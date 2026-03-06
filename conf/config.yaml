@@ -1,0 +1,7 @@
+game_name: "HiddenAttrRuleGame" # WordGuessingGame
+max_turns: 10
+language: "zh" # zh en
+model: "DeepSeek-V3.2" # Ling-1T Ling-flash-2.0 Qwen3-Next-80B-A3B-Instruct DeepSeek-V3.2 Kimi-K2-Thinking
+system_prompt:
+  include_rules: False
+difficulty: 1 # 1-3代表难度
