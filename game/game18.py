@@ -84,7 +84,7 @@ class PermutationDetectiveGame(Game):
             1: {
                 "num": 4,
                 "elements": "[A, B, C, D]",
-                "answer": ["B", "A", "C", "D"],
+                "answer": ["B", "C", "A", "D"],
                 "clue": "B 在 A 之前，且它们不相邻",
             },
             2: {
@@ -104,7 +104,7 @@ class PermutationDetectiveGame(Game):
             1: {
                 "num": 4,
                 "elements": "[A, B, C, D]",
-                "answer": ["B", "A", "C", "D"],
+                "answer": ["B", "C", "A", "D"],
                 "clue": "B is before A, and they are not adjacent",
             },
             2: {

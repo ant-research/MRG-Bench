@@ -88,7 +88,8 @@ class Game(ABC):
                 parsed_info[tag] = match.group(1).strip()
         
         contain_answer = "answer" in parsed_info
-        contain_other = all(
+        
+        contain_other = any(
             tag in parsed_info
             for tag in self.tags
             if tag != "answer"
@@ -100,7 +101,7 @@ class Game(ABC):
             raise ValueError(
                 f"Invalid LLM response. Parsed tags: {list(parsed_info.keys())}; "
                 f"expected tags: {list(self.tags)}, and require either 'answer' "
-                f"or all non-'answer' tags to be present."
+                f"or at least one query tag to be present."
             )
 
 
@@ -134,5 +135,3 @@ class Game(ABC):
             self.state.set_state("failed", str(e))    
         
         return self.state
-
-

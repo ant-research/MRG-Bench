@@ -122,9 +122,10 @@ class HiddenTreeRuleGame(Game):
     }
 
     def __init__(self, config):
+        # 修改说明：必须先初始化 _node_values，因为 super().__init__ 会调用 _initialize_game，
+        # 而 _initialize_game 会调用依赖 _node_values 的 _precalculate_values。
+        self._node_values = {} 
         super().__init__(config)
-        self._node_values = {} # Cache for calculated values based on secret rule
-        self._initialize_game()
 
     def _initialize_game(self):
         lang = self.config.language

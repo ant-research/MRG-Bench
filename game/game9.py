@@ -1,4 +1,8 @@
+# ────────────────────────────────────────────────────────────
+# 文件：../game_benchmark_v2/game/game9.py
+# ────────────────────────────────────────────────────────────
 import json
+import re
 from .base import Game
 
 class LcaGuessGame(Game):
@@ -185,7 +189,9 @@ class LcaGuessGame(Game):
     def produce_response(self, parsed_info):
         # Parse query: <query>node=1,target=A</query>
         query_str = parsed_info.get("query", "")
-        items = [item.strip() for item in query_str.split(",")]
+        
+        items = [item.strip() for item in re.split(r'[,;]', query_str) if item.strip()]
+        
         query_dict = {}
         for item in items:
             if "=" in item:

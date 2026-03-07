@@ -1,3 +1,6 @@
+# ────────────────────────────────────────────────────────────
+# 文件：../game_benchmark_v2/game/game13.py
+# ────────────────────────────────────────────────────────────
 from .base import Game
 
 class GraphMinesweeperGame(Game):
@@ -105,9 +108,8 @@ class GraphMinesweeperGame(Game):
     }
 
     def __init__(self, config):
-        super().__init__(config)
         self._graph = {}
-        self._initialize_game()
+        super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language

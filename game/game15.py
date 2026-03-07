@@ -1,3 +1,9 @@
+# ────────────────────────────────────────────────────────────
+# 修改说明：
+# 1. 修改了 __init__ 方法，移除了重复调用 _initialize_game, _init_rule, _init_message 的代码。
+#    原因：父类 Game.__init__ 已经调用了这些方法。重复调用 _init_rule 会导致已经格式化好的字符串（包含字面量 {A, B, C}）
+#    被再次格式化，从而引发 KeyError: 'A, B, C' 错误。
+# ────────────────────────────────────────────────────────────
 import re
 from .base import Game
 
@@ -6,7 +12,7 @@ class TransformationRuleGame(Game):
     game_rule_zh = """\
     我们来玩一个序列推理游戏。
 
-    游戏基于字母表 {A, B, C}。我已经选定了一个初始序列，并秘密选中了以下四种“规范化规则”中的一种：
+    游戏基于字母表 {{A, B, C}}。我已经选定了一个初始序列，并秘密选中了以下四种“规范化规则”中的一种：
 
     A. 相邻压缩 (Neighbor Compression)：合并连续相同的字母（如 AABCC -> ABC）。
     B. 全局排序 (Global Sort)：按字母表顺序排序（A < B < C）。
@@ -47,7 +53,7 @@ class TransformationRuleGame(Game):
     game_rule_en = """\
     Let's play a sequence inference game.
 
-    The game uses the alphabet {A, B, C}. I have selected an initial sequence and secretly chosen one of the following "Normalization Rules":
+    The game uses the alphabet {{A, B, C}}. I have selected an initial sequence and secretly chosen one of the following "Normalization Rules":
 
     A. Neighbor Compression: Merge consecutive identical letters (e.g., AABCC -> ABC).
     B. Global Sort: Sort alphabetically (A < B < C).
@@ -125,13 +131,6 @@ class TransformationRuleGame(Game):
 
     def __init__(self, config):
         super().__init__(config)
-        self._current_seq = ""
-        self._initialize_game()
-        # 这里需要重新初始化一下 rule prompt，因为 _initialize_game 中更新了 init_seq
-        self._init_rule()
-        # 更新 message history 中的第一条 system/user message
-        self.state.messages = []
-        self._init_message()
 
     def _initialize_game(self):
         lang = self.config.language

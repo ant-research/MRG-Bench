@@ -129,16 +129,19 @@ class HiddenAttrRuleGame(Game):
     def produce_response(self, parsed_info):
 
         query_items = [item.strip() for item in parsed_info["query"].split(",")]
+        # 修改说明：从等号分割，提取值
         query_values = [item.split("=")[1].strip() for item in query_items]
 
-        if self._game_info["num"] != len(query_values):
-            raise ValueError("Invalid query (missing some attrs).")
+        # 修改说明：移除此处的长度检查，允许 LLM 只查询部分属性组合
+        # if self._game_info["num"] != len(query_values):
+        #     raise ValueError("Invalid query (missing some attrs).")
         
         if self.config.language == "zh":
             in_res, not_in_res = "是", "不是"
         elif self.config.language == "en":
             in_res, not_in_res = "Yes", "No"
 
+        # 判断用户提供的属性值是否包含了秘密规则中的所有要素
         if all(i in query_values for i in self._game_info["answer"]):
             return in_res
         else:

@@ -114,9 +114,8 @@ class GraphConnectivityGame(Game):
     }
 
     def __init__(self, config):
-        super().__init__(config)
         self._adj = collections.defaultdict(list)
-        self._initialize_game()
+        super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
