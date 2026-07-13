@@ -1,77 +1,200 @@
-import hydra
-import json
-import csv
+# evaluate.py
+
+import importlib
 import os
+import csv
 import sys
+import random
+import string
+import argparse
 from datetime import datetime
-from omegaconf import DictConfig, OmegaConf
-from runner import GameRunner
+from types import SimpleNamespace
+from typing import Dict, Any
 from chat_assistant import init_client
-from dataclasses import asdict
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
-def main(cfg):
-    
-    # 初始化客户端
-    try:
-        client = init_client(cfg.model)
-    except Exception as e:
-        print(f"[Error] Client initialization failed: {e}")
-        sys.exit(1)
 
-    # 初始化 Runner
-    try:
-        runner = GameRunner(cfg, client)
-    except KeyError as e:
-        print(f"[Error] Game initialization failed: {e}")
-        sys.exit(1)
+# ------------------------------------------------------------------ Noise
 
-    # 记录开始时间
-    start_time = datetime.now()
-    
-    # 运行游戏
-    game_state = runner.run()
-    
-    # 记录结束时间
-    end_time = datetime.now()
-    duration = (end_time - start_time).total_seconds()
+_NOISE_EN = " ".join([
+    "I went to the grocery store yesterday and bought some apples.",
+    "The weather was quite nice this morning.",
+    "My cat knocked over a glass of water.",
+    "I forgot to charge my phone last night.",
+    "The traffic on the highway was terrible today.",
+    "I made scrambled eggs for breakfast.",
+    "The neighbor's dog kept barking all night.",
+    "I need to do laundry sometime this week.",
+    "The library closes early on Sundays.",
+    "I spilled coffee on my shirt this morning.",
+])
 
-    info = asdict(game_state)
-    
-    # 计算使用的轮数 (Assistant 的回复次数)
-    assistant_moves = len([m for m in info['messages'] if m['role'] == 'assistant'])
-    
-    # 准备记录的数据字典
-    result_data = {
-        "timestamp": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-        "model": cfg.model,
-        "game_name": cfg.game_name,
-        "difficulty": cfg.get("difficulty", 1),
-        "language": cfg.get("language", "zh"),
-        "status": info['state'],
-        "reason": info['state_reason'],
-        "turns_used": assistant_moves,
-        "max_turns": cfg.get("max_turns", 99999),
-        "duration_seconds": round(duration, 2),
-        "history_length": len(info['messages'])
+_NOISE_ZH = "".join([
+    "昨天我去超市买了一些苹果。今天早上的天气还不错。",
+    "我的猫把一杯水打翻了。我昨晚忘记给手机充电了。",
+    "今天高速公路上堵车堵得很厉害。我早饭做了炒鸡蛋。",
+    "邻居家的狗整晚都在叫。我这周要找时间洗一下衣服。",
+    "图书馆周日关门比较早。今天早上我把咖啡洒在衬衫上了。",
+])
+
+def _sentence_noise(language: str) -> str:
+    return _NOISE_EN if language == "en" else _NOISE_ZH
+
+def _random_char_noise() -> str:
+    chars = string.ascii_letters + string.digits + string.punctuation + " "
+    return ''.join(random.choices(chars, k=100))
+
+
+# ------------------------------------------------------------------ Game Runner
+
+class GameRunner:
+    def __init__(self, game, llm_client, max_turns: int = 100,
+                 noise_after_response: bool = False, language: str = "zh"):
+        self.game = game
+        self.llm_client = llm_client
+        self.max_turns = max_turns
+        self.noise_after_response = noise_after_response
+        self.language = language
+
+    def run(self):
+        game_state = self.game.state
+
+        for _ in range(self.max_turns):
+            if game_state.state != "in_progress":
+                break
+            try:
+                llm_response = self.llm_client.chat_messages(game_state.messages)[0]
+                if not llm_response:
+                    game_state.set_state("failed", "LLM returned empty response")
+                    break
+                
+                game_state.add_message("assistant", llm_response)
+                self.game.step(llm_response)
+
+                # 在游戏回复（最新一条 user 消息）末尾注入随机字符噪声
+                if (self.noise_after_response
+                        and game_state.state == "in_progress"
+                        and game_state.messages[-1]["role"] == "user"):
+                    game_state.messages[-1]["content"] += "\nNoise Info:" + _random_char_noise()
+
+            except Exception as e:
+                game_state.set_state("failed", f"Runtime error: {e}")
+                break
+        else:
+            game_state.set_state("over_max_turns", f"Exceeded max turns: {self.max_turns}")
+
+        return game_state
+
+
+# ------------------------------------------------------------------ Helpers
+
+def build_game(game_name: str, difficulty: int, language: str,
+               context: int, games_module: str = "games"):
+    module = importlib.import_module(games_module)
+    GameClass = getattr(module, game_name)
+    cfg = SimpleNamespace(difficulty=difficulty, language=language, context=context)
+    return GameClass(cfg)
+
+
+def write_csv(filepath: str, row: Dict[str, Any]):
+    file_exists = os.path.isfile(filepath)
+    with open(filepath, mode="a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=row.keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def _base_result(args, **overrides) -> Dict[str, Any]:
+    """构建结果字典的公共字段"""
+    return {
+        "timestamp":            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "model":                args.model,
+        "game_name":            args.game,
+        "difficulty":           args.difficulty,
+        "language":             args.language,
+        "context":              args.context,
+        "eval_mode":            args.eval_mode,
+        "status":               "failed",
+        "reason":               "",
+        "turns_used":           0,
+        "max_turns":            args.max_turns,
+        "duration_seconds":     0.0,
+        **overrides,
     }
 
-    # 打印简要结果到控制台
-    print(f"[Result] Game: {cfg.game_name} | Diff: {cfg.get('difficulty')} | Status: {info['state']} | Turns: {assistant_moves}/{cfg.get('max_turns', 99)}")
 
-    # 将结果写入 CSV 文件
-    output_file = "evaluation_results.csv"
-    file_exists = os.path.isfile(output_file)
-    
+# ------------------------------------------------------------------ Evaluate
+
+def evaluate(args) -> Dict[str, Any]:
+    client = init_client(args.model)
+
+    # 构建游戏
     try:
-        with open(output_file, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=result_data.keys())
-            # 如果文件不存在，先写入表头
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow(result_data)
+        game = build_game(args.game, args.difficulty, args.language,
+                          args.context, args.games_module)
     except Exception as e:
-        print(f"[Error] Failed to write results to CSV: {e}")
+        return _base_result(args, reason=f"Game init error: {e}")
 
-if __name__ == '__main__':
+    # 反事实模式：开启游戏内置纠正逻辑
+    if args.eval_mode == "counterfactual":
+        game.enable_counterfactual = True
+
+    # 规则末尾注入句子噪声
+    if args.eval_mode == "noise_in_rule":
+        game.state.messages[0]["content"] += "\n\n" + _sentence_noise(args.language)
+
+    noise_after = (args.eval_mode == "noise_in_rule")
+
+    # 运行
+    start = datetime.now()
+    final_state = GameRunner(
+        game, client, args.max_turns,
+        noise_after_response=noise_after,
+        language=args.language,
+    ).run()
+    duration = (datetime.now() - start).total_seconds()
+
+    turns_used = sum(1 for m in final_state.messages if m["role"] == "assistant")
+
+    return _base_result(
+        args,
+        status=final_state.state,
+        reason=final_state.state_reason,
+        turns_used=turns_used,
+        duration_seconds=round(duration, 2),
+    )
+
+
+# ------------------------------------------------------------------ CLI
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--model",       default="Ling-2.5-1T")
+    parser.add_argument("--max-tokens",  type=int,   default=10240)
+    parser.add_argument("--temperature", type=float, default=0.7)
+
+    parser.add_argument("--game",        required=True, help="游戏类名")
+    parser.add_argument("--difficulty",  type=int,  required=True)
+    parser.add_argument("--language",    required=True, choices=["zh", "en"])
+    parser.add_argument("--context",     type=int,  default=0)
+    parser.add_argument("--max-turns",   type=int,  default=30)
+
+    parser.add_argument("--eval-mode",   default="standard",
+                        choices=["standard", "noise_in_rule", "noise_after_response", "counterfactual"],
+                        help="评估模式")
+
+    parser.add_argument("--output",       default="evaluation_results.csv")
+    parser.add_argument("--games-module", default="games")
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    result = evaluate(args)
+    write_csv(args.output, result)
+
+
+if __name__ == "__main__":
     main()

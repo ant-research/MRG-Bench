@@ -4,13 +4,14 @@ import requests
 import logging
 import time
 import curlify
+import random
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class VllmChat:
     def __init__(
-        self, server_ip, server_port, model_name_or_path, api_key=None, schema="http"
+        self, server_ip, server_port, model_name_or_path="Ling-2.5-1T", api_key=None, schema="http"
     ):
         self.model_name_or_path = model_name_or_path
         self.generation_config = dict(
@@ -171,7 +172,7 @@ class VllmChat:
         return None
     
     def chat_messages(
-        self, messages, n=1, retry=1
+        self, messages, n=1, retry=100
     ) -> Union[str, List[str]]:
         payload = {
             "model": self.model_name_or_path,
@@ -199,7 +200,7 @@ class VllmChat:
             try:
                 response = requests.post(self.url, json=payload, headers=headers)
                 curl_command = curlify.to_curl(response.request)
-                logger.debug(curl_command)
+                # logger.debug(curl_command)
 
                 if response.status_code == 200:
                     contents = [
@@ -208,26 +209,26 @@ class VllmChat:
                     ]
                     return contents
                 else:
-                    logger.warning(
-                        f"Attempt {attempt + 1} failed with status code: {response.status_code}"
-                    )
+                    # logger.warning(
+                    #     f"Attempt {attempt + 1} failed with status code: {response.status_code}"
+                    # )
                     last_exception = Exception(f"HTTP {response.status_code}")
                     response.close()
                     response = None
 
             except requests.RequestException as e:
-                logger.warning(
-                    f"Attempt {attempt + 1} failed with {type(e).__name__}: {str(e)}"
-                )
+                # logger.warning(
+                #     f"Attempt {attempt + 1} failed with {type(e).__name__}: {str(e)}"
+                # )
                 last_exception = e
                 if response:
                     response.close()
                     response = None
 
             except Exception as e:
-                logger.error(
-                    f"Attempt {attempt + 1} failed with unexpected {type(e).__name__}: {str(e)}"
-                )
+                # logger.error(
+                #     f"Attempt {attempt + 1} failed with unexpected {type(e).__name__}: {str(e)}"
+                # )
                 last_exception = e
                 if response:
                     response.close()
@@ -235,19 +236,17 @@ class VllmChat:
 
             # If not the last attempt, wait before retrying
             if attempt < retry - 1:
-                sleep_time = min(
-                    2**attempt, 10
-                )  # Exponential backoff with max 10 seconds
-                logger.info(f"Waiting {sleep_time} seconds before retry...")
+                sleep_time = random.randint(5, 60)  # Exponential backoff with max 10 seconds
+                # logger.info(f"Waiting {sleep_time} seconds before retry...")
                 time.sleep(sleep_time)
 
         # All retries failed
-        if last_exception:
-            logger.error(
-                f"All {retry} attempts failed. Last error: {str(last_exception)}"
-            )
-        else:
-            logger.error(f"All {retry} attempts failed with unknown error")
+        # if last_exception:
+        #     logger.error(
+        #         f"All {retry} attempts failed. Last error: {str(last_exception)}"
+        #     )
+        # else:
+        #     logger.error(f"All {retry} attempts failed with unknown error")
 
         return None
 
@@ -260,22 +259,4 @@ def init_client(model_name_or_path):
     chat_client.set_generation_config(
         temperature=1.0, top_p=1.0, max_tokens=16384
     )
-    # res = chat_client.chat_messages(
-    #     [
-    #         {
-    #             "role": "user",
-    #             "content": "你是谁"
-    #         },
-    #         {
-    #             "role": "assistant",
-    #             "content": "我是千问."
-    #         },
-    #         {
-    #             "role": "user",
-    #             "content": "你确定吗？"
-    #         },
-    #     ]
-    # )
-    # print(res)
-    
     return chat_client
