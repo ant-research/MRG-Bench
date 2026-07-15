@@ -1,825 +1,614 @@
 from .base import Game
-import random
+import re
+import itertools
 
-class MaxPathInTreeGame(Game):
+class ParityRuleGame(Game):
 
     reasoning_type = "归纳推理"
-    data_structure = "树"
+    data_structure = "集合"
 
     game_rule_zh = """\
-我们来玩一个"树路径最大得分推理"游戏，规则如下：
+我们现在来玩一个"奇偶规则推理"游戏，规则如下：
 
-游戏设定了一棵有根树 T，共有 {n} 个节点，根节点编号为 {root_id}，其深度为 1。
+有一个包含16个对象的集合，每个对象由4个二元特征 A1, A2, A3, A4 描述，每个特征的取值为0或1。集合中恰好包含所有可能的特征组合（从 0000 到 1111）各一个。
 
-**树结构（已知）**：
-每个非根节点 v 都具有：
-- 一个可见的离散标签（来自标签集合 {label_set}）
-- 一个已知的深度值（2 到 {max_depth} 之间的整数）
-- 是否为叶子节点的标识
+我已秘密设定了一个"标记规则"，该规则由以下两部分组成：
+1. **关键特征集合 H**：从4个特征中选择若干个（可能为空集、单个特征、多个特征或全部特征）
+2. **目标奇偶性 p**：为"奇"或"偶"
 
-树的完整结构在游戏开始时已知，你可以随时查询任意节点的子节点信息。当前树共有 {leaf_count} 个叶子节点。
+标记规则的工作方式：对于集合中的任意一个对象，如果该对象在关键特征集合 H 中的特征取值为1的个数的奇偶性等于目标奇偶性 p，则该对象被标记为1；否则标记为0。
 
-**隐藏规则**：
-存在一个隐藏的整数权重矩阵 W，它为每一层（深度 2 到 {max_depth}）的每一种标签分配一个整数权重。
-权重可以是负数、零或正数。同一层同一标签的权重在全树中一致，但不同层的同一标签权重可以不同。
+例如：若 H = {{A1, A3}}，p = "奇"，则对象 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而对象 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
 
-从根节点到任意节点 v 的路径总得分定义为：该路径上所有非根节点的权重之和（每个节点的权重由其所在层和标签共同决定）。
+通过尽可能少的查询次数，推断出关键特征集合 H 和目标奇偶性 p。
 
-**你的目标**：
-推断出从根节点到某个叶子节点的路径，使得该路径的总得分在所有根到叶路径中最大（若存在多条最优路径，任选其一即可）。
+你可以进行"条件计数查询"。每次查询时，你需要对4个特征给出部分约束条件，每个特征可以指定为：
+- **0**：该特征必须为0
+- **1**：该特征必须为1  
+- **?**：该特征可以为0或1（不限制）
 
-**可用查询**：
-你可以向我提出以下类型的查询来获取信息，但请注意总查询次数有限制（配额为 {quota} 次）：
+**重要限制**：每次查询必须至少有一个特征为 ?（即不允许将所有特征都固定）。
 
-1. **路径总得分查询**：询问从根节点到指定节点 v 的路径总得分。返回一个整数。
+我会返回两个数字：
+- **k**：在你的约束条件下，被标记为1的对象数量
+- **m**：在你的约束条件下，符合约束的对象总数
 
-2. **路径区段得分查询**：询问从节点 a 到节点 b 的路径区段得分（要求 a 是 b 的祖先）。返回一个整数，等于从根到 b 的得分减去从根到 a 的得分。
+每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
 
-3. **路径比较查询**：比较从根到节点 u 和从根到节点 v 的路径总得分大小。返回三种结果之一：greater（u 的得分大于 v）、equal（相等）、less（u 的得分小于 v）。
+查询示例（查询 A1=1, A2=?, A3=0, A4=? 的情况）：
+<query>1,?,0,?</query>
 
-4. **结构复核查询**（不计入配额）：查询节点 x 的子节点列表，返回每个子节点的 ID、深度、标签和是否为叶子的信息。
+提交最终答案时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
 
-注意：非法请求（如祖先关系不成立、节点 ID 不存在等）将返回错误信息且不计入配额。
+- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
+- p 为"奇"或"偶"
 
-**查询格式（必须严格遵守）**：
+答案示例1（H = {{A1, A3}}，p = 奇）：
+<answer>H=A1,A3, p=奇</answer>
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+答案示例2（H 为空集，p = 偶）：
+<answer>H=empty, p=偶</answer>
 
-- 路径总得分查询（例如查询节点 5）：
-<query_total>5</query_total>
-
-- 路径区段得分查询（例如查询从节点 2 到节点 5 的区段，用逗号分隔）：
-<query_segment>2,5</query_segment>
-
-- 路径比较查询（例如比较节点 3 和节点 7，用逗号分隔）：
-<query_compare>3,7</query_compare>
-
-- 结构复核查询（例如查询节点 4 的子节点）：
-<query_structure>4</query_structure>
-
-**提交答案格式**：
-
-当你确定答案后，必须提交一个叶子节点的 ID 以及该路径的总得分，格式如下：
-
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-
-例如：<answer>leaf=8, score=15</answer>
-
-若提交的路径不是最优路径，或格式不正确，或超出查询配额，游戏将失败。
+答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
+<answer>H=A1,A2,A3,A4, p=偶</answer>
 """
 
     game_rule_en = """\
-Let's play a "Maximum Path Score Inference in Tree" game. Here are the rules:
+Let's play a "Parity Rule Deduction" game. Here are the rules:
 
-A rooted tree T with {n} nodes is given. The root node has ID {root_id} and depth 1.
+There is a set of 16 objects, each described by 4 binary features A1, A2, A3, A4, where each feature takes value 0 or 1. The set contains exactly one object for each possible feature combination (from 0000 to 1111).
 
-**Tree Structure (Known)**:
-Each non-root node v has:
-- A visible discrete label from the label set {label_set}
-- A known depth value (an integer between 2 and {max_depth})
-- An indicator of whether it is a leaf node
+I have secretly set up a "marking rule" consisting of two components:
+1. **Key Feature Set H**: A subset of the 4 features (may be empty, single feature, multiple features, or all features)
+2. **Target Parity p**: Either "odd" or "even"
 
-The complete tree structure is known at the start. You can query the children of any node at any time. The tree has {leaf_count} leaf nodes in total.
+How the marking rule works: For any object in the set, if the count of features in the key feature set H that have value 1 matches the target parity p, then the object is marked as 1; otherwise marked as 0.
 
-**Hidden Rule**:
-There exists a hidden integer weight matrix W that assigns an integer weight to each label at each layer (depth 2 to {max_depth}).
-Weights can be negative, zero, or positive. The weight of the same label at the same layer is consistent throughout the tree, but the weight of the same label at different layers can differ.
+For example: If H = {{A1, A3}}, p = "odd", then object (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy odd requirement, marked as 0; while object (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies requirement, marked as 1.
 
-The total score of a path from the root to any node v is defined as: the sum of weights of all non-root nodes on that path (each node's weight is determined by its depth and label).
+Through as few queries as possible, deduce the key feature set H and target parity p.
 
-**Your Goal**:
-Infer a path from the root to a leaf node such that the total score of that path is maximum among all root-to-leaf paths (if multiple optimal paths exist, any one is acceptable).
+You can perform "conditional count queries". For each query, you specify partial constraints on the 4 features, where each feature can be:
+- **0**: The feature must be 0
+- **1**: The feature must be 1
+- **?**: The feature can be 0 or 1 (unrestricted)
 
-**Available Queries**:
-You can make the following types of queries to gather information, but note that the total number of queries is limited (quota is {quota}):
+**Important Restriction**: Each query must have at least one feature as ? (i.e., you cannot fix all features).
 
-1. **Path Total Score Query**: Ask for the total score of the path from the root to a specified node v. Returns an integer.
+I will return two numbers:
+- **k**: The count of objects marked as 1 under your constraints
+- **m**: The total count of objects satisfying your constraints
 
-2. **Path Segment Score Query**: Ask for the segment score from node a to node b (requires a to be an ancestor of b). Returns an integer equal to the score from root to b minus the score from root to a.
+Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
 
-3. **Path Comparison Query**: Compare the total scores of paths from root to node u and from root to node v. Returns one of three results: greater (u's score is greater than v's), equal, or less (u's score is less than v's).
+Query example (querying A1=1, A2=?, A3=0, A4=?):
+<query>1,?,0,?</query>
 
-4. **Structure Review Query** (does not count toward quota): Query the list of children of node x, returning each child's ID, depth, label, and leaf status.
+When submitting final answer, specify the key feature set H and target parity p. Format:
 
-Note: Invalid requests (such as invalid ancestor relationships or non-existent node IDs) will return an error message and will not count toward the quota.
+- H is a list of feature names, comma-separated (if empty set, write empty)
+- p is "odd" or "even"
 
-**Query Format (must strictly follow)**:
+Answer example 1 (H = {{A1, A3}}, p = odd):
+<answer>H=A1,A3, p=odd</answer>
 
-Each query must contain only one tag. Use the following XML format:
+Answer example 2 (H is empty set, p = even):
+<answer>H=empty, p=even</answer>
 
-- Path Total Score Query (e.g., querying node 5):
-<query_total>5</query_total>
-
-- Path Segment Score Query (e.g., querying segment from node 2 to node 5, comma-separated):
-<query_segment>2,5</query_segment>
-
-- Path Comparison Query (e.g., comparing nodes 3 and 7, comma-separated):
-<query_compare>3,7</query_compare>
-
-- Structure Review Query (e.g., querying children of node 4):
-<query_structure>4</query_structure>
-
-**Answer Submission Format**:
-
-When you have determined your answer, you must submit a leaf node ID and the total score of that path in the following format:
-
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-
-For example: <answer>leaf=8, score=15</answer>
-
-If the submitted path is not optimal, or the format is incorrect, or the query quota is exceeded, the game will fail.
+Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
+<answer>H=A1,A2,A3,A4, p=even</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用“智能交通路网最优路径规划系统”。
+智能交通系统正在进行“事故风险归纳”风控测试。
 
-已知有一棵表示交通路网的分支树 T，共有 {n} 个节点。起点（根节点）编号为 {root_id}，处于第 1 层级（深度 1）。
+在交通流量分析数据库中，包含16种典型的“路口状态画像”，每种画像由4个二元特征 A1, A2, A3, A4 描述（例如：A1代表是否为主干道，A2代表是否为早晚高峰等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
 
-**路网结构（已知）**：
-每个途经节点（非起点）v 都具有：
-- 一个路口类型标签（来自集合 {label_set}）
-- 一个已知的层级深度（介于 2 到 {max_depth} 之间）
-- 是否为道路终点（叶子节点）的标识
+交通指挥中心秘密设定了一项“风险标记规则”，该规则由以下两部分组成：
+1. **关键特征集合 H**：从4个特征中选择若干个（可能为空集、单个特征、多个特征或全部特征）
+2. **目标奇偶性 p**：为"奇"或"偶"
 
-完整路网结构已录入系统，你可以随时查询任意路口的后续连接情况。当前共有 {leaf_count} 个终点。
+风控判定方式：对于任意一个路口状态，如果该状态在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则该状态被标记为高风险（记为1）；否则标记为正常（记为0）。
 
-**隐藏规则**：
-系统存在一个隐藏的通行顺畅度权重矩阵 W，它为每一层级（深度 2 到 {max_depth}）的每种路口标签分配一个整数得分。得分可能是正数（顺畅）、零或负数（拥堵）。同一层级同一类型的路口得分一致，但不同层级下同一类型的得分可能不同。
-一条从起点到任意节点 v 的路线总通行效率定义为：该路线上所有途经节点的得分之和。
+例如：若 H = {{A1, A3}}，p = "奇"，则状态 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而状态 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
 
-**你的目标**：
-推断出一条从起点到某个终点（叶子节点）的路线，使得该路线的总通行效率在所有可选路线中最高（若有多条最优路线，任选其一即可）。
+通过尽可能少的数据查询次数，推断出控制中心的“关键特征集合 H”和“目标奇偶性 p”。
 
-**可用查询**：
-你可以调用以下系统接口获取信息，查询配额上限为 {quota} 次：
-1. **路线总效率查询**：获取从起点到指定节点 v 的路线总得分。返回一个整数。
-2. **路线区段效率查询**：获取从节点 a 到节点 b 的区段通行得分（a 须为 b 的前置节点）。返回一个整数，等于起点到 b 的得分减去起点到 a 的得分。
-3. **路线效率比较**：比较从起点到节点 u 和节点 v 的路线总得分。返回 greater（u 的得分大于 v）、equal 或 less。
-4. **路网结构复核查询**（不计入配额）：查询节点 x 的后续相连路口列表，返回每个相连路口的 ID、层级、标签及是否为终点。
+你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
+- **0**：该特征必须为0
+- **1**：该特征必须为1  
+- **?**：该特征可以为0或1（不限制）
 
-**查询格式（必须严格遵守）**：
-每次查询只包含一个XML标签：
-- 路线总效率查询：<query_total>5</query_total>
-- 路线区段效率查询：<query_segment>2,5</query_segment>
-- 路线效率比较：<query_compare>3,7</query_compare>
-- 路网结构复核查询：<query_structure>4</query_structure>
+**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
 
-**提交答案格式**：
-确定最优规划后，请提交终点 ID 及该路线总效率得分：
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-示例：<answer>leaf=8, score=15</answer>
-若提交非最优路线、格式错误或超出配额，规划任务将失败。
+系统会返回两个统计数字：
+- **k**：在你的检索条件下，被标记为高风险(1)的状态数量
+- **m**：在你的检索条件下，符合检索条件的状态总数
+
+每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
+
+查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
+<query>1,?,0,?</query>
+
+提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
+
+- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
+- p 为"奇"或"偶"
+
+答案示例1（H = {{A1, A3}}，p = 奇）：
+<answer>H=A1,A3, p=奇</answer>
+
+答案示例2（H 为空集，p = 偶）：
+<answer>H=empty, p=偶</answer>
+
+答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
+<answer>H=A1,A2,A3,A4, p=偶</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the "Intelligent Traffic Network Routing System".
+[Transportation Scenario]
+The Intelligent Traffic System is running an "Accident Risk Deduction" risk control test.
 
-A branch tree T representing the traffic network is given, with {n} nodes. The starting point (root node) has ID {root_id} and is at routing level 1 (depth 1).
+The traffic flow database contains 16 typical "intersection state profiles". Each profile is described by 4 binary features A1, A2, A3, A4 (e.g., A1 for main road, A2 for rush hour, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
 
-**Network Structure (Known)**:
-Each passing intersection (non-root node) v has:
-- An intersection type label (from the set {label_set})
-- A known routing level (an integer between 2 and {max_depth})
-- An indicator of whether it is a destination (leaf node)
+The traffic control center has secretly established a "Risk Marking Rule" consisting of two components:
+1. **Key Feature Set H**: A subset of the 4 features (may be empty, single, multiple, or all features)
+2. **Target Parity p**: Either "odd" or "even"
 
-The complete network structure is pre-loaded. You can query the connected succeeding intersections of any node at any time. There are {leaf_count} destinations in total.
+Risk assessment logic: For any intersection state, if the count of features in the key feature set H that have value 1 matches the target parity p, the state is flagged as high-risk (marked 1); otherwise normal (marked 0).
 
-**Hidden Rule**:
-There exists a hidden traffic efficiency matrix W that assigns an integer score to each intersection type at each level (depth 2 to {max_depth}). Scores can be positive (smooth traffic), zero, or negative (congestion). The score of the same intersection type at the same level is identical, but can vary across different levels.
-The total routing efficiency of a path from the start to any node v is defined as: the sum of the scores of all passing intersections on that route.
+For example: If H = {{A1, A3}}, p = "odd", then profile (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Profile (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
 
-**Your Goal**:
-Infer a route from the starting point to a destination (leaf node) such that its total routing efficiency is the maximum among all valid routes (if multiple optimal routes exist, any one is acceptable).
+Through as few data queries as possible, deduce the "Key Feature Set H" and "Target Parity p".
 
-**Available Queries**:
-You can query the system interfaces to gather routing data. Your total query quota is {quota}:
-1. **Total Efficiency Query**: Ask for the total routing efficiency from the start to node v. Returns an integer.
-2. **Segment Efficiency Query**: Ask for the segment efficiency from node a to node b (a must be a predecessor of b). Returns an integer equal to the score at b minus the score at a.
-3. **Efficiency Comparison Query**: Compare the total efficiencies of routes to node u and node v. Returns greater, equal, or less.
-4. **Structure Review Query** (quota-free): Query the connected succeeding intersections of node x, returning the ID, level, label, and destination status of each child.
+You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
+- **0**: The feature must be 0
+- **1**: The feature must be 1
+- **?**: The feature can be 0 or 1 (unrestricted)
 
-**Query Format (must strictly follow)**:
-Each query must contain only one XML tag:
-- Total Efficiency Query: <query_total>5</query_total>
-- Segment Efficiency Query: <query_segment>2,5</query_segment>
-- Efficiency Comparison Query: <query_compare>3,7</query_compare>
-- Structure Review Query: <query_structure>4</query_structure>
+**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
 
-**Answer Submission Format**:
-When the optimal route is determined, submit the destination ID and the maximum total efficiency:
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-Example: <answer>leaf=8, score=15</answer>
-Failing to submit the optimal route, syntax errors, or quota exhaustion will abort the routing task.
+The system will return two metrics:
+- **k**: The count of high-risk (1) profiles under your constraints
+- **m**: The total count of matching profiles satisfying your constraints
+
+Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
+
+Query example (querying A1=1, A2=?, A3=0, A4=?):
+<query>1,?,0,?</query>
+
+When submitting your final deduction, specify the key feature set H and target parity p. Format:
+
+- H is a list of feature names, comma-separated (if empty set, write empty)
+- p is "odd" or "even"
+
+Answer example 1 (H = {{A1, A3}}, p = odd):
+<answer>H=A1,A3, p=odd</answer>
+
+Answer example 2 (H is empty set, p = even):
+<answer>H=empty, p=even</answer>
+
+Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
+<answer>H=A1,A2,A3,A4, p=even</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“临床诊疗路径最优决策支持系统”。
+临床医学研究中心正在进行“生物标记物反应归纳”测试。
 
-本系统提供了一棵诊疗决策树 T，共 {n} 个节点。初始症状（根节点）编号为 {root_id}，处于诊疗第 1 阶段（深度 1）。
+在患者临床实验数据库中，包含16种典型的“患者症状画像”，每种画像由4个二元临床特征 A1, A2, A3, A4 描述（例如：A1代表是否发热，A2代表是否有基础病等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
 
-**决策树结构（已知）**：
-每个后续诊疗节点（非根节点）v 均具有：
-- 一个干预手段标签（选自 {label_set}）
-- 所处的诊疗阶段（深度介于 2 到 {max_depth}）
-- 是否为最终治疗结局（叶子节点）的标识
+医学系统秘密设定了一项基于复杂生物学通路的“阳性反应标记规则”，该规则由以下两部分组成：
+1. **关键特征集合 H**：从4个特征中选择若干个核心表征（可能为空集、单个特征、多个特征或全部特征）
+2. **目标奇偶性 p**：为"奇"或"偶"
 
-决策树的完整架构已对你开放，你可以随时查询任意节点的可选后续方案。当前存在 {leaf_count} 个最终治疗结局。
+临床判定方式：对于任意一个患者画像，如果该画像在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则认为该患者对新药呈阳性反应（记为1）；否则为阴性反应（记为0）。
 
-**隐藏规则**：
-系统内置了一个隐藏的健康收益矩阵 W，它为每一阶段（深度 2 到 {max_depth}）的每种干预手段分配一个整数分值。分值可正（改善）、零或负（副作用）。同一阶段相同干预手段的分值一致，不同阶段相同干预手段的分值可能有异。
-从初始症状到某一节点 v 的整体健康收益定义为：该路径上所有干预节点的得分总和。
+例如：若 H = {{A1, A3}}，p = "奇"，则画像 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而画像 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
 
-**你的目标**：
-推演并确定一条从初始症状通往最终治疗结局的最优诊疗路径，使总健康收益达到最大值（若存多条等效最优路径，任选其一）。
+通过尽可能少的数据查询次数，推断出核心的“关键特征集合 H”和“目标奇偶性 p”。
 
-**可用查询**：
-你可通过以下查询接口收集数据，最多允许查询 {quota} 次：
-1. **阶段健康收益查询**：询问从初始症状到节点 v 的总健康收益。返回整数。
-2. **疗程区段收益查询**：询问从节点 a 到节点 b 的区段健康收益（a 须为 b 的前置环节）。返回整数，即 b 的总收益减去 a 的总收益。
-3. **诊疗路径收益比较**：比较通往节点 u 和节点 v 的总收益。返回 greater（u 大于 v）、equal 或 less。
-4. **决策分支结构复核**（免配额）：查询节点 x 的后续干预选项，返回节点 ID、阶段、标签及结局状态。
+你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
+- **0**：该特征必须为0
+- **1**：该特征必须为1  
+- **?**：该特征可以为0或1（不限制）
 
-**查询格式（必须严格遵守）**：
-每次查询仅使用单一 XML 标签：
-- 阶段健康收益查询：<query_total>5</query_total>
-- 疗程区段收益查询：<query_segment>2,5</query_segment>
-- 诊疗路径收益比较：<query_compare>3,7</query_compare>
-- 决策分支结构复核：<query_structure>4</query_structure>
+**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
 
-**提交答案格式**：
-确认最终最优方案后，请按以下格式提交结局结局 ID 及总健康收益：
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-示例：<answer>leaf=8, score=15</answer>
-提交次优路径、格式违规或配额耗尽均判定为决策失败。
+系统会返回两个统计数字：
+- **k**：在你的检索条件下，呈阳性反应(1)的画像数量
+- **m**：在你的检索条件下，符合检索条件的画像总数
+
+每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
+
+查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
+<query>1,?,0,?</query>
+
+提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
+
+- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
+- p 为"奇"或"偶"
+
+答案示例1（H = {{A1, A3}}，p = 奇）：
+<answer>H=A1,A3, p=奇</answer>
+
+答案示例2（H 为空集，p = 偶）：
+<answer>H=empty, p=偶</answer>
+
+答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
+<answer>H=A1,A2,A3,A4, p=偶</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the "Clinical Pathway Optimization and Decision Support System".
+[Healthcare Scenario]
+The clinical medical research center is running a "Biomarker Reaction Deduction" test.
 
-A decision tree T for clinical diagnosis and treatment is provided, containing {n} nodes. The initial symptom (root node) has ID {root_id} and represents phase 1 (depth 1).
+The clinical trial database contains 16 typical "patient symptom profiles". Each profile is described by 4 binary clinical features A1, A2, A3, A4 (e.g., A1 for fever, A2 for underlying disease, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
 
-**Decision Tree Structure (Known)**:
-Each subsequent intervention step (non-root node) v features:
-- A medical intervention label (from {label_set})
-- A clinical phase depth (between 2 and {max_depth})
-- An indicator of whether it is a final clinical outcome (leaf node)
+The medical system has secretly established a "Positive Reaction Marking Rule" based on a complex biological pathway, consisting of two components:
+1. **Key Feature Set H**: A subset of the 4 core clinical features (may be empty, single, multiple, or all features)
+2. **Target Parity p**: Either "odd" or "even"
 
-The entire decision tree is accessible. You can query the available subsequent treatments for any node. Currently, there are {leaf_count} final clinical outcomes.
+Clinical assessment logic: For any patient profile, if the count of features in the key feature set H that have value 1 matches the target parity p, the patient is considered to have a positive reaction to the new drug (marked 1); otherwise a negative reaction (marked 0).
 
-**Hidden Rule**:
-A hidden health benefit matrix W assigns an integer score to each medical intervention at each phase (depth 2 to {max_depth}). Scores can be positive (improvement), zero, or negative (side effects). The benefit of an intervention is identical within the same phase but may differ across phases.
-The cumulative health benefit from the initial symptom to any node v is the sum of the scores of all intervention steps along that path.
+For example: If H = {{A1, A3}}, p = "odd", then profile (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Profile (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
 
-**Your Goal**:
-Deduce an optimal clinical pathway from the initial symptom to a final clinical outcome that yields the maximum cumulative health benefit (any equally optimal path suffices).
+Through as few data queries as possible, deduce the core "Key Feature Set H" and "Target Parity p".
 
-**Available Queries**:
-You can retrieve clinical data using the following queries, limited to {quota} uses:
-1. **Total Health Benefit Query**: Request the cumulative health benefit to node v. Returns an integer.
-2. **Segment Benefit Query**: Request the health benefit accrued from step a to step b (a must be a predecessor of b). Returns an integer (b's total score minus a's).
-3. **Pathway Benefit Comparison**: Compare the cumulative health benefits up to node u and node v. Returns greater, equal, or less.
-4. **Branch Structure Review** (quota-free): Query the available intervention options following node x, returning the ID, phase depth, label, and outcome status of each child node.
+You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
+- **0**: The feature must be 0
+- **1**: The feature must be 1
+- **?**: The feature can be 0 or 1 (unrestricted)
 
-**Query Format (must strictly follow)**:
-Use only one XML tag per query:
-- Total Health Benefit Query: <query_total>5</query_total>
-- Segment Benefit Query: <query_segment>2,5</query_segment>
-- Pathway Benefit Comparison: <query_compare>3,7</query_compare>
-- Branch Structure Review: <query_structure>4</query_structure>
+**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
 
-**Answer Submission Format**:
-Upon finding the optimal pathway, submit the final outcome ID and the cumulative health benefit:
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-Example: <answer>leaf=8, score=15</answer>
-Submitting sub-optimal pathways, formatting errors, or exceeding the query quota will result in decision failure.
+The system will return two metrics:
+- **k**: The count of positive reaction (1) profiles under your constraints
+- **m**: The total count of matching profiles satisfying your constraints
+
+Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
+
+Query example (querying A1=1, A2=?, A3=0, A4=?):
+<query>1,?,0,?</query>
+
+When submitting your final deduction, specify the key feature set H and target parity p. Format:
+
+- H is a list of feature names, comma-separated (if empty set, write empty)
+- p is "odd" or "even"
+
+Answer example 1 (H = {{A1, A3}}, p = odd):
+<answer>H=A1,A3, p=odd</answer>
+
+Answer example 2 (H is empty set, p = even):
+<answer>H=empty, p=even</answer>
+
+Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
+<answer>H=A1,A2,A3,A4, p=even</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎进入“进阶学习路径能力评估与规划系统”。
+智能教育平台正在进行“学习轨迹归纳”分析。
 
-系统预设了一棵学习体系树 T，包含 {n} 个节点。基础起点（根节点）编号为 {root_id}，层级为 1（深度 1）。
+在学生行为跟踪数据库中，包含16种典型的“学习行为画像”，每种画像由4个二元行为特征 A1, A2, A3, A4 描述（例如：A1代表是否完成预习，A2代表是否参与讨论等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
 
-**体系结构（已知）**：
-每个进阶学习节点（非根节点）v 具有：
-- 一个课程模块标签（来自 {label_set}）
-- 所在的学习阶段层级（介于 2 到 {max_depth}）
-- 是否为结业认证（叶子节点）的标识
+教学跟踪系统秘密设定了一项“高潜力推荐规则”，该规则由以下两部分组成：
+1. **关键特征集合 H**：从4个行为特征中选择若干个（可能为空集、单个特征、多个特征或全部特征）
+2. **目标奇偶性 p**：为"奇"或"偶"
 
-所有课程的依赖关系初始即刻可见，你可随时查询任意节点的后续课程。目前共有 {leaf_count} 个结业认证点。
+推荐判定方式：对于任意一个学习行为画像，如果该画像在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则该画像被标记为推荐进入培优库（记为1）；否则标记为普通（记为0）。
 
-**隐藏规则**：
-存在一个未公开的能力增益矩阵 W，给每个阶段（深度 2 到 {max_depth}）的每个课程标签赋予一个整数分值。该分值可为正（能力提升）、零或负（精力损耗）。同阶段同类课程增益固定，不同阶段的同类课程增益可能产生变化。
-从基础起点至任意节点 v 的累计能力得分定义为：该路径上所有进阶节点增益分值的总和。
+例如：若 H = {{A1, A3}}，p = "奇"，则画像 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而画像 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
 
-**你的目标**：
-在所有通往结业认证的完整学习路径中，找寻出一条能带来最大累计能力得分的路径（如遇并列最高，任选其一）。
+通过尽可能少的数据查询次数，推断出系统的“关键特征集合 H”和“目标奇偶性 p”。
 
-**可用查询**：
-你可以使用下列查询指令获取规划依据，可用查询配额共计 {quota} 次：
-1. **路径总能力查询**：获取至节点 v 的累计能力得分。返回整数。
-2. **阶段能力增益查询**：获取从节点 a 进阶至 b 的区段增益（a 必须是 b 的前置节点）。返回整数（即 b 的得分减去 a 的得分）。
-3. **学习路径比较**：比对抵达节点 u 与 v 的得分高低。返回 greater（u 高于 v）、equal 或 less。
-4. **前置/后续课程结构复核**（不耗配额）：查询节点 x 的后续分支，返回子节点 ID、层级、标签及结业标识。
+你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
+- **0**：该特征必须为0
+- **1**：该特征必须为1  
+- **?**：该特征可以为0或1（不限制）
 
-**查询格式（必须严格遵守）**：
-每次查询必须且只能包含一个XML格式标签：
-- 路径总能力查询：<query_total>5</query_total>
-- 阶段能力增益查询：<query_segment>2,5</query_segment>
-- 学习路径比较：<query_compare>3,7</query_compare>
-- 前置/后续课程结构复核：<query_structure>4</query_structure>
+**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
 
-**提交答案格式**：
-当你得出最优学习规划时，请提交最终结业节点 ID 及其总能力得分：
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-示例：<answer>leaf=8, score=15</answer>
-若提交的路线未达最优、格式偏差或超过查询配额限制，规划评估即刻失败。
+系统会返回两个统计数字：
+- **k**：在你的检索条件下，被标记为推荐(1)的画像数量
+- **m**：在你的检索条件下，符合检索条件的画像总数
+
+每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
+
+查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
+<query>1,?,0,?</query>
+
+提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
+
+- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
+- p 为"奇"或"偶"
+
+答案示例1（H = {{A1, A3}}，p = 奇）：
+<answer>H=A1,A3, p=奇</answer>
+
+答案示例2（H 为空集，p = 偶）：
+<answer>H=empty, p=偶</answer>
+
+答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
+<answer>H=A1,A2,A3,A4, p=偶</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Advanced Learning Path Competency Evaluation System".
+The intelligent education platform is running a "Learning Trajectory Deduction" analysis.
 
-A structured learning curriculum tree T is established with {n} nodes. The foundational starting point (root node) has ID {root_id} at learning level 1 (depth 1).
+The student behavior tracking database contains 16 typical "learning behavior profiles". Each profile is described by 4 binary behavioral features A1, A2, A3, A4 (e.g., A1 for pre-class study, A2 for discussion participation, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
 
-**Curriculum Structure (Known)**:
-Each advanced learning module (non-root node) v has:
-- A curriculum subject label (from {label_set})
-- A specific learning level (between 2 and {max_depth})
-- An indicator of whether it is a final certification (leaf node)
+The tracking system has secretly established a "High-Potential Recommendation Rule" consisting of two components:
+1. **Key Feature Set H**: A subset of the 4 behavioral features (may be empty, single, multiple, or all features)
+2. **Target Parity p**: Either "odd" or "even"
 
-All course dependencies are transparent. You can query the prerequisites and subsequent modules of any node. There are {leaf_count} final certification points.
+Recommendation logic: For any learning behavior profile, if the count of features in the key feature set H that have value 1 matches the target parity p, the profile is flagged for recommendation to the advanced track (marked 1); otherwise standard (marked 0).
 
-**Hidden Rule**:
-A hidden competency gain matrix W allocates an integer score to each subject at each level (depth 2 to {max_depth}). Gains can be positive (skill increase), zero, or negative (effort penalty). The gain for a subject is constant at a specific level but may vary across different levels.
-The cumulative competency score from the foundation to any module v is the total gain of all modules taken along that path.
+For example: If H = {{A1, A3}}, p = "odd", then profile (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Profile (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
 
-**Your Goal**:
-Identify a complete learning path ending in a final certification that yields the highest cumulative competency score (choose one if multiple exist).
+Through as few data queries as possible, deduce the system's "Key Feature Set H" and "Target Parity p".
 
-**Available Queries**:
-You may use the following tools to map the curriculum, up to {quota} queries:
-1. **Total Competency Query**: Obtain the cumulative competency score up to node v. Returns an integer.
-2. **Segment Gain Query**: Obtain the competency gained from module a to module b (a must be a prerequisite of b). Returns an integer (b's score minus a's).
-3. **Learning Path Comparison**: Compare the cumulative scores at node u and node v. Returns greater, equal, or less.
-4. **Course Structure Review** (quota-free): Query the subsequent modules of node x, returning the ID, level, label, and certification status of each child.
+You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
+- **0**: The feature must be 0
+- **1**: The feature must be 1
+- **?**: The feature can be 0 or 1 (unrestricted)
 
-**Query Format (must strictly follow)**:
-Include only one precise XML tag per request:
-- Total Competency Query: <query_total>5</query_total>
-- Segment Gain Query: <query_segment>2,5</query_segment>
-- Learning Path Comparison: <query_compare>3,7</query_compare>
-- Course Structure Review: <query_structure>4</query_structure>
+**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
 
-**Answer Submission Format**:
-When the most effective curriculum is determined, submit the final certification ID and the maximum competency score:
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-Example: <answer>leaf=8, score=15</answer>
-Failure occurs upon submitting a non-optimal path, syntax errors, or exceeding the quota.
+The system will return two metrics:
+- **k**: The count of recommended (1) profiles under your constraints
+- **m**: The total count of matching profiles satisfying your constraints
+
+Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
+
+Query example (querying A1=1, A2=?, A3=0, A4=?):
+<query>1,?,0,?</query>
+
+When submitting your final deduction, specify the key feature set H and target parity p. Format:
+
+- H is a list of feature names, comma-separated (if empty set, write empty)
+- p is "odd" or "even"
+
+Answer example 1 (H = {{A1, A3}}, p = odd):
+<answer>H=A1,A3, p=odd</answer>
+
+Answer example 2 (H is empty set, p = even):
+<answer>H=empty, p=even</answer>
+
+Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
+<answer>H=A1,A2,A3,A4, p=even</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎操作“工业制造加工工艺流优化引擎”。
+自动化质检系统正在执行“缺陷复检逻辑推导”任务。
 
-当前任务涉及一棵加工工序树 T，节点总数为 {n}。原材料导入（根节点）编号 {root_id}，处于第 1 道次（深度 1）。
+在生产工艺数据库中，包含16批典型的“工艺组合批次”，每个批次由4个二元工艺特征 A1, A2, A3, A4 描述（例如：A1代表是否经过高温处理，A2代表是否有化学涂层等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
 
-**工艺结构（已知）**：
-任意后续加工节点 v 包含：
-- 一项特定工艺标签（取自 {label_set}）
-- 所处的加工道次（深度 2 到 {max_depth} 整数）
-- 是否为成品下线节点（叶子节点）
+质量保证(QA)模块秘密设定了一项“异常拦截规则”，该规则由以下两部分组成：
+1. **关键特征集合 H**：从4个工艺特征中选择若干个重点工艺（可能为空集、单个特征、多个特征或全部特征）
+2. **目标奇偶性 p**：为"奇"或"偶"
 
-完整的工序图谱始终开放，可随时核查各加工步骤的后续分支。当前共包含 {leaf_count} 种成品下线状态。
+拦截判定方式：对于任意一个生产批次，如果该批次在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则触发质检警报，该批次被标记为需复检（记为1）；否则标记为直接放行（记为0）。
 
-**隐藏规则**：
-系统深层潜藏一套工艺附加值矩阵 W，针对每一道次（深度 2 到 {max_depth}）的不同工艺标签赋予整数分值。得分允许正数（价值提升）、零或负数（损耗/废品率增加）。同道次同工艺的分值恒定，异道次的同工艺分值可能浮动。
-产品从原料流通至任一工序 v 的累计附加值定义为：路径上所有途经工艺节点的附加值总和。
+例如：若 H = {{A1, A3}}，p = "奇"，则批次 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而批次 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
 
-**你的目标**：
-推算并定位出一条从原料走向成品的完整加工路线，使得累计总附加值在所有生产方案中居于首位（如有多个最优解，提交其一即可）。
+通过尽可能少的数据查询次数，推断出QA模块内部的“关键特征集合 H”和“目标奇偶性 p”。
 
-**可用查询**：
-你可利用下述指令获取工艺数据，系统授权总查询 {quota} 次：
-1. **工序累计附加值查询**：测算至节点 v 的当前累计附加值。返回整数。
-2. **区段工艺附加值查询**：测算自节点 a 流转至 b 产生的新增附加值（要求 a 是 b 的上游道次）。返回整数，计算逻辑为 b 值减 a 值。
-3. **加工路线比较**：对比到达节点 u 与 v 的累计附加值高低。返回 greater（u 优于 v）、equal 或 less。
-4. **后续工序结构复核**（不扣除次数）：调取节点 x 之后的所有可行分支工序，返回各子节点 ID、道次、标签与下线属性。
+你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
+- **0**：该特征必须为0
+- **1**：该特征必须为1  
+- **?**：该特征可以为0或1（不限制）
 
-**查询格式（必须严格遵守）**：
-单次问询仅限使用一项指定 XML 标签：
-- 工序累计附加值查询：<query_total>5</query_total>
-- 区段工艺附加值查询：<query_segment>2,5</query_segment>
-- 加工路线比较：<query_compare>3,7</query_compare>
-- 后续工序结构复核：<query_structure>4</query_structure>
+**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
 
-**提交答案格式**：
-锁定最高价值路线后，务必以此格式提交成品节点 ID 和满额附加值：
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-示例：<answer>leaf=8, score=15</answer>
-任何非最优结果、排版错误或超额查询，将导致产线工艺优化流程终止。
+系统会返回两个统计数字：
+- **k**：在你的检索条件下，被标记为需复检(1)的批次数量
+- **m**：在你的检索条件下，符合检索条件的批次总数
+
+每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
+
+查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
+<query>1,?,0,?</query>
+
+提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
+
+- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
+- p 为"奇"或"偶"
+
+答案示例1（H = {{A1, A3}}，p = 奇）：
+<answer>H=A1,A3, p=奇</answer>
+
+答案示例2（H 为空集，p = 偶）：
+<answer>H=empty, p=偶</answer>
+
+答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
+<answer>H=A1,A2,A3,A4, p=偶</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Industrial Manufacturing Process Optimization Engine".
+[Manufacturing/Industry Scenario]
+The automated quality inspection system is performing a "Defect Re-inspection Logic Deduction" task.
 
-A production routing tree T is loaded, consisting of {n} nodes. The raw material input (root node) has ID {root_id} and represents operation stage 1 (depth 1).
+The production process database contains 16 typical "process combination batches". Each batch is described by 4 binary process features A1, A2, A3, A4 (e.g., A1 for high-temp treatment, A2 for chemical coating, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
 
-**Process Structure (Known)**:
-Each subsequent manufacturing operation v features:
-- A specific processing technique label (from {label_set})
-- An operation stage depth (between 2 and {max_depth})
-- An indicator of whether it produces a final finished good (leaf node)
+The Quality Assurance (QA) module has secretly established an "Anomaly Interception Rule" consisting of two components:
+1. **Key Feature Set H**: A subset of the 4 core process features (may be empty, single, multiple, or all features)
+2. **Target Parity p**: Either "odd" or "even"
 
-The full routing map is visible. You can inspect the downstream process branches of any operation. There are {leaf_count} final finished good states.
+Interception logic: For any production batch, if the count of features in the key feature set H that have value 1 matches the target parity p, it triggers a quality alert, and the batch is flagged for re-inspection (marked 1); otherwise it passes directly (marked 0).
 
-**Hidden Rule**:
-A hidden value-added matrix W assigns an integer score to each technique at every stage (depth 2 to {max_depth}). Scores can be positive (value added), zero, or negative (material waste/defect rate increase). The score is identical for a technique within the same stage, but may change across different stages.
-The total value-added score of a product routed from raw material to operation v is the sum of the scores of all manufacturing operations performed.
+For example: If H = {{A1, A3}}, p = "odd", then batch (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Batch (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
 
-**Your Goal**:
-Determine a full production route ending at a finished good that produces the highest total value-added score (any optimal route is acceptable).
+Through as few data queries as possible, deduce the QA module's internal "Key Feature Set H" and "Target Parity p".
 
-**Available Queries**:
-You are authorized to extract process data using these functions, with a quota of {quota}:
-1. **Cumulative Value-Added Query**: Calculate the total value-added score up to operation v. Returns an integer.
-2. **Segment Value Query**: Calculate the added value from operation a to operation b (a must be upstream of b). Returns an integer (b's total minus a's total).
-3. **Production Route Comparison**: Compare the total scores of reaching operation u and operation v. Returns greater, equal, or less.
-4. **Downstream Structure Review** (quota-free): Retrieve the succeeding operations for node x, returning the ID, stage, technique label, and finished-good status of each child.
+You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
+- **0**: The feature must be 0
+- **1**: The feature must be 1
+- **?**: The feature can be 0 or 1 (unrestricted)
 
-**Query Format (must strictly follow)**:
-Query using exactly one XML tag:
-- Cumulative Value-Added Query: <query_total>5</query_total>
-- Segment Value Query: <query_segment>2,5</query_segment>
-- Production Route Comparison: <query_compare>3,7</query_compare>
-- Downstream Structure Review: <query_structure>4</query_structure>
+**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
 
-**Answer Submission Format**:
-Submit the finalized optimal route using the finished good ID and the maximum total value-added score:
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-Example: <answer>leaf=8, score=15</answer>
-Suboptimal routes, format deviations, or quota exhaustion will abort the process optimization.
+The system will return two metrics:
+- **k**: The count of batches flagged for re-inspection (1) under your constraints
+- **m**: The total count of matching batches satisfying your constraints
+
+Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
+
+Query example (querying A1=1, A2=?, A3=0, A4=?):
+<query>1,?,0,?</query>
+
+When submitting your final deduction, specify the key feature set H and target parity p. Format:
+
+- H is a list of feature names, comma-separated (if empty set, write empty)
+- p is "odd" or "even"
+
+Answer example 1 (H = {{A1, A3}}, p = odd):
+<answer>H=A1,A3, p=odd</answer>
+
+Answer example 2 (H is empty set, p = even):
+<answer>H=empty, p=even</answer>
+
+Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
+<answer>H=A1,A2,A3,A4, p=even</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎登入“诉讼策略与案情演进推演系统”。
+合规审查系统正在进行“反垄断审查触发机制”推演。
 
-本案卷宗建模为一棵策略树 T，包含 {n} 个节点。案件初始立案（根节点）编号为 {root_id}，处于诉讼第 1 阶段（深度 1）。
+在企业尽职调查数据库中，包含16宗典型的“企业并购案画像”，每宗画像由4个二元法律特征 A1, A2, A3, A4 描述（例如：A1代表是否含外资背景，A2代表是否涉及数据出境等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
 
-**策略结构（已知）**：
-立案之后的各阶段节点 v 具有：
-- 一项法律行动标签（来自集合 {label_set}）
-- 诉讼所处的阶段深度（2 到 {max_depth}）
-- 是否为终局判决（叶子节点）的标识
+监管框架内秘密设定了一项“重点审查触发规则”，该规则由以下两部分组成：
+1. **关键特征集合 H**：从4个法律特征中选择若干个（可能为空集、单个特征、多个特征或全部特征）
+2. **目标奇偶性 p**：为"奇"或"偶"
 
-全盘可能的策略推演结构你已尽数掌握，可随时查询某个法律动作的后续应对方案。本案共有 {leaf_count} 个终局判决节点。
+触发判定方式：对于任意一宗并购案，如果该案件在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则触发红线，案件被标记为需审查（记为1）；否则标记为合规（记为0）。
 
-**隐藏规则**：
-法院审理逻辑构成了一个隐藏的案件有利度矩阵 W，为各阶段（深度 2 到 {max_depth}）的各项法律行动预设了整数分值。分值可能是正数（对我方有利）、零或负数（存在法律风险）。同一诉讼阶段采取同类行动的分值一致，但在不同阶段采取该行动的分值会有差异。
-由立案推进至任意节点 v 的案件总有利度得分为：该策略路线上执行的所有法律行动节点的得分总计。
+例如：若 H = {{A1, A3}}，p = "奇"，则案件 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而案件 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
 
-**你的目标**：
-在错综复杂的策略中，推演并敲定一条直达终局判决的最优诉讼路线，以实现本案的最大总有利度得分（若有同样胜算的路线，选定一条即可）。
+通过尽可能少的数据查询次数，推断出监管框架设定的“关键特征集合 H”和“目标奇偶性 p”。
 
-**可用查询**：
-你可以向系统申请提取如下数据辅助决策，上限许可 {quota} 次：
-1. **策略总有利得分查询**：核算截至节点 v 的累计有利度。返回一个整数。
-2. **阶段行动收益查询**：核算从节点 a 推进到 b 区间的动作收益（前提是 a 必须早于 b 发生）。返回整数，即 b 的总分扣除 a 的总分。
-3. **策略路径比较**：评估到达节点 u 与 v 的有利度优劣。返回 greater（u 大于 v）、equal 或 less。
-4. **诉讼分支结构复核**（不计费）：提取节点 x 可触发的后续法律动作，返回节点 ID、诉讼深度、标签及终局状态。
+你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
+- **0**：该特征必须为0
+- **1**：该特征必须为1  
+- **?**：该特征可以为0或1（不限制）
 
-**查询格式（必须严格遵守）**：
-每次数据提取只包含唯一一个相关标签：
-- 策略总有利得分查询：<query_total>5</query_total>
-- 阶段行动收益查询：<query_segment>2,5</query_segment>
-- 策略路径比较：<query_compare>3,7</query_compare>
-- 诉讼分支结构复核：<query_structure>4</query_structure>
+**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
 
-**提交答案格式**：
-当确定了胜算最高的诉讼路线，请严格依格式提交终局判决节点 ID 和对应总有利得分：
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-例如：<answer>leaf=8, score=15</answer>
-凡提交未达最高分的路线、格式不规范，或问询超过规定次数，均视作诉讼失败。
+系统会返回两个统计数字：
+- **k**：在你的检索条件下，被标记为需审查(1)的案件数量
+- **m**：在你的检索条件下，符合检索条件的案件总数
+
+每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
+
+查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
+<query>1,?,0,?</query>
+
+提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
+
+- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
+- p 为"奇"或"偶"
+
+答案示例1（H = {{A1, A3}}，p = 奇）：
+<answer>H=A1,A3, p=奇</answer>
+
+答案示例2（H 为空集，p = 偶）：
+<answer>H=empty, p=偶</answer>
+
+答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
+<answer>H=A1,A2,A3,A4, p=偶</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Law Scenario]
-Welcome to the "Litigation Strategy and Case Evolution Engine".
+The compliance review system is running an "Antitrust Review Trigger Deduction" exercise.
 
-The case file is modeled as a strategy tree T with {n} nodes. The initial case filing (root node) has ID {root_id} and stands at litigation phase 1 (depth 1).
+The corporate due diligence database contains 16 typical "corporate M&A case profiles". Each profile is described by 4 binary legal features A1, A2, A3, A4 (e.g., A1 for foreign capital involvement, A2 for cross-border data transfer, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
 
-**Strategy Structure (Known)**:
-Every subsequent litigation action (non-root node) v has:
-- A legal action label (from {label_set})
-- A litigation phase depth (between 2 and {max_depth})
-- An indicator of whether it is a final judgment (leaf node)
+The regulatory framework has secretly established a "Priority Review Trigger Rule" consisting of two components:
+1. **Key Feature Set H**: A subset of the 4 legal features (may be empty, single, multiple, or all features)
+2. **Target Parity p**: Either "odd" or "even"
 
-The entire grid of possible legal maneuvers is known. You can query the available counter-strategies following any action. The case has {leaf_count} final judgment outcomes.
+Trigger logic: For any M&A case, if the count of features in the key feature set H that have value 1 matches the target parity p, the red line is triggered and the case is flagged for review (marked 1); otherwise compliant (marked 0).
 
-**Hidden Rule**:
-The court's judicial logic forms a hidden favorable matrix W, assigning an integer score to every legal action at each phase (depth 2 to {max_depth}). Scores can be positive (favorable to our side), zero, or negative (legal risk). The score for an action is consistent within a specific phase but may shift dynamically in different phases.
-The total favorable score of a strategy from filing to any node v is the sum of scores of all executed legal actions on that trajectory.
+For example: If H = {{A1, A3}}, p = "odd", then case (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Case (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
 
-**Your Goal**:
-Navigate the complexities of the case to identify a strategy path leading to a final judgment that achieves the maximum total favorable score (any equivalent best strategy will do).
+Through as few data queries as possible, deduce the regulatory framework's "Key Feature Set H" and "Target Parity p".
 
-**Available Queries**:
-You can draw upon the following discovery requests, limited to a quota of {quota}:
-1. **Total Favorable Score Query**: Compute the cumulative favorable score up to node v. Returns an integer.
-2. **Phase Action Score Query**: Compute the strategic gain from action a to action b (a must temporally precede b). Returns an integer (score of b minus score of a).
-3. **Strategy Path Comparison**: Weigh the total score of reaching node u against node v. Returns greater, equal, or less.
-4. **Litigation Branch Review** (quota-free): Review the strategic options following node x, returning the ID, phase, label, and judgment status of each child node.
+You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
+- **0**: The feature must be 0
+- **1**: The feature must be 1
+- **?**: The feature can be 0 or 1 (unrestricted)
 
-**Query Format (must strictly follow)**:
-Apply strictly one XML tag per request:
-- Total Favorable Score Query: <query_total>5</query_total>
-- Phase Action Score Query: <query_segment>2,5</query_segment>
-- Strategy Path Comparison: <query_compare>3,7</query_compare>
-- Litigation Branch Review: <query_structure>4</query_structure>
+**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
 
-**Answer Submission Format**:
-Upon deducing the most advantageous strategy, submit the final judgment ID and the total favorable score:
-<answer>leaf={{leaf_id}}, score={{score_value}}</answer>
-Example: <answer>leaf=8, score=15</answer>
-Failing to secure the maximum score, syntax noncompliance, or running out of queries will result in a lost case.
+The system will return two metrics:
+- **k**: The count of cases flagged for review (1) under your constraints
+- **m**: The total count of matching cases satisfying your constraints
+
+Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
+
+Query example (querying A1=1, A2=?, A3=0, A4=?):
+<query>1,?,0,?</query>
+
+When submitting your final deduction, specify the key feature set H and target parity p. Format:
+
+- H is a list of feature names, comma-separated (if empty set, write empty)
+- p is "odd" or "even"
+
+Answer example 1 (H = {{A1, A3}}, p = odd):
+<answer>H=A1,A3, p=odd</answer>
+
+Answer example 2 (H is empty set, p = even):
+<answer>H=empty, p=even</answer>
+
+Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
+<answer>H=A1,A2,A3,A4, p=even</answer>
 """
 
-    tags = ["answer", "query_total", "query_segment", "query_compare", "query_structure"]
+    tags = ["answer", "query"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [4, 5], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [6, 7], "is_leaf": False},
-                    4: {"depth": 3, "label": "A", "children": [], "is_leaf": True},
-                    5: {"depth": 3, "label": "B", "children": [], "is_leaf": True},
-                    6: {"depth": 3, "label": "A", "children": [], "is_leaf": True},
-                    7: {"depth": 3, "label": "B", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 5, "B": 2},
-                    3: {"A": 3, "B": 1},
-                },
-                "optimal_leaf": 4, 
+                "H": ["A1"],
+                "p": "偶",
             },
             2: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [4, 5], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [6], "is_leaf": False},
-                    4: {"depth": 3, "label": "C", "children": [7, 8], "is_leaf": False},
-                    5: {"depth": 3, "label": "A", "children": [9], "is_leaf": False},
-                    6: {"depth": 3, "label": "B", "children": [10], "is_leaf": False},
-                    7: {"depth": 4, "label": "A", "children": [], "is_leaf": True},
-                    8: {"depth": 4, "label": "B", "children": [], "is_leaf": True},
-                    9: {"depth": 4, "label": "C", "children": [], "is_leaf": True},
-                    10: {"depth": 4, "label": "A", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 4, "B": 1, "C": 0},
-                    3: {"A": 2, "B": -1, "C": 5},
-                    4: {"A": 3, "B": 2, "C": 4},
-                },
-                "optimal_leaf": 9, 
+                "H": [],
+                "p": "偶",
             },
             3: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [4, 5], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [6, 7], "is_leaf": False},
-                    4: {"depth": 3, "label": "B", "children": [8, 9], "is_leaf": False},
-                    5: {"depth": 3, "label": "C", "children": [10], "is_leaf": False},
-                    6: {"depth": 3, "label": "A", "children": [11], "is_leaf": False},
-                    7: {"depth": 3, "label": "C", "children": [12], "is_leaf": False},
-                    8: {"depth": 4, "label": "A", "children": [13], "is_leaf": False},
-                    9: {"depth": 4, "label": "B", "children": [14], "is_leaf": False},
-                    10: {"depth": 4, "label": "A", "children": [15], "is_leaf": False},
-                    11: {"depth": 4, "label": "B", "children": [16], "is_leaf": False},
-                    12: {"depth": 4, "label": "C", "children": [17], "is_leaf": False},
-                    13: {"depth": 5, "label": "C", "children": [], "is_leaf": True},
-                    14: {"depth": 5, "label": "A", "children": [], "is_leaf": True},
-                    15: {"depth": 5, "label": "B", "children": [], "is_leaf": True},
-                    16: {"depth": 5, "label": "C", "children": [], "is_leaf": True},
-                    17: {"depth": 5, "label": "A", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 3, "B": 2, "C": 1},
-                    3: {"A": 1, "B": 4, "C": 2},
-                    4: {"A": 5, "B": 1, "C": 3},
-                    5: {"A": 2, "B": 6, "C": 4},
-                },
-                "optimal_leaf": 15, 
+                "H": ["A1", "A3"],
+                "p": "奇",
             },
             4: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3, 4], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [5, 6], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [7], "is_leaf": False},
-                    4: {"depth": 2, "label": "C", "children": [8], "is_leaf": False},
-                    5: {"depth": 3, "label": "D", "children": [9, 10], "is_leaf": False},
-                    6: {"depth": 3, "label": "A", "children": [11], "is_leaf": False},
-                    7: {"depth": 3, "label": "C", "children": [12, 13], "is_leaf": False},
-                    8: {"depth": 3, "label": "B", "children": [14], "is_leaf": False},
-                    9: {"depth": 4, "label": "B", "children": [15], "is_leaf": False},
-                    10: {"depth": 4, "label": "C", "children": [16], "is_leaf": False},
-                    11: {"depth": 4, "label": "D", "children": [17], "is_leaf": False},
-                    12: {"depth": 4, "label": "A", "children": [18], "is_leaf": False},
-                    13: {"depth": 4, "label": "D", "children": [19], "is_leaf": False},
-                    14: {"depth": 4, "label": "A", "children": [20], "is_leaf": False},
-                    15: {"depth": 5, "label": "A", "children": [], "is_leaf": True},
-                    16: {"depth": 5, "label": "D", "children": [], "is_leaf": True},
-                    17: {"depth": 5, "label": "B", "children": [], "is_leaf": True},
-                    18: {"depth": 5, "label": "C", "children": [], "is_leaf": True},
-                    19: {"depth": 5, "label": "B", "children": [], "is_leaf": True},
-                    20: {"depth": 5, "label": "C", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 7, "B": -2, "C": 3, "D": 0},
-                    3: {"A": -1, "B": 2, "C": 4, "D": 8},
-                    4: {"A": 3, "B": 5, "C": -2, "D": 6},
-                    5: {"A": 4, "B": 1, "C": 7, "D": 2},
-                },
-                "optimal_leaf": 16, 
+                "H": ["A2", "A3", "A4"],
+                "p": "偶",
             },
             5: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [4, 5, 6], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [7, 8], "is_leaf": False},
-                    4: {"depth": 3, "label": "C", "children": [9, 10], "is_leaf": False},
-                    5: {"depth": 3, "label": "D", "children": [11], "is_leaf": False},
-                    6: {"depth": 3, "label": "A", "children": [12], "is_leaf": False},
-                    7: {"depth": 3, "label": "B", "children": [13], "is_leaf": False},
-                    8: {"depth": 3, "label": "C", "children": [14], "is_leaf": False},
-                    9: {"depth": 4, "label": "B", "children": [15, 16], "is_leaf": False},
-                    10: {"depth": 4, "label": "A", "children": [17], "is_leaf": False},
-                    11: {"depth": 4, "label": "C", "children": [18], "is_leaf": False},
-                    12: {"depth": 4, "label": "D", "children": [19], "is_leaf": False},
-                    13: {"depth": 4, "label": "A", "children": [20], "is_leaf": False},
-                    14: {"depth": 4, "label": "D", "children": [21], "is_leaf": False},
-                    15: {"depth": 5, "label": "D", "children": [22], "is_leaf": False},
-                    16: {"depth": 5, "label": "A", "children": [23], "is_leaf": False},
-                    17: {"depth": 5, "label": "B", "children": [24], "is_leaf": False},
-                    18: {"depth": 5, "label": "A", "children": [25], "is_leaf": False},
-                    19: {"depth": 5, "label": "C", "children": [26], "is_leaf": False},
-                    20: {"depth": 5, "label": "D", "children": [27], "is_leaf": False},
-                    21: {"depth": 5, "label": "B", "children": [28], "is_leaf": False},
-                    22: {"depth": 6, "label": "C", "children": [], "is_leaf": True},
-                    23: {"depth": 6, "label": "B", "children": [], "is_leaf": True},
-                    24: {"depth": 6, "label": "D", "children": [], "is_leaf": True},
-                    25: {"depth": 6, "label": "C", "children": [], "is_leaf": True},
-                    26: {"depth": 6, "label": "A", "children": [], "is_leaf": True},
-                    27: {"depth": 6, "label": "B", "children": [], "is_leaf": True},
-                    28: {"depth": 6, "label": "A", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 6, "B": -3, "C": 2, "D": 1},
-                    3: {"A": 2, "B": 5, "C": 8, "D": -1},
-                    4: {"A": 4, "B": -2, "C": 3, "D": 7},
-                    5: {"A": 1, "B": 6, "C": -3, "D": 9},
-                    6: {"A": 5, "B": 2, "C": 8, "D": 3},
-                },
-                "optimal_leaf": 22, 
+                "H": ["A1", "A2", "A3", "A4"],
+                "p": "奇",
             },
         },
         "en": {
             1: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [4, 5], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [6, 7], "is_leaf": False},
-                    4: {"depth": 3, "label": "A", "children": [], "is_leaf": True},
-                    5: {"depth": 3, "label": "B", "children": [], "is_leaf": True},
-                    6: {"depth": 3, "label": "A", "children": [], "is_leaf": True},
-                    7: {"depth": 3, "label": "B", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 5, "B": 2},
-                    3: {"A": 3, "B": 1},
-                },
-                "optimal_leaf": 4,
+                "H": ["A1"],
+                "p": "even",
             },
             2: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [4, 5], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [6], "is_leaf": False},
-                    4: {"depth": 3, "label": "C", "children": [7, 8], "is_leaf": False},
-                    5: {"depth": 3, "label": "A", "children": [9], "is_leaf": False},
-                    6: {"depth": 3, "label": "B", "children": [10], "is_leaf": False},
-                    7: {"depth": 4, "label": "A", "children": [], "is_leaf": True},
-                    8: {"depth": 4, "label": "B", "children": [], "is_leaf": True},
-                    9: {"depth": 4, "label": "C", "children": [], "is_leaf": True},
-                    10: {"depth": 4, "label": "A", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 4, "B": 1, "C": 0},
-                    3: {"A": 2, "B": -1, "C": 5},
-                    4: {"A": 3, "B": 2, "C": 4},
-                },
-                "optimal_leaf": 9,
+                "H": [],
+                "p": "even",
             },
             3: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [4, 5], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [6, 7], "is_leaf": False},
-                    4: {"depth": 3, "label": "B", "children": [8, 9], "is_leaf": False},
-                    5: {"depth": 3, "label": "C", "children": [10], "is_leaf": False},
-                    6: {"depth": 3, "label": "A", "children": [11], "is_leaf": False},
-                    7: {"depth": 3, "label": "C", "children": [12], "is_leaf": False},
-                    8: {"depth": 4, "label": "A", "children": [13], "is_leaf": False},
-                    9: {"depth": 4, "label": "B", "children": [14], "is_leaf": False},
-                    10: {"depth": 4, "label": "A", "children": [15], "is_leaf": False},
-                    11: {"depth": 4, "label": "B", "children": [16], "is_leaf": False},
-                    12: {"depth": 4, "label": "C", "children": [17], "is_leaf": False},
-                    13: {"depth": 5, "label": "C", "children": [], "is_leaf": True},
-                    14: {"depth": 5, "label": "A", "children": [], "is_leaf": True},
-                    15: {"depth": 5, "label": "B", "children": [], "is_leaf": True},
-                    16: {"depth": 5, "label": "C", "children": [], "is_leaf": True},
-                    17: {"depth": 5, "label": "A", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 3, "B": 2, "C": 1},
-                    3: {"A": 1, "B": 4, "C": 2},
-                    4: {"A": 5, "B": 1, "C": 3},
-                    5: {"A": 2, "B": 6, "C": 4},
-                },
-                "optimal_leaf": 15,
+                "H": ["A1", "A3"],
+                "p": "odd",
             },
             4: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3, 4], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [5, 6], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [7], "is_leaf": False},
-                    4: {"depth": 2, "label": "C", "children": [8], "is_leaf": False},
-                    5: {"depth": 3, "label": "D", "children": [9, 10], "is_leaf": False},
-                    6: {"depth": 3, "label": "A", "children": [11], "is_leaf": False},
-                    7: {"depth": 3, "label": "C", "children": [12, 13], "is_leaf": False},
-                    8: {"depth": 3, "label": "B", "children": [14], "is_leaf": False},
-                    9: {"depth": 4, "label": "B", "children": [15], "is_leaf": False},
-                    10: {"depth": 4, "label": "C", "children": [16], "is_leaf": False},
-                    11: {"depth": 4, "label": "D", "children": [17], "is_leaf": False},
-                    12: {"depth": 4, "label": "A", "children": [18], "is_leaf": False},
-                    13: {"depth": 4, "label": "D", "children": [19], "is_leaf": False},
-                    14: {"depth": 4, "label": "A", "children": [20], "is_leaf": False},
-                    15: {"depth": 5, "label": "A", "children": [], "is_leaf": True},
-                    16: {"depth": 5, "label": "D", "children": [], "is_leaf": True},
-                    17: {"depth": 5, "label": "B", "children": [], "is_leaf": True},
-                    18: {"depth": 5, "label": "C", "children": [], "is_leaf": True},
-                    19: {"depth": 5, "label": "B", "children": [], "is_leaf": True},
-                    20: {"depth": 5, "label": "C", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 7, "B": -2, "C": 3, "D": 0},
-                    3: {"A": -1, "B": 2, "C": 4, "D": 8},
-                    4: {"A": 3, "B": 5, "C": -2, "D": 6},
-                    5: {"A": 4, "B": 1, "C": 7, "D": 2},
-                },
-                "optimal_leaf": 16,
+                "H": ["A2", "A3", "A4"],
+                "p": "even",
             },
             5: {
-                "tree_structure": {
-                    1: {"depth": 1, "label": None, "children": [2, 3], "is_leaf": False},
-                    2: {"depth": 2, "label": "A", "children": [4, 5, 6], "is_leaf": False},
-                    3: {"depth": 2, "label": "B", "children": [7, 8], "is_leaf": False},
-                    4: {"depth": 3, "label": "C", "children": [9, 10], "is_leaf": False},
-                    5: {"depth": 3, "label": "D", "children": [11], "is_leaf": False},
-                    6: {"depth": 3, "label": "A", "children": [12], "is_leaf": False},
-                    7: {"depth": 3, "label": "B", "children": [13], "is_leaf": False},
-                    8: {"depth": 3, "label": "C", "children": [14], "is_leaf": False},
-                    9: {"depth": 4, "label": "B", "children": [15, 16], "is_leaf": False},
-                    10: {"depth": 4, "label": "A", "children": [17], "is_leaf": False},
-                    11: {"depth": 4, "label": "C", "children": [18], "is_leaf": False},
-                    12: {"depth": 4, "label": "D", "children": [19], "is_leaf": False},
-                    13: {"depth": 4, "label": "A", "children": [20], "is_leaf": False},
-                    14: {"depth": 4, "label": "D", "children": [21], "is_leaf": False},
-                    15: {"depth": 5, "label": "D", "children": [22], "is_leaf": False},
-                    16: {"depth": 5, "label": "A", "children": [23], "is_leaf": False},
-                    17: {"depth": 5, "label": "B", "children": [24], "is_leaf": False},
-                    18: {"depth": 5, "label": "A", "children": [25], "is_leaf": False},
-                    19: {"depth": 5, "label": "C", "children": [26], "is_leaf": False},
-                    20: {"depth": 5, "label": "D", "children": [27], "is_leaf": False},
-                    21: {"depth": 5, "label": "B", "children": [28], "is_leaf": False},
-                    22: {"depth": 6, "label": "C", "children": [], "is_leaf": True},
-                    23: {"depth": 6, "label": "B", "children": [], "is_leaf": True},
-                    24: {"depth": 6, "label": "D", "children": [], "is_leaf": True},
-                    25: {"depth": 6, "label": "C", "children": [], "is_leaf": True},
-                    26: {"depth": 6, "label": "A", "children": [], "is_leaf": True},
-                    27: {"depth": 6, "label": "B", "children": [], "is_leaf": True},
-                    28: {"depth": 6, "label": "A", "children": [], "is_leaf": True},
-                },
-                "weights": {
-                    2: {"A": 6, "B": -3, "C": 2, "D": 1},
-                    3: {"A": 2, "B": 5, "C": 8, "D": -1},
-                    4: {"A": 4, "B": -2, "C": 3, "D": 7},
-                    5: {"A": 1, "B": 6, "C": -3, "D": 9},
-                    6: {"A": 5, "B": 2, "C": 8, "D": 3},
-                },
-                "optimal_leaf": 22,
+                "H": ["A1", "A2", "A3", "A4"],
+                "p": "odd",
             },
         },
     }
@@ -828,7 +617,6 @@ Failing to secure the maximum score, syntax noncompliance, or running out of que
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：加载树结构和权重矩阵"""
         lang = self.config.language
         diff = self.config.difficulty
 
@@ -839,362 +627,156 @@ Failing to secure the maximum score, syntax noncompliance, or running out of que
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 加载树结构
-        self.tree = cfg["tree_structure"]
-        self.weights = cfg["weights"]
-        self.optimal_leaf = cfg["optimal_leaf"]
+        self.H = set(cfg["H"])
+        self.p = cfg["p"]
         
-        # 计算基础信息
-        self.root_id = 1
-        self.leaves = [node_id for node_id, info in self.tree.items() if info["is_leaf"]]
-        self.max_depth = max(info["depth"] for info in self.tree.values())
+        self.objects = []
+        self.markings = []
         
-        # 收集所有标签
-        labels = set()
-        for node_id, info in self.tree.items():
-            if info["label"] is not None:
-                labels.add(info["label"])
-        self.label_set = sorted(list(labels))
-        
-        # 计算配额（比叶子数少，但足够推断）
-        # 配额设为：每层不同标签数之和 + 一些余量
-        layer_label_count = {}
-        for node_id, info in self.tree.items():
-            if info["label"] is not None:
-                depth = info["depth"]
-                if depth not in layer_label_count:
-                    layer_label_count[depth] = set()
-                layer_label_count[depth].add(info["label"])
-        
-        quota_base = sum(len(labels) for labels in layer_label_count.values())
-        self.quota = quota_base + 3
-        
-        # 预计算所有节点的路径得分
-        self._compute_all_scores()
-        
-        # 设置游戏信息用于模板替换
-        self._game_info = {
-            "n": len(self.tree),
-            "root_id": self.root_id,
-            "max_depth": self.max_depth,
-            "leaf_count": len(self.leaves),
-            "label_set": ", ".join(self.label_set),
-            "quota": self.quota,
-        }
-        
-        # 查询计数器
-        self.query_count = 0
-
-    def _compute_all_scores(self):
-        """预计算从根到每个节点的路径得分"""
-        self.node_scores = {}
-        
-        def compute_score(node_id):
-            """递归计算从根到node_id的得分"""
-            if node_id in self.node_scores:
-                return self.node_scores[node_id]
+        for i in range(16):
+            obj = [
+                (i >> 3) & 1,
+                (i >> 2) & 1,
+                (i >> 1) & 1,
+                i & 1
+            ]
+            self.objects.append(obj)
             
-            # 根节点得分为0
-            if node_id == self.root_id:
-                self.node_scores[node_id] = 0
-                return 0
+            count_in_H = sum(
+                obj[j] for j, feature in enumerate(["A1", "A2", "A3", "A4"])
+                if feature in self.H
+            )
             
-            # 找到父节点
-            parent_id = None
-            for pid, pinfo in self.tree.items():
-                if node_id in pinfo["children"]:
-                    parent_id = pid
-                    break
+            if lang == "zh":
+                target_is_odd = (self.p == "奇")
+            else:
+                target_is_odd = (self.p == "odd")
             
-            if parent_id is None:
-                raise ValueError(f"Node {node_id} has no parent")
+            actual_is_odd = (count_in_H % 2 == 1)
             
-            # 父节点得分 + 当前节点权重
-            parent_score = compute_score(parent_id)
-            node_info = self.tree[node_id]
-            node_weight = self.weights[node_info["depth"]][node_info["label"]]
-            
-            total_score = parent_score + node_weight
-            self.node_scores[node_id] = total_score
-            return total_score
+            marking = 1 if (actual_is_odd == target_is_odd) else 0
+            self.markings.append(marking)
         
-        # 计算所有节点的得分
-        for node_id in self.tree:
-            compute_score(node_id)
-
-    def _is_ancestor(self, ancestor_id, descendant_id):
-        """检查ancestor_id是否是descendant_id的祖先"""
-        if ancestor_id == descendant_id:
-            return True
-        if descendant_id == self.root_id:
-            return False
-        
-        # 向上追溯descendant的父节点
-        current = descendant_id
-        while current != self.root_id:
-            # 找父节点
-            parent = None
-            for pid, pinfo in self.tree.items():
-                if current in pinfo["children"]:
-                    parent = pid
-                    break
-            if parent is None:
-                return False
-            if parent == ancestor_id:
-                return True
-            current = parent
-        
-        return ancestor_id == self.root_id
+        self._game_info = {}
 
     def evaluate(self, parsed_info):
-        """评估提交的答案是否正确"""
+        raw_ans = parsed_info["answer"].strip()
+        
         try:
-            # 解析答案: leaf=X, score=Y
-            raw_ans = parsed_info["answer"]
-            kv_pairs = [x.strip() for x in raw_ans.split(",")]
-            ans_dict = {}
-            for kv in kv_pairs:
-                if "=" not in kv:
-                    continue
-                k, v = kv.split("=", 1)
-                ans_dict[k.strip()] = v.strip()
+            h_match = re.search(r'H\s*=\s*(.*?)\s*,\s*p\s*=', raw_ans, re.IGNORECASE)
+            p_match = re.search(r'p\s*=\s*(\S+)', raw_ans, re.IGNORECASE)
             
-            if "leaf" not in ans_dict or "score" not in ans_dict:
+            if not h_match or not p_match:
                 return False
             
-            # 检查叶子节点是否合法
-            try:
-                leaf_id = int(ans_dict["leaf"])
-            except:
+            h_str = h_match.group(1).strip()
+            model_p = p_match.group(1).strip().rstrip('.,;:!?。，；：！？')
+            
+            if h_str.lower() == "empty":
+                model_H = set()
+            else:
+                model_H = set(x.strip().upper() for x in h_str.split(",") if x.strip())
+            
+            expected_H = set(x.upper() for x in self.H)
+            
+            if model_H != expected_H:
                 return False
             
-            if leaf_id not in self.leaves:
+            if model_p.lower() != self.p.lower():
                 return False
             
-            # 检查得分是否正确
-            try:
-                submitted_score = int(ans_dict["score"])
-            except:
-                return False
+            return True
             
-            actual_score = self.node_scores[leaf_id]
-            if submitted_score != actual_score:
-                return False
-            
-            # 检查是否为最优路径
-            optimal_score = self.node_scores[self.optimal_leaf]
-            return actual_score == optimal_score
-            
-        except Exception as e:
+        except Exception:
             return False
 
-    def _cf_core_produce(self, parsed_info):
-        query_types = [t for t in ["query_total", "query_segment", "query_compare", "query_structure"]
-                       if t in parsed_info]
-        
-        if len(query_types) > 1:
-            raise ValueError("Only one query tag is allowed per turn.")
-        
-        # 处理路径总得分查询
-        if "query_total" in parsed_info:
-            try:
-                node_id = int(parsed_info["query_total"].strip())
-                if node_id not in self.tree:
-                    return "invalid" if self.config.language == "en" else "无效"
-                
-                # 合法查询，扣配额
-                if self.query_count >= self.quota:
-                    if self.config.language == "zh":
-                        raise ValueError(f"已超出查询配额限制（{self.quota}次）")
-                    else:
-                        raise ValueError(f"Query quota exceeded (limit: {self.quota})")
-                self.query_count += 1
-                return str(self.node_scores[node_id])
-            except ValueError:
-                raise
-            except:
-                return "invalid" if self.config.language == "en" else "无效"
-        
-        # 处理路径区段得分查询
-        elif "query_segment" in parsed_info:
-            try:
-                raw = parsed_info["query_segment"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return "invalid" if self.config.language == "en" else "无效"
-                
-                ancestor_id = int(parts[0])
-                descendant_id = int(parts[1])
-                
-                if ancestor_id not in self.tree or descendant_id not in self.tree:
-                    return "invalid" if self.config.language == "en" else "无效"
-                
-                if not self._is_ancestor(ancestor_id, descendant_id):
-                    return "invalid" if self.config.language == "en" else "无效"
-                
-                # 合法查询，扣配额
-                if self.query_count >= self.quota:
-                    if self.config.language == "zh":
-                        raise ValueError(f"已超出查询配额限制（{self.quota}次）")
-                    else:
-                        raise ValueError(f"Query quota exceeded (limit: {self.quota})")
-                self.query_count += 1
-                segment_score = self.node_scores[descendant_id] - self.node_scores[ancestor_id]
-                return str(segment_score)
-            except ValueError:
-                raise
-            except:
-                return "invalid" if self.config.language == "en" else "无效"
-        
-        # 处理路径比较查询
-        elif "query_compare" in parsed_info:
-            try:
-                raw = parsed_info["query_compare"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return "invalid" if self.config.language == "en" else "无效"
-                
-                node1_id = int(parts[0])
-                node2_id = int(parts[1])
-                
-                if node1_id not in self.tree or node2_id not in self.tree:
-                    return "invalid" if self.config.language == "en" else "无效"
-                
-                # 合法查询，扣配额
-                if self.query_count >= self.quota:
-                    if self.config.language == "zh":
-                        raise ValueError(f"已超出查询配额限制（{self.quota}次）")
-                    else:
-                        raise ValueError(f"Query quota exceeded (limit: {self.quota})")
-                self.query_count += 1
-                
-                score1 = self.node_scores[node1_id]
-                score2 = self.node_scores[node2_id]
-                
-                if score1 > score2:
-                    return "greater"
-                elif score1 == score2:
-                    return "equal"
-                else:
-                    return "less"
-            except ValueError:
-                raise
-            except:
-                return "invalid" if self.config.language == "en" else "无效"
-        
-        # 处理结构复核查询（不计费）
-        elif "query_structure" in parsed_info:
-            try:
-                node_id = int(parsed_info["query_structure"].strip())
-                if node_id not in self.tree:
-                    return "invalid" if self.config.language == "en" else "无效"
-                
-                node_info = self.tree[node_id]
-                children_info = []
-                for child_id in node_info["children"]:
-                    child = self.tree[child_id]
-                    children_info.append(
-                        f"ID={child_id}, depth={child['depth']}, label={child['label']}, "
-                        f"is_leaf={child['is_leaf']}"
-                    )
-                
-                if not children_info:
-                    return "no children" if self.config.language == "en" else "无子节点"
-                
-                return "; ".join(children_info)
-            except:
-                return "invalid" if self.config.language == "en" else "无效"
-        
-        else:
-            raise ValueError("No valid query tag found.")
-
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        # 获取所有节点ID
-        all_nodes = list(self.tree.keys())
+        results = []
+        options = ["0", "1", "?"]
         
-        # 1. Path Total Score Query: <query_total>v</query_total>
-        for node_id in all_nodes:
-            query_str = f"<query_total>{node_id}</query_total>"
-            ans = str(self.node_scores[node_id])
-            queries.append({"query": query_str, "answer": ans})
+        for p in itertools.product(options, repeat=4):
+            if "?" not in p:
+                continue
             
-        # 2. Path Segment Score Query: <query_segment>a,b</query_segment>
-        # 仅生成满足祖先关系的合法查询
-        for a in all_nodes:
-            for b in all_nodes:
-                if self._is_ancestor(a, b):
-                    query_str = f"<query_segment>{a},{b}</query_segment>"
-                    ans = str(self.node_scores[b] - self.node_scores[a])
-                    queries.append({"query": query_str, "answer": ans})
+            query_str = ",".join(p)
+            
+            answer = self._cf_core_produce({"query": query_str})
+            
+            results.append({
+                "query": f"<query>{query_str}</query>",
+                "answer": answer
+            })
+            
+        return results
+
+    def _cf_core_produce(self, parsed_info):
+        if "query" not in parsed_info:
+            raise ValueError("No valid query tag found.")
         
-        # 3. Path Comparison Query: <query_compare>u,v</query_compare>
-        # 枚举所有节点对
-        for u in all_nodes:
-            for v in all_nodes:
-                query_str = f"<query_compare>{u},{v}</query_compare>"
-                s_u = self.node_scores[u]
-                s_v = self.node_scores[v]
-                if s_u > s_v:
-                    ans = "greater"
-                elif s_u == s_v:
-                    ans = "equal"
+        query_str = parsed_info["query"].strip()
+        
+        try:
+            constraints = [x.strip() for x in query_str.split(",")]
+            
+            if len(constraints) != 4:
+                if self.config.language == "zh":
+                    return "错误：查询必须包含4个特征的约束（用逗号分隔）。"
                 else:
-                    ans = "less"
-                queries.append({"query": query_str, "answer": ans})
+                    return "Error: Query must contain constraints for 4 features (comma-separated)."
+            
+            if "?" not in constraints:
+                if self.config.language == "zh":
+                    return "错误：查询必须至少有一个特征为 ?（不能将所有特征都固定）。"
+                else:
+                    return "Error: Query must have at least one feature as ? (cannot fix all features)."
+            
+            for c in constraints:
+                if c not in ["0", "1", "?"]:
+                    if self.config.language == "zh":
+                        return "错误：每个特征的约束必须是 0、1 或 ?。"
+                    else:
+                        return "Error: Each feature constraint must be 0, 1, or ?."
+            
+            k = 0
+            m = 0
+            
+            for obj, marking in zip(self.objects, self.markings):
+                satisfies = True
+                for i, constraint in enumerate(constraints):
+                    if constraint != "?":
+                        if obj[i] != int(constraint):
+                            satisfies = False
+                            break
                 
-        # 4. Structure Review Query: <query_structure>x</query_structure>
-        for node_id in all_nodes:
-            query_str = f"<query_structure>{node_id}</query_structure>"
+                if satisfies:
+                    m += 1
+                    if marking == 1:
+                        k += 1
             
-            # 复用 _cf_core_produce 中的逻辑生成答案
-            node_info = self.tree[node_id]
-            children_info = []
-            for child_id in node_info["children"]:
-                child = self.tree[child_id]
-                # 保持格式一致
-                children_info.append(
-                    f"ID={child_id}, depth={child['depth']}, label={child['label']}, "
-                    f"is_leaf={child['is_leaf']}"
-                )
-            
-            if not children_info:
-                ans = "无子节点" if self.config.language == "zh" else "no children"
+            if self.config.language == "zh":
+                return f"满足条件且被标记为1的对象数量 k = {k}，符合条件的对象总数 m = {m}。"
             else:
-                ans = "; ".join(children_info)
-                
-            queries.append({"query": query_str, "answer": ans})
+                return f"Count of marked objects k = {k}, total count of matching objects m = {m}."
             
-        return queries
+        except Exception as e:
+            if self.config.language == "zh":
+                return f"错误：查询格式无效。{str(e)}"
+            else:
+                return f"Error: Invalid query format. {str(e)}"
 
     def _cf_make_wrong(self, correct: str) -> str:
-        # 若 correct 是纯整数字符串（考虑负号），返回 +1
-        if correct.lstrip('-').isdigit():
-            return str(int(correct) + 1)
+        import re as _re
         
-        # 处理比较查询的返回值
-        compare_map = {"greater": "less", "less": "greater", "equal": "less"}
-        if correct in compare_map:
-            return compare_map[correct]
+        def _modify_k(match):
+            k_val = int(match.group(1))
+            m_match = _re.search(r'm\s*=\s*(\d+)', correct)
+            m_val = int(m_match.group(1)) if m_match else 16
+            wrong_k = k_val + 1 if k_val < m_val else k_val - 1
+            return match.group(0).replace(match.group(1), str(wrong_k))
         
-        # 否则按语言替换关键词
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            if "否" in correct:
-                return correct.replace("否", "是")
-        else:
-            if "Yes" in correct:
-                return correct.replace("Yes", "No")
-            if "yes" in correct:
-                return correct.replace("yes", "no")
-            if "No" in correct:
-                return correct.replace("No", "Yes")
-            if "no" in correct:
-                return correct.replace("no", "yes")
+        modified = _re.sub(r'k\s*=\s*(\d+)', _modify_k, correct, count=1)
         
-        # 若都不匹配，追加 _WRONG
-        return f"{correct}_WRONG"
+        if modified != correct:
+            return modified
+        
+        return correct + "_WRONG"

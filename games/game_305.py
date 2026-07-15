@@ -1,747 +1,661 @@
-# -*- coding: utf-8 -*-
-import re
-import random
 from .base import Game
+import re
 
-class TreePathAggregationGame(Game):
-
-    reasoning_type = "溯因推理"
-    data_structure = "树"
-    tags = ["query_parity", "query_mod3", "query_sign", "answer"]
+class SubtreeEquivalenceGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"树路径聚合规则推理"游戏，规则如下：
+我们来玩一个"子树等价溯因"推理游戏，规则如下：
 
-游戏设定了一棵包含节点 1 到 {n} 的树（无环连通图），边的连接关系为：{edges}。
+游戏设定了一棵固定的有序根树，节点编号 1 到 35，根节点为 1。每个节点的孩子有固定顺序。
 
-以节点 1 为根，定义深度 depth(1) = 0，沿边向下每层深度递增 1。
+存在四种候选的子树结构等价关系，它们定义了如何比较两棵子树是否等价：
+1. OE（严格有序）：在每一对应节点处，孩子序列长度相同，按原顺序一一对应，且对应孩子子树递归等价。
+2. OR（允许整序反转）：在每一对应节点处，允许将一侧的孩子序列整体反转后再逐位比较；若能在该选择下使对应孩子子树递归等价，则视为等价。不得进行除整序反转之外的重排。
+3. UE（无序计重）：在每一对应节点处，忽略孩子顺序，将孩子子树视为一个多重集合；存在一个多重集合匹配使对应孩子子树递归等价，且相同形子树的数量需一致。
+4. UD（无序去重）：在每一对应节点处，忽略孩子顺序与重复，将孩子子树按形状去重为集合；集合中的每一种不同形状均需在另一侧出现，且对应形状递归等价，不要求计数一致。
 
-每个节点都有一个整数权值：{weights}。
-
-对于任意两个节点 u 和 v，它们之间存在唯一的简单路径 P(u,v)。
-
-我已经秘密选择了一种"路径聚合规则"，该规则用于计算路径 P(u,v) 的得分 S(u,v)。规则类型只有四种（用字母 A、B、C、D 表示），但具体使用的是哪一种对你来说是未知的。
-
-四种规则的定义如下：
-- 规则 A（路径逐点求和）：S(u,v) = 路径 P(u,v) 上所有节点权值之和。
-- 规则 B（按深度交替符号）：S(u,v) = 路径 P(u,v) 上所有节点，按 (-1)^depth(node) × w(node) 求和。
-- 规则 C（端点加倍）：S(u,v) = 路径 P(u,v) 上所有节点权值之和 + w(u) + w(v)（即两端点的权值额外各加一次）。
-- 规则 D（仅端点）：S(u,v) = w(u) + w(v)（仅两端点权值之和）。
+我已秘密选择了其中一种等价关系作为真实规则。
 
 你的目标是：
-1. 通过查询推断出使用的是哪种规则（A、B、C 或 D）
-2. 在确定规则后，计算出特定路径 P({target_u},{target_v}) 的精确得分值
+1. 通过询问指定的节点对，根据是/否反馈推断出真实的等价关系。
+2. 依据推断出的等价关系，判断另一指定节点对的子树是否等价。
 
-你可以反复向我提出查询（每次仅限一个查询），每次查询需要指定一对节点 (u,v) 以及查询类型。我会根据真实规则如实回答。
+你可以询问的节点对仅限：(2,3)、(13,14)、(25,26)。询问时我会根据真实等价关系判断这两个节点的子树是否等价，并回答"是"或"否"。
 
-可选的查询类型有三种：
+注意：若询问不在指定范围内的节点对，会被记为无效询问。若累计两次及以上无效询问，游戏失败。
 
-1. 奇偶查询：询问路径 P(u,v) 的得分是偶数还是奇数。回答 "even" 或 "odd"。
-2. 模3查询：询问路径 P(u,v) 的得分对 3 取模的结果。回答 0、1 或 2。
-3. 符号查询：询问路径 P(u,v) 的得分是正数、零还是负数。回答 "positive"、"zero" 或 "negative"。
+每次询问使用以下 XML 格式：
 
-当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+- 询问节点对（例如询问节点 2 和节点 3）：
+<twin_check>2,3</twin_check>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，需要指明真实的等价关系（OE、OR、UE 或 UD），以及在该关系下节点对 (13,26) 的子树是否等价（是或否），格式如下：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
-
-- 奇偶查询（例如查询节点 2 到节点 5 的路径）：
-<query_parity>2,5</query_parity>
-
-- 模3查询（例如查询节点 3 到节点 8 的路径）：
-<query_mod3>3,8</query_mod3>
-
-- 符号查询（例如查询节点 1 到节点 9 的路径）：
-<query_sign>1,9</query_sign>
-
-提交最终答案时，必须说明规则类型（A、B、C 或 D）并给出目标路径的精确得分值，格式如下：
-
-<answer>rule=A, score=15</answer>
+<answer>relation=OE, result=是</answer>
 """
 
     game_rule_en = """\
-Let's play a "Tree Path Aggregation Rule Inference" game. Here are the rules:
+Let's play a "Subtree Equivalence Abduction" reasoning game. Here are the rules:
 
-The game sets up a tree (acyclic connected graph) containing nodes 1 to {n}, with edge connections: {edges}.
+The game features a fixed ordered rooted tree with nodes numbered 1 to 35, with root node 1. Each node's children have a fixed order.
 
-Using node 1 as the root, we define depth(1) = 0, and depth increases by 1 along each edge going down.
+There are four candidate subtree structural equivalence relations that define how to compare whether two subtrees are equivalent:
+1. OE (Ordered Exact): At each corresponding node, the child sequences have the same length, match one-to-one in original order, and corresponding child subtrees are recursively equivalent.
+2. OR (Order with Reversal): At each corresponding node, allows reversing the entire child sequence of one side before pairwise comparison; if this choice makes corresponding child subtrees recursively equivalent, they are considered equivalent. No reordering other than full reversal is allowed.
+3. UE (Unordered with multiplicity Exact): At each corresponding node, ignores child order and treats child subtrees as a multiset; there exists a multiset matching such that corresponding child subtrees are recursively equivalent, and counts of identical subtrees must match.
+4. UD (Unordered Deduplicated): At each corresponding node, ignores both child order and duplicates, deduplicating child subtrees by shape into a set; each distinct shape in the set must appear on the other side with corresponding shapes recursively equivalent, without requiring count consistency.
 
-Each node has an integer weight: {weights}.
-
-For any two nodes u and v, there exists a unique simple path P(u,v) between them.
-
-I have secretly selected a "path aggregation rule" that computes a score S(u,v) for path P(u,v). There are only four rule types (denoted by letters A, B, C, D), but which one is actually used is unknown to you.
-
-The four rules are defined as follows:
-- Rule A (Path Sum): S(u,v) = sum of weights of all nodes on path P(u,v).
-- Rule B (Depth-Alternating Sign): S(u,v) = sum of (-1)^depth(node) × w(node) for all nodes on path P(u,v).
-- Rule C (Endpoint Doubling): S(u,v) = sum of weights of all nodes on path P(u,v) + w(u) + w(v) (i.e., the endpoint weights are each added an extra time).
-- Rule D (Endpoints Only): S(u,v) = w(u) + w(v) (sum of endpoint weights only).
+I have secretly selected one of these equivalence relations as the true rule.
 
 Your goals are:
-1. Infer which rule (A, B, C, or D) is being used through queries
-2. After determining the rule, calculate the exact score for the specific path P({target_u},{target_v})
+1. Through querying specified node pairs and receiving Yes/No feedback, deduce the true equivalence relation.
+2. Based on the deduced equivalence relation, determine whether another specified node pair's subtrees are equivalent.
 
-You can repeatedly ask me queries (one query at a time), each specifying a pair of nodes (u,v) and a query type. I will answer truthfully based on the actual rule.
+You may only query these node pairs: (2,3), (13,14), (25,26). When querying, I will judge whether these two nodes' subtrees are equivalent according to the true equivalence relation, and answer "Yes" or "No".
 
-There are three types of queries available:
+Note: Querying node pairs outside the specified range will be recorded as invalid queries. If there are two or more invalid queries, the game fails.
 
-1. Parity Query: Ask whether the score of path P(u,v) is even or odd. Answer "even" or "odd".
-2. Mod3 Query: Ask for the score of path P(u,v) modulo 3. Answer 0, 1, or 2.
-3. Sign Query: Ask whether the score of path P(u,v) is positive, zero, or negative. Answer "positive", "zero", or "negative".
+Each query uses the following XML format:
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+- Query node pair (e.g., querying nodes 2 and 3):
+<twin_check>2,3</twin_check>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, specify the true equivalence relation (OE, OR, UE, or UD) and whether the subtrees of node pair (13,26) are equivalent under that relation (Yes or No), using this format:
 
-Each query must contain only one tag. Use the following XML format:
-
-- Parity Query (e.g., querying path from node 2 to node 5):
-<query_parity>2,5</query_parity>
-
-- Mod3 Query (e.g., querying path from node 3 to node 8):
-<query_mod3>3,8</query_mod3>
-
-- Sign Query (e.g., querying path from node 1 to node 9):
-<query_sign>1,9</query_sign>
-
-When submitting the final answer, specify the rule type (A, B, C, or D) and give the exact score for the target path, using this format:
-
-<answer>rule=A, score=15</answer>
+<answer>relation=OE, result=Yes</answer>
 """
 
-    # ==========================================
-    # 场景 1：交通
-    # ==========================================
     contextualized_rule_zh_1 = """\
-欢迎使用"智能交通路网聚合分析系统"。
+欢迎进入智能交通路网调度系统。在此进行“交通枢纽拓扑等价”推断分析。
 
-本系统监控着一个包含 {n} 个交通枢纽节点的道路网络（无环连通图），路段连接关系为：{edges}。
-以总控枢纽节点 1 为根，定义层级深度 depth(1) = 0，沿路段向边缘辐射，每层递增 1。
-每个枢纽都有一个基础拥堵权值：{weights}。
+系统记录了一棵固定的单向放射状路网拓扑树，枢纽节点编号 1 到 35，总枢纽为节点 1。每个枢纽的分流路线有固定的空间排布顺序。
 
-对于任意两个枢纽 u 和 v，它们之间存在唯一的通行路径 P(u,v)。
-系统秘密加载了一种"路线拥堵评估算法"，该算法用于计算通行路径 P(u,v) 的综合阻力得分 S(u,v)。算法模型有四种（用字母 A、B、C、D 表示），但具体应用了哪一种对你保密。
+目前存在四种评估不同分流区域（子树）等价性的通行量代换规则：
+1. OE（严格有序）：在每个对应枢纽处，分流路线数量相同，空间顺序一一对应，且对应的下游路网递归等价。
+2. OR（允许整序反转）：在每个对应枢纽处，允许将一侧的路线排布完全镜像反转后再逐位对比；若在该调度下使对应的下游路网递归等价，则视为等价。不得进行除整体反转外的重排。
+3. UE（无序计重）：在每个对应枢纽处，忽略路线的空间顺序，仅视下游路网为多重集合；只要存在一种匹配使得下游路网递归等价，且相同拓扑的路网数量一致，则视为等价。
+4. UD（无序去重）：在每个对应枢纽处，忽略路线顺序与冗余建设，将下游路网按拓扑去重；每一种独特的拓扑均需在另一侧出现并递归等价，不要求冗余路线数量一致。
 
-四种算法模型的定义如下：
-- 算法 A（路径逐点求和）：S(u,v) = 路径 P(u,v) 上所有枢纽拥堵权值之和。
-- 算法 B（按深度交替符号）：S(u,v) = 路径 P(u,v) 上所有枢纽，按 (-1)^depth(node) × w(node) 求和。
-- 算法 C（端点加倍）：S(u,v) = 路径 P(u,v) 上所有枢纽权值之和 + w(u) + w(v)（即两端点的权值额外各加一次）。
-- 算法 D（仅端点）：S(u,v) = w(u) + w(v)（仅两端点权值之和）。
+我已在后台秘密加载了其中一种代换规则作为当前的真实系统基准。
 
-你的目标是：
-1. 通过探测推断出正在使用的是哪种算法模型（A、B、C 或 D）
-2. 在确定模型后，计算出目标通行路径 P({target_u},{target_v}) 的精确阻力得分值
+你的任务是：
+1. 通过向系统查验指定的枢纽对，根据“是/否”反馈推断出真实的代换规则。
+2. 依据推断出的规则，判断另一指定枢纽对的下游路网是否等价。
 
-你可以反复向系统提交查询指令（每次仅限一个），每次需指定一对枢纽节点 (u,v) 及查询类型。系统将根据真实运行的算法如实反馈。
+你被授权查验的枢纽对仅限：(2,3)、(13,14)、(25,26)。查验时，我会根据真实规则判断这两个枢纽的下游路网是否等价，并回答“是”或“否”。
+注意：若查验越权（不在指定范围内），将被记录为无效操作。累计两次及以上无效操作，系统阻断，任务失败。
 
-可选的探测查询类型有三种：
-1. 奇偶查询：询问路径 P(u,v) 得分是偶数还是奇数。返回 "even" 或 "odd"。
-2. 模3查询：询问路径 P(u,v) 得分对 3 取模的结果。返回 0、1 或 2。
-3. 符号查询：询问路径 P(u,v) 得分是正数、零还是负数。返回 "positive"、"zero" 或 "negative"。
+每次查验请使用以下 XML 格式：
+- 查验枢纽对（例如查验枢纽 2 和枢纽 3）：
+<twin_check>2,3</twin_check>
 
-收集到足够数据后，请提交最终分析报告。若答案错误或格式不符，分析任务失败。
-
-## 查询与提交答案的格式（必须严格遵守）
-每次查询只能包含一个标签。请使用以下 XML 格式：
-- 奇偶查询（例如查询枢纽 2 到枢纽 5 的路径）：
-<query_parity>2,5</query_parity>
-- 模3查询（例如查询枢纽 3 到枢纽 8 的路径）：
-<query_mod3>3,8</query_mod3>
-- 符号查询（例如查询枢纽 1 到枢纽 9 的路径）：
-<query_sign>1,9</query_sign>
-
-提交最终报告时，必须说明算法模型（A、B、C 或 D）并给出目标路径的精确阻力得分值，格式如下：
-<answer>rule=A, score=15</answer>
+提交最终报告时，需指明真实的代换规则（OE、OR、UE 或 UD），以及枢纽对 (13,26) 的下游路网是否等价（是或否）：
+<answer>relation=OE, result=是</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Intelligent Traffic Network Aggregation Analysis System".
+Welcome to the Intelligent Traffic Network Scheduling System. You are tasked with analyzing "Traffic Hub Topology Equivalence."
 
-The system monitors a road network containing {n} traffic hub nodes (an acyclic connected graph), with road connections: {edges}.
-Using the main control hub node 1 as the root, we define the hierarchical depth depth(1) = 0. The depth increases by 1 for each tier radiating outward along the roads.
-Each hub has a basic congestion weight: {weights}.
+The system maps a fixed, one-way radial road network topology tree, with hub nodes numbered 1 to 35, and the main hub at node 1. Each hub's diverging routes have a fixed spatial layout sequence.
 
-For any two hubs u and v, there exists a unique travel path P(u,v) between them.
-The system has currently secretly loaded a "route congestion evaluation algorithm" that computes a comprehensive resistance score S(u,v) for path P(u,v). There are four algorithm models (denoted by letters A, B, C, D), but which one is actually applied is kept secret from you.
+There are four candidate capacity-substitution rules for assessing the equivalence of different diverging areas (subtrees):
+1. OE (Ordered Exact): At each corresponding hub, the diverging routes have identical counts, strict one-to-one spatial order, and downstream networks recursively match.
+2. OR (Order with Reversal): At each corresponding hub, one side's route layout can be completely mirrored (reversed) before pairwise comparison; if this ensures downstream networks recursively match, they are equivalent. No reshuffling beyond full reversal is allowed.
+3. UE (Unordered with multiplicity Exact): At each corresponding hub, spatial order is ignored, treating downstream networks as a multiset; if a matching exists making downstream networks recursively equivalent with identical topology counts, they are equivalent.
+4. UD (Unordered Deduplicated): At each corresponding hub, order and redundant construction are ignored, deduplicating downstream networks by topology; each unique topology must appear on the counterpart side and recursively match, without requiring redundant route count consistency.
 
-The four algorithm models are defined as follows:
-- Algorithm A (Path Sum): S(u,v) = sum of weights of all hub nodes on path P(u,v).
-- Algorithm B (Depth-Alternating Sign): S(u,v) = sum of (-1)^depth(node) × w(node) for all hub nodes on path P(u,v).
-- Algorithm C (Endpoint Doubling): S(u,v) = sum of weights of all hub nodes on path P(u,v) + w(u) + w(v) (i.e., the endpoint weights are each added an extra time).
-- Algorithm D (Endpoints Only): S(u,v) = w(u) + w(v) (sum of endpoint weights only).
+I have secretly loaded one substitution rule as the active system benchmark.
 
-Your goals are:
-1. Infer which algorithm model (A, B, C, or D) is being used through probing queries.
-2. After determining the model, calculate the exact resistance score for the target travel path P({target_u},{target_v}).
+Your objectives:
+1. Deduce the true substitution rule by querying specific hub pairs and analyzing the Yes/No feedback.
+2. Based on the deduced rule, determine whether the downstream networks of another specified hub pair are equivalent.
 
-You can repeatedly submit query commands to the system (one at a time), each specifying a pair of hub nodes (u,v) and a query type. The system will feedback truthfully based on the running algorithm.
+Authorized query hub pairs: (2,3), (13,14), (25,26). I will evaluate their equivalence using the active rule and respond "Yes" or "No".
+Note: Queries outside this scope are marked invalid. Two or more invalid queries will trigger a system lockout, resulting in failure.
 
-There are three types of probing queries available:
-1. Parity Query: Ask whether the score of path P(u,v) is even or odd. Returns "even" or "odd".
-2. Mod3 Query: Ask for the score of path P(u,v) modulo 3. Returns 0, 1, or 2.
-3. Sign Query: Ask whether the score of path P(u,v) is positive, zero, or negative. Returns "positive", "zero", or "negative".
+Format for each query:
+- Query hub pair (e.g., hubs 2 and 3):
+<twin_check>2,3</twin_check>
 
-When you have collected enough data, submit your final analysis report. If the answer is incorrect or the format is invalid, the analysis task fails.
-
-## Query and Answer Format (strictly required)
-Each query must contain only one tag. Use the following XML format:
-- Parity Query (e.g., querying path from hub 2 to hub 5):
-<query_parity>2,5</query_parity>
-- Mod3 Query (e.g., querying path from hub 3 to hub 8):
-<query_mod3>3,8</query_mod3>
-- Sign Query (e.g., querying path from hub 1 to hub 9):
-<query_sign>1,9</query_sign>
-
-When submitting the final report, specify the algorithm model (A, B, C, or D) and give the exact resistance score for the target path, using this format:
-<answer>rule=A, score=15</answer>
+When submitting the final report, specify the true rule (OE, OR, UE, or UD), and whether hub pair (13,26) is equivalent (Yes or No):
+<answer>relation=OE, result=Yes</answer>
 """
 
-    # ==========================================
-    # 场景 2：医疗
-    # ==========================================
     contextualized_rule_zh_2 = """\
-欢迎使用"智慧医疗神经传导分析系统"。
+欢迎进入临床血管分支分析系统。在此进行“血管网络拓扑等价”溯因诊断。
 
-本系统监控着一个包含 {n} 个神经元节点的神经网络（无环连通图），突触连接关系为：{edges}。
-以中枢神经元节点 1 为根，定义传导深度 depth(1) = 0，沿突触向外围辐射，每层递增 1。
-每个神经元都有一个基础电位权值：{weights}。
+系统重建了一棵固定的血管造影结构树，分叉节点编号 1 到 35，主动脉根节点为 1。每个节点发出的微血管分支有固定的解剖学空间顺序。
 
-对于任意两个神经元 u 和 v，它们之间存在唯一的传导路径 P(u,v)。
-系统秘密加载了一种"神经信号衰减/增强评估算法"，该算法用于计算传导路径 P(u,v) 的综合电位得分 S(u,v)。算法模型有四种（用字母 A、B、C、D 表示），但具体应用了哪一种对你保密。
+目前存在四种评估不同血管子网等价性的血流动力学对比规则：
+1. OE（严格有序）：在每个对应分叉处，分支数量相同，解剖顺序一一对应，且下游血管网递归等价。
+2. OR（允许整序反转）：在每个对应分叉处，允许将一侧的分支序列整体镜像反转后再对比；若反转后能使下游血管网递归等价，即视为等价。不得进行其他错位重排。
+3. UE（无序计重）：在每个对应分叉处，忽略血管解剖顺序，视下游血管网为多重集合；只要存在一种匹配使下游网递归等价且特定结构的血管数量一致，则视为等价。
+4. UD（无序去重）：在每个对应分叉处，忽略顺序与增生冗余血管，按结构去重；每种独特的血管构型均需在另一侧存在并递归等价，不要求冗余血管数量一致。
 
-四种算法模型的定义如下：
-- 算法 A（路径逐点求和）：S(u,v) = 路径 P(u,v) 上所有神经元电位权值之和。
-- 算法 B（按深度交替符号）：S(u,v) = 路径 P(u,v) 上所有神经元，按 (-1)^depth(node) × w(node) 求和。
-- 算法 C（端点加倍）：S(u,v) = 路径 P(u,v) 上所有神经元权值之和 + w(u) + w(v)（即两端点的权值额外各加一次）。
-- 算法 D（仅端点）：S(u,v) = w(u) + w(v)（仅两端点权值之和）。
+我已在后台秘密配置了其中一种对比规则作为本次病例的诊断依据。
 
-你的目标是：
-1. 通过探测推断出正在使用的是哪种算法模型（A、B、C 或 D）
-2. 在确定模型后，计算出目标传导路径 P({target_u},{target_v}) 的精确电位得分值
+你的任务是：
+1. 通过向系统比对指定的血管分叉对，根据“是/否”反馈推断出真实的诊断规则。
+2. 依据推断出的规则，判断另一指定分叉对的下游血管网是否等价。
 
-你可以反复向系统提交探测指令（每次仅限一个），每次需指定一对神经元节点 (u,v) 及查询类型。系统将根据真实运行的算法如实反馈。
+你被授权比对的分叉对仅限：(2,3)、(13,14)、(25,26)。比对时，我会根据真实规则判断这两个分叉的下游网是否等价，并回答“是”或“否”。
+注意：违规比对将被计为无效操作。累计两次及以上无效操作将导致诊断超时失败。
 
-可选的探测查询类型有三种：
-1. 奇偶查询：询问路径 P(u,v) 得分是偶数还是奇数。返回 "even" 或 "odd"。
-2. 模3查询：询问路径 P(u,v) 得分对 3 取模的结果。返回 0、1 或 2。
-3. 符号查询：询问路径 P(u,v) 得分是正数、零还是负数。返回 "positive"、"zero" 或 "negative"。
+每次比对请使用以下 XML 格式：
+- 比对分叉对（例如比对节点 2 和 3）：
+<twin_check>2,3</twin_check>
 
-收集到足够数据后，请提交最终分析报告。若答案错误或格式不符，分析任务失败。
-
-## 查询与提交答案的格式（必须严格遵守）
-每次查询只能包含一个标签。请使用以下 XML 格式：
-- 奇偶查询（例如查询神经元 2 到神经元 5 的路径）：
-<query_parity>2,5</query_parity>
-- 模3查询（例如查询神经元 3 到神经元 8 的路径）：
-<query_mod3>3,8</query_mod3>
-- 符号查询（例如查询神经元 1 到神经元 9 的路径）：
-<query_sign>1,9</query_sign>
-
-提交最终报告时，必须说明算法模型（A、B、C 或 D）并给出目标路径的精确电位得分值，格式如下：
-<answer>rule=A, score=15</answer>
+提交最终诊断时，需指明真实的诊断规则（OE、OR、UE 或 UD），以及分叉对 (13,26) 的下游血管网是否等价（是或否）：
+<answer>relation=OE, result=是</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Smart Medical Neural Conduction Analysis System".
+Welcome to the Clinical Vascular Branching Analysis System. You are to perform a "Vascular Network Topology Equivalence" diagnostic deduction.
 
-The system monitors a neural network containing {n} neuron nodes (an acyclic connected graph), with synaptic connections: {edges}.
-Using the central neuron node 1 as the root, we define the conduction depth depth(1) = 0. The depth increases by 1 for each tier radiating outward along the synapses.
-Each neuron has a basic potential weight: {weights}.
+The system has reconstructed a fixed angiographic structure tree, with bifurcation nodes numbered 1 to 35, and the aortic root at node 1. The microvascular branches emerging from each node follow a fixed anatomical spatial order.
 
-For any two neurons u and v, there exists a unique conduction path P(u,v) between them.
-The system has secretly loaded a "neural signal attenuation/enhancement evaluation algorithm" that computes a comprehensive potential score S(u,v) for path P(u,v). There are four algorithm models (denoted by letters A, B, C, D), but which one is actually applied is kept secret from you.
+There are four candidate hemodynamic comparison rules for evaluating the equivalence of different vascular subnetworks:
+1. OE (Ordered Exact): At each corresponding bifurcation, branch counts are identical, anatomical orders match strictly one-to-one, and downstream vascular networks are recursively equivalent.
+2. OR (Order with Reversal): At each corresponding bifurcation, one side's branch sequence can be fully mirrored (reversed) before comparison; if this makes downstream networks recursively equivalent, they are deemed equivalent. No other reshuffling is permitted.
+3. UE (Unordered with multiplicity Exact): At each corresponding bifurcation, anatomical order is ignored, treating downstream networks as a multiset; equivalence holds if a matching exists where downstream networks are recursively equivalent and counts of identical vascular structures match.
+4. UD (Unordered Deduplicated): At each corresponding bifurcation, order and redundant hyperplastic vessels are ignored, deduplicating by structure; each unique vascular configuration must be present on the counterpart side and recursively match, without requiring redundant vessel count consistency.
 
-The four algorithm models are defined as follows:
-- Algorithm A (Path Sum): S(u,v) = sum of potential weights of all neurons on path P(u,v).
-- Algorithm B (Depth-Alternating Sign): S(u,v) = sum of (-1)^depth(node) × w(node) for all neurons on path P(u,v).
-- Algorithm C (Endpoint Doubling): S(u,v) = sum of weights of all neurons on path P(u,v) + w(u) + w(v) (i.e., the endpoint weights are each added an extra time).
-- Algorithm D (Endpoints Only): S(u,v) = w(u) + w(v) (sum of endpoint weights only).
+I have secretly configured one comparison rule as the diagnostic basis for this case.
 
-Your goals are:
-1. Infer which algorithm model (A, B, C, or D) is being used through probing queries.
-2. After determining the model, calculate the exact potential score for the target conduction path P({target_u},{target_v}).
+Your tasks:
+1. Deduce the true diagnostic rule by querying specific bifurcation pairs and utilizing the Yes/No feedback.
+2. Based on the deduced rule, determine whether the downstream networks of another specified bifurcation pair are equivalent.
 
-You can repeatedly submit probing commands to the system (one at a time), each specifying a pair of neurons (u,v) and a query type. The system will feedback truthfully based on the running algorithm.
+Authorized query bifurcation pairs: (2,3), (13,14), (25,26). I will assess their equivalence using the active rule and respond "Yes" or "No".
+Note: Unauthorized queries are logged as invalid operations. Two or more invalid operations will result in diagnostic timeout and failure.
 
-There are three types of probing queries available:
-1. Parity Query: Ask whether the score of path P(u,v) is even or odd. Returns "even" or "odd".
-2. Mod3 Query: Ask for the score of path P(u,v) modulo 3. Returns 0, 1, or 2.
-3. Sign Query: Ask whether the score of path P(u,v) is positive, zero, or negative. Returns "positive", "zero", or "negative".
+Format for each query:
+- Query bifurcation pair (e.g., nodes 2 and 3):
+<twin_check>2,3</twin_check>
 
-When you have collected enough data, submit your final analysis report. If the answer is incorrect or the format is invalid, the analysis task fails.
-
-## Query and Answer Format (strictly required)
-Each query must contain only one tag. Use the following XML format:
-- Parity Query (e.g., querying path from neuron 2 to neuron 5):
-<query_parity>2,5</query_parity>
-- Mod3 Query (e.g., querying path from neuron 3 to neuron 8):
-<query_mod3>3,8</query_mod3>
-- Sign Query (e.g., querying path from neuron 1 to neuron 9):
-<query_sign>1,9</query_sign>
-
-When submitting the final report, specify the algorithm model (A, B, C, or D) and give the exact potential score for the target path, using this format:
-<answer>rule=A, score=15</answer>
+When submitting the final diagnosis, specify the true diagnostic rule (OE, OR, UE, or UD), and whether bifurcation pair (13,26) is equivalent (Yes or No):
+<answer>relation=OE, result=Yes</answer>
 """
 
-    # ==========================================
-    # 场景 3：教育
-    # ==========================================
     contextualized_rule_zh_3 = """\
-欢迎使用"教育知识图谱路径分析系统"。
+欢迎进入自适应教育知识图谱系统。在此进行“学习路径等价性”推理评估。
 
-本系统维护着一个包含 {n} 个知识点节点的知识图谱（无环连通图），知识点的前置/后置连接关系为：{edges}。
-以核心素养节点 1 为根，定义认知深度 depth(1) = 0，沿连接向进阶知识辐射，每层递增 1。
-每个知识点都有一个基础难度权值：{weights}。
+系统设定了一棵固定的前置知识依赖树，知识模块编号 1 到 35，根学科核心模块为 1。每个模块的子学习单元有固定的教学顺序。
 
-对于任意两个知识点 u 和 v，它们之间存在唯一的学习路径 P(u,v)。
-系统秘密加载了一种"学习路径综合难度评估算法"，该算法用于计算学习路径 P(u,v) 的认知负荷得分 S(u,v)。算法模型有四种（用字母 A、B、C、D 表示），但具体应用了哪一种对你保密。
+目前存在四种评估不同学习路径（子树）等价性的教学目标评估规则：
+1. OE（严格有序）：在每个对应模块处，子单元数量相同，学习顺序一一对应，且对应的后续知识图谱递归等价。
+2. OR（允许整序反转）：在每个对应模块处，允许将一侧的子单元学习顺序完全反转后再逐位对比（例如从后向前学）；若能使对应的后续知识图谱递归等价，则视为等价。不得进行整体反转之外的顺序打乱。
+3. UE（无序计重）：在每个对应模块处，忽略学习顺序，将子单元视为多重集合；只要存在匹配使后续知识图谱递归等价，且同类强化的练习模块数量一致，则视为等价。
+4. UD（无序去重）：在每个对应模块处，忽略顺序与重复练习，按知识点覆盖去重；每一种知识点分支均需在另一侧覆盖并递归等价，不要求重复练习的次数一致。
 
-四种算法模型的定义如下：
-- 算法 A（路径逐点求和）：S(u,v) = 路径 P(u,v) 上所有知识点难度权值之和。
-- 算法 B（按深度交替符号）：S(u,v) = 路径 P(u,v) 上所有知识点，按 (-1)^depth(node) × w(node) 求和（模拟温故知新的难度抵消效应）。
-- 算法 C（端点加倍）：S(u,v) = 路径 P(u,v) 上所有知识点权值之和 + w(u) + w(v)（即起点和终点知识的难度额外各加一次）。
-- 算法 D（仅端点）：S(u,v) = w(u) + w(v)（仅考虑起点和终点知识的难度之和）。
+我已秘密应用了其中一种评估规则作为当前班级的考核标准。
 
-你的目标是：
-1. 通过测评推断出正在使用的是哪种算法模型（A、B、C 或 D）
-2. 在确定模型后，计算出目标学习路径 P({target_u},{target_v}) 的精确认知负荷得分值
+你的任务是：
+1. 通过向系统测试指定的模块对，根据“是/否”反馈推断出真实的评估规则。
+2. 依据推断出的规则，判断另一指定模块对的后续学习路径是否等价。
 
-你可以反复向系统提交测评指令（每次仅限一个），每次需指定一对知识点 (u,v) 及查询类型。系统将根据真实运行的算法如实反馈。
+你被授权测试的模块对仅限：(2,3)、(13,14)、(25,26)。测试时，我会根据真实规则判断这两个模块的后续路径是否等价，并回答“是”或“否”。
+注意：测试指定范围外的模块将被记为无效请求。累计两次及以上无效请求，评测判定失败。
 
-可选的测评查询类型有三种：
-1. 奇偶查询：询问路径 P(u,v) 得分是偶数还是奇数。返回 "even" 或 "odd"。
-2. 模3查询：询问路径 P(u,v) 得分对 3 取模的结果。返回 0、1 或 2。
-3. 符号查询：询问路径 P(u,v) 得分是正数、零还是负数。返回 "positive"、"zero" 或 "negative"。
+每次测试请使用以下 XML 格式：
+- 测试模块对（例如测试模块 2 和 3）：
+<twin_check>2,3</twin_check>
 
-收集到足够数据后，请提交最终分析报告。若答案错误或格式不符，分析任务失败。
-
-## 查询与提交答案的格式（必须严格遵守）
-每次查询只能包含一个标签。请使用以下 XML 格式：
-- 奇偶查询（例如查询知识点 2 到知识点 5 的路径）：
-<query_parity>2,5</query_parity>
-- 模3查询（例如查询知识点 3 到知识点 8 的路径）：
-<query_mod3>3,8</query_mod3>
-- 符号查询（例如查询知识点 1 到知识点 9 的路径）：
-<query_sign>1,9</query_sign>
-
-提交最终报告时，必须说明算法模型（A、B、C 或 D）并给出目标路径的精确认知负荷得分值，格式如下：
-<answer>rule=A, score=15</answer>
+提交最终报告时，需指明真实的评估规则（OE、OR、UE 或 UD），以及模块对 (13,26) 的后续路径是否等价（是或否）：
+<answer>relation=OE, result=是</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Educational Knowledge Graph Path Analysis System".
+Welcome to the Adaptive Education Knowledge Graph System. You will conduct a "Learning Path Equivalence" reasoning assessment.
 
-The system maintains a knowledge graph containing {n} knowledge point nodes (an acyclic connected graph), with prerequisite/successor connections: {edges}.
-Using the core literacy node 1 as the root, we define the cognitive depth depth(1) = 0. The depth increases by 1 for each tier radiating toward advanced knowledge.
-Each knowledge point has a basic difficulty weight: {weights}.
+The system features a fixed prerequisite dependency tree, with knowledge modules numbered 1 to 35, and the core subject root at module 1. Each module's sub-learning units follow a strict pedagogical sequence.
 
-For any two knowledge points u and v, there exists a unique learning path P(u,v) between them.
-The system has secretly loaded a "learning path comprehensive difficulty evaluation algorithm" that computes a cognitive load score S(u,v) for path P(u,v). There are four algorithm models (denoted by letters A, B, C, D), but which one is actually applied is kept secret from you.
+There are four candidate pedagogical objective rules for assessing the equivalence of different learning paths (subtrees):
+1. OE (Ordered Exact): At each corresponding module, sub-unit counts are identical, learning sequences match one-to-one, and subsequent knowledge graphs are recursively equivalent.
+2. OR (Order with Reversal): At each corresponding module, one side's learning sequence can be entirely reversed (e.g., studying backwards) before comparison; if this makes subsequent knowledge graphs recursively equivalent, they are deemed equivalent. No random shuffling beyond full reversal is allowed.
+3. UE (Unordered with multiplicity Exact): At each corresponding module, learning sequence is ignored, treating sub-units as a multiset; equivalence holds if a matching exists where subsequent graphs are recursively equivalent and counts of identical reinforcement modules match.
+4. UD (Unordered Deduplicated): At each corresponding module, sequence and repetitive practices are ignored, deduplicating by topic coverage; each unique knowledge branch must be covered on the counterpart side and recursively match, without requiring identical repetition counts.
 
-The four algorithm models are defined as follows:
-- Algorithm A (Path Sum): S(u,v) = sum of difficulty weights of all knowledge points on path P(u,v).
-- Algorithm B (Depth-Alternating Sign): S(u,v) = sum of (-1)^depth(node) × w(node) for all knowledge points on path P(u,v) (simulating the difficulty offset effect of reviewing past knowledge).
-- Algorithm C (Endpoint Doubling): S(u,v) = sum of weights of all knowledge points on path P(u,v) + w(u) + w(v) (i.e., the starting and ending node weights are each added an extra time).
-- Algorithm D (Endpoints Only): S(u,v) = w(u) + w(v) (sum of starting and ending node weights only).
+I have secretly applied one assessment rule as the evaluation standard for the current class.
 
-Your goals are:
-1. Infer which algorithm model (A, B, C, or D) is being used through assessment queries.
-2. After determining the model, calculate the exact cognitive load score for the target learning path P({target_u},{target_v}).
+Your tasks:
+1. Deduce the true assessment rule by testing specific module pairs and analyzing the Yes/No feedback.
+2. Based on the deduced rule, determine whether the subsequent learning paths of another specified module pair are equivalent.
 
-You can repeatedly submit assessment commands to the system (one at a time), each specifying a pair of knowledge points (u,v) and a query type. The system will feedback truthfully based on the running algorithm.
+Authorized test module pairs: (2,3), (13,14), (25,26). I will evaluate their equivalence using the active rule and respond "Yes" or "No".
+Note: Testing modules outside the specified range is recorded as an invalid request. Two or more invalid requests will result in an assessment failure.
 
-There are three types of assessment queries available:
-1. Parity Query: Ask whether the score of path P(u,v) is even or odd. Returns "even" or "odd".
-2. Mod3 Query: Ask for the score of path P(u,v) modulo 3. Returns 0, 1, or 2.
-3. Sign Query: Ask whether the score of path P(u,v) is positive, zero, or negative. Returns "positive", "zero", or "negative".
+Format for each test:
+- Test module pair (e.g., modules 2 and 3):
+<twin_check>2,3</twin_check>
 
-When you have collected enough data, submit your final analysis report. If the answer is incorrect or the format is invalid, the analysis task fails.
-
-## Query and Answer Format (strictly required)
-Each query must contain only one tag. Use the following XML format:
-- Parity Query (e.g., querying path from node 2 to node 5):
-<query_parity>2,5</query_parity>
-- Mod3 Query (e.g., querying path from node 3 to node 8):
-<query_mod3>3,8</query_mod3>
-- Sign Query (e.g., querying path from node 1 to node 9):
-<query_sign>1,9</query_sign>
-
-When submitting the final report, specify the algorithm model (A, B, C, or D) and give the exact cognitive load score for the target path, using this format:
-<answer>rule=A, score=15</answer>
+When submitting the final report, specify the true assessment rule (OE, OR, UE, or UD), and whether module pair (13,26) is equivalent (Yes or No):
+<answer>relation=OE, result=Yes</answer>
 """
 
-    # ==========================================
-    # 场景 4：制造业/工业
-    # ==========================================
     contextualized_rule_zh_4 = """\
-欢迎使用"工业流水线效能追踪系统"。
+欢迎进入工业制造BOM（物料清单）验证系统。在此进行“装配子树等价性”逆向推断。
 
-本系统监控着一个包含 {n} 个加工工序节点的生产网络（无环连通图），工序流转关系为：{edges}。
-以总装调度节点 1 为根，定义流转深度 depth(1) = 0，沿工序向前端零件加工辐射，每层递增 1。
-每个工序都有一个基础耗时权值：{weights}。
+系统载入了一棵固定的复杂机械装配BOM树，组件编号 1 到 35，最终总成节点为 1。每个组件的子装配流程存在固定的工序顺序。
 
-对于任意两个工序 u 和 v，它们之间存在唯一的工艺流转路径 P(u,v)。
-系统秘密加载了一种"工序流转效能评估算法"，该算法用于计算流转路径 P(u,v) 的综合效能得分 S(u,v)。算法模型有四种（用字母 A、B、C、D 表示），但具体应用了哪一种对你保密。
+目前存在四种评估不同子装配体可替换性（等价性）的工程验证规则：
+1. OE（严格有序）：在每个对应组件处，子工序数量相同，装配顺序一一对应，且对应的下级BOM递归等价。
+2. OR（允许整序反转）：在每个对应组件处，允许将一侧的子工序完全镜像反转后再对比；若能在该操作下使对应的下级BOM递归等价，则视为可替换。严禁进行整体反转之外的工序打乱。
+3. UE（无序计重）：在每个对应组件处，忽略装配顺序，将子工序视为散件包（多重集合）；只要存在匹配使下级BOM递归等价，且同规格子组件的耗用数量严格一致，则视为可替换。
+4. UD（无序去重）：在每个对应组件处，忽略顺序与重复备件，按规格种类去重；每一种规格的子组件均需在另一侧出现并递归等价，假假设备件库无限，不要求消耗数量一致。
 
-四种算法模型的定义如下：
-- 算法 A（路径逐点求和）：S(u,v) = 路径 P(u,v) 上所有工序耗时权值之和。
-- 算法 B（按深度交替符号）：S(u,v) = 路径 P(u,v) 上所有工序，按 (-1)^depth(node) × w(node) 求和。
-- 算法 C（端点加倍）：S(u,v) = 路径 P(u,v) 上所有工序权值之和 + w(u) + w(v)（即两端点工序的权值额外各加一次）。
-- 算法 D（仅端点）：S(u,v) = w(u) + w(v)（仅两端点工序权值之和）。
+我已在制造执行系统中秘密锁定了其中一种工程验证规则。
 
-你的目标是：
-1. 通过检测推断出正在使用的是哪种算法模型（A、B、C 或 D）
-2. 在确定模型后，计算出目标流转路径 P({target_u},{target_v}) 的精确效能得分值
+你的任务是：
+1. 通过向系统比对指定的组件对，根据“是/否”反馈推断出真实的验证规则。
+2. 依据推断出的规则，判断另一指定组件对的装配逻辑是否等价。
 
-你可以反复向系统提交检测指令（每次仅限一个），每次需指定一对工序 (u,v) 及查询类型。系统将根据真实运行的算法如实反馈。
+你被授权比对的组件对仅限：(2,3)、(13,14)、(25,26)。比对时，我会根据真实规则判断这两个组件的装配逻辑是否等价，并回答“是”或“否”。
+注意：比对系统限制外的组件将被拦截并记为违规。累计两次及以上违规将导致验证流程终止。
 
-可选的检测查询类型有三种：
-1. 奇偶查询：询问路径 P(u,v) 得分是偶数还是奇数。返回 "even" 或 "odd"。
-2. 模3查询：询问路径 P(u,v) 得分对 3 取模的结果。返回 0、1 或 2。
-3. 符号查询：询问路径 P(u,v) 得分是正数、零还是负数。返回 "positive"、"zero" 或 "negative"。
+每次比对请使用以下 XML 格式：
+- 比对组件对（例如比对组件 2 和 3）：
+<twin_check>2,3</twin_check>
 
-收集到足够数据后，请提交最终分析报告。若答案错误或格式不符，分析任务失败。
-
-## 查询与提交答案的格式（必须严格遵守）
-每次查询只能包含一个标签。请使用以下 XML 格式：
-- 奇偶查询（例如查询工序 2 到工序 5 的路径）：
-<query_parity>2,5</query_parity>
-- 模3查询（例如查询工序 3 到工序 8 的路径）：
-<query_mod3>3,8</query_mod3>
-- 符号查询（例如查询工序 1 到工序 9 的路径）：
-<query_sign>1,9</query_sign>
-
-提交最终报告时，必须说明算法模型（A、B、C 或 D）并给出目标路径的精确效能得分值，格式如下：
-<answer>rule=A, score=15</answer>
+提交最终结论时，需指明真实的验证规则（OE、OR、UE 或 UD），以及组件对 (13,26) 是否等价（是或否）：
+<answer>relation=OE, result=是</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Welcome to the "Industrial Assembly Line Efficiency Tracking System".
+Welcome to the Industrial Manufacturing BOM (Bill of Materials) Validation System. You will execute an "Assembly Subtree Equivalence" reverse engineering deduction.
 
-The system monitors a production network containing {n} processing operation nodes (an acyclic connected graph), with operation flow connections: {edges}.
-Using the main assembly scheduling node 1 as the root, we define the flow depth depth(1) = 0. The depth increases by 1 for each tier radiating toward front-end part processing.
-Each operation has a basic time-consumption weight: {weights}.
+The system has loaded a fixed complex machinery assembly BOM tree, with components numbered 1 to 35, and the final assembly at node 1. Each component's sub-assembly process follows a strict procedural sequence.
 
-For any two operations u and v, there exists a unique process flow path P(u,v) between them.
-The system has secretly loaded an "operation flow efficiency evaluation algorithm" that computes a comprehensive efficiency score S(u,v) for flow path P(u,v). There are four algorithm models (denoted by letters A, B, C, D), but which one is actually applied is kept secret from you.
+There are four candidate engineering validation rules to assess the interchangeability (equivalence) of different sub-assemblies:
+1. OE (Ordered Exact): At each corresponding component, sub-procedure counts are identical, assembly sequences match one-to-one, and lower-level BOMs are recursively equivalent.
+2. OR (Order with Reversal): At each corresponding component, one side's sub-procedure sequence can be fully mirrored (reversed) before comparison; if this makes lower-level BOMs recursively equivalent, they are deemed interchangeable. No reshuffling beyond full reversal is allowed.
+3. UE (Unordered with multiplicity Exact): At each corresponding component, assembly sequence is ignored, treating sub-procedures as a parts kit (multiset); equivalence holds if a matching makes lower-level BOMs recursively equivalent, and consumption quantities of identical sub-components perfectly match.
+4. UD (Unordered Deduplicated): At each corresponding component, sequence and duplicate spare parts are ignored, deduplicating by specification; each specification type must appear on the counterpart side and recursively match, assuming infinite spare inventory without requiring identical consumption quantities.
 
-The four algorithm models are defined as follows:
-- Algorithm A (Path Sum): S(u,v) = sum of time-consumption weights of all operations on path P(u,v).
-- Algorithm B (Depth-Alternating Sign): S(u,v) = sum of (-1)^depth(node) × w(node) for all operations on path P(u,v).
-- Algorithm C (Endpoint Doubling): S(u,v) = sum of weights of all operations on path P(u,v) + w(u) + w(v) (i.e., the endpoint operation weights are each added an extra time).
-- Algorithm D (Endpoints Only): S(u,v) = w(u) + w(v) (sum of endpoint operation weights only).
+I have secretly locked one engineering validation rule within the Manufacturing Execution System.
 
-Your goals are:
-1. Infer which algorithm model (A, B, C, or D) is being used through inspection queries.
-2. After determining the model, calculate the exact efficiency score for the target flow path P({target_u},{target_v}).
+Your tasks:
+1. Deduce the true validation rule by comparing specific component pairs and utilizing the Yes/No feedback.
+2. Based on the deduced rule, determine whether the assembly logic of another specified component pair is equivalent.
 
-You can repeatedly submit inspection commands to the system (one at a time), each specifying a pair of operations (u,v) and a query type. The system will feedback truthfully based on the running algorithm.
+Authorized comparison component pairs: (2,3), (13,14), (25,26). I will assess their interchangeability using the active rule and respond "Yes" or "No".
+Note: Comparing components outside system limits will be blocked and recorded as a violation. Two or more violations will terminate the validation workflow.
 
-There are three types of inspection queries available:
-1. Parity Query: Ask whether the score of path P(u,v) is even or odd. Returns "even" or "odd".
-2. Mod3 Query: Ask for the score of path P(u,v) modulo 3. Returns 0, 1, or 2.
-3. Sign Query: Ask whether the score of path P(u,v) is positive, zero, or negative. Returns "positive", "zero", or "negative".
+Format for each comparison:
+- Compare component pair (e.g., components 2 and 3):
+<twin_check>2,3</twin_check>
 
-When you have collected enough data, submit your final analysis report. If the answer is incorrect or the format is invalid, the analysis task fails.
-
-## Query and Answer Format (strictly required)
-Each query must contain only one tag. Use the following XML format:
-- Parity Query (e.g., querying path from operation 2 to operation 5):
-<query_parity>2,5</query_parity>
-- Mod3 Query (e.g., querying path from operation 3 to operation 8):
-<query_mod3>3,8</query_mod3>
-- Sign Query (e.g., querying path from operation 1 to operation 9):
-<query_sign>1,9</query_sign>
-
-When submitting the final report, specify the algorithm model (A, B, C, or D) and give the exact efficiency score for the target path, using this format:
-<answer>rule=A, score=15</answer>
+When submitting the final conclusion, specify the true validation rule (OE, OR, UE, or UD), and whether component pair (13,26) is equivalent (Yes or No):
+<answer>relation=OE, result=Yes</answer>
 """
 
-    # ==========================================
-    # 场景 5：法律
-    # ==========================================
     contextualized_rule_zh_5 = """\
-欢迎使用"司法溯源与合规审查系统"。
+欢迎进入企业合规与股权穿透分析系统。在此进行“控股架构等价”溯因审查。
 
-本系统维护着一个包含 {n} 个法律责任主体的交易关系网络（无环连通图），主体间的合同关联为：{edges}。
-以核心发起方主体 1 为根，定义责任层级深度 depth(1) = 0，沿合同链条向外辐射，每层递增 1。
-每个主体都有一个基础风险权值：{weights}。
+系统映射了一棵固定的集团企业控制权属树，实体编号 1 到 35，顶级母公司为节点 1。每个法人的下设子公司有固定的工商登记顺位。
 
-对于任意两个主体 u 和 v，它们之间存在唯一的追责路径 P(u,v)。
-系统秘密加载了一种"责任链条风险评估算法"，该算法用于计算追责路径 P(u,v) 的综合风险得分 S(u,v)。算法模型有四种（用字母 A、B、C、D 表示），但具体应用了哪一种对你保密。
+目前存在四种评估不同控股支柱（子树）合规等价性的穿透审查规则：
+1. OE（严格有序）：在每个对应母体处，子公司数量相同，设立顺位一一对应，且对应的底层架构递归等价。
+2. OR（允许整序反转）：在每个对应母体处，允许将一侧的子公司设立顺位完全反转后再逐位审查；若能使对应的底层架构递归等价，则视为合规等价。严禁进行顺位反转之外的结构腾挪。
+3. UE（无序计重）：在每个对应母体处，忽略设立顺位，将子公司群视为多重集合；只要存在匹配使底层架构递归等价，且同类资质实体的持股数量一致，则视为合规等价。
+4. UD（无序去重）：在每个对应母体处，忽略顺位与重复注册的壳公司，按业务资质去重；每一种核心资质实体均需在另一侧出现并递归等价，不要求冗余注册数量一致。
 
-四种算法模型的定义如下：
-- 算法 A（路径逐点求和）：S(u,v) = 路径 P(u,v) 上所有主体风险权值之和。
-- 算法 B（按深度交替符号）：S(u,v) = 路径 P(u,v) 上所有主体，按 (-1)^depth(node) × w(node) 求和（模拟责任的分担与对冲）。
-- 算法 C（端点加倍）：S(u,v) = 路径 P(u,v) 上所有主体权值之和 + w(u) + w(v)（即两端点主体的权值额外各加一次，体现首尾主体的双重责任）。
-- 算法 D（仅端点）：S(u,v) = w(u) + w(v)（仅两端点主体风险权值之和）。
+我已在法务合规库中秘密指定了其中一种审查规则作为本次尽调的准则。
 
-你的目标是：
-1. 通过审查推断出正在使用的是哪种算法模型（A、B、C 或 D）
-2. 在确定模型后，计算出目标追责路径 P({target_u},{target_v}) 的精确风险得分值
+你的任务是：
+1. 通过向系统质询指定的实体对，根据“是/否”反馈推断出真实的审查规则。
+2. 依据推断出的规则，判断另一指定实体对的控股架构是否等价。
 
-你可以反复向系统提交审查指令（每次仅限一个），每次需指定一对主体 (u,v) 及查询类型。系统将根据真实运行的算法如实反馈。
+你被授权质询的实体对仅限：(2,3)、(13,14)、(25,26)。质询时，我会根据真实规则判断这两个实体的架构是否等价，并回答“是”或“否”。
+注意：越权质询非指定实体将被风控拦截记为违规。累计两次及以上违规，尽调流程将被强制终止。
 
-可选的审查查询类型有三种：
-1. 奇偶查询：询问路径 P(u,v) 得分是偶数还是奇数。返回 "even" 或 "odd"。
-2. 模3查询：询问路径 P(u,v) 得分对 3 取模的结果。返回 0、1 或 2。
-3. 符号查询：询问路径 P(u,v) 得分是正数、零还是负数。返回 "positive"、"zero" 或 "negative"。
+每次质询请使用以下 XML 格式：
+- 质询实体对（例如质询实体 2 和 3）：
+<twin_check>2,3</twin_check>
 
-收集到足够数据后，请提交最终分析报告。若答案错误或格式不符，分析任务失败。
-
-## 查询与提交答案的格式（必须严格遵守）
-每次查询只能包含一个标签。请使用以下 XML 格式：
-- 奇偶查询（例如查询主体 2 到主体 5 的路径）：
-<query_parity>2,5</query_parity>
-- 模3查询（例如查询主体 3 到主体 8 的路径）：
-<query_mod3>3,8</query_mod3>
-- 符号查询（例如查询主体 1 到主体 9 的路径）：
-<query_sign>1,9</query_sign>
-
-提交最终报告时，必须说明算法模型（A、B、C 或 D）并给出目标路径的精确风险得分值，格式如下：
-<answer>rule=A, score=15</answer>
+出具最终意见书时，需指明真实的审查规则（OE、OR、UE 或 UD），以及实体对 (13,26) 是否等价（是或否）：
+<answer>relation=OE, result=是</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Judicial Traceability and Compliance Review System".
+Welcome to the Corporate Compliance and Shareholding Penetration Analysis System. You will conduct a "Holding Structure Equivalence" due diligence abduction.
 
-The system maintains a transaction relationship network containing {n} legal liability subject nodes (an acyclic connected graph), with contract associations: {edges}.
-Using the core initiating subject 1 as the root, we define the liability tier depth depth(1) = 0. The depth increases by 1 for each tier radiating outward along the contract chains.
-Each subject has a basic risk weight: {weights}.
+The system maps a fixed group corporate control ownership tree, with entities numbered 1 to 35, and the top-tier parent company at node 1. Each legal entity's subsidiaries follow a fixed corporate registration sequence.
 
-For any two subjects u and v, there exists a unique accountability path P(u,v) between them.
-The system has secretly loaded a "liability chain risk evaluation algorithm" that computes a comprehensive risk score S(u,v) for accountability path P(u,v). There are four algorithm models (denoted by letters A, B, C, D), but which one is actually applied is kept secret from you.
+There are four candidate penetration review rules for assessing the compliance equivalence of different holding pillars (subtrees):
+1. OE (Ordered Exact): At each corresponding parent, subsidiary counts are identical, registration sequences match one-to-one, and underlying structures are recursively equivalent.
+2. OR (Order with Reversal): At each corresponding parent, one side's subsidiary sequence can be fully reversed before review; if this makes underlying structures recursively equivalent, they are deemed compliance-equivalent. No restructuring beyond full sequence reversal is allowed.
+3. UE (Unordered with multiplicity Exact): At each corresponding parent, registration sequence is ignored, treating subsidiaries as a multiset; equivalence holds if a matching makes underlying structures recursively equivalent, and counts of identical licensed entities perfectly match.
+4. UD (Unordered Deduplicated): At each corresponding parent, sequence and redundant shell companies are ignored, deduplicating by business license type; each core licensed entity must appear on the counterpart side and recursively match, without requiring redundant registration count consistency.
 
-The four algorithm models are defined as follows:
-- Algorithm A (Path Sum): S(u,v) = sum of risk weights of all subjects on path P(u,v).
-- Algorithm B (Depth-Alternating Sign): S(u,v) = sum of (-1)^depth(node) × w(node) for all subjects on path P(u,v) (simulating the sharing and hedging of liabilities).
-- Algorithm C (Endpoint Doubling): S(u,v) = sum of weights of all subjects on path P(u,v) + w(u) + w(v) (i.e., the endpoint subject weights are each added an extra time, reflecting dual responsibility of the start and end subjects).
-- Algorithm D (Endpoints Only): S(u,v) = w(u) + w(v) (sum of endpoint subject weights only).
+I have secretly designated one review rule within the legal compliance database as the standard for this due diligence.
 
-Your goals are:
-1. Infer which algorithm model (A, B, C, or D) is being used through review queries.
-2. After determining the model, calculate the exact risk score for the target accountability path P({target_u},{target_v}).
+Your tasks:
+1. Deduce the true review rule by querying specific entity pairs and utilizing the Yes/No feedback.
+2. Based on the deduced rule, determine whether the holding structures of another specified entity pair are equivalent.
 
-You can repeatedly submit review commands to the system (one at a time), each specifying a pair of subjects (u,v) and a query type. The system will feedback truthfully based on the running algorithm.
+Authorized query entity pairs: (2,3), (13,14), (25,26). I will evaluate their structural equivalence using the active rule and respond "Yes" or "No".
+Note: Unauthorized queries outside the designated entities will be intercepted by risk control as a violation. Two or more violations will forcefully terminate the due diligence process.
 
-There are three types of review queries available:
-1. Parity Query: Ask whether the score of path P(u,v) is even or odd. Returns "even" or "odd".
-2. Mod3 Query: Ask for the score of path P(u,v) modulo 3. Returns 0, 1, or 2.
-3. Sign Query: Ask whether the score of path P(u,v) is positive, zero, or negative. Returns "positive", "zero", or "negative".
+Format for each query:
+- Query entity pair (e.g., entities 2 and 3):
+<twin_check>2,3</twin_check>
 
-When you have collected enough data, submit your final analysis report. If the answer is incorrect or the format is invalid, the analysis task fails.
-
-## Query and Answer Format (strictly required)
-Each query must contain only one tag. Use the following XML format:
-- Parity Query (e.g., querying path from subject 2 to subject 5):
-<query_parity>2,5</query_parity>
-- Mod3 Query (e.g., querying path from subject 3 to subject 8):
-<query_mod3>3,8</query_mod3>
-- Sign Query (e.g., querying path from subject 1 to subject 9):
-<query_sign>1,9</query_sign>
-
-When submitting the final report, specify the algorithm model (A, B, C, or D) and give the exact risk score for the target path, using this format:
-<answer>rule=A, score=15</answer>
+When issuing the final legal opinion, specify the true review rule (OE, OR, UE, or UD), and whether entity pair (13,26) is equivalent (Yes or No):
+<answer>relation=OE, result=Yes</answer>
 """
 
+    tags = ["answer", "twin_check"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "树"
+
+    TREE_STRUCTURE = {
+        1: [2,3,4],
+        2: [5,6],
+        3: [7,8],
+        4: [13,14,25,26],
+        5: [],
+        6: [9,10],
+        7: [11,12],
+        8: [],
+        9: [],
+        10: [],
+        11: [],
+        12: [],
+        13: [15,16,17],
+        14: [18,23,24],
+        15: [],
+        16: [19,20],
+        17: [],
+        18: [21,22],
+        19: [],
+        20: [],
+        21: [],
+        22: [],
+        23: [],
+        24: [],
+        25: [27,28,29],
+        26: [32,33],
+        27: [],
+        28: [],
+        29: [30,31],
+        30: [],
+        31: [],
+        32: [],
+        33: [34,35],
+        34: [],
+        35: []
+    }
+
+    DIFFICULTY_CONFIG = {
+        "zh": {
+            1: {
+                "relation": "OE",
+                "target_result": "否"
+            },
+            2: {
+                "relation": "UD",
+                "target_result": "是"
+            },
+            3: {
+                "relation": "UE",
+                "target_result": "否"
+            },
+            4: {
+                "relation": "OR",
+                "target_result": "否"
+            },
+            5: {
+                "relation": "OE",
+                "target_result": "否"
+            }
+        },
+        "en": {
+            1: {
+                "relation": "OE",
+                "target_result": "No"
+            },
+            2: {
+                "relation": "UD",
+                "target_result": "Yes"
+            },
+            3: {
+                "relation": "UE",
+                "target_result": "No"
+            },
+            4: {
+                "relation": "OR",
+                "target_result": "No"
+            },
+            5: {
+                "relation": "OE",
+                "target_result": "No"
+            }
+        }
+    }
+
+    ALLOWED_PAIRS = [(2,3), (13,14), (25,26)]
+    TARGET_PAIR = (13, 26)
+
+    def __init__(self, config):
+        self.invalid_query_count = 0
+        super().__init__(config)
+
     def _initialize_game(self):
-        difficulty = int(self.config.difficulty)
-        seed = hash((self.__class__.__name__, difficulty)) % (2**32)
-        rng = random.Random(seed)
-        
-        difficulty_settings = {
-            1: (6, 8),
-            2: (8, 10),
-            3: (10, 12),
-            4: (12, 15),
-            5: (15, 18),
-        }
-        lo, hi = difficulty_settings.get(difficulty, (8, 12))
-        
-        max_attempts = 100
-        for attempt in range(max_attempts):
-            n = rng.randint(lo, hi)
-            
-            edges = []
-            for i in range(2, n + 1):
-                parent = rng.randint(1, i - 1)
-                edges.append((parent, i))
-                
-            weights = {i: rng.randint(-10, 10) for i in range(1, n+1)}
-            target_u, target_v = rng.sample(range(1, n+1), 2)
-            
-            self.n = n
-            self.edges = edges
-            self.weights = weights
-            self.target_u = target_u
-            self.target_v = target_v
-            
-            self.adj = {i: [] for i in range(1, n+1)}
-            for u, v in edges:
-                self.adj[u].append(v)
-                self.adj[v].append(u)
-                
-            self.depths = {}
-            self._dfs_depth(1, -1, 0)
-            
-            if self._rules_are_distinguishable():
-                break
-        
-        rule = rng.choice(["A", "B", "C", "D"])
-        
-        self.rule = rule
-        self.target_score = self._calculate_score(target_u, target_v, self.rule)
-        
-        edges_str = ", ".join(f"({u}-{v})" for u, v in edges)
-        weights_str = ", ".join(f"node {i}: {weights[i]}" for i in range(1, n + 1))
+        lang = self.config.language
+        diff = int(self.config.difficulty)
 
-        self._game_info = {
-            "n": n,
-            "edges": edges_str,
-            "weights": weights_str,
-            "target_u": target_u,
-            "target_v": target_v
-        }
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
+            raise KeyError(f"Unsupported difficulty: {diff}")
 
-    def _rules_are_distinguishable(self):
-        signatures = {r: [] for r in ["A", "B", "C", "D"]}
-        for r in ["A", "B", "C", "D"]:
-            sig = []
-            for u in range(1, self.n + 1):
-                for v in range(u + 1, self.n + 1):
-                    score = self._calculate_score(u, v, r)
-                    sig.append("even" if score % 2 == 0 else "odd")
-                    sig.append(str(score % 3))
-                    if score > 0:
-                        sig.append("positive")
-                    elif score == 0:
-                        sig.append("zero")
-                    else:
-                        sig.append("negative")
-            signatures[r] = tuple(sig)
-        return len(set(signatures.values())) == 4
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.true_relation = cfg["relation"]
+        self.target_result = cfg["target_result"]
+        
+        actual_equiv = self._check_equivalence(
+            self.TARGET_PAIR[0], self.TARGET_PAIR[1], self.true_relation
+        )
+        if lang == "zh":
+            actual_result = "是" if actual_equiv else "否"
+        else:
+            actual_result = "Yes" if actual_equiv else "No"
+        assert actual_result == self.target_result, (
+            f"Mismatch: computed {actual_result} but config says {self.target_result} "
+            f"for relation={self.true_relation}, pair={self.TARGET_PAIR}"
+        )
+        
+        my_sig = tuple(
+            self._check_equivalence(a, b, self.true_relation)
+            for a, b in self.ALLOWED_PAIRS
+        )
+        relations = ["OE", "OR", "UE", "UD"]
+        for other_rel in relations:
+            if other_rel == self.true_relation:
+                continue
+            other_sig = tuple(
+                self._check_equivalence(a, b, other_rel)
+                for a, b in self.ALLOWED_PAIRS
+            )
+            if my_sig == other_sig:
+                import warnings
+                warnings.warn(
+                    f"Query signature for {self.true_relation} is identical to {other_rel}: "
+                    f"{my_sig}. Players cannot distinguish these two relations. "
+                    f"Consider redesigning the tree or query pairs."
+                )
+        
+        self._game_info = {}
 
-    def _dfs_depth(self, node, parent, d):
-        self.depths[node] = d
-        for neighbor in self.adj[node]:
-            if neighbor != parent:
-                self._dfs_depth(neighbor, node, d+1)
+    def _get_subtree_structure(self, node):
+        if node not in self.TREE_STRUCTURE:
+            return []
+        children = self.TREE_STRUCTURE[node]
+        return [self._get_subtree_structure(child) for child in children]
 
-    def _get_path(self, u, v):
-        path = []
-        def dfs(curr, target, parent, current_path):
-            current_path.append(curr)
-            if curr == target:
-                path.extend(current_path)
+    def _check_equivalence_OE(self, node1, node2):
+        struct1 = self._get_subtree_structure(node1)
+        struct2 = self._get_subtree_structure(node2)
+        return struct1 == struct2
+
+    def _check_equivalence_OR(self, node1, node2):
+        struct1 = self._get_subtree_structure(node1)
+        struct2 = self._get_subtree_structure(node2)
+        
+        def compare_with_reversal(s1, s2):
+            if len(s1) != len(s2):
+                return False
+            if all(compare_with_reversal(c1, c2) for c1, c2 in zip(s1, s2)):
                 return True
-            for neighbor in self.adj[curr]:
-                if neighbor != parent:
-                    if dfs(neighbor, target, curr, current_path):
-                        return True
-            current_path.pop()
+            if all(compare_with_reversal(c1, c2) for c1, c2 in zip(s1, s2[::-1])):
+                return True
             return False
-            
-        dfs(u, v, -1, [])
-        return path
+        
+        return compare_with_reversal(struct1, struct2)
 
-    def _calculate_score(self, u, v, rule):
-        path = self._get_path(u, v)
-        if rule == "A":
-            return sum(self.weights[node] for node in path)
-        elif rule == "B":
-            return sum(((-1) ** self.depths[node]) * self.weights[node] for node in path)
-        elif rule == "C":
-            return sum(self.weights[node] for node in path) + self.weights[u] + self.weights[v]
-        elif rule == "D":
-            return self.weights[u] + self.weights[v]
-        return 0
+    def _check_equivalence_UE(self, node1, node2):
+        struct1 = self._get_subtree_structure(node1)
+        struct2 = self._get_subtree_structure(node2)
+        
+        def to_comparable(s):
+            return tuple(sorted([to_comparable(child) for child in s]))
+        
+        def compare_multiset(s1, s2):
+            if len(s1) != len(s2):
+                return False
+            t1 = sorted([to_comparable(c) for c in s1])
+            t2 = sorted([to_comparable(c) for c in s2])
+            return t1 == t2
+        
+        return compare_multiset(struct1, struct2)
+
+    def _check_equivalence_UD(self, node1, node2):
+        struct1 = self._get_subtree_structure(node1)
+        struct2 = self._get_subtree_structure(node2)
+        
+        def to_comparable(s):
+            return tuple(sorted([to_comparable(child) for child in s]))
+        
+        def compare_set(s1, s2):
+            set1 = set([to_comparable(c) for c in s1])
+            set2 = set([to_comparable(c) for c in s2])
+            return set1 == set2
+        
+        return compare_set(struct1, struct2)
+
+    def _check_equivalence(self, node1, node2, relation):
+        if relation == "OE":
+            return self._check_equivalence_OE(node1, node2)
+        elif relation == "OR":
+            return self._check_equivalence_OR(node1, node2)
+        elif relation == "UE":
+            return self._check_equivalence_UE(node1, node2)
+        elif relation == "UD":
+            return self._check_equivalence_UD(node1, node2)
+        else:
+            raise ValueError(f"Unknown relation: {relation}")
 
     def evaluate(self, parsed_info):
-        if "answer" not in parsed_info:
-            return False
-        answer = parsed_info["answer"]
-        match = re.search(r"rule\s*=\s*([A-D])\s*,\s*score\s*=\s*(-?\d+)", answer, re.IGNORECASE)
-        if not match:
+        raw_ans = parsed_info["answer"]
+        
+        kv_pairs = [x.strip() for x in raw_ans.split(",")]
+        ans_dict = {}
+        for kv in kv_pairs:
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                ans_dict[k.strip()] = v.strip()
+        
+        if "relation" not in ans_dict or "result" not in ans_dict:
             return False
         
-        ans_rule = match.group(1).upper()
-        ans_score = int(match.group(2))
+        if ans_dict["relation"] != self.true_relation:
+            return False
         
-        if ans_rule == self.rule and ans_score == self.target_score:
-            return True
-        return False
-
-    def _cf_core_produce(self, parsed_info):
-        def _parse_nodes(tag):
-            nodes = parsed_info[tag].split(",")
-            if len(nodes) != 2:
-                raise ValueError(f"Expected exactly 2 node IDs, got: {parsed_info[tag]}")
-            u, v = int(nodes[0].strip()), int(nodes[1].strip())
-            if u < 1 or u > self.n or v < 1 or v > self.n:
-                raise ValueError(f"Node IDs must be between 1 and {self.n}, got: {u}, {v}")
-            return u, v
-
-        if "query_parity" in parsed_info:
-            u, v = _parse_nodes("query_parity")
-            score = self._calculate_score(u, v, self.rule)
-            return "even" if score % 2 == 0 else "odd"
-            
-        elif "query_mod3" in parsed_info:
-            u, v = _parse_nodes("query_mod3")
-            score = self._calculate_score(u, v, self.rule)
-            return str(score % 3)
-            
-        elif "query_sign" in parsed_info:
-            u, v = _parse_nodes("query_sign")
-            score = self._calculate_score(u, v, self.rule)
-            if score > 0:
-                return "positive"
-            elif score == 0:
-                return "zero"
-            else:
-                return "negative"
-        return "invalid query"
+        return ans_dict["result"] == self.target_result
 
     def get_all_possible_queries(self):
-        queries = []
-        for u in range(1, self.n + 1):
-            for v in range(u + 1, self.n + 1):
-                for tag in ["query_parity", "query_mod3", "query_sign"]:
-                    query_str = f"<{tag}>{u},{v}</{tag}>"
-                    score = self._calculate_score(u, v, self.rule)
-                    if tag == "query_parity":
-                        answer = "even" if score % 2 == 0 else "odd"
-                    elif tag == "query_mod3":
-                        answer = str(score % 3)
-                    else:  # query_sign
-                        if score > 0:
-                            answer = "positive"
-                        elif score == 0:
-                            answer = "zero"
+        results = []
+        for node1, node2 in self.ALLOWED_PAIRS:
+            query = f"<twin_check>{node1},{node2}</twin_check>"
+            is_equivalent = self._check_equivalence(node1, node2, self.true_relation)
+            
+            if self.config.language == "zh":
+                answer = "是" if is_equivalent else "否"
+            else:
+                answer = "Yes" if is_equivalent else "No"
+            
+            results.append({
+                "query": query,
+                "answer": answer
+            })
+        
+        return results
+
+    def _cf_core_produce(self, parsed_info):
+        if "twin_check" in parsed_info:
+            raw_query = parsed_info["twin_check"]
+            
+            try:
+                parts = [x.strip() for x in raw_query.split(",")]
+                if len(parts) != 2:
+                    raise ValueError("Invalid format")
+                
+                node1 = int(parts[0])
+                node2 = int(parts[1])
+                
+                if (node1, node2) not in self.ALLOWED_PAIRS and (node2, node1) not in self.ALLOWED_PAIRS:
+                    self.invalid_query_count += 1
+                    if self.invalid_query_count >= 2:
+                        if self.config.language == "zh":
+                            self.state.set_state("failed", "累计无效询问次数达到2次")
+                            return "游戏失败：累计无效询问次数达到2次。"
                         else:
-                            answer = "negative"
-                    queries.append({
-                        "query": query_str,
-                        "answer": answer,
-                    })
-        return queries
+                            self.state.set_state("failed", "2 invalid queries reached")
+                            return "Game failed: 2 invalid queries reached."
+                    
+                    return "无效询问（请只询问证据板三对）" if self.config.language == "zh" else "Invalid query (please only query the three evidence pairs)"
+                
+                is_equivalent = self._check_equivalence(node1, node2, self.true_relation)
+                
+                if self.config.language == "zh":
+                    return "是" if is_equivalent else "否"
+                else:
+                    return "Yes" if is_equivalent else "No"
+                    
+            except Exception as e:
+                self.invalid_query_count += 1
+                if self.invalid_query_count >= 2:
+                    if self.config.language == "zh":
+                        self.state.set_state("failed", "累计无效询问次数达到2次")
+                        return "游戏失败：累计无效询问次数达到2次。"
+                    else:
+                        self.state.set_state("failed", "2 invalid queries reached")
+                        return "Game failed: 2 invalid queries reached."
+                
+                return "错误：格式无效或节点错误。" if self.config.language == "zh" else "Error: Invalid format or nodes."
+        else:
+            raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct):
-        if correct in ["even", "odd"]:
-            return "odd" if correct == "even" else "even"
-        elif correct in ["0", "1", "2"]:
-            opts = ["0", "1", "2"]
-            opts.remove(correct)
-            return opts[0]
-        elif correct in ["positive", "zero", "negative"]:
-            opts = ["positive", "zero", "negative"]
-            opts.remove(correct)
-            return opts[0]
-        return "error"
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
+            
+        lower_correct = correct.lower()
+        if lower_correct == "yes":
+            return "No" if correct[0].isupper() else "no"
+        if lower_correct == "no":
+            return "Yes" if correct[0].isupper() else "yes"
+            
+        return correct + "_WRONG"

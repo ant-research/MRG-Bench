@@ -1,891 +1,893 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   最小覆盖：能覆盖所有元素所需的最少子集数量
-# ============================================================
-
 from .base import Game
 import random
-import itertools
+import re
 
-
-class MinimalSetCoverGame(Game):
+class PrefixAggregationGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"最小覆盖推理"游戏，规则如下：
+我们现在来玩一个"前缀聚合模式识别"的推理游戏，规则如下：
 
-游戏设定了一个未知的全集 U 和若干子集 S1, S2, ..., S{m}。全集 U 包含 {n} 个元素，每个子集 Si 是 U 的子集，且所有子集的并集覆盖全集 U。
+游戏设定了一个长度为 {n} 的有序整数序列 a1, a2, ..., a{n}，每项取值范围为 0 到 9。序列的第一项 a1 固定为 0。
 
-你的目标是找到最少数量的子集，使得它们的并集恰好等于全集 U。我们称这个最小数量为 k*。你需要确定 k* 的值，并给出一个由 k* 个子集组成的索引集合。
+我已经秘密选择了一种"聚合模式"，该模式只可能是以下三种之一：
+1. 模式 S（前缀和）：对于位置 k，读数 R(k) 等于前 k 项的和。
+2. 模式 M（前缀最大）：对于位置 k，读数 R(k) 等于前 k 项的最大值。
+3. 模式 C（前缀阈值计数）：对于位置 k，读数 R(k) 等于前 k 项中大于等于 6 的元素个数。
 
-你可以使用以下四种查询（每次只能提交一种查询）：
+你的目标是通过一系列查询来推断出真实的聚合模式类型（S、M 或 C）。
 
-1. 计数查询 (COUNT)：查询指定若干子集的并集包含多少个元素。
-   格式示例：<query_count>1,3,5</query_count>
-   返回：这些子集并集的元素个数。
+游戏中维护一个当前位置 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
 
-2. 边际查询 (MARG)：查询在已有若干子集的并集基础上，再加入一个新子集会增加多少个新元素。
-   格式示例：<query_marg>1,2+3</query_marg>（表示在子集1、2的并集基础上加入子集3）
-   返回：新增的元素个数。
+1. 前进一步：将位置 k 增加 1（必须按顺序前进，不能跳跃，最多前进到 k = {n}）
+2. 查询当前读数：获取当前位置 k 的聚合读数 R(k)
+3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对于上一位置的增量
+4. 查询当前位置：获取当前的位置 k
 
-3. 比较查询 (COMP)：比较两组子集的并集大小。
-   格式示例：<query_comp>1,2 vs 3,4</query_comp>
-   返回：A>B（左边大）、A<B（左边小）或 A=B（相等）。
+当你收集足够信息后，请提交最终答案，宣告真实的聚合模式。若答案错误或格式不符，游戏失败。
 
-4. 进度查询 (PROG)：查询已使用的查询次数和剩余次数。
-   格式示例：<query_prog></query_prog>
-   返回：已用次数和剩余次数。
+每次操作只能包含一个标签。请使用以下 XML format：
 
-你有总共 {quota} 次查询配额。超出配额将导致游戏失败。
+- 前进一步（内容为空）：
+<step></step>
 
-当你确定答案后，请提交最终答案。格式如下：
+- 查询当前读数（内容为空）：
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- 查询增量（内容为空）：
+<query_delta></query_delta>
 
-其中 k 是你认为的最小覆盖数量，SET 是具体的子集索引集合（用逗号分隔）。
+- 查询当前位置（内容为空）：
+<query_position></query_position>
 
-提交后系统会进行校验：
-- 首先检查你提交的子集是否覆盖全集
-- 如果覆盖全集，再检查数量是否最小
+提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
 
-请谨慎提交答案，答案错误将直接导致游戏失败。祝你好运！
+<answer>S</answer>
+
+或
+
+<answer>M</answer>
+
+或
+
+<answer>C</answer>
+
+- 初始时 k = 0，R(0) = 0
+- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
+- 三种模式的读数都是非递减的
+- 模式 C 的增量只能是 0 或 1
+- 模式 M 的读数不会超过 9
+- 模式 S 的增量等于当前位置的序列值
 """
 
     game_rule_en = """\
-Let's play a "Minimal Set Cover Inference" game. Here are the rules:
+Let's play a "Prefix Aggregation Pattern Recognition" deduction game. Here are the rules:
 
-The game involves an unknown universal set U and several subsets S1, S2, ..., S{m}. The universal set U contains {n} elements, each subset Si is a subset of U, and the union of all subsets covers U.
+There is an ordered integer sequence of length {n}: a1, a2, ..., a{n}, where each element ranges from 0 to 9. The first element a1 is fixed at 0.
 
-Your goal is to find the minimum number of subsets whose union equals the universal set U. We call this minimum number k*. You need to determine the value of k* and provide an index set consisting of k* subsets.
+I have secretly selected an "aggregation pattern", which can only be one of the following three:
+1. Pattern S (Prefix Sum): For position k, the reading R(k) equals the sum of the first k elements.
+2. Pattern M (Prefix Maximum): For position k, the reading R(k) equals the maximum of the first k elements.
+3. Pattern C (Prefix Threshold Count): For position k, the reading R(k) equals the count of elements among the first k that are greater than or equal to 6.
 
-You can use the following four types of queries (only one query per submission):
+Your goal is to infer the true aggregation pattern type (S, M, or C) through a series of queries.
 
-1. Count Query (COUNT): Query how many elements are in the union of specified subsets.
-   Format example: <query_count>1,3,5</query_count>
-   Returns: The number of elements in the union of these subsets.
+The game maintains a current position k (initially 0). You can perform the following operations (one per turn):
 
-2. Marginal Query (MARG): Query how many new elements would be added when adding a new subset to the union of existing subsets.
-   Format example: <query_marg>1,2+3</query_marg> (means adding subset 3 to the union of subsets 1 and 2)
-   Returns: The number of newly added elements.
+1. Step forward: Increment position k by 1 (must proceed sequentially, cannot skip, maximum k = {n})
+2. Query current reading: Get the aggregation reading R(k) at current position k
+3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous position
+4. Query current position: Get the current position k
 
-3. Comparison Query (COMP): Compare the sizes of unions of two groups of subsets.
-   Format example: <query_comp>1,2 vs 3,4</query_comp>
-   Returns: A>B (left is larger), A<B (left is smaller), or A=B (equal).
+When you have enough information, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the game fails.
 
-4. Progress Query (PROG): Query the number of queries used and remaining.
-   Format example: <query_prog></query_prog>
-   Returns: Used and remaining query counts.
+Each operation must contain only one tag. Use the following XML format:
 
-You have a total of {quota} query quota. Exceeding the quota will result in game failure.
+- Step forward (empty content):
+<step></step>
 
-When you determine the answer, submit your final answer in this format:
+- Query current reading (empty content):
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- Query delta (empty content):
+<query_delta></query_delta>
 
-Where k is your answer for the minimum cover size, and SET is the specific subset index set (comma-separated).
+- Query current position (empty content):
+<query_position></query_position>
 
-After submission, the system will verify:
-- First check if your submitted subsets cover the universal set
-- If they cover, then check if the number is minimal
+When submitting the final answer, specify the pattern type (S, M, or C) using this format:
 
-Please submit your answer carefully, as an incorrect answer will directly lead to game failure. Good luck!
+<answer>S</answer>
+
+or
+
+<answer>M</answer>
+
+or
+
+<answer>C</answer>
+
+- Initially k = 0, R(0) = 0
+- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
+- The readings of all three patterns are non-decreasing
+- Pattern C has deltas of only 0 or 1
+- Pattern M has readings that do not exceed 9
+- Pattern S has deltas equal to the current sequence value
 """
 
     contextualized_rule_zh_1 = """\
-我们来玩一个"交通监控盲区最小化部署"游戏，规则如下：
+欢迎进入智能交通路网拥堵分析系统。我们现在来进行一次"路网聚合模式识别"的推理评估，规则如下：
 
-作为城市交通规划师，你需要监控该市的一个核心交通网（全集 U）。该交通网包含 {n} 个关键路口，现有 {m} 种不同型号的监控摄像头部署方案（方案 S1, S2, ..., S{m}）。每种方案能覆盖特定的几个路口，且所有方案综合起来能覆盖全部 {n} 个路口。
+系统记录了一条路线上长度为 {n} 的路段序列的拥堵指数 a1, a2, ..., a{n}，每项拥堵指数范围为 0 到 9。序列的第一个路段 a1 固定为 0（代表起点畅通）。
 
-你的目标是找到最少数量的部署方案组合，使得它们的监控范围恰好无死角覆盖所有的核心路口。我们称这个最小数量为 k*。你需要确定 k* 的值，并给出一个由 k* 个方案组成的索引集合。
+系统后台秘密选择了一种"路网聚合模式"用于生成读数，该模式只可能是以下三种之一：
+1. 模式 S（前缀和/累计拥堵）：对于检查点 k，读数 R(k) 等于前 k 个路段的拥堵指数总和。
+2. 模式 M（前缀最大/历史最高拥堵）：对于检查点 k，读数 R(k) 等于前 k 个路段中出现的最高拥堵指数。
+3. 模式 C（前缀阈值计数/严重拥堵路段数）：对于检查点 k，读数 R(k) 等于前 k 个路段中指数大于等于 6 的路段个数。
 
-你可以使用以下四种系统查询（每次只能提交一种查询）：
+你的目标是通过一系列系统查询，推断出后台真实使用的聚合模式类型（S、M 或 C）。
 
-1. 计数查询 (COUNT)：查询指定若干方案的联合覆盖范围包含多少个路口。
-   格式示例：<query_count>1,3,5</query_count>
-   返回：这些方案联合覆盖的路口总数。
+系统中维护着当前检查点位置 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
 
-2. 边际查询 (MARG)：查询在已有若干方案的基础上，再增加一个新方案会多覆盖多少个未知路口。
-   格式示例：<query_marg>1,2+3</query_marg>（表示在方案1、2的基础上加入方案3）
-   返回：新增覆盖的路口个数。
+1. 前进一步：将检查点 k 增加 1（必须按顺序驶入下一路段，不能跳跃，最多前进到 k = {n}）
+2. 查询当前读数：获取当前检查点 k 的路网聚合读数 R(k)
+3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一检查点读数的增量
+4. 查询当前位置：获取当前所在的检查点位置 k
 
-3. 比较查询 (COMP)：比较两套不同方案组合的覆盖路口数量。
-   格式示例：<query_comp>1,2 vs 3,4</query_comp>
-   返回：A>B（左边覆盖多）、A<B（左边覆盖少）或 A=B（相等）。
+当收集到足够的情报后，请提交最终答案，宣告真实的聚合模式。若答案错误或格式不符，排查任务失败。
 
-4. 进度查询 (PROG)：查询已使用的系统评估次数和剩余次数。
-   格式示例：<query_prog></query_prog>
-   返回：已用次数和剩余次数。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-你有总共 {quota} 次评估配额。超出配额将导致规划任务失败。
+- 前进一步（内容为空）：
+<step></step>
 
-当你确定最优部署方案后，请提交最终答案。格式如下：
+- 查询当前读数（内容为空）：
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- 查询增量（内容为空）：
+<query_delta></query_delta>
 
-其中 k 是你认为的最少方案数量，SET 是具体的方案索引集合（用逗号分隔）。
+- 查询当前位置（内容为空）：
+<query_position></query_position>
 
-提交后系统会进行校验：
-- 首先检查你提交的方案组合是否无死角覆盖了所有路口
-- 如果完全覆盖，再检查使用的方案数量是否做到了最小化
+提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
 
-请谨慎提交答案，答案错误将直接导致游戏失败。祝你好运！
+<answer>S</answer>
+
+或
+
+<answer>M</answer>
+
+或
+
+<answer>C</answer>
+
+- 初始时 k = 0，R(0) = 0
+- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
+- 三种模式的读数都是非递减的
+- 模式 C 的增量只能是 0 或 1
+- 模式 M 的读数不会超过 9
+- 模式 S 的增量等于当前位置的序列值
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's play a "Traffic Surveillance Minimal Deployment" game. Here are the rules:
+Welcome to the Intelligent Traffic Network Congestion Analysis System. Let's perform a "Network Aggregation Pattern Recognition" evaluation. Here are the rules:
 
-As a city traffic planner, you need to monitor a core traffic network (the universal set U). This network contains {n} key intersections, and there are {m} different surveillance camera deployment plans available (plans S1, S2, ..., S{m}). Each plan covers specific intersections, and collectively, all plans cover all {n} intersections.
+The system records a sequence of congestion indices for a route of length {n}: a1, a2, ..., a{n}, where each index ranges from 0 to 9. The first segment a1 is fixed at 0 (indicating a clear starting point).
 
-Your goal is to find the minimum number of deployment plans whose combined coverage monitors the entire network without blind spots. We call this minimum number k*. You need to determine the value of k* and provide an index set consisting of k* plans.
+The backend has secretly selected a "network aggregation pattern" to generate readings, which can only be one of the following three:
+1. Pattern S (Prefix Sum / Cumulative Congestion): For checkpoint k, the reading R(k) equals the total sum of congestion indices of the first k segments.
+2. Pattern M (Prefix Maximum / Historical Peak Congestion): For checkpoint k, the reading R(k) equals the maximum congestion index among the first k segments.
+3. Pattern C (Prefix Threshold Count / Severe Congestion Count): For checkpoint k, the reading R(k) equals the count of segments among the first k that have a congestion index greater than or equal to 6.
 
-You can use the following four types of system queries (only one query per submission):
+Your goal is to infer the true aggregation pattern type (S, M, or C) used by the backend through a series of system queries.
 
-1. Count Query (COUNT): Query how many intersections are covered by the combination of specified plans.
-   Format example: <query_count>1,3,5</query_count>
-   Returns: The total number of intersections covered by these plans.
+The system maintains a current checkpoint position k (initially 0). You can perform the following operations (one per turn):
 
-2. Marginal Query (MARG): Query how many new intersections would be covered by adding a new plan to the existing combination of plans.
-   Format example: <query_marg>1,2+3</query_marg> (means adding plan 3 to plans 1 and 2)
-   Returns: The number of newly covered intersections.
+1. Step forward: Increment checkpoint k by 1 (must proceed sequentially to the next segment, cannot skip, maximum k = {n})
+2. Query current reading: Get the network aggregation reading R(k) at the current checkpoint k
+3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous checkpoint
+4. Query current position: Get the current checkpoint position k
 
-3. Comparison Query (COMP): Compare the coverage sizes of two groups of plans.
-   Format example: <query_comp>1,2 vs 3,4</query_comp>
-   Returns: A>B (left covers more), A<B (left covers less), or A=B (equal coverage).
+When you have gathered enough intelligence, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the evaluation task fails.
 
-4. Progress Query (PROG): Query the number of evaluation queries used and remaining.
-   Format example: <query_prog></query_prog>
-   Returns: Used and remaining query counts.
+Each operation must contain only one tag. Use the following XML format:
 
-You have a total of {quota} evaluation quota. Exceeding the quota will result in planning failure.
+- Step forward (empty content):
+<step></step>
 
-When you determine the optimal deployment, submit your final answer in this format:
+- Query current reading (empty content):
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- Query delta (empty content):
+<query_delta></query_delta>
 
-Where k is your answer for the minimum number of plans, and SET is the specific plan index set (comma-separated).
+- Query current position (empty content):
+<query_position></query_position>
 
-After submission, the system will verify:
-- First check if your submitted combination covers all intersections without blind spots
-- If fully covered, then check if the number of plans is minimal
+When submitting the final answer, specify the pattern type (S, M, or C) using this format:
 
-Please submit your answer carefully, as an incorrect answer will directly lead to game failure. Good luck!
+<answer>S</answer>
+
+or
+
+<answer>M</answer>
+
+or
+
+<answer>C</answer>
+
+- Initially k = 0, R(0) = 0
+- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
+- The readings of all three patterns are non-decreasing
+- Pattern C has deltas of only 0 or 1
+- Pattern M has readings that do not exceed 9
+- Pattern S has deltas equal to the current sequence value
 """
 
     contextualized_rule_zh_2 = """\
-我们来玩一个"医疗检测套餐最优化"游戏，规则如下：
+欢迎使用临床病程体征监测系统。我们现在来进行一次"体征聚合模式识别"的诊断推理，规则如下：
 
-作为首席诊断医师，你面对一种罕见综合征，其全部确诊指征构成了全集 U。该疾病共有 {n} 个关键临床症状，医院提供了 {m} 种生化检测套餐（套餐 S1, S2, ..., S{m}）。每种检测套餐能确诊特定的几个症状，且所有套餐综合起来能够确诊全部 {n} 个症状。
+系统记录了某患者连续 {n} 天的特定症状评分序列 a1, a2, ..., a{n}，每日评分范围为 0 到 9。第 1 天的评分 a1 固定为 0（代表入院时基础状态平稳）。
 
-你的目标是为患者开出最少数量的检测套餐，使得它们能够覆盖并确诊所有的关键症状。我们称这个最少套餐数量为 k*。你需要确定 k* 的值，并给出一个由 k* 个套餐组成的索引集合。
+系统已自动选择了一种"体征聚合模式"以生成评估读数，该模式只可能是以下三种之一：
+1. 模式 S（前缀和/累计症状负荷）：对于随访天数 k，读数 R(k) 等于前 k 天的症状评分总和。
+2. 模式 M（前缀最大/历史最高危急值）：对于随访天数 k，读数 R(k) 等于前 k 天中出现的最高症状评分。
+3. 模式 C（前缀阈值计数/高危状态天数）：对于随访天数 k，读数 R(k) 等于前 k 天中评分大于等于 6 的天数。
 
-你可以使用以下四种系统查询（每次只能提交一种查询）：
+你的目标是通过一系列病历查询，推断出系统当前应用的真实聚合模式类型（S、M 或 C）。
 
-1. 计数查询 (COUNT)：查询指定若干套餐的联合诊断能覆盖多少个症状。
-   格式示例：<query_count>1,3,5</query_count>
-   返回：这些套餐联合覆盖的症状总数。
+系统当前处于随访天数 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
 
-2. 边际查询 (MARG)：查询在已有若干套餐的基础上，再增加一个新检测套餐会多覆盖多少个未知症状。
-   格式示例：<query_marg>1,2+3</query_marg>（表示在套餐1、2的基础上加入套餐3）
-   返回：新增覆盖的症状个数。
+1. 前进一步：将随访天数 k 增加 1（必须按日期顺序查看，不能跳跃，最多推进到 k = {n}）
+2. 查询当前读数：获取当前天数 k 的体征聚合读数 R(k)
+3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一天的读数变化量
+4. 查询当前位置：获取当前的随访天数 k
 
-3. 比较查询 (COMP)：比较两组检测套餐的症状覆盖数量。
-   格式示例：<query_comp>1,2 vs 3,4</query_comp>
-   返回：A>B（左边覆盖多）、A<B（左边覆盖少）或 A=B（相等）。
+在收集到充分的临床证据后，请提交最终答案，宣告真实的聚合模式。若判断错误或格式不符，诊断任务失败。
 
-4. 进度查询 (PROG)：查询已使用的诊断评估次数和剩余次数。
-   格式示例：<query_prog></query_prog>
-   返回：已用次数和剩余次数。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-你有总共 {quota} 次评估配额。超出配额将导致延误诊断，游戏失败。
+- 前进一步（内容为空）：
+<step></step>
 
-当你确定最优诊断方案后，请提交最终答案。格式如下：
+- 查询当前读数（内容为空）：
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- 查询增量（内容为空）：
+<query_delta></query_delta>
 
-其中 k 是你认为的最少套餐数量，SET 是具体的检测套餐索引集合（用逗号分隔）。
+- 查询当前位置（内容为空）：
+<query_position></query_position>
 
-提交后系统会进行校验：
-- 首先检查你提交的检测套餐是否涵盖了全部关键症状
-- 如果完全涵盖，再检查开具的套餐数量是否做到了最小化
+提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
 
-请谨慎提交答案，答案错误将直接导致游戏失败。祝你好运！
+<answer>S</answer>
+
+或
+
+<answer>M</answer>
+
+或
+
+<answer>C</answer>
+
+- 初始时 k = 0，R(0) = 0
+- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
+- 三种模式的读数都是非递减的
+- 模式 C 的增量只能是 0 或 1
+- 模式 M 的读数不会超过 9
+- 模式 S 的增量等于当前位置的序列值
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's play an "Optimal Medical Testing Panel" game. Here are the rules:
+Welcome to the Clinical Vital Signs Monitoring System. Let's perform a "Vital Sign Aggregation Pattern Recognition" diagnostic reasoning task. Here are the rules:
 
-As the chief diagnostic physician, you are dealing with a rare syndrome whose definitive diagnostic indicators make up the universal set U. The disease has {n} key clinical symptoms, and the hospital offers {m} biochemical testing panels (panels S1, S2, ..., S{m}). Each testing panel can confirm specific symptoms, and altogether they can cover all {n} symptoms.
+The system has recorded a patient's daily specific symptom scores over {n} days: a1, a2, ..., a{n}, where each daily score ranges from 0 to 9. The score for day 1, a1, is fixed at 0 (indicating a stable baseline upon admission).
 
-Your goal is to prescribe the minimum number of testing panels that collectively cover and confirm all key symptoms. We call this minimum number k*. You need to determine the value of k* and provide an index set consisting of k* panels.
+The system has automatically selected a "vital sign aggregation pattern" to generate assessment readings, which can only be one of the following three:
+1. Pattern S (Prefix Sum / Cumulative Symptom Burden): For follow-up day k, the reading R(k) equals the sum of the symptom scores over the first k days.
+2. Pattern M (Prefix Maximum / Historical Peak Critical Value): For follow-up day k, the reading R(k) equals the highest symptom score observed during the first k days.
+3. Pattern C (Prefix Threshold Count / High-Risk Days Count): For follow-up day k, the reading R(k) equals the number of days among the first k where the score was greater than or equal to 6.
 
-You can use the following four types of system queries (only one query per submission):
+Your goal is to infer the true aggregation pattern type (S, M, or C) currently applied by the system through a series of medical record queries.
 
-1. Count Query (COUNT): Query how many symptoms are covered by the combined diagnosis of specified testing panels.
-   Format example: <query_count>1,3,5</query_count>
-   Returns: The total number of symptoms covered by these panels.
+The system maintains a current follow-up day k (initially 0). You can perform the following operations (one per turn):
 
-2. Marginal Query (MARG): Query how many new symptoms would be covered by adding a new testing panel to the existing combination of panels.
-   Format example: <query_marg>1,2+3</query_marg> (means adding panel 3 to panels 1 and 2)
-   Returns: The number of newly covered symptoms.
+1. Step forward: Increment follow-up day k by 1 (must proceed sequentially by date, cannot skip, maximum k = {n})
+2. Query current reading: Get the vital sign aggregation reading R(k) at the current day k
+3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous day
+4. Query current position: Get the current follow-up day k
 
-3. Comparison Query (COMP): Compare the symptom coverage sizes of two groups of testing panels.
-   Format example: <query_comp>1,2 vs 3,4</query_comp>
-   Returns: A>B (left covers more), A<B (left covers less), or A=B (equal coverage).
+When you have gathered sufficient clinical evidence, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the diagnostic task fails.
 
-4. Progress Query (PROG): Query the number of diagnostic evaluation queries used and remaining.
-   Format example: <query_prog></query_prog>
-   Returns: Used and remaining query counts.
+Each operation must contain only one tag. Use the following XML format:
 
-You have a total of {quota} evaluation quota. Exceeding the quota will delay diagnosis and result in failure.
+- Step forward (empty content):
+<step></step>
 
-When you determine the optimal diagnostic plan, submit your final answer in this format:
+- Query current reading (empty content):
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- Query delta (empty content):
+<query_delta></query_delta>
 
-Where k is your answer for the minimum number of panels, and SET is the specific testing panel index set (comma-separated).
+- Query current position (empty content):
+<query_position></query_position>
 
-After submission, the system will verify:
-- First check if your submitted panels cover all key symptoms
-- If fully covered, then check if the number of prescribed panels is minimal
+When submitting the final answer, specify the pattern type (S, M, or C) using this format:
 
-Please submit your answer carefully, as an incorrect answer will directly lead to game failure. Good luck!
+<answer>S</answer>
+
+or
+
+<answer>M</answer>
+
+or
+
+<answer>C</answer>
+
+- Initially k = 0, R(0) = 0
+- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
+- The readings of all three patterns are non-decreasing
+- Pattern C has deltas of only 0 or 1
+- Pattern M has readings that do not exceed 9
+- Pattern S has deltas equal to the current sequence value
 """
 
     contextualized_rule_zh_3 = """\
-我们来玩一个"精准复习资料筛选"游戏，规则如下：
+欢迎进入自适应学情评估追踪系统。我们现在来进行一次"学情聚合模式识别"的教学推理，规则如下：
 
-作为一名冲刺备考的学生，你需要复习某门课程的核心大纲（全集 U）。该大纲包含 {n} 个必考知识点，目前市面上有 {m} 种教辅题库（题库 S1, S2, ..., S{m}）。每种教辅题库涵盖了特定的几个知识点，且所有题库综合起来能覆盖全部 {n} 个知识点。
+系统收录了某学生在 {n} 个连续学习模块中的错误知识点数量序列 a1, a2, ..., a{n}，每个模块的错误数量范围为 0 到 9。第 1 个模块的错误数 a1 固定为 0（代表基础模块已完全掌握）。
 
-你的目标是购买最少数量的教辅题库，使得它们能够覆盖所有的必考知识点，做到复习无死角。我们称这个最少题库数量为 k*。你需要确定 k* 的值，并给出一个由 k* 个题库组成的索引集合。
+评测引擎秘密配置了一种"学情聚合模式"来生成评价读数，该模式只可能是以下三种之一：
+1. 模式 S（前缀和/累计薄弱点）：对于评估进度 k，读数 R(k) 等于前 k 个模块的错误知识点总和。
+2. 模式 M（前缀最大/单模块最多错误）：对于评估进度 k，读数 R(k) 等于前 k 个模块中出现的最高错误数量。
+3. 模式 C（前缀阈值计数/未达标模块数）：对于评估进度 k，读数 R(k) 等于前 k 个模块中错误数大于等于 6（即未达标）的模块个数。
 
-你可以使用以下四种系统查询（每次只能提交一种查询）：
+你的目标是通过一系列学情查询，推断出评测引擎真实采用的聚合模式类型（S、M 或 C）。
 
-1. 计数查询 (COUNT)：查询指定若干题库的联合内容能覆盖多少个大纲知识点。
-   格式示例：<query_count>1,3,5</query_count>
-   返回：这些题库联合覆盖的知识点总数。
+系统当前处于评估进度 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
 
-2. 边际查询 (MARG)：查询在已有若干题库的基础上，再购买一本新题库会多覆盖多少个未复习的知识点。
-   格式示例：<query_marg>1,2+3</query_marg>（表示在题库1、2的基础上加入题库3）
-   返回：新增覆盖的知识点个数。
+1. 前进一步：将评估进度 k 增加 1（必须按模块顺序推进，不能跳跃，最多推进到 k = {n}）
+2. 查询当前读数：获取当前进度 k 的学情聚合读数 R(k)
+3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一个模块的评价增量
+4. 查询当前位置：获取当前的评估进度 k
 
-3. 比较查询 (COMP)：比较两组教辅题库的知识点覆盖数量。
-   格式示例：<query_comp>1,2 vs 3,4</query_comp>
-   返回：A>B（左边覆盖多）、A<B（左边覆盖少）或 A=B（相等）。
+当掌握足够的学情特征后，请提交最终答案，宣告真实的聚合模式。若答案错误或格式不符，评估任务失败。
 
-4. 进度查询 (PROG)：查询已使用的试读查询次数和剩余次数。
-   格式示例：<query_prog></query_prog>
-   返回：已用次数和剩余次数。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-你有总共 {quota} 次试读查询配额。超出配额将导致备考计划失败。
+- 前进一步（内容为空）：
+<step></step>
 
-当你确定最优购买方案后，请提交最终答案。格式如下：
+- 查询当前读数（内容为空）：
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- 查询增量（内容为空）：
+<query_delta></query_delta>
 
-其中 k 是你认为的最少题库数量，SET 是具体的题库索引集合（用逗号分隔）。
+- 查询当前位置（内容为空）：
+<query_position></query_position>
 
-提交后系统会进行校验：
-- 首先检查你提交的题库组合是否涵盖了大纲的所有知识点
-- 如果完全涵盖，再检查所选的题库数量是否做到了最少
+提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
 
-请谨慎提交答案，答案错误将直接导致游戏失败。祝你好运！
+<answer>S</answer>
+
+或
+
+<answer>M</answer>
+
+或
+
+<answer>C</answer>
+
+- 初始时 k = 0，R(0) = 0
+- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
+- 三种模式的读数都是非递减的
+- 模式 C 的增量只能是 0 或 1
+- 模式 M 的读数不会超过 9
+- 模式 S 的增量等于当前位置的序列值
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Precise Study Material Screening" game. Here are the rules:
+Welcome to the Adaptive Learning Assessment Tracking System. Let's engage in a "Learning Aggregation Pattern Recognition" pedagogical deduction. Here are the rules:
 
-As a student preparing for final exams, you need to review the core syllabus of a course (the universal set U). The syllabus contains {n} essential knowledge points, and there are currently {m} test bank workbooks available on the market (workbooks S1, S2, ..., S{m}). Each workbook covers specific knowledge points, and collectively, all workbooks cover all {n} points.
+The system contains a sequence of a student's missed knowledge points across {n} consecutive learning modules: a1, a2, ..., a{n}, where the number of errors per module ranges from 0 to 9. The error count for the first module, a1, is fixed at 0 (indicating complete mastery of the foundation).
 
-Your goal is to purchase the minimum number of workbooks so that they cover all the essential knowledge points without any blind spots. We call this minimum number k*. You need to determine the value of k* and provide an index set consisting of k* workbooks.
+The evaluation engine has secretly configured a "learning aggregation pattern" to generate assessment readings, which can only be one of the following three:
+1. Pattern S (Prefix Sum / Cumulative Weaknesses): For assessment progress k, the reading R(k) equals the total sum of missed knowledge points across the first k modules.
+2. Pattern M (Prefix Maximum / Peak Module Errors): For assessment progress k, the reading R(k) equals the highest number of errors found in any single module among the first k modules.
+3. Pattern C (Prefix Threshold Count / Substandard Modules Count): For assessment progress k, the reading R(k) equals the number of modules among the first k that have 6 or more errors (considered substandard).
 
-You can use the following four types of system queries (only one query per submission):
+Your goal is to infer the true aggregation pattern type (S, M, or C) adopted by the evaluation engine through a series of learning status queries.
 
-1. Count Query (COUNT): Query how many syllabus points are covered by the combined content of specified workbooks.
-   Format example: <query_count>1,3,5</query_count>
-   Returns: The total number of knowledge points covered by these workbooks.
+The system maintains a current assessment progress k (initially 0). You can perform the following operations (one per turn):
 
-2. Marginal Query (MARG): Query how many unreviewed knowledge points would be newly covered by purchasing an additional workbook to the existing combination.
-   Format example: <query_marg>1,2+3</query_marg> (means adding workbook 3 to workbooks 1 and 2)
-   Returns: The number of newly covered knowledge points.
+1. Step forward: Increment progress k by 1 (must proceed sequentially by module, cannot skip, maximum k = {n})
+2. Query current reading: Get the learning aggregation reading R(k) at the current progress k
+3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous module
+4. Query current position: Get the current assessment progress k
 
-3. Comparison Query (COMP): Compare the knowledge point coverage sizes of two groups of workbooks.
-   Format example: <query_comp>1,2 vs 3,4</query_comp>
-   Returns: A>B (left covers more), A<B (left covers less), or A=B (equal coverage).
+When you have sufficient understanding of the learning features, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the assessment task fails.
 
-4. Progress Query (PROG): Query the number of trial reading queries used and remaining.
-   Format example: <query_prog></query_prog>
-   Returns: Used and remaining query counts.
+Each operation must contain only one tag. Use the following XML format:
 
-You have a total of {quota} trial reading quota. Exceeding the quota will result in study plan failure.
+- Step forward (empty content):
+<step></step>
 
-When you determine the optimal purchase plan, submit your final answer in this format:
+- Query current reading (empty content):
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- Query delta (empty content):
+<query_delta></query_delta>
 
-Where k is your answer for the minimum number of workbooks, and SET is the specific workbook index set (comma-separated).
+- Query current position (empty content):
+<query_position></query_position>
 
-After submission, the system will verify:
-- First check if your submitted combination of workbooks covers all knowledge points in the syllabus
-- If fully covered, then check if the number of selected workbooks is minimal
+When submitting the final answer, specify the pattern type (S, M, or C) using this format:
 
-Please submit your answer carefully, as an incorrect answer will directly lead to game failure. Good luck!
+<answer>S</answer>
+
+or
+
+<answer>M</answer>
+
+or
+
+<answer>C</answer>
+
+- Initially k = 0, R(0) = 0
+- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
+- The readings of all three patterns are non-decreasing
+- Pattern C has deltas of only 0 or 1
+- Pattern M has readings that do not exceed 9
+- Pattern S has deltas equal to the current sequence value
 """
 
     contextualized_rule_zh_4 = """\
-我们来玩一个"工业传感器网络极简覆盖"游戏，规则如下：
+欢迎使用智能制造流水线质检分析系统。我们现在来进行一次"缺陷聚合模式识别"的工业排查，规则如下：
 
-作为大型制造厂的可靠性工程师，你需要监控一套精密设备的所有潜在故障点（全集 U）。该设备共有 {n} 个核心故障点，系统供应商提供了 {m} 种不同拓扑的传感器网络（网络 S1, S2, ..., S{m}）。每种传感器网络能监测到特定的几个故障点，且所有网络组合起来能监测到全部 {n} 个点。
+系统记录了流水线上 {n} 个连续工位的次品检出量序列 a1, a2, ..., a{n}，每个工位的次品检出量范围为 0 到 9。第 1 个工位 a1 固定为 0（代表原材料准备区无次品）。
 
-你的目标是部署最少数量的传感器网络，使得它们的监控范围恰好覆盖所有的潜在故障点。我们称这个最小数量为 k*。你需要确定 k* 的值，并给出一个由 k* 个传感器网络组成的索引集合。
+质检后台秘密应用了一种"缺陷聚合模式"以输出监控读数，该模式只可能是以下三种之一：
+1. 模式 S（前缀和/累计次品总数）：对于检查工位 k，读数 R(k) 等于前 k 个工位的次品检出量总和。
+2. 模式 M（前缀最大/单工位最高缺陷）：对于检查工位 k，读数 R(k) 等于前 k 个工位中检出次品的最高纪录。
+3. 模式 C（前缀阈值计数/异常工位数量）：对于检查工位 k，读数 R(k) 等于前 k 个工位中次品量大于等于 6 的异常工位个数。
 
-你可以使用以下四种系统查询（每次只能提交一种查询）：
+你的目标是通过一系列流水线数据查询，推断出质检后台真实使用的聚合模式类型（S、M 或 C）。
 
-1. 计数查询 (COUNT)：查询指定若干传感器网络的联合监测能覆盖多少个故障点。
-   格式示例：<query_count>1,3,5</query_count>
-   返回：这些网络联合覆盖的故障点总数。
+系统当前处于检查工位 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
 
-2. 边际查询 (MARG)：查询在已有若干网络的基础上，再接入一个新传感器网络会多监测到多少个盲区故障点。
-   格式示例：<query_marg>1,2+3</query_marg>（表示在网络1、2的基础上加入网络3）
-   返回：新增监测到的故障点个数。
+1. 前进一步：将检查工位 k 增加 1（必须按流水线顺序推进，不能跳跃，最多推进到 k = {n}）
+2. 查询当前读数：获取当前工位 k 的监控聚合读数 R(k)
+3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一个工位的监控数据增量
+4. 查询当前位置：获取当前的检查工位编号 k
 
-3. 比较查询 (COMP)：比较两组传感器网络的故障点监控数量。
-   格式示例：<query_comp>1,2 vs 3,4</query_comp>
-   返回：A>B（左边监测多）、A<B（左边监测少）或 A=B（相等）。
+当收集到充分的质检特征后，请提交最终答案，宣告真实的聚合模式。若推断错误或格式不符，排查任务失败。
 
-4. 进度查询 (PROG)：查询已使用的测试查询次数和剩余次数。
-   格式示例：<query_prog></query_prog>
-   返回：已用次数和剩余次数。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-你有总共 {quota} 次测试查询配额。超出配额将导致设备维保规划失败。
+- 前进一步（内容为空）：
+<step></step>
 
-当你确定最优部署方案后，请提交最终答案。格式如下：
+- 查询当前读数（内容为空）：
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- 查询增量（内容为空）：
+<query_delta></query_delta>
 
-其中 k 是你认为的最少网络数量，SET 是具体的传感器网络索引集合（用逗号分隔）。
+- 查询当前位置（内容为空）：
+<query_position></query_position>
 
-提交后系统会进行校验：
-- 首先检查你提交的网络组合是否无死角监测了所有故障点
-- 如果完全覆盖，再检查使用的传感器网络数量是否做到了最少
+提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
 
-请谨慎提交答案，答案错误将直接导致游戏失败。祝你好运！
+<answer>S</answer>
+
+或
+
+<answer>M</answer>
+
+或
+
+<answer>C</answer>
+
+- 初始时 k = 0，R(0) = 0
+- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
+- 三种模式的读数都是非递减的
+- 模式 C 的增量只能是 0 或 1
+- 模式 M 的读数不会超过 9
+- 模式 S 的增量等于当前位置的序列值
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industrial Scenario]
-Let's play an "Industrial Sensor Network Minimal Coverage" game. Here are the rules:
+Welcome to the Smart Manufacturing Pipeline Quality Inspection Analysis System. Let's conduct an industrial troubleshooting based on "Defect Aggregation Pattern Recognition". Here are the rules:
 
-As a reliability engineer in a large manufacturing plant, you need to monitor all potential failure points of a precision equipment (the universal set U). The equipment has {n} core failure points, and the system supplier offers {m} sensor networks with different topologies (networks S1, S2, ..., S{m}). Each sensor network can detect specific failure points, and combined, all networks can monitor all {n} points.
+The system records a sequence of defective item counts across {n} consecutive workstations on the assembly line: a1, a2, ..., a{n}, where each count ranges from 0 to 9. The first workstation a1 is fixed at 0 (representing the defect-free raw material preparation area).
 
-Your goal is to deploy the minimum number of sensor networks whose monitoring scope perfectly covers all potential failure points. We call this minimum number k*. You need to determine the value of k* and provide an index set consisting of k* sensor networks.
+The quality inspection backend has secretly applied a "defect aggregation pattern" to output monitoring readings, which can only be one of the following three:
+1. Pattern S (Prefix Sum / Cumulative Defect Total): For inspected workstation k, the reading R(k) equals the total sum of defective items from the first k workstations.
+2. Pattern M (Prefix Maximum / Peak Station Defects): For inspected workstation k, the reading R(k) equals the highest defective count recorded among the first k workstations.
+3. Pattern C (Prefix Threshold Count / Anomalous Stations Count): For inspected workstation k, the reading R(k) equals the number of anomalous workstations among the first k that have a defective count greater than or equal to 6.
 
-You can use the following four types of system queries (only one query per submission):
+Your objective is to infer the true aggregation pattern type (S, M, or C) applied by the backend through a series of pipeline data queries.
 
-1. Count Query (COUNT): Query how many failure points are covered by the combined monitoring of specified sensor networks.
-   Format example: <query_count>1,3,5</query_count>
-   Returns: The total number of failure points covered by these networks.
+The system maintains a current inspection workstation k (initially 0). You can perform the following operations (one per turn):
 
-2. Marginal Query (MARG): Query how many blind-spot failure points would be newly detected by adding a new sensor network to the existing ones.
-   Format example: <query_marg>1,2+3</query_marg> (means adding network 3 to networks 1 and 2)
-   Returns: The number of newly detected failure points.
+1. Step forward: Increment workstation k by 1 (must proceed sequentially along the pipeline, cannot skip, maximum k = {n})
+2. Query current reading: Get the monitoring aggregation reading R(k) at the current workstation k
+3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous workstation
+4. Query current position: Get the current inspection workstation k
 
-3. Comparison Query (COMP): Compare the monitored failure point coverage of two groups of sensor networks.
-   Format example: <query_comp>1,2 vs 3,4</query_comp>
-   Returns: A>B (left monitors more), A<B (left monitors less), or A=B (equal coverage).
+When you have gathered enough quality inspection data, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the troubleshooting task fails.
 
-4. Progress Query (PROG): Query the number of testing queries used and remaining.
-   Format example: <query_prog></query_prog>
-   Returns: Used and remaining query counts.
+Each operation must contain only one tag. Use the following XML format:
 
-You have a total of {quota} testing query quota. Exceeding the quota will result in equipment maintenance planning failure.
+- Step forward (empty content):
+<step></step>
 
-When you determine the optimal deployment plan, submit your final answer in this format:
+- Query current reading (empty content):
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- Query delta (empty content):
+<query_delta></query_delta>
 
-Where k is your answer for the minimum number of networks, and SET is the specific sensor network index set (comma-separated).
+- Query current position (empty content):
+<query_position></query_position>
 
-After submission, the system will verify:
-- First check if your submitted combination of networks monitors all failure points without blind spots
-- If fully covered, then check if the number of deployed sensor networks is minimal
+When submitting the final answer, specify the pattern type (S, M, or C) using this format:
 
-Please submit your answer carefully, as an incorrect answer will directly lead to game failure. Good luck!
+<answer>S</answer>
+
+or
+
+<answer>M</answer>
+
+or
+
+<answer>C</answer>
+
+- Initially k = 0, R(0) = 0
+- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
+- The readings of all three patterns are non-decreasing
+- Pattern C has deltas of only 0 or 1
+- Pattern M has readings that do not exceed 9
+- Pattern S has deltas equal to the current sequence value
 """
 
     contextualized_rule_zh_5 = """\
-我们来玩一个"完美证据链最简构建"游戏，规则如下：
+欢迎使用案件违规行为审查辅助系统。我们现在来进行一次"法务聚合模式识别"的案情推理，规则如下：
 
-作为首席控方律师，你需要为一宗复杂案件构建完整的证据链（全集 U）。该案件包含 {n} 个必须被证明的关键事实，你手里有 {m} 位证人/专家（证人 S1, S2, ..., S{m}）。每位证人的证词能证实特定的几个事实，且所有证人加起来能够证实全部 {n} 个关键事实。
+系统记录了某案件在 {n} 个连续调查阶段中发现的违规行为数量序列 a1, a2, ..., a{n}，每个阶段的违规数量范围为 0 到 9。第 1 阶段 a1 固定为 0（代表初步审查时的无罪推定假定）。
 
-你的目标是传唤最少数量的证人，使得他们的证词组合起来恰好能证实所有的关键事实，从而形成完美证据链。我们称这个最少证人数量为 k*。你需要确定 k* 的值，并给出一个由 k* 位证人组成的索引集合。
+审查引擎秘密设定了一种"法务聚合模式"来生成案情严重性读数，该模式只可能是以下三种之一：
+1. 模式 S（前缀和/累计违规总数）：对于审查阶段 k，读数 R(k) 等于前 k 个阶段发现的违规行为总和。
+2. 模式 M（前缀最大/单阶段最恶劣情节）：对于审查阶段 k，读数 R(k) 等于前 k 个阶段中出现的单次最高违规数量。
+3. 模式 C（前缀阈值计数/重大违规阶段数）：对于审查阶段 k，读数 R(k) 等于前 k 个阶段中违规数量大于等于 6（即构成重大违规）的阶段个数。
 
-你可以使用以下四种庭前调查查询（每次只能提交一种查询）：
+你的目标是通过一系列案情卷宗查询，推断出审查引擎真实采用的聚合模式类型（S、M 或 C）。
 
-1. 计数查询 (COUNT)：查询指定若干证人的联合证词能证实多少个关键事实。
-   格式示例：<query_count>1,3,5</query_count>
-   返回：这些证人联合证实的事实总数。
+系统当前处于审查阶段 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
 
-2. 边际查询 (MARG)：查询在已有若干证人的基础上，再传唤一位新证人会多证实多少个缺乏证据的事实。
-   格式示例：<query_marg>1,2+3</query_marg>（表示在证人1、2的基础上加入证人3）
-   返回：新增证实的事实个数。
+1. 前进一步：将审查阶段 k 增加 1（必须按调查程序顺序推进，不能跳跃，最多推进到 k = {n}）
+2. 查询当前读数：获取当前阶段 k 的案情聚合读数 R(k)
+3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一阶段的严重性读数增量
+4. 查询当前位置：获取当前的审查阶段编号 k
 
-3. 比较查询 (COMP)：比较两组证人的事实证实数量。
-   格式示例：<query_comp>1,2 vs 3,4</query_comp>
-   返回：A>B（左边证实多）、A<B（左边证实少）或 A=B（相等）。
+当梳理出明确的法务证据链后，请提交最终答案，宣告真实的聚合模式。若判断错误或格式不符，审查任务失败。
 
-4. 进度查询 (PROG)：查询已使用的调查评估次数和剩余次数。
-   格式示例：<query_prog></query_prog>
-   返回：已用次数和剩余次数。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-你有总共 {quota} 次调查评估配额。超出配额将导致庭审准备失败。
+- 前进一步（内容为空）：
+<step></step>
 
-当你确定最优传唤名单后，请提交最终答案。格式如下：
+- 查询当前读数（内容为空）：
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- 查询增量（内容为空）：
+<query_delta></query_delta>
 
-其中 k 是你认为的最少证人数量，SET 是具体的证人索引集合（用逗号分隔）。
+- 查询当前位置（内容为空）：
+<query_position></query_position>
 
-提交后系统会进行校验：
-- 首先检查你提交的证人组合是否证实了案件的所有关键事实
-- 如果完全证实，再检查传唤的证人数量是否做到了最少
+提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
 
-请谨慎提交答案，答案错误将直接导致游戏失败。祝你好运！
+<answer>S</answer>
+
+或
+
+<answer>M</answer>
+
+或
+
+<answer>C</answer>
+
+- 初始时 k = 0，R(0) = 0
+- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
+- 三种模式的读数都是非递减的
+- 模式 C 的增量只能是 0 或 1
+- 模式 M 的读数不会超过 9
+- 模式 S 的增量等于当前位置的序列值
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's play a "Perfect Evidence Chain Minimal Construction" game. Here are the rules:
+Welcome to the Case Violation Review Assistance System. Let's conduct a legal deduction based on "Legal Aggregation Pattern Recognition". Here are the rules:
 
-As the lead prosecuting attorney, you need to construct a complete evidence chain for a complex case (the universal set U). The case involves {n} key facts that must be proven, and you have {m} witnesses/experts available (witnesses S1, S2, ..., S{m}). Each witness's testimony can prove specific facts, and collectively, all witnesses can prove all {n} key facts.
+The system records a sequence of identified violation counts across {n} consecutive investigation stages for a case: a1, a2, ..., a{n}, where the number of violations per stage ranges from 0 to 9. The first stage a1 is fixed at 0 (representing the presumption of innocence during the preliminary review).
 
-Your goal is to subpoena the minimum number of witnesses whose combined testimonies precisely prove all key facts, forming a perfect evidence chain. We call this minimum number k*. You need to determine the value of k* and provide an index set consisting of k* witnesses.
+The review engine has secretly configured a "legal aggregation pattern" to generate case severity readings, which can only be one of the following three:
+1. Pattern S (Prefix Sum / Cumulative Violations Total): For review stage k, the reading R(k) equals the total sum of violations discovered across the first k stages.
+2. Pattern M (Prefix Maximum / Most Egregious Single-Stage Offense): For review stage k, the reading R(k) equals the highest number of violations found in any single stage among the first k stages.
+3. Pattern C (Prefix Threshold Count / Major Violation Stages Count): For review stage k, the reading R(k) equals the number of stages among the first k where the violation count is greater than or equal to 6 (constituting a major violation stage).
 
-You can use the following four types of pre-trial investigation queries (only one query per submission):
+Your objective is to infer the true aggregation pattern type (S, M, or C) adopted by the review engine through a series of case file queries.
 
-1. Count Query (COUNT): Query how many key facts are proven by the combined testimony of specified witnesses.
-   Format example: <query_count>1,3,5</query_count>
-   Returns: The total number of facts proven by these witnesses.
+The system maintains a current review stage k (initially 0). You can perform the following operations (one per turn):
 
-2. Marginal Query (MARG): Query how many unsupported facts would be newly proven by subpoenaing an additional witness to the existing group.
-   Format example: <query_marg>1,2+3</query_marg> (means adding witness 3 to witnesses 1 and 2)
-   Returns: The number of newly proven facts.
+1. Step forward: Increment review stage k by 1 (must proceed sequentially through the investigation process, cannot skip, maximum k = {n})
+2. Query current reading: Get the legal aggregation reading R(k) at the current stage k
+3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous stage
+4. Query current position: Get the current review stage k
 
-3. Comparison Query (COMP): Compare the number of facts proven by two groups of witnesses.
-   Format example: <query_comp>1,2 vs 3,4</query_comp>
-   Returns: A>B (left proves more), A<B (left proves less), or A=B (equal coverage).
+When you have formed a clear chain of legal evidence, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the review task fails.
 
-4. Progress Query (PROG): Query the number of investigation evaluation queries used and remaining.
-   Format example: <query_prog></query_prog>
-   Returns: Used and remaining query counts.
+Each operation must contain only one tag. Use the following XML format:
 
-You have a total of {quota} investigation evaluation quota. Exceeding the quota will result in trial preparation failure.
+- Step forward (empty content):
+<step></step>
 
-When you determine the optimal subpoena list, submit your final answer in this format:
+- Query current reading (empty content):
+<query_reading></query_reading>
 
-<answer>k=3; SET=1,4,5</answer>
+- Query delta (empty content):
+<query_delta></query_delta>
 
-Where k is your answer for the minimum number of witnesses, and SET is the specific witness index set (comma-separated).
+- Query current position (empty content):
+<query_position></query_position>
 
-After submission, the system will verify:
-- First check if your submitted combination of witnesses proves all key facts of the case
-- If fully proven, then check if the number of subpoenaed witnesses is minimal
+When submitting the final answer, specify the pattern type (S, M, or C) using this format:
 
-Please submit your answer carefully, as an incorrect answer will directly lead to game failure. Good luck!
+<answer>S</answer>
+
+or
+
+<answer>M</answer>
+
+or
+
+<answer>C</answer>
+
+- Initially k = 0, R(0) = 0
+- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
+- The readings of all three patterns are non-decreasing
+- Pattern C has deltas of only 0 or 1
+- Pattern M has readings that do not exceed 9
+- Pattern S has deltas equal to the current sequence value
 """
 
-    tags = ["answer", "query_count", "query_marg", "query_comp", "query_prog"]
-
-    reasoning_type = "归纳推理"
-    data_structure = "集合"
-
-    # 难度配置：
-    # 1 (简单)      - N=6,  M=4,  k*=2
-    # 2 (中等偏下)  - N=8,  M=5,  k*=2
-    # 3 (中等偏上)  - N=10, M=6,  k*=3
-    # 4 (较难)      - N=12, M=7,  k*=3
-    # 5 (难)        - N=15, M=8,  k*=4
+    tags = ["answer", "step", "query_reading", "query_delta", "query_position"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "n": 6,
-            "m": 4,
-            "k_star": 2,
-            # U = {0,1,2,3,4,5}
-            # S1={0,1,2}, S2={3,4,5}, S3={0,3}, S4={1,4}
-            # 最小覆盖：S1+S2 (2个)
-            "subsets": [
-                {0, 1, 2},
-                {3, 4, 5},
-                {0, 3},
-                {1, 4}
-            ]
+        "zh": {
+            1: {
+                "n": 7,
+                "sequence": [0, 2, 3, 1, 7, 4, 8],
+                "pattern": "M"
+            },
+            2: {
+                "n": 8,
+                "sequence": [0, 1, 2, 6, 3, 7, 1, 8],
+                "pattern": "C"
+            },
+            3: {
+                "n": 9,
+                "sequence": [0, 2, 1, 3, 2, 1, 4, 6, 5],
+                "pattern": "S"
+            },
+            4: {
+                "n": 10,
+                "sequence": [0, 1, 2, 3, 6, 2, 7, 1, 8, 3],
+                "pattern": "M"
+            },
+            5: {
+                "n": 12,
+                "sequence": [0, 1, 6, 2, 3, 7, 1, 8, 2, 4, 6, 3],
+                "pattern": "C"
+            },
         },
-        2: {
-            "n": 8,
-            "m": 5,
-            "k_star": 2,
-            # U = {0,1,2,3,4,5,6,7}
-            # S1={0,1,2,3}, S2={4,5,6,7}, S3={0,4}, S4={1,5}, S5={2,6}
-            # 最小覆盖：S1+S2 (2个)
-            "subsets": [
-                {0, 1, 2, 3},
-                {4, 5, 6, 7},
-                {0, 4},
-                {1, 5},
-                {2, 6}
-            ]
+        "en": {
+            1: {
+                "n": 7,
+                "sequence": [0, 2, 3, 1, 7, 4, 8],
+                "pattern": "M"
+            },
+            2: {
+                "n": 8,
+                "sequence": [0, 1, 2, 6, 3, 7, 1, 8],
+                "pattern": "C"
+            },
+            3: {
+                "n": 9,
+                "sequence": [0, 2, 1, 3, 2, 1, 4, 6, 5],
+                "pattern": "S"
+            },
+            4: {
+                "n": 10,
+                "sequence": [0, 1, 2, 3, 6, 2, 7, 1, 8, 3],
+                "pattern": "M"
+            },
+            5: {
+                "n": 12,
+                "sequence": [0, 1, 6, 2, 3, 7, 1, 8, 2, 4, 6, 3],
+                "pattern": "C"
+            },
         },
-        3: {
-            "n": 10,
-            "m": 6,
-            "k_star": 3,
-            # U = {0,1,2,3,4,5,6,7,8,9}
-            # S1={0,1,2,3}, S2={4,5,6}, S3={7,8,9}, S4={0,4,7}, S5={1,5,8}, S6={2,3,6,9}
-            # 最小覆盖：S1+S2+S3 = {0,1,2,3,4,5,6,7,8,9} (3个)
-            "subsets": [
-                {0, 1, 2, 3},
-                {4, 5, 6},
-                {7, 8, 9},
-                {0, 4, 7},
-                {1, 5, 8},
-                {2, 3, 6, 9}
-            ]
-        },
-        4: {
-            "n": 12,
-            "m": 7,
-            "k_star": 3,
-            # U = {0,1,2,3,4,5,6,7,8,9,10,11}
-            # S1={0,1,2,3}, S2={4,5,6,7}, S3={8,9,10,11}, S4={0,4,8}, S5={1,5,9}, S6={2,6}, S7={3,7}
-            # 最小覆盖：S1+S2+S3 (3个)
-            "subsets": [
-                {0, 1, 2, 3},
-                {4, 5, 6, 7},
-                {8, 9, 10, 11},
-                {0, 4, 8},
-                {1, 5, 9},
-                {2, 6},
-                {3, 7}
-            ]
-        },
-        5: {
-            "n": 15,
-            "m": 8,
-            "k_star": 4,
-            # U = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14}
-            # S1={0,1,2,3,4}, S2={5,6,7,8}, S3={9,10,11}, S4={12,13,14},
-            # S5={0,5,9,12}, S6={1,6,10,13}, S7={2,7,11,14}, S8={3,8}
-            # 最小覆盖：S1+S2+S3+S4 (4个), 验证：{0..4}∪{5..8}∪{9..11}∪{12..14} = {0..14} ✓
-            "subsets": [
-                {0, 1, 2, 3, 4},
-                {5, 6, 7, 8},
-                {9, 10, 11},
-                {12, 13, 14},
-                {0, 5, 9, 12},
-                {1, 6, 10, 13},
-                {2, 7, 11, 14},
-                {3, 8}
-            ]
-        }
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
+        lang = self.config.language
         diff = int(self.config.difficulty)
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
         
-        # 基本参数
-        self.n = cfg["n"]
-        self.m = cfg["m"]
-        self.k_star = cfg["k_star"]
-        self.subsets = [s.copy() for s in cfg["subsets"]]  # 深拷贝避免共享引用
+        self.sequence = cfg["sequence"]
+        self.true_pattern = cfg["pattern"]
         
-        # 全集 U = {0, 1, ..., n-1}
-        self.U = set(range(self.n))
+        self.current_k = 0
         
-        # 查询配额
-        self.quota = 3 * self.m
-        self.query_used = 0
+        self.tau = 6
         
-        # 游戏信息（用于填充规则模板）
-        self._game_info = {
-            "n": self.n,
-            "m": self.m,
-            "quota": self.quota
-        }
+        self._precompute_readings()
 
-    def _parse_indices(self, s):
-        """解析逗号分隔的索引字符串，返回整数列表"""
-        if not s or s.strip() == "":
-            return []
-        return [int(x.strip()) for x in s.split(",") if x.strip()]
+    def _precompute_readings(self):
+        n = len(self.sequence)
+        
+        self.readings_S = [0] * (n + 1)
+        self.readings_M = [0] * (n + 1)
+        self.readings_C = [0] * (n + 1)
+        
+        for k in range(1, n + 1):
+            ak = self.sequence[k - 1]
+            
+            self.readings_S[k] = self.readings_S[k - 1] + ak
+            
+            self.readings_M[k] = max(self.readings_M[k - 1], ak)
+            
+            self.readings_C[k] = self.readings_C[k - 1] + (1 if ak >= self.tau else 0)
 
-    def _get_union(self, indices):
-        """计算指定子集索引的并集"""
-        union = set()
-        for idx in indices:
-            if 1 <= idx <= self.m:
-                union |= self.subsets[idx - 1]  # 索引从1开始
-        return union
+    def _get_reading(self, k):
+        if self.true_pattern == "S":
+            return self.readings_S[k]
+        elif self.true_pattern == "M":
+            return self.readings_M[k]
+        elif self.true_pattern == "C":
+            return self.readings_C[k]
+        else:
+            raise ValueError(f"Unknown pattern: {self.true_pattern}")
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
-        raw_ans = parsed_info["answer"].strip()
-        
-        try:
-            parts = raw_ans.split(";")
-            k_part = None
-            set_part = None
-            
-            for part in parts:
-                part = part.strip()
-                if part.lower().startswith("k="):
-                    k_part = part.split("=", 1)[1].strip()
-                elif part.lower().startswith("set="):
-                    set_part = part.split("=", 1)[1].strip()
-            
-            if k_part is None or set_part is None:
-                return False
-            
-            k_ans = int(k_part)
-            set_indices = self._parse_indices(set_part)
-            
-            if len(set_indices) != k_ans:
-                return False
-            
-            # 检查是否所有索引有效
-            if any(idx < 1 or idx > self.m for idx in set_indices):
-                return False
-            
-            # 检查覆盖性
-            union = self._get_union(set_indices)
-            if union != self.U:
-                return False
-            
-            # 检查最小性
-            if k_ans == self.k_star:
-                return True
-            else:
-                return False
-                
-        except Exception:
-            return False
+        player_answer = parsed_info["answer"].strip().upper()
+        return player_answer == self.true_pattern
 
     def _cf_core_produce(self, parsed_info):
-        # 检查配额（进度查询不消耗配额，先检查）
-        if "query_prog" in parsed_info:
-            remain = self.quota - self.query_used
-            if self.config.language == "zh":
-                return f"已用={self.query_used}, 剩余={remain}"
-            else:
-                return f"used={self.query_used}, remain={remain}"
-        
-        # 对于消耗配额的查询，先检查是否还有配额
-        if self.query_used >= self.quota:
-            raise ValueError("Query budget exhausted / 查询配额已用尽")
-        
-        try:
-            # 消耗配额
-            self.query_used += 1
-            
-            # Q1: 计数查询
-            if "query_count" in parsed_info:
-                indices = self._parse_indices(parsed_info["query_count"])
-                if not indices:
-                    raise ValueError("Empty index list")
-                if any(idx < 1 or idx > self.m for idx in indices):
-                    raise ValueError("Index out of range")
-                union = self._get_union(indices)
-                return str(len(union))
-            
-            # Q2: 边际查询
-            elif "query_marg" in parsed_info:
-                raw = parsed_info["query_marg"]
-                if "+" not in raw:
-                    raise ValueError("Invalid MARG format")
-                base_part, new_part = raw.split("+", 1)
-                base_indices = self._parse_indices(base_part)
-                new_indices = self._parse_indices(new_part)
-                
-                if not new_indices:
-                    raise ValueError("No new index specified")
-                if any(idx < 1 or idx > self.m for idx in base_indices + new_indices):
-                    raise ValueError("Index out of range")
-                
-                base_union = self._get_union(base_indices)
-                full_union = self._get_union(base_indices + new_indices)
-                marginal = len(full_union) - len(base_union)
-                return str(marginal)
-            
-            # Q3: 比较查询
-            elif "query_comp" in parsed_info:
-                raw = parsed_info["query_comp"]
-                if " vs " not in raw:
-                    raise ValueError("Invalid COMP format")
-                left_part, right_part = raw.split(" vs ", 1)
-                left_indices = self._parse_indices(left_part)
-                right_indices = self._parse_indices(right_part)
-                
-                if not left_indices or not right_indices:
-                    raise ValueError("Empty index list in comparison")
-                if any(idx < 1 or idx > self.m for idx in left_indices + right_indices):
-                    raise ValueError("Index out of range")
-                
-                left_union = self._get_union(left_indices)
-                right_union = self._get_union(right_indices)
-                
-                if len(left_union) > len(right_union):
-                    return "A>B"
-                elif len(left_union) < len(right_union):
-                    return "A<B"
-                else:
-                    return "A=B"
-            
-            else:
-                raise ValueError("No valid query tag found")
-                
-        except Exception as e:
-            # 查询格式错误，回退配额
-            self.query_used -= 1
-            raise
+        if self.config.language == "zh":
+            error_msg = "错误：无效操作。"
+            step_msg = "已前进到位置 {k}。"
+            max_step_msg = "错误：已到达序列末尾，无法继续前进。"
+            reading_msg = "当前读数 R({k}) = {reading}。"
+            delta_msg = "增量 Delta({k}) = {delta}。"
+            delta_zero_msg = "错误：当前在位置 0，无法查询增量。"
+            position_msg = "当前位置 k = {k}。"
+        else:
+            error_msg = "Error: Invalid operation."
+            step_msg = "Stepped forward to position {k}."
+            max_step_msg = "Error: Already at sequence end, cannot step forward."
+            reading_msg = "Current reading R({k}) = {reading}."
+            delta_msg = "Delta({k}) = {delta}."
+            delta_zero_msg = "Error: At position 0, cannot query delta."
+            position_msg = "Current position k = {k}."
+
+        if "step" in parsed_info:
+            if self.current_k >= self._game_info["n"]:
+                return max_step_msg
+            self.current_k += 1
+            return step_msg.format(k=self.current_k)
+
+        elif "query_reading" in parsed_info:
+            reading = self._get_reading(self.current_k)
+            return reading_msg.format(k=self.current_k, reading=reading)
+
+        elif "query_delta" in parsed_info:
+            if self.current_k == 0:
+                return delta_zero_msg
+            current_reading = self._get_reading(self.current_k)
+            previous_reading = self._get_reading(self.current_k - 1)
+            delta = current_reading - previous_reading
+            return delta_msg.format(k=self.current_k, delta=delta)
+
+        elif "query_position" in parsed_info:
+            return position_msg.format(k=self.current_k)
+
+        else:
+            return error_msg
 
     def _cf_make_wrong(self, correct: str) -> str:
-        # 数字结果：+1
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        # 比较查询结果
-        if correct == "A>B":
-            return "A<B"
-        if correct == "A<B":
-            return "A>B"
-        if correct == "A=B":
-            return "A>B"
-        
-        # 进度查询（理论上不会在反事实第2轮出现，但以防万一）
-        # 中文处理
-        if "已用" in correct:
-            return correct + "（数据有误）"
-        if "used" in correct.lower():
-            return correct + " (Data Error)"
-            
-        if "是" in correct:
-            return correct.replace("是", "否")
-        if "否" in correct:
-            return correct.replace("否", "是")
-            
-        # 英文处理 (Yes/No)
-        lower_correct = correct.lower()
-        if "yes" in lower_correct:
-            # 简单的大小写保留替换
-            if correct == "Yes": return "No"
-            if correct == "YES": return "NO"
-            if correct == "yes": return "no"
-            return correct.replace("Yes", "No").replace("yes", "no")
-        if "no" in lower_correct:
-            if correct == "No": return "Yes"
-            if correct == "NO": return "YES"
-            if correct == "no": return "yes"
-            return correct.replace("No", "Yes").replace("no", "yes")
-            
-        return correct + "_WRONG"
+        match = re.search(r'=\s*(-?\d+)', correct)
+        if match:
+            num = int(match.group(1))
+            wrong_num = num + random.choice([-2, -1, 1, 2, 3])
+            if wrong_num == num:
+                wrong_num = num + 1
+            return correct[:match.start(1)] + str(wrong_num) + correct[match.end(1):]
+
+        match = re.search(r'(position\s+|位置\s*)(\d+)', correct)
+        if match:
+            num = int(match.group(2))
+            wrong_num = num + 1
+            return correct[:match.start(2)] + str(wrong_num) + correct[match.end(2):]
+
+        return correct + " [WRONG]"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # XML格式的完整查询字符串
-                "answer": str,   # 正确答案
-            }
-        """
         queries = []
-        
-        # 1. 计数查询 (COUNT)
-        # 枚举所有非空子集组合。M最大为8，2^8-1 = 255种组合，可完全枚举。
-        for r in range(1, self.m + 1):
-            for combo in itertools.combinations(range(1, self.m + 1), r):
-                indices = list(combo)
-                indices_str = ",".join(map(str, indices))
-                query_content = f"<query_count>{indices_str}</query_count>"
-                
-                # 内部逻辑计算
-                union = self._get_union(indices)
-                ans = str(len(union))
-                
-                queries.append({
-                    "query": query_content,
-                    "answer": ans
-                })
-        
-        # 2. 边际查询 (MARG)
-        # 格式：<query_marg>base+new</query_marg>
-        # 策略：枚举所有可能的 Base 集合（包含空集）和所有可能的 New 单一子集。
-        # M=8时，Base有256种，New有8种，共2048种，可完全枚举。
-        for r in range(0, self.m + 1): # Base集合的大小，从0到m
-            for base_combo in itertools.combinations(range(1, self.m + 1), r):
-                base_indices = list(base_combo)
-                base_str = ",".join(map(str, base_indices)) if base_indices else ""
-                
-                # 遍历所有可能的 'new' 子集（单一索引）
-                for new_idx in range(1, self.m + 1):
-                    # 构造查询字符串
-                    if not base_str:
-                        # 如果base为空，格式为 "+3" 或 "3"？根据 _parse_indices 逻辑，split需带"+"
-                        marg_str = f"+{new_idx}"
-                    else:
-                        marg_str = f"{base_str}+{new_idx}"
-                    
-                    query_content = f"<query_marg>{marg_str}</query_marg>"
-                    
-                    # 内部逻辑计算
-                    new_indices = [new_idx]
-                    base_union = self._get_union(base_indices)
-                    full_union = self._get_union(base_indices + new_indices)
-                    marginal = len(full_union) - len(base_union)
-                    
-                    queries.append({
-                        "query": query_content,
-                        "answer": str(marginal)
-                    })
-        
-        # 3. 比较查询 (COMP)
-        # 格式：<query_comp>A vs B</query_comp>
-        # 策略：为了防止组合爆炸，仅枚举 "单一子集 vs 单一子集" 的情况。
-        # M=8时，8x8=64种，可完全枚举。
-        for i in range(1, self.m + 1):
-            for j in range(1, self.m + 1):
-                if i == j: 
-                    continue # 排除自身比较
-                
-                query_content = f"<query_comp>{i} vs {j}</query_comp>"
-                
-                # 内部逻辑计算
-                u1 = self._get_union([i])
-                u2 = self._get_union([j])
-                
-                if len(u1) > len(u2):
-                    ans = "A>B"
-                elif len(u1) < len(u2):
-                    ans = "A<B"
-                else:
-                    ans = "A=B"
-                    
-                queries.append({
-                    "query": query_content,
-                    "answer": ans
-                })
-        
+        n = self._game_info["n"]
+
+        if self.config.language == "zh":
+            step_msg = "已前进到位置 {k}。"
+            reading_msg = "当前读数 R({k}) = {reading}。"
+            delta_msg = "增量 Delta({k}) = {delta}。"
+            position_msg = "当前位置 k = {k}。"
+        else:
+            step_msg = "Stepped forward to position {k}."
+            reading_msg = "Current reading R({k}) = {reading}."
+            delta_msg = "Delta({k}) = {delta}."
+            position_msg = "Current position k = {k}."
+
+        queries.append({
+            "query": "<query_reading></query_reading>",
+            "answer": reading_msg.format(k=0, reading=self._get_reading(0))
+        })
+        queries.append({
+            "query": "<query_position></query_position>",
+            "answer": position_msg.format(k=0)
+        })
+
+        for k in range(1, n + 1):
+            queries.append({
+                "query": "<step></step>",
+                "answer": step_msg.format(k=k)
+            })
+            reading = self._get_reading(k)
+            queries.append({
+                "query": "<query_reading></query_reading>",
+                "answer": reading_msg.format(k=k, reading=reading)
+            })
+            current_val = self._get_reading(k)
+            prev_val = self._get_reading(k - 1)
+            delta = current_val - prev_val
+            queries.append({
+                "query": "<query_delta></query_delta>",
+                "answer": delta_msg.format(k=k, delta=delta)
+            })
+            queries.append({
+                "query": "<query_position></query_position>",
+                "answer": position_msg.format(k=k)
+            })
+
         return queries

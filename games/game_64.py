@@ -1,1068 +1,802 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   叶节点数量：树中叶子节点的总数是多少
-# ============================================================
-
 from .base import Game
-import random
+import re
+import itertools
 
+class SequencePatternFindingGame(Game):
 
-class TreeParameterIdentificationGame(Game):
+    reasoning_type = "归纳推理"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们现在来玩一个"交互式树参数识别"游戏，规则如下：
+我们现在来玩一个"序列模式推理"游戏，规则如下：
 
-游戏设定了一棵固定的、有限的有根树。节点总数为 N（未知）。根节点 ID 为 1，所有节点用不重复的整数 ID 标记，范围为 1 到 N。
+游戏设定了一个长度为 {n} 的隐藏序列 A，序列中的每个元素都是从字母表 {alphabet} 中选取的。同时，我已经秘密选择了一个连续子序列 T 作为目标模式，T 的长度在 1 到 {lmax} 之间，且 T 在序列 A 中至少出现一次（可能出现多次）。
 
-对于每个节点 i，定义 c(i) 为其子节点数：
-- 叶节点满足 c(i) = 0
-- 非叶节点满足 c(i) 大于 0
+你的目标是通过交互式查询，推断出目标模式 T 的准确内容。你可以反复向我提出以下几类查询（每次仅限一个查询），我会根据真实设定如实回答：
 
-游戏提供以下公理供你推理：
-- 树的边数为 N - 1
-- 所有节点的子节点数之和等于 N - 1
-- 叶节点总数 L 加上非叶节点数 I 等于 N
+1. 目标计数查询：询问目标模式 T 在指定区间 [L,R] 内完整出现的次数。"完整出现"是指该模式的所有位置都位于区间内。
+   - 回答：一个非负整数，表示出现次数。
 
-初始状态：你仅知道根节点 ID=1 存在，其余节点未知。
+2. 目标存在查询：询问目标模式 T 在指定区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-你的目标是通过查询确定叶节点的总数 L。
+3. 测试计数查询：给定一个候选子序列 X，询问 X 在指定区间 [L,R] 内完整出现的次数。
+   - 回答：一个非负整数，表示出现次数。
 
-## 可用的查询操作
+4. 测试存在查询：给定一个候选子序列 X，询问 X 在指定区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-每轮你可以提出以下查询（每次只能包含一个查询标签）：
+注意事项：
+- 区间采用闭区间表示，即 [L,R] 包含位置 L 和 R，且 1 小于等于 L 小于等于 R 小于等于 {n}。
+- "完整出现"要求子序列的所有位置都在指定区间内，跨越边界的匹配不计入。
+- 你无法直接读取序列 A 的任何位置，只能通过查询获得反馈。
 
-1. 询问总节点数：
-<query_total></query_total>
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-2. 查询某个节点的子节点信息（仅限已知但未查询过的节点）：
-<query_node>节点ID</query_node>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. 复查已查询节点的记录：
-<query_record>节点ID</query_record>
+- 目标计数查询（例如查询区间 [1,5]）：
+<query_target_count>1,5</query_target_count>
 
-4. 查询当前已发现的所有节点ID：
-<query_known></query_known>
+- 目标存在查询（例如查询区间 [2,8]）：
+<query_target_exists>2,8</query_target_exists>
 
-5. 查询已查询过的节点数量：
-<query_explored_count></query_explored_count>
+- 测试计数查询（例如测试子序列"AB"在区间 [3,10]）：
+<query_test_count>AB,3,10</query_test_count>
 
-6. 查询已查询节点的子节点数总和：
-<query_children_sum></query_children_sum>
+- 测试存在查询（例如测试子序列"CD"在区间 [1,6]）：
+<query_test_exists>CD,1,6</query_test_exists>
 
-## 提交答案格式
+提交最终答案时，直接给出目标模式 T 的内容，格式如下：
 
-当你确定答案后，使用以下格式提交：
-<answer>叶节点总数</answer>
-
-例如：
-<answer>5</answer>
-
-注意：答案只有一次提交机会，请确保你的推理正确后再提交。
+<answer>ABC</answer>
 """
 
     game_rule_en = """\
-Let's play a "Tree Parameter Identification" game with the following rules:
+Let's play a "Sequence Pattern Finding" game. Here are the rules:
 
-There is a fixed, finite rooted tree. The total number of nodes is N (unknown). The root node has ID 1, and all nodes are labeled with unique integer IDs ranging from 1 to N.
+There is a hidden sequence A of length {n}, where each element is selected from the alphabet {alphabet}. I have secretly chosen a contiguous subsequence T as the target pattern. The length of T is between 1 and {lmax}, and T appears at least once in sequence A (possibly multiple times).
 
-For each node i, define c(i) as its number of children:
-- Leaf nodes satisfy c(i) = 0
-- Non-leaf nodes satisfy c(i) greater than 0
+Your goal is to infer the exact content of the target pattern T through interactive queries. You can repeatedly ask me the following types of queries (one per turn), and I will answer truthfully based on the actual setup:
 
-The following axioms are provided for reasoning:
-- The number of edges is N - 1
-- The sum of all nodes' children counts equals N - 1
-- The number of leaf nodes L plus the number of internal nodes I equals N
+1. Target Count Query: Ask for the number of complete occurrences of the target pattern T within a specified interval [L,R]. A "complete occurrence" means all positions of the pattern are within the interval.
+   - Answer: A non-negative integer representing the count.
 
-Initial state: You only know that the root node ID=1 exists; other nodes are unknown.
+2. Target Exists Query: Ask whether the target pattern T appears at least once completely within the specified interval [L,R].
+   - Answer: "Yes" or "No".
 
-Your goal is to determine the total number of leaf nodes L through queries.
+3. Test Count Query: Given a candidate subsequence X, ask for the number of complete occurrences of X within the specified interval [L,R].
+   - Answer: A non-negative integer representing the count.
 
-## Available Query Operations
+4. Test Exists Query: Given a candidate subsequence X, ask whether X appears at least once completely within the specified interval [L,R].
+   - Answer: "Yes" or "No".
 
-Each turn you can make one of the following queries (only one query tag per turn):
+Notes:
+- Intervals are closed intervals, meaning [L,R] includes both positions L and R, with 1 less than or equal to L less than or equal to R less than or equal to {n}.
+- "Complete occurrence" requires all positions of the subsequence to be within the specified interval; matches crossing boundaries are not counted.
+- You cannot directly read any position of sequence A; you can only obtain feedback through queries.
 
-1. Ask for the total number of nodes:
-<query_total></query_total>
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-2. Query a node's children information (only for known but not yet queried nodes):
-<query_node>NodeID</query_node>
+Each query must contain only one tag. Use the following XML format:
 
-3. Review the record of an already queried node:
-<query_record>NodeID</query_record>
+- Target Count Query (e.g., querying interval [1,5]):
+<query_target_count>1,5</query_target_count>
 
-4. Query all currently known node IDs:
-<query_known></query_known>
+- Target Exists Query (e.g., querying interval [2,8]):
+<query_target_exists>2,8</query_target_exists>
 
-5. Query the count of explored nodes:
-<query_explored_count></query_explored_count>
+- Test Count Query (e.g., testing subsequence "AB" in interval [3,10]):
+<query_test_count>AB,3,10</query_test_count>
 
-6. Query the sum of children counts of explored nodes:
-<query_children_sum></query_children_sum>
+- Test Exists Query (e.g., testing subsequence "CD" in interval [1,6]):
+<query_test_exists>CD,1,6</query_test_exists>
 
-## Answer Submission Format
+When submitting the final answer, directly provide the content of target pattern T in this format:
 
-When you are ready to submit your answer, use:
-<answer>NumberOfLeafNodes</answer>
-
-For example:
-<answer>5</answer>
-
-Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
+<answer>ABC</answer>
 """
 
     contextualized_rule_zh_1 = """\
-我们现在来进行"交通线网末端站点排查"系统操作，规则如下：
+智能交通控制中心正在分析一段道路的监控数据，目的是找出导致偶发性拥堵的高风险车流模式。
 
-系统映射了一个区域的交通线网，该线网呈严格的单向分支树状结构分布。站点总数为 N（未知）。中心交通枢纽站 ID 为 1，所有站点用不重复的整数 ID 标记，范围为 1 到 N。
+系统中记录了长度为 {n} 的连续时间片车流序列 A，序列中每个时间片的车辆类型均来自集合 {alphabet}。交管专家已经锁定了一个连续的车流子序列 T 作为引发拥堵的核心模式，其长度在 1 到 {lmax} 之间，且 T 在序列 A 中至少出现了一次。
 
-对于每个站点 i，定义 c(i) 为其直接连接的下级站点数：
-- 末端终点站（叶节点）满足 c(i) = 0
-- 中转枢纽站（非叶节点）满足 c(i) 大于 0
+你的任务是通过系统接口进行交互查询，精准反推出该高风险车流模式 T。你可以提出以下四种查询（每次仅限一个查询），系统会根据真实监控数据返回结果：
 
-系统提供以下公理供你推理：
-- 线网的连接路段（边）数为 N - 1
-- 所有站点的下级站点数之和等于 N - 1
-- 末端终点站总数 L 加上中转枢纽站数 I 等于 N
+1. 目标计数查询：查询目标模式 T 在指定的时间片区间 [L,R] 内完整出现的次数。"完整出现"意味着该模式的全部时间片都落在该区间内。
+   - 回答：一个非负整数，表示出现次数。
 
-初始状态：你仅知道中心枢纽站 ID=1 存在，其余站点未知。
-（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的站点和下级站点）
+2. 目标存在查询：查询目标模式 T 在指定区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-你的目标是通过调用查询指令，确定末端终点站（叶节点）的总数 L。
+3. 测试计数查询：指定一个假定的车流子序列 X，查询 X 在区间 [L,R] 内完整出现的次数。
+   - 回答：一个非负整数，表示出现次数。
 
-## 可用的查询操作
+4. 测试存在查询：指定一个假定的车流子序列 X，查询 X 在区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-每轮你可以提出以下查询（每次只能包含一个查询标签）：
+注意事项：
+- 区间为闭区间 [L,R]，包含起点和终点，且 1 <= L <= R <= {n}。
+- 只有所有元素都在区间内的匹配才会被统计，跨越边界的车流不计入。
+- 你无法直接调阅原始监控序列 A，必须依赖查询接口提供的反馈。
 
-1. 询问总站点数：
-<query_total></query_total>
+获取足够线索后，请提交最终发现的模式。若提交的模式错误或格式不符，分析任务失败。
 
-2. 查询某个站点的下级站点信息（仅限已知但未查询过的站点）：
-<query_node>站点ID</query_node>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. 复查已查询站点的记录：
-<query_record>站点ID</query_record>
+- 目标计数查询（例如查询区间 [1,5]）：
+<query_target_count>1,5</query_target_count>
 
-4. 查询当前已发现的所有站点ID：
-<query_known></query_known>
+- 目标存在查询（例如查询区间 [2,8]）：
+<query_target_exists>2,8</query_target_exists>
 
-5. 查询已排查过的站点数量：
-<query_explored_count></query_explored_count>
+- 测试计数查询（例如测试子序列"AB"在区间 [3,10]）：
+<query_test_count>AB,3,10</query_test_count>
 
-6. 查询已排查站点的下级站点数总和：
-<query_children_sum></query_children_sum>
+- 测试存在查询（例如测试子序列"CD"在区间 [1,6]）：
+<query_test_exists>CD,1,6</query_test_exists>
 
-## 提交答案格式
+提交最终答案时，直接给出目标模式 T 的内容，格式如下：
 
-当你确定答案后，使用以下格式提交：
-<answer>末端终点站总数</answer>
-
-例如：
-<answer>5</answer>
-
-注意：答案只有一次提交机会，请确保你的推理正确后再提交。
+<answer>ABC</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Let's conduct a "Transport Network Terminal Station Identification" operation with the following rules:
+[Traffic Scenario]
+The intelligent traffic control center is analyzing surveillance data from a road segment to identify the high-risk traffic flow pattern responsible for sporadic congestion.
 
-The system maps a regional transport network distributed in a strictly directional branching tree structure. The total number of stations is N (unknown). The central transport hub has ID 1, and all stations are labeled with unique integer IDs ranging from 1 to N.
+The system has recorded a sequence A of length {n} representing traffic over continuous time slices, where the vehicle type in each slice is from the set {alphabet}. Traffic experts have identified a contiguous traffic subsequence T as the core pattern causing the congestion. The length of T is between 1 and {lmax}, and it appears at least once in sequence A.
 
-For each station i, define c(i) as its number of directly connected downstream stations (children):
-- Terminal stations (leaf nodes) satisfy c(i) = 0
-- Transit hubs (internal nodes) satisfy c(i) greater than 0
+Your task is to deduce the exact high-risk traffic pattern T by interacting with the system's query interface. You may issue the following four types of queries (one per turn), and the system will respond based on the actual surveillance data:
 
-The following axioms are provided for reasoning:
-- The number of connecting routes (edges) is N - 1
-- The sum of all stations' downstream station counts equals N - 1
-- The number of terminal stations L plus the number of transit hubs I equals N
+1. Target Count Query: Ask for the number of complete occurrences of the target pattern T within a specified time slice interval [L,R]. A "complete occurrence" means all time slices of the pattern fall entirely within the interval.
+   - Answer: A non-negative integer representing the count.
 
-Initial state: You only know that the central hub ID=1 exists; other stations are unknown.
-(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to stations and downstream stations respectively.)
+2. Target Exists Query: Ask whether the target pattern T appears at least once completely within the specified interval [L,R].
+   - Answer: "Yes" or "No".
 
-Your goal is to determine the total number of terminal stations L through queries.
+3. Test Count Query: Given a hypothetical traffic subsequence X, ask for the number of complete occurrences of X within the interval [L,R].
+   - Answer: A non-negative integer representing the count.
 
-## Available Query Operations
+4. Test Exists Query: Given a hypothetical traffic subsequence X, ask whether X appears at least once completely within the interval [L,R].
+   - Answer: "Yes" or "No".
 
-Each turn you can make one of the following queries (only one query tag per turn):
+Notes:
+- Intervals are closed [L,R], meaning they include both boundaries, with 1 <= L <= R <= {n}.
+- Only matches entirely within the interval are counted; patterns crossing the boundaries are ignored.
+- You cannot directly access the original surveillance sequence A and must rely entirely on query feedback.
 
-1. Ask for the total number of stations:
-<query_total></query_total>
+Once you have gathered sufficient clues, submit the identified pattern. If your submission is incorrect or improperly formatted, the analysis fails.
 
-2. Query a station's downstream information (only for known but not yet queried stations):
-<query_node>StationID</query_node>
+Each query must contain only one tag. Use the following XML format:
 
-3. Review the record of an already queried station:
-<query_record>StationID</query_record>
+- Target Count Query (e.g., querying interval [1,5]):
+<query_target_count>1,5</query_target_count>
 
-4. Query all currently known station IDs:
-<query_known></query_known>
+- Target Exists Query (e.g., querying interval [2,8]):
+<query_target_exists>2,8</query_target_exists>
 
-5. Query the count of explored stations:
-<query_explored_count></query_explored_count>
+- Test Count Query (e.g., testing subsequence "AB" in interval [3,10]):
+<query_test_count>AB,3,10</query_test_count>
 
-6. Query the sum of downstream station counts of explored stations:
-<query_children_sum></query_children_sum>
+- Test Exists Query (e.g., testing subsequence "CD" in interval [1,6]):
+<query_test_exists>CD,1,6</query_test_exists>
 
-## Answer Submission Format
+When submitting the final answer, directly provide the content of target pattern T in this format:
 
-When you are ready to submit your answer, use:
-<answer>NumberOfTerminalStations</answer>
-
-For example:
-<answer>5</answer>
-
-Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
+<answer>ABC</answer>
 """
 
     contextualized_rule_zh_2 = """\
-我们现在来进行"病毒传播链末端追踪"系统操作，规则如下：
+精准医疗实验室正在分析一段罕见病患者的基因测序数据，试图定位致病的突变序列片段。
 
-流行病学调查发现了一起树状聚集性疫情。感染者总数为 N（未知）。零号病人 ID 为 1，所有感染者用不重复的整数 ID 标记，范围为 1 到 N。
+测序仪输出了一段长度为 {n} 的基因序列 A，序列中的每个测序位点均来自碱基集合 {alphabet}。研究人员已经确认了一段连续的基因子序列 T 作为引发该疾病的核心突变模式，其长度在 1 到 {lmax} 之间，且 T 在序列 A 中至少出现过一次。
 
-对于每个感染者 i，定义 c(i) 为其直接传染的下级感染者数：
-- 末端感染者（叶节点，未引发二次传播）满足 c(i) = 0
-- 传播者（非叶节点）满足 c(i) 大于 0
+你的任务是通过系统接口进行交互式排查，精确测定该致病突变模式 T。你可以提出以下四种查询（每次仅限一个查询），生信分析系统会返回真实结果：
 
-系统提供以下公理供你推理：
-- 传播事件（边）数为 N - 1
-- 所有感染者的直接传染人数之和等于 N - 1
-- 末端感染者总数 L 加上传播者数 I 等于 N
+1. 目标计数查询：查询致病模式 T 在指定的基因位点区间 [L,R] 内完整出现的次数。"完整出现"意味着该模式的全部位点都落在该区间内。
+   - 回答：一个非负整数，表示出现次数。
 
-初始状态：你仅知道零号病人 ID=1 存在，其余感染者未知。
-（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的感染者和被传染者）
+2. 目标存在查询：查询致病模式 T 在指定区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-你的目标是通过调用查询指令，确定末端感染者（叶节点）的总数 L。
+3. 测试计数查询：指定一个候选基因子序列 X，查询 X 在区间 [L,R] 内完整出现的次数。
+   - 回答：一个非负整数，表示出现次数。
 
-## 可用的查询操作
+4. 测试存在查询：指定一个候选基因子序列 X，查询 X 在区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-每轮你可以提出以下查询（每次只能包含一个查询标签）：
+注意事项：
+- 区间为闭区间 [L,R]，包含起点和终点，且 1 <= L <= R <= {n}。
+- 只有所有碱基都在区间内的匹配才会被统计，跨越区间边界的序列不计入。
+- 你无法直接读取原始基因序列 A，必须完全依靠接口查询的反馈。
 
-1. 询问总感染者数：
-<query_total></query_total>
+收集足够的数据后，请提交最终发现的致病模式。若序列错误或格式不符，诊断任务将宣告失败。
 
-2. 查询某个感染者的下级传染信息（仅限已知但未查询过的感染者）：
-<query_node>感染者ID</query_node>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. 复查已查询感染者的记录：
-<query_record>感染者ID</query_record>
+- 目标计数查询（例如查询区间 [1,5]）：
+<query_target_count>1,5</query_target_count>
 
-4. 查询当前已发现的所有感染者ID：
-<query_known></query_known>
+- 目标存在查询（例如查询区间 [2,8]）：
+<query_target_exists>2,8</query_target_exists>
 
-5. 查询已流调过的感染者数量：
-<query_explored_count></query_explored_count>
+- 测试计数查询（例如测试子序列"AB"在区间 [3,10]）：
+<query_test_count>AB,3,10</query_test_count>
 
-6. 查询已流调感染者的直接传染人数总和：
-<query_children_sum></query_children_sum>
+- 测试存在查询（例如测试子序列"CD"在区间 [1,6]）：
+<query_test_exists>CD,1,6</query_test_exists>
 
-## 提交答案格式
+提交最终答案时，直接给出目标模式 T 的内容，格式如下：
 
-当你确定答案后，使用以下格式提交：
-<answer>末端感染者总数</answer>
-
-例如：
-<answer>5</answer>
-
-注意：答案只有一次提交机会，请确保你的推理正确后再提交。
+<answer>ABC</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Let's conduct a "Viral Transmission Chain Terminal Tracing" operation with the following rules:
+[Medical Scenario]
+The precision medicine laboratory is analyzing genomic sequencing data from a patient with a rare disease, attempting to locate the pathogenic mutation sequence.
 
-Epidemiological investigation has identified a tree-like cluster outbreak. The total number of infected patients is N (unknown). Patient Zero has ID 1, and all patients are labeled with unique integer IDs ranging from 1 to N.
+The sequencer has output a gene sequence A of length {n}, where each sequencing site belongs to the base set {alphabet}. Researchers have identified a contiguous gene subsequence T as the core mutation pattern responsible for the disease. Its length is between 1 and {lmax}, and it occurs at least once in sequence A.
 
-For each patient i, define c(i) as the number of individuals they directly infected (children):
-- Terminal patients (leaf nodes, caused no secondary transmission) satisfy c(i) = 0
-- Spreaders (internal nodes) satisfy c(i) greater than 0
+Your task is to deduce the exact pathogenic mutation pattern T by interactively querying the bioinformatics system. You can issue the following four types of queries (one per turn), and the system will return real results:
 
-The following axioms are provided for reasoning:
-- The number of transmission events (edges) is N - 1
-- The sum of all patients' directly infected counts equals N - 1
-- The number of terminal patients L plus the number of spreaders I equals N
+1. Target Count Query: Ask for the number of complete occurrences of the pathogenic pattern T within a specified genomic interval [L,R]. A "complete occurrence" means all bases of the pattern fall entirely within the interval.
+   - Answer: A non-negative integer representing the count.
 
-Initial state: You only know that Patient Zero ID=1 exists; other patients are unknown.
-(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to patients and their infectees respectively.)
+2. Target Exists Query: Ask whether the pathogenic pattern T appears at least once completely within the specified interval [L,R].
+   - Answer: "Yes" or "No".
 
-Your goal is to determine the total number of terminal patients L through queries.
+3. Test Count Query: Given a candidate gene subsequence X, ask for the number of complete occurrences of X within the interval [L,R].
+   - Answer: A non-negative integer representing the count.
 
-## Available Query Operations
+4. Test Exists Query: Given a candidate gene subsequence X, ask whether X appears at least once completely within the interval [L,R].
+   - Answer: "Yes" or "No".
 
-Each turn you can make one of the following queries (only one query tag per turn):
+Notes:
+- Intervals are closed [L,R], including both endpoints, with 1 <= L <= R <= {n}.
+- Only matches entirely within the interval are counted; sequences crossing the boundaries are not.
+- You cannot directly access the original gene sequence A; you must rely entirely on the query feedback.
 
-1. Ask for the total number of patients:
-<query_total></query_total>
+Once you have gathered enough data, submit the final pathogenic pattern. If your submission is incorrect or improperly formatted, the diagnostic task fails.
 
-2. Query a patient's downstream transmission information (only for known but not yet queried patients):
-<query_node>PatientID</query_node>
+Each query must contain only one tag. Use the following XML format:
 
-3. Review the record of an already queried patient:
-<query_record>PatientID</query_record>
+- Target Count Query (e.g., querying interval [1,5]):
+<query_target_count>1,5</query_target_count>
 
-4. Query all currently known patient IDs:
-<query_known></query_known>
+- Target Exists Query (e.g., querying interval [2,8]):
+<query_target_exists>2,8</query_target_exists>
 
-5. Query the count of investigated patients:
-<query_explored_count></query_explored_count>
+- Test Count Query (e.g., testing subsequence "AB" in interval [3,10]):
+<query_test_count>AB,3,10</query_test_count>
 
-6. Query the sum of transmission counts of investigated patients:
-<query_children_sum></query_children_sum>
+- Test Exists Query (e.g., testing subsequence "CD" in interval [1,6]):
+<query_test_exists>CD,1,6</query_test_exists>
 
-## Answer Submission Format
+When submitting the final answer, directly provide the content of target pattern T in this format:
 
-When you are ready to submit your answer, use:
-<answer>NumberOfTerminalPatients</answer>
-
-For example:
-<answer>5</answer>
-
-Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
+<answer>ABC</answer>
 """
 
     contextualized_rule_zh_3 = """\
-我们现在来进行"学科知识图谱末端节点评估"，规则如下：
+教育数据分析平台正在评估一段学生连续的答题行为记录，试图找出导致该生未能掌握核心知识点的错误认知链条。
 
-一门核心学科的知识点构成了严格的有根树状前置依赖图谱。知识点总数为 N（未知）。最底层的核心基础概念 ID 为 1，所有知识点用不重复的整数 ID 标记，范围为 1 到 N。
+系统记录了该生在连续 {n} 个学习步骤中的行为序列 A，每个步骤的行为特征均被抽象为集合 {alphabet} 中的状态码。教研专家指出，存在一个连续的行为子序列 T，它是反映学生根本性认知误区的关键链条。T 的长度在 1 到 {lmax} 之间，且在总序列 A 中至少发生过一次。
 
-对于每个知识点 i，定义 c(i) 为直接以其为前置依赖的后续知识点数：
-- 终极知识点（叶节点，无后续依赖）满足 c(i) = 0
-- 基础/中间知识点（非叶节点）满足 c(i) 大于 0
+你需要通过与平台数据库交互，推导出这段关键错误认知链条 T。你可以使用以下四类查询（每次仅限一个查询）：
 
-系统提供以下公理供你推理：
-- 知识点间的依赖关系（边）数为 N - 1
-- 所有知识点的后续依赖知识点数之和等于 N - 1
-- 终极知识点总数 L 加上基础/中间知识点数 I 等于 N
+1. 目标计数查询：查询关键链条 T 在指定的学习步骤区间 [L,R] 内完整出现的次数。"完整出现"意味着该链条的所有步骤都包含在给定区间内。
+   - 回答：一个非负整数，表示出现次数。
 
-初始状态：你仅知道核心基础概念 ID=1 存在，其余知识点未知。
-（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的前置知识点和后续知识点）
+2. 目标存在查询：查询关键链条 T 在指定区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-你的目标是通过调用查询指令，确定终极知识点（叶节点）的总数 L。
+3. 测试计数查询：指定一个假设的行为子序列 X，查询 X 在区间 [L,R] 内完整出现的次数。
+   - 回答：一个非负整数，表示出现次数。
 
-## 可用的查询操作
+4. 测试存在查询：指定一个假设的行为子序列 X，查询 X 在区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-每轮你可以提出以下查询（每次只能包含一个查询标签）：
+注意事项：
+- 区间采用闭区间表示，即包含步骤 L 和 R，且 1 <= L <= R <= {n}。
+- 只有当行为子序列的每一步都在区间内时才计入，跨边界的分布不视为完整出现。
+- 你无法直接调阅原始行为序列 A，只能通过查询获得分析结果。
 
-1. 询问总知识点数：
-<query_total></query_total>
+在确认结论后，请提交发现的关键链条。如果答案有误或不符合格式，评估过程失败。
 
-2. 查询某个知识点的后续依赖信息（仅限已知但未查询过的知识点）：
-<query_node>知识点ID</query_node>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. 复查已查询知识点的记录：
-<query_record>知识点ID</query_record>
+- 目标计数查询（例如查询区间 [1,5]）：
+<query_target_count>1,5</query_target_count>
 
-4. 查询当前已发现的所有知识点ID：
-<query_known></query_known>
+- 目标存在查询（例如查询区间 [2,8]）：
+<query_target_exists>2,8</query_target_exists>
 
-5. 查询已评估过的知识点数量：
-<query_explored_count></query_explored_count>
+- 测试计数查询（例如测试子序列"AB"在区间 [3,10]）：
+<query_test_count>AB,3,10</query_test_count>
 
-6. 查询已评估知识点的直接后续依赖数总和：
-<query_children_sum></query_children_sum>
+- 测试存在查询（例如测试子序列"CD"在区间 [1,6]）：
+<query_test_exists>CD,1,6</query_test_exists>
 
-## 提交答案格式
+提交最终答案时，直接给出目标模式 T 的内容，格式如下：
 
-当你确定答案后，使用以下格式提交：
-<answer>终极知识点总数</answer>
-
-例如：
-<answer>5</answer>
-
-注意：答案只有一次提交机会，请确保你的推理正确后再提交。
+<answer>ABC</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's evaluate the "Disciplinary Knowledge Graph Terminal Nodes" with the following rules:
+The educational data analysis platform is evaluating a student's continuous problem-solving record to identify the flawed cognitive chain that caused their failure to master a core concept.
 
-The concepts of a core discipline form a strict rooted tree of prerequisite dependencies. The total number of knowledge concepts is N (unknown). The foundational core concept has ID 1, and all concepts are labeled with unique integer IDs ranging from 1 to N.
+The system has recorded the student's behavior sequence A across {n} consecutive learning steps, where the behavioral trait of each step is mapped to a state code in the set {alphabet}. Educational experts indicate that a contiguous behavioral subsequence T represents the critical chain reflecting the student's fundamental cognitive misconception. The length of T is between 1 and {lmax}, and it occurs at least once in sequence A.
 
-For each concept i, define c(i) as the number of subsequent concepts that directly depend on it (children):
-- Terminal concepts (leaf nodes, having no subsequent dependencies) satisfy c(i) = 0
-- Foundational/intermediate concepts (internal nodes) satisfy c(i) greater than 0
+Your task is to deduce this critical flawed cognitive chain T by interacting with the platform's database. You may use the following four types of queries (one per turn):
 
-The following axioms are provided for reasoning:
-- The number of dependency relationships (edges) is N - 1
-- The sum of all concepts' subsequent dependent concept counts equals N - 1
-- The number of terminal concepts L plus the number of intermediate concepts I equals N
+1. Target Count Query: Ask for the number of complete occurrences of the critical chain T within a specified learning step interval [L,R]. A "complete occurrence" means all steps of the chain are fully contained within the interval.
+   - Answer: A non-negative integer representing the count.
 
-Initial state: You only know that the foundational concept ID=1 exists; other concepts are unknown.
-(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to concepts and their dependent concepts respectively.)
+2. Target Exists Query: Ask whether the critical chain T appears at least once completely within the specified interval [L,R].
+   - Answer: "Yes" or "No".
 
-Your goal is to determine the total number of terminal concepts L through queries.
+3. Test Count Query: Given a hypothetical behavioral subsequence X, ask for the number of complete occurrences of X within the interval [L,R].
+   - Answer: A non-negative integer representing the count.
 
-## Available Query Operations
+4. Test Exists Query: Given a hypothetical behavioral subsequence X, ask whether X appears at least once completely within the interval [L,R].
+   - Answer: "Yes" or "No".
 
-Each turn you can make one of the following queries (only one query tag per turn):
+Notes:
+- Intervals are closed [L,R], meaning they include steps L and R, with 1 <= L <= R <= {n}.
+- A subsequence is only counted if every step falls within the interval; sequences spanning across boundaries are not considered complete.
+- You cannot directly read the original behavior sequence A and must deduce the answer from query feedback.
 
-1. Ask for the total number of concepts:
-<query_total></query_total>
+Once you confirm your findings, submit the identified critical chain. If the answer is wrong or incorrectly formatted, the evaluation fails.
 
-2. Query a concept's subsequent dependency information (only for known but not yet queried concepts):
-<query_node>ConceptID</query_node>
+Each query must contain only one tag. Use the following XML format:
 
-3. Review the record of an already queried concept:
-<query_record>ConceptID</query_record>
+- Target Count Query (e.g., querying interval [1,5]):
+<query_target_count>1,5</query_target_count>
 
-4. Query all currently known concept IDs:
-<query_known></query_known>
+- Target Exists Query (e.g., querying interval [2,8]):
+<query_target_exists>2,8</query_target_exists>
 
-5. Query the count of evaluated concepts:
-<query_explored_count></query_explored_count>
+- Test Count Query (e.g., testing subsequence "AB" in interval [3,10]):
+<query_test_count>AB,3,10</query_test_count>
 
-6. Query the sum of subsequent dependencies of evaluated concepts:
-<query_children_sum></query_children_sum>
+- Test Exists Query (e.g., testing subsequence "CD" in interval [1,6]):
+<query_test_exists>CD,1,6</query_test_exists>
 
-## Answer Submission Format
+When submitting the final answer, directly provide the content of target pattern T in this format:
 
-When you are ready to submit your answer, use:
-<answer>NumberOfTerminalConcepts</answer>
-
-For example:
-<answer>5</answer>
-
-Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
+<answer>ABC</answer>
 """
 
     contextualized_rule_zh_4 = """\
-我们现在来进行"产品BOM(物料清单)底层零件核算"，规则如下：
+智能制造工厂的质检系统正在分析流水线上的传感器监控数据，试图排查导致近期批量次品的缺陷连锁反应。
 
-一款复杂产品的BOM构成了一棵标准的装配树。组件总数为 N（未知）。最终成品 ID 为 1，所有组件用不重复的整数 ID 标记，范围为 1 到 N。
+监控网络捕捉到了一段包含 {n} 个连续工序状态的序列 A，每个状态码均属于集合 {alphabet}。工艺工程师判断，存在一个连续的状态子序列 T 构成了核心缺陷模式，正是它引发了后续的质量崩盘。模式 T 的长度在 1 到 {lmax} 之间，且在整个监控序列 A 中至少出现了一次。
 
-对于每个组件 i，定义 c(i) 为其直接包含的子零件/子组件数：
-- 底层基础零件（叶节点，不可再分）满足 c(i) = 0
-- 复合组件（非叶节点）满足 c(i) 大于 0
+你的任务是通过向诊断系统发起交互式查询，精确定位该缺陷模式 T。系统支持四种查询接口（每次仅限调用一个）：
 
-系统提供以下公理供你推理：
-- 装配拆解关系（边）数为 N - 1
-- 所有组件直接包含的子零件数之和等于 N - 1
-- 底层基础零件总数 L 加上复合组件数 I 等于 N
+1. 目标计数查询：查询缺陷模式 T 在指定工序区间 [L,R] 内完整发生的次数。"完整发生"指该模式涵盖的所有工序状态都处于区间内部。
+   - 回答：一个非负整数，表示发生次数。
 
-初始状态：你仅知道最终成品 ID=1 存在，其余组件未知。
-（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的组件和子零件）
+2. 目标存在查询：查询缺陷模式 T 在指定区间 [L,R] 内是否至少完整发生一次。
+   - 回答："是"或"否"。
 
-你的目标是通过调用查询指令，确定底层基础零件（叶节点）的总数 L。
+3. 测试计数查询：指定一个疑似的状态子序列 X，查询 X 在区间 [L,R] 内完整发生的次数。
+   - 回答：一个非负整数，表示发生次数。
 
-## 可用的查询操作
+4. 测试存在查询：指定一个疑似的状态子序列 X，查询 X 在区间 [L,R] 内是否至少完整发生一次。
+   - 回答："是"或"否"。
 
-每轮你可以提出以下查询（每次只能包含一个查询标签）：
+注意事项：
+- 区间为闭区间 [L,R]，包含端点 L 和 R，且 1 <= L <= R <= {n}。
+- 仅当连锁反应完全包含在指定工序区间时才计为有效匹配，跨区间的模式不予统计。
+- 你没有权限直接拉取完整的状态序列 A，所有的推断必须基于接口返回的数据。
 
-1. 询问总组件数：
-<query_total></query_total>
+当你锁定缺陷源头后，请提交该模式。提交错误或格式不对，排查任务将重置失败。
 
-2. 查询某个组件的子零件信息（仅限已知但未查询过的组件）：
-<query_node>组件ID</query_node>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. 复查已查询组件的记录：
-<query_record>组件ID</query_record>
+- 目标计数查询（例如查询区间 [1,5]）：
+<query_target_count>1,5</query_target_count>
 
-4. 查询当前已发现的所有组件ID：
-<query_known></query_known>
+- 目标存在查询（例如查询区间 [2,8]）：
+<query_target_exists>2,8</query_target_exists>
 
-5. 查询已核算过的组件数量：
-<query_explored_count></query_explored_count>
+- 测试计数查询（例如测试子序列"AB"在区间 [3,10]）：
+<query_test_count>AB,3,10</query_test_count>
 
-6. 查询已核算组件的子零件数总和：
-<query_children_sum></query_children_sum>
+- 测试存在查询（例如测试子序列"CD"在区间 [1,6]）：
+<query_test_exists>CD,1,6</query_test_exists>
 
-## 提交答案格式
+提交最终答案时，直接给出目标模式 T 的内容，格式如下：
 
-当你确定答案后，使用以下格式提交：
-<answer>底层基础零件总数</answer>
-
-例如：
-<answer>5</answer>
-
-注意：答案只有一次提交机会，请确保你的推理正确后再提交。
+<answer>ABC</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industry Scenario]
-Let's conduct a "Product BOM Base Component Audit" with the following rules:
+The quality inspection system of a smart factory is analyzing sensor monitoring data from the assembly line to troubleshoot the defect chain reaction that caused a recent batch of faulty products.
 
-A complex product's Bill of Materials (BOM) forms a standard assembly tree. The total number of components is N (unknown). The final product has ID 1, and all components are labeled with unique integer IDs ranging from 1 to N.
+The monitoring network captured a sequence A containing {n} consecutive process states, where each state code belongs to the set {alphabet}. Process engineers suspect that a contiguous state subsequence T constitutes the core defect pattern triggering the subsequent quality collapse. The length of T is between 1 and {lmax}, and it appears at least once in sequence A.
 
-For each component i, define c(i) as the number of sub-components/parts it directly contains (children):
-- Base raw materials (leaf nodes, cannot be further disassembled) satisfy c(i) = 0
-- Sub-assemblies (internal nodes) satisfy c(i) greater than 0
+Your task is to pinpoint this defect pattern T by making interactive queries to the diagnostic system. The system supports four query interfaces (one per turn):
 
-The following axioms are provided for reasoning:
-- The number of assembly relationships (edges) is N - 1
-- The sum of all components' sub-component counts equals N - 1
-- The number of base raw materials L plus the number of sub-assemblies I equals N
+1. Target Count Query: Ask for the number of complete occurrences of the defect pattern T within a specified process interval [L,R]. A "complete occurrence" means all process states covered by the pattern lie entirely within the interval.
+   - Answer: A non-negative integer representing the count.
 
-Initial state: You only know that the final product ID=1 exists; other components are unknown.
-(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to components and sub-components respectively.)
+2. Target Exists Query: Ask whether the defect pattern T appears at least once completely within the specified interval [L,R].
+   - Answer: "Yes" or "No".
 
-Your goal is to determine the total number of base raw materials L through queries.
+3. Test Count Query: Given a suspected state subsequence X, ask for the number of complete occurrences of X within the interval [L,R].
+   - Answer: A non-negative integer representing the count.
 
-## Available Query Operations
+4. Test Exists Query: Given a suspected state subsequence X, ask whether X appears at least once completely within the interval [L,R].
+   - Answer: "Yes" or "No".
 
-Each turn you can make one of the following queries (only one query tag per turn):
+Notes:
+- Intervals are closed [L,R], including endpoints L and R, with 1 <= L <= R <= {n}.
+- A match is only valid if the entire chain reaction is contained within the process interval; patterns crossing intervals are ignored.
+- You are not authorized to directly extract the full state sequence A; all deductions must be based on data returned by the interfaces.
 
-1. Ask for the total number of components:
-<query_total></query_total>
+Once you have locked onto the source of the defect, submit the pattern. If the submission is wrong or improperly formatted, the troubleshooting task resets and fails.
 
-2. Query a component's sub-component information (only for known but not yet queried components):
-<query_node>ComponentID</query_node>
+Each query must contain only one tag. Use the following XML format:
 
-3. Review the record of an already queried component:
-<query_record>ComponentID</query_record>
+- Target Count Query (e.g., querying interval [1,5]):
+<query_target_count>1,5</query_target_count>
 
-4. Query all currently known component IDs:
-<query_known></query_known>
+- Target Exists Query (e.g., querying interval [2,8]):
+<query_target_exists>2,8</query_target_exists>
 
-5. Query the count of audited components:
-<query_explored_count></query_explored_count>
+- Test Count Query (e.g., testing subsequence "AB" in interval [3,10]):
+<query_test_count>AB,3,10</query_test_count>
 
-6. Query the sum of sub-component counts of audited components:
-<query_children_sum></query_children_sum>
+- Test Exists Query (e.g., testing subsequence "CD" in interval [1,6]):
+<query_test_exists>CD,1,6</query_test_exists>
 
-## Answer Submission Format
+When submitting the final answer, directly provide the content of target pattern T in this format:
 
-When you are ready to submit your answer, use:
-<answer>NumberOfBaseComponents</answer>
-
-For example:
-<answer>5</answer>
-
-Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
+<answer>ABC</answer>
 """
 
     contextualized_rule_zh_5 = """\
-我们现在来进行"企业股权穿透与底层实体调查"，规则如下：
+经侦部门正在对一宗复杂的金融案件资金流水进行穿透式审查，旨在锁定洗钱网络的关键流转路径。
 
-某跨国集团具有严格树状的层级控股结构。关联企业总数为 N（未知）。顶层控股母公司 ID 为 1，所有企业用不重复的整数 ID 标记，范围为 1 到 N。
+警方查获了一份包含 {n} 笔连续交易的账本序列 A，每笔交易的类型均被归类于集合 {alphabet}。财务侦查员怀疑其中隐藏着一个连续的交易子序列 T，它是整个洗钱操作的核心特征路径。该特征路径的长度在 1 到 {lmax} 之间，且在账本 A 中至少暴露过一次。
 
-对于每个企业 i，定义 c(i) 为其直接控股的子公司数：
-- 底层运营实体（叶节点，无下属公司）满足 c(i) = 0
-- 中间控股公司（非叶节点）满足 c(i) 大于 0
+作为调查指挥，你需要通过警用数据终端进行查询，拼凑出完整的非法流转路径 T。你可以下达以下四种查询指令（每次仅限一条指令）：
 
-系统提供以下公理供你推理：
-- 控股关系（边）数为 N - 1
-- 所有企业的控股子公司数之和等于 N - 1
-- 底层运营实体总数 L 加上中间控股公司数 I 等于 N
+1. 目标计数查询：查询核心路径 T 在指定的流水记录区间 [L,R] 内完整出现的次数。"完整出现"表示该条路径的所有交易环节均未超出该区间。
+   - 回答：一个非负整数，表示出现次数。
 
-初始状态：你仅知道顶层控股母公司 ID=1 存在，其余企业未知。
-（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的母公司和子公司）
+2. 目标存在查询：查询核心路径 T 在指定区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-你的目标是通过调用查询指令，查清底层运营实体（叶节点）的总数 L。
+3. 测试计数查询：提交一条假定的交易子序列 X，查询 X 在区间 [L,R] 内完整出现的次数。
+   - 回答：一个非负整数，表示出现次数。
 
-## 可用的查询操作
+4. 测试存在查询：提交一条假定的交易子序列 X，查询 X 在区间 [L,R] 内是否至少完整出现一次。
+   - 回答："是"或"否"。
 
-每轮你可以提出以下查询（每次只能包含一个查询标签）：
+注意事项：
+- 检索区间必须为闭区间 [L,R]（1 <= L <= R <= {n}），包括起始和终止流水号。
+- 交易路径的每一环都必须落在区间内才能视为匹配，跨越检索边界的流转不作数。
+- 原始账本 A 受到高度加密保护，你只能通过终端反馈的结果进行推理。
 
-1. 询问总企业数：
-<query_total></query_total>
+在证据链闭环后，请提交你的调查结论。若认定的路径错误或文书格式违规，案件线索将就此中断。
 
-2. 查询某个企业的下属公司信息（仅限已知但未查询过的企业）：
-<query_node>企业ID</query_node>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. 复查已查询企业的记录：
-<query_record>企业ID</query_record>
+- 目标计数查询（例如查询区间 [1,5]）：
+<query_target_count>1,5</query_target_count>
 
-4. 查询当前已发现的所有企业ID：
-<query_known></query_known>
+- 目标存在查询（例如查询区间 [2,8]）：
+<query_target_exists>2,8</query_target_exists>
 
-5. 查询已调查过的企业数量：
-<query_explored_count></query_explored_count>
+- 测试计数查询（例如测试子序列"AB"在区间 [3,10]）：
+<query_test_count>AB,3,10</query_test_count>
 
-6. 查询已调查企业的直接控股子公司数总和：
-<query_children_sum></query_children_sum>
+- 测试存在查询（例如测试子序列"CD"在区间 [1,6]）：
+<query_test_exists>CD,1,6</query_test_exists>
 
-## 提交答案格式
+提交最终答案时，直接给出目标模式 T 的内容，格式如下：
 
-当你确定答案后，使用以下格式提交：
-<answer>底层运营实体总数</answer>
-
-例如：
-<answer>5</answer>
-
-注意：答案只有一次提交机会，请确保你的推理正确后再提交。
+<answer>ABC</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's conduct a "Corporate Equity Penetration and Subsidiary Investigation" with the following rules:
+[Legal Scenario]
+The economic crime investigation department is conducting a penetrative review of the fund flow in a complex financial case to lock down the critical routing path of a money laundering network.
 
-A multinational conglomerate has a strictly tree-like hierarchical holding structure. The total number of affiliated entities is N (unknown). The ultimate holding company has ID 1, and all entities are labeled with unique integer IDs ranging from 1 to N.
+Police have seized a ledger sequence A containing {n} consecutive transactions, with each transaction type classified under the set {alphabet}. Financial investigators suspect that a contiguous transaction subsequence T is hidden within, serving as the core characteristic path of the money laundering operation. The length of this characteristic path is between 1 and {lmax}, and it is exposed at least once in ledger A.
 
-For each entity i, define c(i) as the number of subsidiaries it directly controls (children):
-- Operating subsidiaries (leaf nodes, with no further subsidiaries) satisfy c(i) = 0
-- Intermediate holding companies (internal nodes) satisfy c(i) greater than 0
+As the investigation commander, you must piece together the complete illicit routing path T by querying the police data terminal. You can issue the following four types of query commands (one per turn):
 
-The following axioms are provided for reasoning:
-- The number of control relationships (edges) is N - 1
-- The sum of all entities' subsidiary counts equals N - 1
-- The number of operating subsidiaries L plus the number of intermediate holding companies I equals N
+1. Target Count Query: Ask for the number of complete occurrences of the core path T within a specified transaction record interval [L,R]. A "complete occurrence" indicates that every link of the transaction path falls entirely within the interval.
+   - Answer: A non-negative integer representing the count.
 
-Initial state: You only know that the ultimate holding company ID=1 exists; other entities are unknown.
-(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to parent entities and subsidiaries respectively.)
+2. Target Exists Query: Ask whether the core path T appears at least once completely within the specified interval [L,R].
+   - Answer: "Yes" or "No".
 
-Your goal is to determine the total number of operating subsidiaries L through queries.
+3. Test Count Query: Submit a hypothetical transaction subsequence X and ask for its number of complete occurrences within the interval [L,R].
+   - Answer: A non-negative integer representing the count.
 
-## Available Query Operations
+4. Test Exists Query: Submit a hypothetical transaction subsequence X and ask whether it appears at least once completely within the interval [L,R].
+   - Answer: "Yes" or "No".
 
-Each turn you can make one of the following queries (only one query tag per turn):
+Notes:
+- Search intervals must be closed [L,R] (1 <= L <= R <= {n}), including the start and end transaction numbers.
+- Every link of the transaction path must fall within the interval to be considered a match; flows crossing search boundaries do not count.
+- The original ledger A is highly encrypted; you can only deduce the path through terminal feedback.
 
-1. Ask for the total number of entities:
-<query_total></query_total>
+Once the chain of evidence is complete, submit your investigative conclusion. If the identified path is wrong or the document format is invalid, the lead will be broken.
 
-2. Query an entity's subsidiary information (only for known but not yet queried entities):
-<query_node>EntityID</query_node>
+Each query must contain only one tag. Use the following XML format:
 
-3. Review the record of an already queried entity:
-<query_record>EntityID</query_record>
+- Target Count Query (e.g., querying interval [1,5]):
+<query_target_count>1,5</query_target_count>
 
-4. Query all currently known entity IDs:
-<query_known></query_known>
+- Target Exists Query (e.g., querying interval [2,8]):
+<query_target_exists>2,8</query_target_exists>
 
-5. Query the count of investigated entities:
-<query_explored_count></query_explored_count>
+- Test Count Query (e.g., testing subsequence "AB" in interval [3,10]):
+<query_test_count>AB,3,10</query_test_count>
 
-6. Query the sum of subsidiary counts of investigated entities:
-<query_children_sum></query_children_sum>
+- Test Exists Query (e.g., testing subsequence "CD" in interval [1,6]):
+<query_test_exists>CD,1,6</query_test_exists>
 
-## Answer Submission Format
+When submitting the final answer, directly provide the content of target pattern T in this format:
 
-When you are ready to submit your answer, use:
-<answer>NumberOfOperatingSubsidiaries</answer>
-
-For example:
-<answer>5</answer>
-
-Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
+<answer>ABC</answer>
 """
 
-    tags = ["answer", "query_total", "query_node", "query_record", "query_known", 
-            "query_explored_count", "query_children_sum"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "树"
+    tags = ["answer", "query_target_count", "query_target_exists", "query_test_count", "query_test_exists"]
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "n": 7,
-            "tree": {
-                1: [2, 3],
-                2: [4, 5],
-                3: [6, 7],
-                4: [],
-                5: [],
-                6: [],
-                7: []
+        "zh": {
+            1: {
+                "n": 6,
+                "lmax": 2,
+                "alphabet": "{A,B}",
+                "sequence": "ABABAB",
+                "target": "AB",
             },
-            "leaf_count": 4
+            2: {
+                "n": 8,
+                "lmax": 3,
+                "alphabet": "{A,B,C}",
+                "sequence": "ABACBACA",
+                "target": "BAC",
+            },
+            3: {
+                "n": 10,
+                "lmax": 3,
+                "alphabet": "{A,B,C}",
+                "sequence": "CABCABCABC",
+                "target": "CAB",
+            },
+            4: {
+                "n": 12,
+                "lmax": 4,
+                "alphabet": "{A,B,C,D}",
+                "sequence": "ABCDABCDABCD",
+                "target": "ABCD",
+            },
+            5: {
+                "n": 15,
+                "lmax": 4,
+                "alphabet": "{A,B,C,D}",
+                "sequence": "CADBCADBCADBCAD",
+                "target": "CADB",
+            },
         },
-        2: {
-            "n": 10,
-            "tree": {
-                1: [2, 3, 4],
-                2: [5, 6],
-                3: [7],
-                4: [8, 9, 10],
-                5: [],
-                6: [],
-                7: [],
-                8: [],
-                9: [],
-                10: []
+        "en": {
+            1: {
+                "n": 6,
+                "lmax": 2,
+                "alphabet": "{A,B}",
+                "sequence": "ABABAB",
+                "target": "AB",
             },
-            "leaf_count": 6
+            2: {
+                "n": 8,
+                "lmax": 3,
+                "alphabet": "{A,B,C}",
+                "sequence": "ABACBACA",
+                "target": "BAC",
+            },
+            3: {
+                "n": 10,
+                "lmax": 3,
+                "alphabet": "{A,B,C}",
+                "sequence": "CABCABCABC",
+                "target": "CAB",
+            },
+            4: {
+                "n": 12,
+                "lmax": 4,
+                "alphabet": "{A,B,C,D}",
+                "sequence": "ABCDABCDABCD",
+                "target": "ABCD",
+            },
+            5: {
+                "n": 15,
+                "lmax": 4,
+                "alphabet": "{A,B,C,D}",
+                "sequence": "CADBCADBCADBCAD",
+                "target": "CADB",
+            },
         },
-        3: {
-            "n": 15,
-            "tree": {
-                1: [2, 3, 4],
-                2: [5, 6, 7],
-                3: [8, 9],
-                4: [10],
-                5: [11, 12],
-                6: [],
-                7: [13],
-                8: [],
-                9: [14, 15],
-                10: [],
-                11: [],
-                12: [],
-                13: [],
-                14: [],
-                15: []
-            },
-            "leaf_count": 8
-        },
-        4: {
-            "n": 20,
-            "tree": {
-                1: [2, 3, 4, 5],
-                2: [6, 7],
-                3: [8, 9, 10],
-                4: [11],
-                5: [12, 13],
-                6: [14, 15],
-                7: [],
-                8: [16],
-                9: [],
-                10: [17, 18],
-                11: [19],
-                12: [],
-                13: [20],
-                14: [],
-                15: [],
-                16: [],
-                17: [],
-                18: [],
-                19: [],
-                20: []
-            },
-            "leaf_count": 10
-        },
-        5: {
-            "n": 30,
-            "tree": {
-                1: [2, 3, 4],
-                2: [5, 6, 7, 8],
-                3: [9, 10],
-                4: [11, 12, 13],
-                5: [14, 15],
-                6: [16],
-                7: [17, 18, 19],
-                8: [],
-                9: [20, 21],
-                10: [22],
-                11: [23, 24],
-                12: [],
-                13: [25, 26],
-                14: [],
-                15: [27],
-                16: [28],
-                17: [],
-                18: [],
-                19: [29, 30],
-                20: [],
-                21: [],
-                22: [],
-                23: [],
-                24: [],
-                25: [],
-                26: [],
-                27: [],
-                28: [],
-                29: [],
-                30: []
-            },
-            "leaf_count": 16
-        }
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
+        lang = self.config.language
         diff = int(self.config.difficulty)
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
+        self._game_info["lmax"] = cfg["lmax"]
+        self._game_info["alphabet"] = cfg["alphabet"]
         
-        # 树结构：节点ID -> 子节点ID列表
-        self.tree = cfg["tree"]
-        self.n = cfg["n"]
-        self.leaf_count = cfg["leaf_count"]
+        self.sequence = cfg["sequence"]
+        self.target = cfg["target"]
+
+    def _count_occurrences(self, pattern, left, right):
+        count = 0
+        pattern_len = len(pattern)
         
-        # 维护已知节点集合和已查询节点集合
-        self.known_nodes = {1}  # K：已知节点
-        self.queried_nodes = set()  # Q：已查询节点
+        left_idx = left - 1
+        right_idx = right - 1
         
-        # 缓存已查询节点的信息
-        self.query_cache = {}  # 节点ID -> (c(i), [子节点列表])
+        for start in range(left_idx, right_idx + 1):
+            end = start + pattern_len - 1
+            if end <= right_idx:
+                if self.sequence[start:end+1] == pattern:
+                    count += 1
+        
+        return count
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        try:
-            answer = int(parsed_info["answer"].strip())
-            return answer == self.leaf_count
-        except:
-            return False
+        raw_ans = parsed_info["answer"].strip()
+        return raw_ans == self.target
 
-    def _cf_core_produce(self, parsed_info):
-        """根据查询生成响应（供基类 produce_response 调用）"""
-        if self.config.language == "zh":
-            return self._produce_response_zh(parsed_info)
-        else:
-            return self._produce_response_en(parsed_info)
-
-    def _cf_make_wrong(self, correct):
-        """将正确的响应篡改为错误的响应"""
-        # 尝试修改数字部分
-        import re
-        
-        def _alter_number(match):
-            num = int(match.group(0))
-            # 偏移量，确保不为0
-            offset = random.choice([-2, -1, 1, 2])
-            new_num = max(0, num + offset)
-            if new_num == num:
-                new_num = num + 1
-            return str(new_num)
-        
-        altered = re.sub(r'\d+', _alter_number, correct, count=1)
-        if altered == correct:
-            # 如果没有数字可改，就添加误导信息
-            if self.config.language == "zh":
-                return correct + "（附加信息：该节点可能还有隐藏子节点。）"
-            else:
-                return correct + " (Additional info: this node may have hidden children.)"
-        return altered
-
-    def _produce_response_zh(self, parsed_info):
-        """中文响应"""
-        # 1. 询问总节点数
-        if "query_total" in parsed_info:
-            return f"总节点数 N = {self.n}。"
-        
-        # 2. 查询节点的子节点信息
-        elif "query_node" in parsed_info:
-            try:
-                node_id = int(parsed_info["query_node"].strip())
-                
-                # 检查节点是否已知
-                if node_id not in self.known_nodes:
-                    return f"错误：节点 {node_id} 尚未被发现，无法查询。"
-                
-                # 检查是否已查询过
-                if node_id in self.queried_nodes:
-                    return f"错误：节点 {node_id} 已经查询过，请使用复查记录操作。"
-                
-                # 检查节点是否存在
-                if node_id not in self.tree:
-                    return f"错误：节点 {node_id} 不存在。"
-                
-                # 获取子节点信息
-                children = self.tree[node_id]
-                c_i = len(children)
-                
-                # 更新状态
-                self.queried_nodes.add(node_id)
-                self.query_cache[node_id] = (c_i, children)
-                self.known_nodes.update(children)
-                
-                if c_i == 0:
-                    return f"节点 {node_id} 的子节点数 c({node_id}) = 0；它是叶节点，无子节点。"
-                else:
-                    children_str = ", ".join(map(str, children))
-                    return f"节点 {node_id} 的子节点数 c({node_id}) = {c_i}；子节点ID列表：{children_str}。"
-            
-            except ValueError:
-                return "错误：节点ID必须是整数。"
-        
-        # 3. 复查已查询节点记录
-        elif "query_record" in parsed_info:
-            try:
-                node_id = int(parsed_info["query_record"].strip())
-                
-                if node_id not in self.queried_nodes:
-                    return f"节点 {node_id} 尚未查询，无记录。"
-                
-                c_i, children = self.query_cache[node_id]
-                if c_i == 0:
-                    return f"节点 {node_id} 的记录：c({node_id}) = 0；它是叶节点，无子节点。"
-                else:
-                    children_str = ", ".join(map(str, children))
-                    return f"节点 {node_id} 的记录：c({node_id}) = {c_i}；子节点ID列表：{children_str}。"
-            
-            except ValueError:
-                return "错误：节点ID必须是整数。"
-        
-        # 4. 查询当前已知节点
-        elif "query_known" in parsed_info:
-            known_list = sorted(list(self.known_nodes))
-            known_str = ", ".join(map(str, known_list))
-            return f"当前已发现的节点ID：{known_str}。"
-        
-        # 5. 查询已查询节点数量
-        elif "query_explored_count" in parsed_info:
-            return f"当前已查询的节点数为 {len(self.queried_nodes)}。"
-        
-        # 6. 查询已查询节点的子节点数总和
-        elif "query_children_sum" in parsed_info:
-            total_sum = sum(c_i for c_i, _ in self.query_cache.values())
-            return f"已查询节点的子节点数总和为 {total_sum}。"
-        
-        else:
-            raise ValueError("无效的查询标签。")
-
-    def _produce_response_en(self, parsed_info):
-        """英文响应"""
-        # 1. 询问总节点数
-        if "query_total" in parsed_info:
-            return f"Total number of nodes N = {self.n}."
-        
-        # 2. 查询节点的子节点信息
-        elif "query_node" in parsed_info:
-            try:
-                node_id = int(parsed_info["query_node"].strip())
-                
-                # 检查节点是否已知
-                if node_id not in self.known_nodes:
-                    return f"Error: Node {node_id} has not been discovered yet and cannot be queried."
-                
-                # 检查是否已查询过
-                if node_id in self.queried_nodes:
-                    return f"Error: Node {node_id} has already been queried. Please use query_record to review."
-                
-                # 检查节点是否存在
-                if node_id not in self.tree:
-                    return f"Error: Node {node_id} does not exist."
-                
-                # 获取子节点信息
-                children = self.tree[node_id]
-                c_i = len(children)
-                
-                # 更新状态
-                self.queried_nodes.add(node_id)
-                self.query_cache[node_id] = (c_i, children)
-                self.known_nodes.update(children)
-                
-                if c_i == 0:
-                    return f"Node {node_id} has c({node_id}) = 0; it is a leaf node with no children."
-                else:
-                    children_str = ", ".join(map(str, children))
-                    return f"Node {node_id} has c({node_id}) = {c_i}; children IDs: {children_str}."
-            
-            except ValueError:
-                return "Error: Node ID must be an integer."
-        
-        # 3. 复查已查询节点记录
-        elif "query_record" in parsed_info:
-            try:
-                node_id = int(parsed_info["query_record"].strip())
-                
-                if node_id not in self.queried_nodes:
-                    return f"Node {node_id} has not been queried yet; no record available."
-                
-                c_i, children = self.query_cache[node_id]
-                if c_i == 0:
-                    return f"Node {node_id} record: c({node_id}) = 0; it is a leaf node with no children."
-                else:
-                    children_str = ", ".join(map(str, children))
-                    return f"Node {node_id} record: c({node_id}) = {c_i}; children IDs: {children_str}."
-            
-            except ValueError:
-                return "Error: Node ID must be an integer."
-        
-        # 4. 查询当前已知节点
-        elif "query_known" in parsed_info:
-            known_list = sorted(list(self.known_nodes))
-            known_str = ", ".join(map(str, known_list))
-            return f"Currently known node IDs: {known_str}."
-        
-        # 5. 查询已查询节点数量
-        elif "query_explored_count" in parsed_info:
-            return f"Number of explored nodes: {len(self.queried_nodes)}."
-        
-        # 6. 查询已查询节点的子节点数总和
-        elif "query_children_sum" in parsed_info:
-            total_sum = sum(c_i for c_i, _ in self.query_cache.values())
-            return f"Sum of children counts of explored nodes: {total_sum}."
-        
-        else:
-            raise ValueError("Invalid query tag.")
-
-    def get_all_possible_queries(self):
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        对于 query_node 和 query_record，枚举所有树中节点（1~N）的正确返回信息，
-        即使在当前游戏状态下该节点可能尚未被发现。
-        """
+    def get_all_possible_queries(self) -> list[dict]:
         results = []
         
-        # 内部辅助函数：在临时状态下执行查询
-        def run_safe(tag, content, setup_fn=None):
-            # 备份状态
-            saved_known = self.known_nodes.copy()
-            saved_queried = self.queried_nodes.copy()
-            saved_cache = self.query_cache.copy() # 浅拷贝即可，因为内部逻辑多为赋值操作
-            
-            try:
-                # 临时修改状态以满足查询前置条件（如果需要）
-                if setup_fn:
-                    setup_fn()
-                
-                # 构造 parsed_info
-                parsed_info = {tag: str(content)}
-                
-                # 调用核心逻辑
-                if self.config.language == "zh":
-                    ans = self._produce_response_zh(parsed_info)
-                else:
-                    ans = self._produce_response_en(parsed_info)
-                
-                # 构造查询字符串
-                query_str = f"<{tag}>{content}</{tag}>"
-                return {"query": query_str, "answer": ans}
-                
-            except Exception:
-                # 如果出现异常则忽略该查询
-                return None
-            finally:
-                # 恢复状态
-                self.known_nodes = saved_known
-                self.queried_nodes = saved_queried
-                self.query_cache = saved_cache
-
-        # 1. query_total
-        res = run_safe("query_total", "")
-        if res: results.append(res)
+        n = self._game_info["n"]
+        lmax = self._game_info["lmax"]
+        alphabet_str = self._game_info["alphabet"]
+        alphabet = [c.strip() for c in alphabet_str.replace("{", "").replace("}", "").split(",")]
         
-        # 2. query_node: 枚举所有节点 (假设满足"已知但未查询"条件)
-        for i in range(1, self.n + 1):
-            def setup_node_query(node_id=i):
-                # 强行使节点变为已知且未查询状态
-                self.known_nodes.add(node_id)
-                if node_id in self.queried_nodes:
-                    self.queried_nodes.remove(node_id)
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
             
-            res = run_safe("query_node", i, setup_node_query)
-            if res: results.append(res)
-            
-        # 3. query_record: 枚举所有节点 (假设满足"已查询"条件)
-        for i in range(1, self.n + 1):
-            def setup_record_query(node_id=i):
-                # 强行使节点变为已查询状态，并填充缓存
-                self.queried_nodes.add(node_id)
-                children = self.tree[node_id]
-                c_i = len(children)
-                self.query_cache[node_id] = (c_i, children)
+        intervals = []
+        for l in range(1, n + 1):
+            for r in range(l, n + 1):
+                intervals.append((l, r))
                 
-            res = run_safe("query_record", i, setup_record_query)
-            if res: results.append(res)
+        for l, r in intervals:
+            count = self._count_occurrences(self.target, l, r)
             
-        # 4. query_known (基于全部节点已探索的状态)
-        def setup_all_known():
-            self.known_nodes = set(range(1, self.n + 1))
-        res = run_safe("query_known", "", setup_all_known)
-        if res: results.append(res)
-        
-        # 5. query_explored_count (基于全部节点已探索的状态)
-        def setup_all_explored_count():
-            self.queried_nodes = set(range(1, self.n + 1))
-        res = run_safe("query_explored_count", "", setup_all_explored_count)
-        if res: results.append(res)
-        
-        # 6. query_children_sum (基于全部节点已探索的状态)
-        def setup_all_children_sum():
-            self.queried_nodes = set(range(1, self.n + 1))
-            for node_id in range(1, self.n + 1):
-                children = self.tree[node_id]
-                self.query_cache[node_id] = (len(children), children)
-        res = run_safe("query_children_sum", "", setup_all_children_sum)
-        if res: results.append(res)
-        
+            results.append({
+                "query": f"<query_target_count>{l},{r}</query_target_count>",
+                "answer": str(count)
+            })
+            
+            results.append({
+                "query": f"<query_target_exists>{l},{r}</query_target_exists>",
+                "answer": yes_res if count > 0 else no_res
+            })
+            
+        patterns = []
+        for length in range(1, lmax + 1):
+            for p in itertools.product(alphabet, repeat=length):
+                patterns.append("".join(p))
+                
+        for pattern in patterns:
+            for l, r in intervals:
+                count = self._count_occurrences(pattern, l, r)
+                
+                results.append({
+                    "query": f"<query_test_count>{pattern},{l},{r}</query_test_count>",
+                    "answer": str(count)
+                })
+                
+                results.append({
+                    "query": f"<query_test_exists>{pattern},{l},{r}</query_test_exists>",
+                    "answer": yes_res if count > 0 else no_res
+                })
+                
         return results
+
+    def _cf_core_produce(self, parsed_info):
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_format = "错误：查询格式无效。"
+            error_range = "错误：区间范围无效。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid query format."
+            error_range = "Error: Invalid interval range."
+
+        try:
+            if "query_target_count" in parsed_info:
+                parts = [x.strip() for x in parsed_info["query_target_count"].split(",")]
+                if len(parts) != 2:
+                    return error_format
+                left, right = int(parts[0]), int(parts[1])
+                if not (1 <= left <= right <= self._game_info["n"]):
+                    return error_range
+                count = self._count_occurrences(self.target, left, right)
+                return str(count)
+
+            elif "query_target_exists" in parsed_info:
+                parts = [x.strip() for x in parsed_info["query_target_exists"].split(",")]
+                if len(parts) != 2:
+                    return error_format
+                left, right = int(parts[0]), int(parts[1])
+                if not (1 <= left <= right <= self._game_info["n"]):
+                    return error_range
+                count = self._count_occurrences(self.target, left, right)
+                return yes_res if count > 0 else no_res
+
+            elif "query_test_count" in parsed_info:
+                raw = parsed_info["query_test_count"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 3:
+                    return error_format
+                pattern, left, right = parts[0], int(parts[1]), int(parts[2])
+                if not (1 <= left <= right <= self._game_info["n"]):
+                    return error_range
+                if len(pattern) == 0 or len(pattern) > self._game_info["lmax"]:
+                    return error_format
+                count = self._count_occurrences(pattern, left, right)
+                return str(count)
+
+            elif "query_test_exists" in parsed_info:
+                raw = parsed_info["query_test_exists"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 3:
+                    return error_format
+                pattern, left, right = parts[0], int(parts[1]), int(parts[2])
+                if not (1 <= left <= right <= self._game_info["n"]):
+                    return error_range
+                if len(pattern) == 0 or len(pattern) > self._game_info["lmax"]:
+                    return error_format
+                count = self._count_occurrences(pattern, left, right)
+                return yes_res if count > 0 else no_res
+
+            else:
+                raise ValueError("No valid query tag found.")
+
+        except (ValueError, IndexError):
+            return error_format
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
+            
+        if correct.lower() == "yes":
+            return "No"
+        if correct.lower() == "no":
+            return "Yes"
+            
+        return correct + "_WRONG"

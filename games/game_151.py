@@ -1,747 +1,883 @@
 from .base import Game
 import re
 
-class OrderRecoveryGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
+class GraphReasoningGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"顺序恢复"的推理游戏，规则如下：
+我们现在来玩一个"图推理"游戏，规则如下：
 
-游戏设定了一个类型集合 T，其中包含 {k} 种不同的类型（用字母表示，如 A、B、C 等）。我已秘密为这些类型确定了一个严格的全序关系 R（即所有类型都可以比较大小，不存在相等关系）。
+游戏设定了一个有向图，包含节点集合：A, B, C, D, E, F。你总是从起始节点 A 开始。
 
-你面前有一个长度为 {n} 的序列 S，序列中的元素都来自类型集合 T（可能有重复）。初始序列为：{initial_sequence}
+图的结构是三个候选之一，但我不会告诉你具体是哪一个：
 
-定义"混乱度" C(S) 为序列 S 中的逆序对总数。所谓逆序对，是指对于位置 i 小于 j，但 S[i] 在真实顺序 R 中排在 S[j] 之后的所有位置对 (i, j) 的数量。
+- 候选 Alpha：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到A, 操作1到F
+  - D: 操作0到E, 操作1到E
+  - E: 操作0到F, 操作1到F
+  - F: 操作0到D, 操作1到D
 
-你的目标是通过与环境交互，推断出类型集合 T 的完整顺序 R，并尽可能少地使用交互次数。
+- 候选 Beta：
+  - A: 操作0到B, 操作1到C
+  - B: 操作0到D, 操作1到E
+  - C: 操作0到E, 操作1无边
+  - D: 操作0到E, 操作1到F
+  - E: 操作0到F, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-## 可用的交互操作
+- 候选 Gamma：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到B, 操作1到F
+  - D: 操作0到E, 操作1无边
+  - E: 操作0到D, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-你可以反复向我提出以下操作（每次仅限一个操作）：
+你可以通过以下四类交互请求来探索图的结构：
 
-1. **状态查询**：查询当前序列及其混乱度。
-   - 返回：当前序列 S 和混乱度 C(S)
+1. 执行操作：在当前节点尝试走操作0或操作1。如果该边存在，你会移动到目标节点；如果不存在，你会留在原地。
+2. 复位：将当前位置重置为起始节点 A。
+3. 位置查询：询问当前所在的节点。
+4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
 
-2. **试探操作**：询问如果交换位置 i 和 i+1 的元素，混乱度会如何变化（不实际交换）。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：变化量 delta，可能是 -1、0 或 +1
-     - delta = -1：交换会使混乱度减少 1（说明这两个位置当前次序与真实顺序相反）
-     - delta = +1：交换会使混乱度增加 1（说明这两个位置当前次序与真实顺序一致）
-     - delta = 0：交换不改变混乱度（说明两个位置的类型相同）
+你的目标是：
+1. 识别真实的候选图（Alpha、Beta 或 Gamma）
+2. 判断该图是否存在有向环（回答"有环"或"无环"）
+3. 提供可验证的证据：
+   - 如果判定"有环"：给出一条完整的有向环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - 如果判定"无环"：给出一个包含所有节点A到F的拓扑序列
 
-3. **交换操作**：实际交换位置 i 和 i+1 的元素。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：交换后的混乱度 C(S)
-   - 注意：这会真实改变当前序列
+每次只能发起一个请求，使用以下XML格式：
 
-4. **重置操作**：将序列恢复到初始状态。
-   - 返回：初始序列和初始混乱度
+- 执行操作（例如在当前节点执行操作1）：
+<action>1</action>
 
-当你收集到足够信息后，请提交你推断出的类型顺序。如果答案错误或格式不符，游戏失败。
-
-## 操作格式（必须严格遵守）
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 状态查询：
-<query_state></query_state>
-
-- 试探操作（例如试探位置 2）：
-<probe>2</probe>
-
-- 交换操作（例如交换位置 3 和 4）：
-<swap>3</swap>
-
-- 重置操作：
+- 复位到起始节点：
 <reset></reset>
 
-- 提交最终答案（例如顺序为 A < B < C）：
-<answer>A,B,C</answer>
+- 查询当前位置：
+<query_position></query_position>
 
-注意：答案中类型按从小到大的顺序排列，用逗号分隔，不包含空格。
+- 查询步数：
+<query_steps></query_steps>
+
+提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
+
+有环的情况（示例）：
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+无环的情况（示例）：
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     game_rule_en = """\
-Let's play an "Order Recovery" deduction game. Here are the rules:
+Let's play a "Graph Reasoning" game. Here are the rules:
 
-The game has a type set T containing {k} different types (represented by letters, such as A, B, C, etc.). I have secretly determined a strict total ordering R over these types (i.e., all types can be compared, with no equal relationships).
+The game has a directed graph with nodes: A, B, C, D, E, F. You always start from node A.
 
-You are given a sequence S of length {n}, where elements come from type set T (with possible repetitions). The initial sequence is: {initial_sequence}
+The graph structure is one of three candidates, but I won't tell you which one:
 
-Define the "chaos degree" C(S) as the total number of inversions in sequence S. An inversion is a pair of positions (i, j) where i is less than j, but S[i] comes after S[j] in the true ordering R.
+- Candidate Alpha:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to A, action 1 to F
+  - D: action 0 to E, action 1 to E
+  - E: action 0 to F, action 1 to F
+  - F: action 0 to D, action 1 to D
 
-Your goal is to infer the complete ordering R of type set T through interactions with the environment, using as few interactions as possible.
+- Candidate Beta:
+  - A: action 0 to B, action 1 to C
+  - B: action 0 to D, action 1 to E
+  - C: action 0 to E, action 1 no edge
+  - D: action 0 to E, action 1 to F
+  - E: action 0 to F, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-## Available Interaction Operations
+- Candidate Gamma:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to B, action 1 to F
+  - D: action 0 to E, action 1 no edge
+  - E: action 0 to D, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-You can repeatedly perform the following operations (one per turn):
+You can explore the graph structure through four types of interaction:
 
-1. **State Query**: Query the current sequence and its chaos degree.
-   - Returns: Current sequence S and chaos degree C(S)
+1. Execute action: Try action 0 or 1 at current node. If the edge exists, you move to the target; otherwise, you stay.
+2. Reset: Return to starting node A.
+3. Position query: Ask which node you are currently at.
+4. Step count query: Ask how many successful moves since last reset (only counts moves via valid edges).
 
-2. **Probe Operation**: Ask how the chaos degree would change if positions i and i+1 were swapped (without actually swapping).
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Change amount delta, which can be -1, 0, or +1
-     - delta = -1: Swapping would decrease chaos by 1 (the current order is opposite to the true order)
-     - delta = +1: Swapping would increase chaos by 1 (the current order matches the true order)
-     - delta = 0: Swapping would not change chaos (the two types are the same)
+Your goals are:
+1. Identify the true candidate graph (Alpha, Beta, or Gamma)
+2. Determine whether the graph has a directed cycle (answer "yes" or "no")
+3. Provide verifiable evidence:
+   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - If "no": Give a topological order containing all nodes A through F
 
-3. **Swap Operation**: Actually swap elements at positions i and i+1.
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Chaos degree C(S) after swapping
-   - Note: This actually modifies the current sequence
+Each request must use one of the following XML formats:
 
-4. **Reset Operation**: Restore the sequence to its initial state.
-   - Returns: Initial sequence and initial chaos degree
+- Execute action (e.g., execute action 1 at current node):
+<action>1</action>
 
-When you have gathered enough information, submit your inferred type ordering. If the answer is wrong or the format is invalid, the game fails.
-
-## Operation Format (must be strictly followed)
-
-Each operation must contain only one tag. Use the following XML format:
-
-- State Query:
-<query_state></query_state>
-
-- Probe Operation (e.g., probe position 2):
-<probe>2</probe>
-
-- Swap Operation (e.g., swap positions 3 and 4):
-<swap>3</swap>
-
-- Reset Operation:
+- Reset to starting node:
 <reset></reset>
 
-- Submit Final Answer (e.g., order is A < B < C):
-<answer>A,B,C</answer>
+- Query current position:
+<query_position></query_position>
 
-Note: In the answer, types are listed from smallest to largest, separated by commas, with no spaces.
+- Query step count:
+<query_steps></query_steps>
+
+When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
+
+With cycle (example):
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+Without cycle (example):
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎来到智能交通调度模拟系统。你将作为调度专家，恢复受损的信号优先级配置。
-我们现在来玩一个"路权顺序恢复"的推理游戏，规则如下：
+我们现在来执行"交通枢纽通行网络排查"任务，规则如下：
 
-系统设定了一个车辆通行优先级集合 T，其中包含 {k} 种不同的优先级类型（用字母表示，如 A、B、C 等）。我已秘密为这些类型确定了一个严格的法定通行顺序 R（即所有类型都可以比较先后，不存在相等关系，越早通行则顺序越小）。
+系统设定了一个有向通行图，包含交通枢纽集合：A, B, C, D, E, F。你总是从起始枢纽 A 开始排查。
 
-你面前有一个长度为 {n} 的路口排队序列 S，序列中的车辆都来自集合 T（可能有重复）。初始排队序列为：{initial_sequence}
+图的结构是三个候选路线之一，但我不会告诉你具体是哪一个：
 
-定义交通"冲突隐患度" C(S) 为序列 S 中的冲突对总数。所谓冲突对，是指对于位置 i 小于 j，但 S[i] 在真实法定顺序 R 中应该排在 S[j] 之后的所有位置对 (i, j) 的数量。
+- 候选路线 Alpha：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到A, 操作1到F
+  - D: 操作0到E, 操作1到E
+  - E: 操作0到F, 操作1到F
+  - F: 操作0到D, 操作1到D
 
-你的目标是通过与调度系统交互，推断出优先级集合 T 的完整顺序 R，并尽可能少地使用交互次数。
+- 候选路线 Beta：
+  - A: 操作0到B, 操作1到C
+  - B: 操作0到D, 操作1到E
+  - C: 操作0到E, 操作1无边
+  - D: 操作0到E, 操作1到F
+  - E: 操作0到F, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-## 可用的交互操作
+- 候选路线 Gamma：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到B, 操作1到F
+  - D: 操作0到E, 操作1无边
+  - E: 操作0到D, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-你可以反复向我提出以下操作（每次仅限一个操作）：
+你可以通过以下四类交互请求来探索交通图的结构：
 
-1. **状态查询**：查询当前车辆序列及其冲突隐患度。
-   - 返回：当前序列 S 和冲突隐患度 C(S)
+1. 执行操作：在当前枢纽尝试走操作0或操作1。如果该边存在，你会移动到目标枢纽；如果不存在，你会留在原地。
+2. 复位：将当前位置重置为起始枢纽 A。
+3. 位置查询：询问当前所在的枢纽。
+4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
 
-2. **试探操作**：询问如果交换位置 i 和 i+1 的车辆，冲突隐患度会如何变化（不实际交换）。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：变化量 delta，可能是 -1、0 或 +1
-     - delta = -1：交换会使冲突隐患度减少 1（说明这两个位置当前次序与真实顺序相反）
-     - delta = +1：交换会使冲突隐患度增加 1（说明这两个位置当前次序与真实顺序一致）
-     - delta = 0：交换不改变冲突隐患度（说明两个位置的类型相同）
+你的目标是：
+1. 识别真实的候选图（Alpha、Beta 或 Gamma）
+2. 判断该通行图是否存在有向循环路线（回答"有环"或"无环"）
+3. 提供可验证的证据：
+   - 如果判定"有环"：给出一条完整的有向循环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - 如果判定"无环"：给出一个包含所有枢纽A到F的拓扑单向通行序列
 
-3. **交换操作**：实际交换位置 i 和 i+1 的车辆。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：交换后的冲突隐患度 C(S)
-   - 注意：这会真实改变当前序列
+每次只能发起一个请求，使用以下XML格式：
 
-4. **重置操作**：将序列恢复到初始状态。
-   - 返回：初始序列和初始冲突隐患度
+- 执行操作（例如在当前枢纽执行操作1）：
+<action>1</action>
 
-当你收集到足够信息后，请提交你推断出的类型顺序。如果答案错误或格式不符，游戏失败。
-
-## 操作格式（必须严格遵守）
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 状态查询：
-<query_state></query_state>
-
-- 试探操作（例如试探位置 2）：
-<probe>2</probe>
-
-- 交换操作（例如交换位置 3 和 4）：
-<swap>3</swap>
-
-- 重置操作：
+- 复位到起始枢纽：
 <reset></reset>
 
-- 提交最终答案（例如法定通行顺序为 A < B < C）：
-<answer>A,B,C</answer>
+- 查询当前位置：
+<query_position></query_position>
 
-注意：答案中类型按法定通行顺序从先到后排列，用逗号分隔，不包含空格。
+- 查询步数：
+<query_steps></query_steps>
+
+提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
+
+有环的情况（示例）：
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+无环的情况（示例）：
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the Intelligent Traffic Dispatch Simulation System. You will act as a dispatch expert to recover a damaged signal priority configuration.
-Let's play an "Right-of-Way Order Recovery" deduction game. Here are the rules:
+Let's execute the "Traffic Hub Transit Network Inspection" task. Here are the rules:
 
-The system defines a vehicle transit priority set T containing {k} different priority types (represented by letters, such as A, B, C, etc.). I have secretly determined a strict statutory transit ordering R over these types (i.e., all types can be compared chronologically, with no equal relationships; smaller means earlier transit).
+The system has a directed transit network graph with transportation hubs: A, B, C, D, E, F. You always start inspecting from the starting hub A.
 
-You are given an intersection queuing sequence S of length {n}, where vehicles come from the priority set T (with possible repetitions). The initial queuing sequence is: {initial_sequence}
+The graph structure is one of three candidate routes, but I won't tell you which one:
 
-Define the traffic "conflict hazard degree" C(S) as the total number of conflict pairs in sequence S. A conflict pair is a pair of positions (i, j) where i is less than j, but S[i] should come after S[j] according to the true statutory ordering R.
+- Candidate Route Alpha:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to A, action 1 to F
+  - D: action 0 to E, action 1 to E
+  - E: action 0 to F, action 1 to F
+  - F: action 0 to D, action 1 to D
 
-Your goal is to infer the complete ordering R of the priority set T through interactions with the dispatch system, using as few interactions as possible.
+- Candidate Route Beta:
+  - A: action 0 to B, action 1 to C
+  - B: action 0 to D, action 1 to E
+  - C: action 0 to E, action 1 no edge
+  - D: action 0 to E, action 1 to F
+  - E: action 0 to F, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-## Available Interaction Operations
+- Candidate Route Gamma:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to B, action 1 to F
+  - D: action 0 to E, action 1 no edge
+  - E: action 0 to D, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-You can repeatedly perform the following operations (one per turn):
+You can explore the network structure through four types of interaction:
 
-1. **State Query**: Query the current sequence and its conflict hazard degree.
-   - Returns: Current sequence S and conflict hazard degree C(S)
+1. Execute action: Try action 0 or 1 at the current hub. If the edge exists, you move to the target hub; otherwise, you stay.
+2. Reset: Return to the starting hub A.
+3. Position query: Ask which hub you are currently at.
+4. Step count query: Ask how many successful moves since the last reset (only counts moves via valid edges).
 
-2. **Probe Operation**: Ask how the hazard degree would change if vehicles at positions i and i+1 were swapped (without actually swapping).
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Change amount delta, which can be -1, 0, or +1
-     - delta = -1: Swapping would decrease the hazard degree by 1 (the current order is opposite to the true ordering)
-     - delta = +1: Swapping would increase the hazard degree by 1 (the current order matches the true ordering)
-     - delta = 0: Swapping would not change the hazard degree (the two types are the same)
+Your goals are:
+1. Identify the true candidate graph (Alpha, Beta, or Gamma)
+2. Determine whether the transit graph has a directed cyclic route (answer "yes" or "no")
+3. Provide verifiable evidence:
+   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - If "no": Give a topological one-way transit sequence containing all hubs A through F
 
-3. **Swap Operation**: Actually swap vehicles at positions i and i+1.
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Hazard degree C(S) after swapping
-   - Note: This actually modifies the current sequence
+Each request must use one of the following XML formats:
 
-4. **Reset Operation**: Restore the sequence to its initial state.
-   - Returns: Initial sequence and initial hazard degree
+- Execute action (e.g., execute action 1 at current hub):
+<action>1</action>
 
-When you have gathered enough information, submit your inferred priority ordering. If the answer is wrong or the format is invalid, the game fails.
-
-## Operation Format (must be strictly followed)
-
-Each operation must contain only one tag. Use the following XML format:
-
-- State Query:
-<query_state></query_state>
-
-- Probe Operation (e.g., probe position 2):
-<probe>2</probe>
-
-- Swap Operation (e.g., swap positions 3 and 4):
-<swap>3</swap>
-
-- Reset Operation:
+- Reset to starting hub:
 <reset></reset>
 
-- Submit Final Answer (e.g., statutory transit order is A < B < C):
-<answer>A,B,C</answer>
+- Query current position:
+<query_position></query_position>
 
-Note: In the answer, priority types are listed chronologically from earliest to latest, separated by commas, with no spaces.
+- Query step count:
+<query_steps></query_steps>
+
+When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
+
+With cycle (example):
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+Without cycle (example):
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎来到急诊科智能分诊系统。你将作为主治医师，修复因故障混乱的急救优先级列表。
-我们现在来玩一个"医疗分诊顺序恢复"的推理游戏，规则如下：
+我们现在来执行"患者转诊流程审查"任务，规则如下：
 
-系统设定了一个疾病分诊等级集合 T，其中包含 {k} 种不同的疾病危重等级（用字母表示，如 A、B、C 等）。我已秘密为这些等级确定了一个严格的医疗急救优先级顺序 R（即所有等级都可以比较优先度，不存在相等关系，越紧急则顺序越小）。
+系统设定了一个有向转诊流程图，包含科室节点集合：A, B, C, D, E, F。患者总是从起始科室 A 开始。
 
-你面前有一个长度为 {n} 的候诊患者序列 S，序列中的患者疾病都来自集合 T（可能有重复）。初始候诊序列为：{initial_sequence}
+图的结构是三个候选转诊路径之一，但我不会告诉你具体是哪一个：
 
-定义"延误风险度" C(S) 为序列 S 中的风险对总数。所谓风险对，是指对于位置 i 小于 j，但 S[i] 在真实急救优先级顺序 R 中排在 S[j] 之后的所有位置对 (i, j) 的数量（即高危患者被排在低危患者之后）。
+- 候选路径 Alpha：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到A, 操作1到F
+  - D: 操作0到E, 操作1到E
+  - E: 操作0到F, 操作1到F
+  - F: 操作0到D, 操作1到D
 
-你的目标是通过与分诊系统交互，推断出疾病分诊等级集合 T 的完整顺序 R，并尽可能少地使用交互次数。
+- 候选路径 Beta：
+  - A: 操作0到B, 操作1到C
+  - B: 操作0到D, 操作1到E
+  - C: 操作0到E, 操作1无边
+  - D: 操作0到E, 操作1到F
+  - E: 操作0到F, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-## 可用的交互操作
+- 候选路径 Gamma：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到B, 操作1到F
+  - D: 操作0到E, 操作1无边
+  - E: 操作0到D, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-你可以反复向我提出以下操作（每次仅限一个操作）：
+你可以通过以下四类交互请求来探索转诊图的结构：
 
-1. **状态查询**：查询当前患者序列及其延误风险度。
-   - 返回：当前序列 S 和延误风险度 C(S)
+1. 执行操作：在当前科室尝试走操作0或操作1。如果该边存在，你会移动到目标科室；如果不存在，你会留在原地。
+2. 复位：将当前患者状态重置为起始科室 A。
+3. 位置查询：询问当前所在的科室。
+4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
 
-2. **试探操作**：询问如果交换位置 i 和 i+1 的患者，延误风险度会如何变化（不实际交换）。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：变化量 delta，可能是 -1、0 或 +1
-     - delta = -1：交换会使延误风险度减少 1（说明这两个位置当前次序与真实顺序相反）
-     - delta = +1：交换会使延误风险度增加 1（说明这两个位置当前次序与真实顺序一致）
-     - delta = 0：交换不改变延误风险度（说明两个位置的等级相同）
+你的目标是：
+1. 识别真实的候选图（Alpha、Beta 或 Gamma）
+2. 判断该转诊图是否存在有向死循环（回答"有环"或"无环"）
+3. 提供可验证的证据：
+   - 如果判定"有环"：给出一条完整的有向死循环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - 如果判定"无环"：给出一个包含所有科室A到F的拓扑康复单向流转序列
 
-3. **交换操作**：实际交换位置 i 和 i+1 的患者。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：交换后的延误风险度 C(S)
-   - 注意：这会真实改变当前序列
+每次只能发起一个请求，使用以下XML格式：
 
-4. **重置操作**：将序列恢复到初始状态。
-   - 返回：初始序列和初始延误风险度
+- 执行操作（例如在当前科室执行操作1）：
+<action>1</action>
 
-当你收集到足够信息后，请提交你推断出的分诊等级顺序。如果答案错误或格式不符，游戏失败。
-
-## 操作格式（必须严格遵守）
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 状态查询：
-<query_state></query_state>
-
-- 试探操作（例如试探位置 2）：
-<probe>2</probe>
-
-- 交换操作（例如交换位置 3 和 4）：
-<swap>3</swap>
-
-- 重置操作：
+- 复位到起始科室：
 <reset></reset>
 
-- 提交最终答案（例如优先级顺序为 A < B < C）：
-<answer>A,B,C</answer>
+- 查询当前位置：
+<query_position></query_position>
 
-注意：答案中疾病分诊等级按优先级从高到低（即从小到大）排列，用逗号分隔，不包含空格。
+- 查询步数：
+<query_steps></query_steps>
+
+提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
+
+有环的情况（示例）：
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+无环的情况（示例）：
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the Emergency Department Intelligent Triage System. You will act as an attending physician to repair a malfunctioning triage priority list.
-Let's play a "Medical Triage Order Recovery" deduction game. Here are the rules:
+Let's execute the "Patient Referral Process Review" task. Here are the rules:
 
-The system defines a disease triage level set T containing {k} different acuity levels (represented by letters, such as A, B, C, etc.). I have secretly determined a strict medical emergency priority ordering R over these levels (i.e., all levels can be compared by urgency, with no equal relationships; smaller means more urgent).
+The system has a directed referral process graph with department nodes: A, B, C, D, E, F. The patient always starts from the starting department A.
 
-You are given a waiting patient sequence S of length {n}, where patients' diseases come from the level set T (with possible repetitions). The initial waiting sequence is: {initial_sequence}
+The graph structure is one of three candidate pathways, but I won't tell you which one:
 
-Define the "delay risk degree" C(S) as the total number of risk pairs in sequence S. A risk pair is a pair of positions (i, j) where i is less than j, but S[i] comes after S[j] in the true priority ordering R (i.e., a high-acuity patient is placed after a lower-acuity one).
+- Candidate Pathway Alpha:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to A, action 1 to F
+  - D: action 0 to E, action 1 to E
+  - E: action 0 to F, action 1 to F
+  - F: action 0 to D, action 1 to D
 
-Your goal is to infer the complete ordering R of the triage level set T through interactions with the triage system, using as few interactions as possible.
+- Candidate Pathway Beta:
+  - A: action 0 to B, action 1 to C
+  - B: action 0 to D, action 1 to E
+  - C: action 0 to E, action 1 no edge
+  - D: action 0 to E, action 1 to F
+  - E: action 0 to F, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-## Available Interaction Operations
+- Candidate Pathway Gamma:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to B, action 1 to F
+  - D: action 0 to E, action 1 no edge
+  - E: action 0 to D, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-You can repeatedly perform the following operations (one per turn):
+You can explore the referral structure through four types of interaction:
 
-1. **State Query**: Query the current patient sequence and its delay risk degree.
-   - Returns: Current sequence S and delay risk degree C(S)
+1. Execute action: Try action 0 or 1 at the current department. If the edge exists, you move to the target department; otherwise, you stay.
+2. Reset: Return the patient state to the starting department A.
+3. Position query: Ask which department you are currently at.
+4. Step count query: Ask how many successful moves since the last reset (only counts moves via valid edges).
 
-2. **Probe Operation**: Ask how the delay risk degree would change if patients at positions i and i+1 were swapped (without actually swapping).
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Change amount delta, which can be -1, 0, or +1
-     - delta = -1: Swapping would decrease the risk degree by 1 (the current order is opposite to the true ordering)
-     - delta = +1: Swapping would increase the risk degree by 1 (the current order matches the true ordering)
-     - delta = 0: Swapping would not change the risk degree (the two levels are the same)
+Your goals are:
+1. Identify the true candidate graph (Alpha, Beta, or Gamma)
+2. Determine whether the referral graph has a directed cyclic loop (answer "yes" or "no")
+3. Provide verifiable evidence:
+   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - If "no": Give a topological one-way recovery sequence containing all departments A through F
 
-3. **Swap Operation**: Actually swap patients at positions i and i+1.
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Delay risk degree C(S) after swapping
-   - Note: This actually modifies the current sequence
+Each request must use one of the following XML formats:
 
-4. **Reset Operation**: Restore the sequence to its initial state.
-   - Returns: Initial sequence and initial delay risk degree
+- Execute action (e.g., execute action 1 at current department):
+<action>1</action>
 
-When you have gathered enough information, submit your inferred triage level ordering. If the answer is wrong or the format is invalid, the game fails.
-
-## Operation Format (must be strictly followed)
-
-Each operation must contain only one tag. Use the following XML format:
-
-- State Query:
-<query_state></query_state>
-
-- Probe Operation (e.g., probe position 2):
-<probe>2</probe>
-
-- Swap Operation (e.g., swap positions 3 and 4):
-<swap>3</swap>
-
-- Reset Operation:
+- Reset to starting department:
 <reset></reset>
 
-- Submit Final Answer (e.g., priority order is A < B < C):
-<answer>A,B,C</answer>
+- Query current position:
+<query_position></query_position>
 
-Note: In the answer, triage levels are listed from most urgent to least urgent (smallest to largest), separated by commas, with no spaces.
+- Query step count:
+<query_steps></query_steps>
+
+When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
+
+With cycle (example):
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+Without cycle (example):
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎来到智能教学大纲规划系统。你将作为教研专家，重新梳理知识模块的前置依赖关系。
-我们现在来玩一个"学习路径顺序恢复"的推理游戏，规则如下：
+我们现在来执行"自适应学习路径评估"任务，规则如下：
 
-系统设定了一个知识模块集合 T，其中包含 {k} 种不同的模块类型（用字母表示，如 A、B、C 等）。我已秘密为这些类型确定了一个严格的认知学习先后顺序 R（即所有模块都可以比较基础性，不存在相等关系，越基础的前置模块顺序越小）。
+系统设定了一个有向学习路径图，包含知识模块集合：A, B, C, D, E, F。学生总是从起始模块 A 开始。
 
-你面前有一个长度为 {n} 的授课安排序列 S，序列中的模块都来自集合 T（可能有重复）。初始授课序列为：{initial_sequence}
+图的结构是三个候选教学设计之一，但我不会告诉你具体是哪一个：
 
-定义教学"认知断层度" C(S) 为序列 S 中的断层对总数。所谓断层对，是指对于位置 i 小于 j，但 S[i] 在真实的认知学习先后顺序 R 中排在 S[j] 之后的所有位置对 (i, j) 的数量（即需要先学的模块排在了后面）。
+- 候选设计 Alpha：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到A, 操作1到F
+  - D: 操作0到E, 操作1到E
+  - E: 操作0到F, 操作1到F
+  - F: 操作0到D, 操作1到D
 
-你的目标是通过与规划系统交互，推断出知识模块集合 T 的完整顺序 R，并尽可能少地使用交互次数。
+- 候选设计 Beta：
+  - A: 操作0到B, 操作1到C
+  - B: 操作0到D, 操作1到E
+  - C: 操作0到E, 操作1无边
+  - D: 操作0到E, 操作1到F
+  - E: 操作0到F, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-## 可用的交互操作
+- 候选设计 Gamma：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到B, 操作1到F
+  - D: 操作0到E, 操作1无边
+  - E: 操作0到D, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-你可以反复向我提出以下操作（每次仅限一个操作）：
+你可以通过以下四类交互请求来探索学习路径的结构：
 
-1. **状态查询**：查询当前授课序列及其认知断层度。
-   - 返回：当前序列 S 和认知断层度 C(S)
+1. 执行操作：在当前模块尝试走操作0或操作1。如果该边存在，你会移动到目标模块；如果不存在，你会留在原地。
+2. 复位：将当前学习进度重置为起始模块 A。
+3. 位置查询：询问当前所在的知识模块。
+4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
 
-2. **试探操作**：询问如果对调位置 i 和 i+1 的授课模块，认知断层度会如何变化（不实际对调）。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：变化量 delta，可能是 -1、0 或 +1
-     - delta = -1：对调会使认知断层度减少 1（说明这两个位置当前次序与真实顺序相反）
-     - delta = +1：对调会使认知断层度增加 1（说明这两个位置当前次序与真实顺序一致）
-     - delta = 0：对调不改变认知断层度（说明两个位置的模块类型相同）
+你的目标是：
+1. 识别真实的候选图（Alpha、Beta 或 Gamma）
+2. 判断该学习图是否存在有向死循环（回答"有环"或"无环"）
+3. 提供可验证的证据：
+   - 如果判定"有环"：给出一条完整的有向学习死循环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - 如果判定"无环"：给出一个包含所有模块A到F的拓扑单向进阶序列
 
-3. **交换操作**：实际对调位置 i 和 i+1 的授课模块。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：对调后的认知断层度 C(S)
-   - 注意：这会真实改变当前序列
+每次只能发起一个请求，使用以下XML格式：
 
-4. **重置操作**：将序列恢复到初始状态。
-   - 返回：初始序列和初始认知断层度
+- 执行操作（例如在当前模块执行操作1）：
+<action>1</action>
 
-当你收集到足够信息后，请提交你推断出的模块学习顺序。如果答案错误或格式不符，游戏失败。
-
-## 操作格式（必须严格遵守）
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 状态查询：
-<query_state></query_state>
-
-- 试探操作（例如试探位置 2）：
-<probe>2</probe>
-
-- 交换操作（例如交换位置 3 和 4）：
-<swap>3</swap>
-
-- 重置操作：
+- 复位到起始模块：
 <reset></reset>
 
-- 提交最终答案（例如学习顺序为 A < B < C）：
-<answer>A,B,C</answer>
+- 查询当前位置：
+<query_position></query_position>
 
-注意：答案中模块类型按基础到高阶的顺序排列，用逗号分隔，不包含空格。
+- 查询步数：
+<query_steps></query_steps>
+
+提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
+
+有环的情况（示例）：
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+无环的情况（示例）：
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Intelligent Syllabus Planning System. You will act as an educational research expert to reorganize the prerequisite dependencies of knowledge modules.
-Let's play a "Learning Path Order Recovery" deduction game. Here are the rules:
+Let's execute the "Adaptive Learning Path Assessment" task. Here are the rules:
 
-The system defines a knowledge module set T containing {k} different module types (represented by letters, such as A, B, C, etc.). I have secretly determined a strict cognitive learning ordering R over these types (i.e., all modules can be compared by their foundational level, with no equal relationships; smaller means more foundational and earlier).
+The system has a directed learning path graph with knowledge modules: A, B, C, D, E, F. The student always starts from the initial module A.
 
-You are given an instruction planning sequence S of length {n}, where modules come from the set T (with possible repetitions). The initial instruction sequence is: {initial_sequence}
+The graph structure is one of three candidate instructional designs, but I won't tell you which one:
 
-Define the instructional "cognitive gap degree" C(S) as the total number of gap pairs in sequence S. A gap pair is a pair of positions (i, j) where i is less than j, but S[i] comes after S[j] in the true learning ordering R (i.e., a prerequisite module is scheduled later).
+- Candidate Design Alpha:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to A, action 1 to F
+  - D: action 0 to E, action 1 to E
+  - E: action 0 to F, action 1 to F
+  - F: action 0 to D, action 1 to D
 
-Your goal is to infer the complete ordering R of the knowledge module set T through interactions with the planning system, using as few interactions as possible.
+- Candidate Design Beta:
+  - A: action 0 to B, action 1 to C
+  - B: action 0 to D, action 1 to E
+  - C: action 0 to E, action 1 no edge
+  - D: action 0 to E, action 1 to F
+  - E: action 0 to F, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-## Available Interaction Operations
+- Candidate Design Gamma:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to B, action 1 to F
+  - D: action 0 to E, action 1 no edge
+  - E: action 0 to D, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-You can repeatedly perform the following operations (one per turn):
+You can explore the path structure through four types of interaction:
 
-1. **State Query**: Query the current instruction sequence and its cognitive gap degree.
-   - Returns: Current sequence S and cognitive gap degree C(S)
+1. Execute action: Try action 0 or 1 at the current module. If the edge exists, you move to the target module; otherwise, you stay.
+2. Reset: Return the learning progress to the starting module A.
+3. Position query: Ask which knowledge module you are currently at.
+4. Step count query: Ask how many successful moves since the last reset (only counts moves via valid edges).
 
-2. **Probe Operation**: Ask how the cognitive gap degree would change if modules at positions i and i+1 were swapped (without actually swapping).
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Change amount delta, which can be -1, 0, or +1
-     - delta = -1: Swapping would decrease the gap degree by 1 (the current order is opposite to the true ordering)
-     - delta = +1: Swapping would increase the gap degree by 1 (the current order matches the true ordering)
-     - delta = 0: Swapping would not change the gap degree (the two module types are the same)
+Your goals are:
+1. Identify the true candidate graph (Alpha, Beta, or Gamma)
+2. Determine whether the learning graph has a directed cyclic loop (answer "yes" or "no")
+3. Provide verifiable evidence:
+   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - If "no": Give a topological one-way progression sequence containing all modules A through F
 
-3. **Swap Operation**: Actually swap modules at positions i and i+1.
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Cognitive gap degree C(S) after swapping
-   - Note: This actually modifies the current sequence
+Each request must use one of the following XML formats:
 
-4. **Reset Operation**: Restore the sequence to its initial state.
-   - Returns: Initial sequence and initial cognitive gap degree
+- Execute action (e.g., execute action 1 at current module):
+<action>1</action>
 
-When you have gathered enough information, submit your inferred learning ordering. If the answer is wrong or the format is invalid, the game fails.
-
-## Operation Format (must be strictly followed)
-
-Each operation must contain only one tag. Use the following XML format:
-
-- State Query:
-<query_state></query_state>
-
-- Probe Operation (e.g., probe position 2):
-<probe>2</probe>
-
-- Swap Operation (e.g., swap positions 3 and 4):
-<swap>3</swap>
-
-- Reset Operation:
+- Reset to starting module:
 <reset></reset>
 
-- Submit Final Answer (e.g., learning order is A < B < C):
-<answer>A,B,C</answer>
+- Query current position:
+<query_position></query_position>
 
-Note: In the answer, module types are listed from foundational to advanced (smallest to largest), separated by commas, with no spaces.
+- Query step count:
+<query_steps></query_steps>
+
+When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
+
+With cycle (example):
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+Without cycle (example):
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎来到自动化制造执行系统。你将作为工艺工程师，排查流水线上的工序错乱问题。
-我们现在来玩一个"标准工艺流顺序恢复"的推理游戏，规则如下：
+我们现在来执行"工厂物料流转检测"任务，规则如下：
 
-系统设定了一个工艺步骤类别集合 T，其中包含 {k} 种不同的工序类型（用字母表示，如 A、B、C 等）。我已秘密为这些类型确定了一个严格的标准工艺流转顺序 R（即所有类型都可以比较先后，不存在相等关系，越早执行的前置工序顺序越小）。
+系统设定了一个有向物料传送图，包含工作站集合：A, B, C, D, E, F。物料总是从起始工作站 A 开始流转。
 
-你面前有一个长度为 {n} 的流水线加工序列 S，序列中的工序都来自集合 T（可能有重复）。初始执行序列为：{initial_sequence}
+图的结构是三个候选流水线配置之一，但我不会告诉你具体是哪一个：
 
-定义"工艺干涉度" C(S) 为序列 S 中的干涉对总数。所谓干涉对，是指对于位置 i 小于 j，但 S[i] 在真实的工艺流转顺序 R 中排在 S[j] 之后的所有位置对 (i, j) 的数量（即后续工序提前到了前面）。
+- 候选配置 Alpha：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到A, 操作1到F
+  - D: 操作0到E, 操作1到E
+  - E: 操作0到F, 操作1到F
+  - F: 操作0到D, 操作1到D
 
-你的目标是通过与制造系统交互，推断出工序类别集合 T 的完整顺序 R，并尽可能少地使用交互次数。
+- 候选配置 Beta：
+  - A: 操作0到B, 操作1到C
+  - B: 操作0到D, 操作1到E
+  - C: 操作0到E, 操作1无边
+  - D: 操作0到E, 操作1到F
+  - E: 操作0到F, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-## 可用的交互操作
+- 候选配置 Gamma：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到B, 操作1到F
+  - D: 操作0到E, 操作1无边
+  - E: 操作0到D, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-你可以反复向我提出以下操作（每次仅限一个操作）：
+你可以通过以下四类交互请求来探索传送图的结构：
 
-1. **状态查询**：查询当前工序执行序列及其工艺干涉度。
-   - 返回：当前序列 S 和工艺干涉度 C(S)
+1. 执行操作：在当前工作站尝试走操作0或操作1。如果该边存在，物料会移动到目标工作站；如果不存在，物料会留在原地。
+2. 复位：将当前物料位置重置为起始工作站 A。
+3. 位置查询：询问当前物料所在的工作站。
+4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
 
-2. **试探操作**：询问如果交换位置 i 和 i+1 的工序，工艺干涉度会如何变化（不实际交换）。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：变化量 delta，可能是 -1、0 或 +1
-     - delta = -1：交换会使工艺干涉度减少 1（说明这两个位置当前次序与真实流转顺序相反）
-     - delta = +1：交换会使工艺干涉度增加 1（说明这两个位置当前次序与真实流转顺序一致）
-     - delta = 0：交换不改变工艺干涉度（说明两个位置的工序类型相同）
+你的目标是：
+1. 识别真实的候选图（Alpha、Beta 或 Gamma）
+2. 判断该传送图是否存在有向回环传送（回答"有环"或"无环"）
+3. 提供可验证的证据：
+   - 如果判定"有环"：给出一条完整的有向回环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - 如果判定"无环"：给出一个包含所有工作站A到F的拓扑顺畅加工单向序列
 
-3. **交换操作**：实际交换位置 i 和 i+1 的工序。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：交换后的工艺干涉度 C(S)
-   - 注意：这会真实改变当前流转序列
+每次只能发起一个请求，使用以下XML格式：
 
-4. **重置操作**：将序列恢复到初始状态。
-   - 返回：初始序列和初始工艺干涉度
+- 执行操作（例如在当前工作站执行操作1）：
+<action>1</action>
 
-当你收集到足够信息后，请提交你推断出的工艺流转顺序。如果答案错误或格式不符，游戏失败。
-
-## 操作格式（必须严格遵守）
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 状态查询：
-<query_state></query_state>
-
-- 试探操作（例如试探位置 2）：
-<probe>2</probe>
-
-- 交换操作（例如交换位置 3 和 4）：
-<swap>3</swap>
-
-- 重置操作：
+- 复位到起始工作站：
 <reset></reset>
 
-- 提交最终答案（例如工艺顺序为 A < B < C）：
-<answer>A,B,C</answer>
+- 查询当前位置：
+<query_position></query_position>
 
-注意：答案中工序类别按标准工艺流从先到后的顺序排列，用逗号分隔，不包含空格。
+- 查询步数：
+<query_steps></query_steps>
+
+提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
+
+有环的情况（示例）：
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+无环的情况（示例）：
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Welcome to the Automated Manufacturing Execution System. You will act as a process engineer to troubleshoot process sequence disorders on the assembly line.
-Let's play a "Standard Process Flow Order Recovery" deduction game. Here are the rules:
+[Industry Scenario]
+Let's execute the "Factory Material Flow Detection" task. Here are the rules:
 
-The system defines a process step category set T containing {k} different process types (represented by letters, such as A, B, C, etc.). I have secretly determined a strict standard process flow ordering R over these types (i.e., all types can be compared sequentially, with no equal relationships; smaller means an earlier prerequisite process).
+The system has a directed material transfer graph with workstations: A, B, C, D, E, F. Materials always start flowing from the starting workstation A.
 
-You are given an assembly line execution sequence S of length {n}, where processes come from the set T (with possible repetitions). The initial execution sequence is: {initial_sequence}
+The graph structure is one of three candidate assembly line configurations, but I won't tell you which one:
 
-Define the "process interference degree" C(S) as the total number of interference pairs in sequence S. An interference pair is a pair of positions (i, j) where i is less than j, but S[i] comes after S[j] in the true process flow ordering R (i.e., a subsequent process is executed too early).
+- Candidate Configuration Alpha:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to A, action 1 to F
+  - D: action 0 to E, action 1 to E
+  - E: action 0 to F, action 1 to F
+  - F: action 0 to D, action 1 to D
 
-Your goal is to infer the complete ordering R of the process category set T through interactions with the manufacturing system, using as few interactions as possible.
+- Candidate Configuration Beta:
+  - A: action 0 to B, action 1 to C
+  - B: action 0 to D, action 1 to E
+  - C: action 0 to E, action 1 no edge
+  - D: action 0 to E, action 1 to F
+  - E: action 0 to F, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-## Available Interaction Operations
+- Candidate Configuration Gamma:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to B, action 1 to F
+  - D: action 0 to E, action 1 no edge
+  - E: action 0 to D, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-You can repeatedly perform the following operations (one per turn):
+You can explore the transfer structure through four types of interaction:
 
-1. **State Query**: Query the current process execution sequence and its process interference degree.
-   - Returns: Current sequence S and process interference degree C(S)
+1. Execute action: Try action 0 or 1 at the current workstation. If the edge exists, the material moves to the target workstation; otherwise, it stays.
+2. Reset: Return the material position to the starting workstation A.
+3. Position query: Ask which workstation the material is currently at.
+4. Step count query: Ask how many successful moves since the last reset (only counts moves via valid edges).
 
-2. **Probe Operation**: Ask how the process interference degree would change if processes at positions i and i+1 were swapped (without actually swapping).
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Change amount delta, which can be -1, 0, or +1
-     - delta = -1: Swapping would decrease the interference degree by 1 (the current order is opposite to the true flow ordering)
-     - delta = +1: Swapping would increase the interference degree by 1 (the current order matches the true flow ordering)
-     - delta = 0: Swapping would not change the interference degree (the two process types are the same)
+Your goals are:
+1. Identify the true candidate graph (Alpha, Beta, or Gamma)
+2. Determine whether the transfer graph has a directed cyclic loop (answer "yes" or "no")
+3. Provide verifiable evidence:
+   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - If "no": Give a topological one-way processing sequence containing all workstations A through F
 
-3. **Swap Operation**: Actually swap processes at positions i and i+1.
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Process interference degree C(S) after swapping
-   - Note: This actually modifies the current flow sequence
+Each request must use one of the following XML formats:
 
-4. **Reset Operation**: Restore the sequence to its initial state.
-   - Returns: Initial sequence and initial process interference degree
+- Execute action (e.g., execute action 1 at current workstation):
+<action>1</action>
 
-When you have gathered enough information, submit your inferred standard process ordering. If the answer is wrong or the format is invalid, the game fails.
-
-## Operation Format (must be strictly followed)
-
-Each operation must contain only one tag. Use the following XML format:
-
-- State Query:
-<query_state></query_state>
-
-- Probe Operation (e.g., probe position 2):
-<probe>2</probe>
-
-- Swap Operation (e.g., swap positions 3 and 4):
-<swap>3</swap>
-
-- Reset Operation:
+- Reset to starting workstation:
 <reset></reset>
 
-- Submit Final Answer (e.g., process order is A < B < C):
-<answer>A,B,C</answer>
+- Query current position:
+<query_position></query_position>
 
-Note: In the answer, process types are listed sequentially from earliest to latest (smallest to largest), separated by commas, with no spaces.
+- Query step count:
+<query_steps></query_steps>
+
+When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
+
+With cycle (example):
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+Without cycle (example):
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎来到司法证据审查辅助系统。你将作为检察官，校验案卷证据链的合法审查次序。
-我们现在来玩一个"法定程序顺序恢复"的推理游戏，规则如下：
+我们现在来执行"司法案件流转核查"任务，规则如下：
 
-系统设定了一个证据审查类别集合 T，其中包含 {k} 种不同的审查类别（用字母表示，如 A、B、C 等）。法律已秘密为这些类别规定了一个严格的法定审查次序 R（即所有类别都可以比较程序先后，不存在相等关系，必须先审查的类别顺序越小）。
+系统设定了一个有向案件移交图，包含司法审查部门集合：A, B, C, D, E, F。案件总是从起始部门 A 开始流转。
 
-你面前有一份长度为 {n} 的卷宗材料排列序列 S，序列中的证据材料都来自集合 T（可能有重复）。初始卷宗序列为：{initial_sequence}
+图的结构是三个候选法定流转程序之一，但我不会告诉你具体是哪一个：
 
-定义"程序瑕疵度" C(S) 为序列 S 中的瑕疵对总数。所谓瑕疵对，是指对于位置 i 小于 j，但 S[i] 在真实的法定审查次序 R 中排在 S[j] 之后的所有位置对 (i, j) 的数量（即后置程序的材料被违规排在了前面）。
+- 候选程序 Alpha：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到A, 操作1到F
+  - D: 操作0到E, 操作1到E
+  - E: 操作0到F, 操作1到F
+  - F: 操作0到D, 操作1到D
 
-你的目标是通过与辅助系统交互，推断出证据审查类别集合 T 的完整顺序 R，并尽可能少地使用交互次数。
+- 候选程序 Beta：
+  - A: 操作0到B, 操作1到C
+  - B: 操作0到D, 操作1到E
+  - C: 操作0到E, 操作1无边
+  - D: 操作0到E, 操作1到F
+  - E: 操作0到F, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-## 可用的交互操作
+- 候选程序 Gamma：
+  - A: 操作0到B, 操作1到D
+  - B: 操作0到C, 操作1到E
+  - C: 操作0到B, 操作1到F
+  - D: 操作0到E, 操作1无边
+  - E: 操作0到D, 操作1无边
+  - F: 操作0无边, 操作1无边
 
-你可以反复向我提出以下操作（每次仅限一个操作）：
+你可以通过以下四类交互请求来探索案件移交图的结构：
 
-1. **状态查询**：查询当前材料排列序列及其程序瑕疵度。
-   - 返回：当前序列 S 和程序瑕疵度 C(S)
+1. 执行操作：在当前部门尝试走操作0或操作1。如果该边存在，案件会移交到目标部门；如果不存在，案件会留在原部门。
+2. 复位：将当前案件状态重置为起始部门 A。
+3. 位置查询：询问当前案件所在的部门。
+4. 计步查询：询问自上次复位以来成功移交的次数（仅计算通过有效边的流转）。
 
-2. **试探操作**：询问如果调换位置 i 和 i+1 的材料，程序瑕疵度会如何变化（不实际调换）。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：变化量 delta，可能是 -1、0 或 +1
-     - delta = -1：调换会使程序瑕疵度减少 1（说明这两个位置当前次序与法定审查次序相反）
-     - delta = +1：调换会使程序瑕疵度增加 1（说明这两个位置当前次序与法定审查次序一致）
-     - delta = 0：调换不改变程序瑕疵度（说明两个位置的审查类别相同）
+你的目标是：
+1. 识别真实的候选图（Alpha、Beta 或 Gamma）
+2. 判断该移交图是否存在有向程序死循环（回答"有环"或"无环"）
+3. 提供可验证的证据：
+   - 如果判定"有环"：给出一条完整的有向案件循环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - 如果判定"无环"：给出一个包含所有部门A到F的拓扑合法结案单向序列
 
-3. **交换操作**：实际调换位置 i 和 i+1 的材料。
-   - 参数：位置 i（1 到 {n_minus_1} 之间的整数）
-   - 返回：调换后的程序瑕疵度 C(S)
-   - 注意：这会真实改变当前卷宗材料序列
+每次只能发起一个请求，使用以下XML格式：
 
-4. **重置操作**：将序列恢复到初始状态。
-   - 返回：初始序列和初始程序瑕疵度
+- 执行操作（例如在当前部门执行操作1）：
+<action>1</action>
 
-当你收集到足够信息后，请提交你推断出的法定审查次序。如果答案错误或格式不符，游戏失败。
-
-## 操作格式（必须严格遵守）
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 状态查询：
-<query_state></query_state>
-
-- 试探操作（例如试探位置 2）：
-<probe>2</probe>
-
-- 交换操作（例如交换位置 3 和 4）：
-<swap>3</swap>
-
-- 重置操作：
+- 复位到起始部门：
 <reset></reset>
 
-- 提交最终答案（例如审查次序为 A < B < C）：
-<answer>A,B,C</answer>
+- 查询当前位置：
+<query_position></query_position>
 
-注意：答案中审查类别按法定程序从先到后排列，用逗号分隔，不包含空格。
+- 查询步数：
+<query_steps></query_steps>
+
+提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
+
+有环的情况（示例）：
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+无环的情况（示例）：
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the Judicial Evidence Review Auxiliary System. You will act as a prosecutor to verify the lawful review sequence of the case evidence chain.
-Let's play a "Statutory Procedure Order Recovery" deduction game. Here are the rules:
+Let's execute the "Judicial Case Flow Verification" task. Here are the rules:
 
-The system defines an evidence review category set T containing {k} different review categories (represented by letters, such as A, B, C, etc.). The law has secretly mandated a strict statutory review procedure ordering R over these categories (i.e., all categories can be compared procedurally, with no equal relationships; smaller means it must be reviewed earlier).
+The system has a directed case transfer graph with judicial departments: A, B, C, D, E, F. The case always starts flowing from the initial department A.
 
-You are given a case file arrangement sequence S of length {n}, where evidence materials come from the category set T (with possible repetitions). The initial case file sequence is: {initial_sequence}
+The graph structure is one of three candidate legal procedures, but I won't tell you which one:
 
-Define the "procedural flaw degree" C(S) as the total number of flaw pairs in sequence S. A flaw pair is a pair of positions (i, j) where i is less than j, but S[i] comes after S[j] in the true statutory ordering R (i.e., a material for a subsequent procedure is improperly placed earlier).
+- Candidate Procedure Alpha:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to A, action 1 to F
+  - D: action 0 to E, action 1 to E
+  - E: action 0 to F, action 1 to F
+  - F: action 0 to D, action 1 to D
 
-Your goal is to infer the complete ordering R of the review category set T through interactions with the auxiliary system, using as few interactions as possible.
+- Candidate Procedure Beta:
+  - A: action 0 to B, action 1 to C
+  - B: action 0 to D, action 1 to E
+  - C: action 0 to E, action 1 no edge
+  - D: action 0 to E, action 1 to F
+  - E: action 0 to F, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-## Available Interaction Operations
+- Candidate Procedure Gamma:
+  - A: action 0 to B, action 1 to D
+  - B: action 0 to C, action 1 to E
+  - C: action 0 to B, action 1 to F
+  - D: action 0 to E, action 1 no edge
+  - E: action 0 to D, action 1 no edge
+  - F: action 0 no edge, action 1 no edge
 
-You can repeatedly perform the following operations (one per turn):
+You can explore the case transfer structure through four types of interaction:
 
-1. **State Query**: Query the current material sequence and its procedural flaw degree.
-   - Returns: Current sequence S and procedural flaw degree C(S)
+1. Execute action: Try action 0 or 1 at the current department. If the edge exists, the case is transferred to the target department; otherwise, it stays.
+2. Reset: Return the case state to the starting department A.
+3. Position query: Ask which department the case is currently at.
+4. Step count query: Ask how many successful transfers since the last reset (only counts moves via valid edges).
 
-2. **Probe Operation**: Ask how the procedural flaw degree would change if materials at positions i and i+1 were swapped (without actually swapping).
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Change amount delta, which can be -1, 0, or +1
-     - delta = -1: Swapping would decrease the flaw degree by 1 (the current order is opposite to the statutory ordering)
-     - delta = +1: Swapping would increase the flaw degree by 1 (the current order matches the statutory ordering)
-     - delta = 0: Swapping would not change the flaw degree (the two review categories are the same)
+Your goals are:
+1. Identify the true candidate graph (Alpha, Beta, or Gamma)
+2. Determine whether the transfer graph has a directed procedural cyclic loop (answer "yes" or "no")
+3. Provide verifiable evidence:
+   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
+   - If "no": Give a topological lawful one-way resolution sequence containing all departments A through F
 
-3. **Swap Operation**: Actually swap materials at positions i and i+1.
-   - Parameter: Position i (an integer between 1 and {n_minus_1})
-   - Returns: Procedural flaw degree C(S) after swapping
-   - Note: This actually modifies the current case file sequence
+Each request must use one of the following XML formats:
 
-4. **Reset Operation**: Restore the sequence to its initial state.
-   - Returns: Initial sequence and initial procedural flaw degree
+- Execute action (e.g., execute action 1 at current department):
+<action>1</action>
 
-When you have gathered enough information, submit your inferred statutory review ordering. If the answer is wrong or the format is invalid, the game fails.
-
-## Operation Format (must be strictly followed)
-
-Each operation must contain only one tag. Use the following XML format:
-
-- State Query:
-<query_state></query_state>
-
-- Probe Operation (e.g., probe position 2):
-<probe>2</probe>
-
-- Swap Operation (e.g., swap positions 3 and 4):
-<swap>3</swap>
-
-- Reset Operation:
+- Reset to starting department:
 <reset></reset>
 
-- Submit Final Answer (e.g., review procedure order is A < B < C):
-<answer>A,B,C</answer>
+- Query current position:
+<query_position></query_position>
 
-Note: In the answer, review categories are listed procedurally from earliest to latest (smallest to largest), separated by commas, with no spaces.
+- Query step count:
+<query_steps></query_steps>
+
+When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
+
+With cycle (example):
+<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
+
+Without cycle (example):
+<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
 """
 
-    tags = ["answer", "query_state", "probe", "swap", "reset"]
+    tags = ["answer", "action", "reset", "query_position", "query_steps"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "k": 3,
-            "n": 5,
-            "types": ["A", "B", "C"],
-            "true_order": ["A", "B", "C"],
-            "initial_sequence": ["C", "A", "B", "C", "A"],
+        1: {"graph": "Beta"},
+        2: {"graph": "Gamma"},
+        3: {"graph": "Alpha"},
+        4: {"graph": "Alpha"},
+        5: {"graph": "Gamma"},
+    }
+
+    GRAPHS = {
+        "Alpha": {
+            "A": {0: "B", 1: "D"},
+            "B": {0: "C", 1: "E"},
+            "C": {0: "A", 1: "F"},
+            "D": {0: "E", 1: "E"},
+            "E": {0: "F", 1: "F"},
+            "F": {0: "D", 1: "D"},
         },
-        2: {
-            "k": 4,
-            "n": 6,
-            "types": ["A", "B", "C", "D"],
-            "true_order": ["B", "D", "A", "C"],
-            "initial_sequence": ["C", "A", "D", "B", "C", "A"],
+        "Beta": {
+            "A": {0: "B", 1: "C"},
+            "B": {0: "D", 1: "E"},
+            "C": {0: "E"},
+            "D": {0: "E", 1: "F"},
+            "E": {0: "F"},
+            "F": {},
         },
-        3: {
-            "k": 4,
-            "n": 8,
-            "types": ["A", "B", "C", "D"],
-            "true_order": ["C", "A", "D", "B"],
-            "initial_sequence": ["B", "D", "A", "C", "B", "D", "A", "C"],
+        "Gamma": {
+            "A": {0: "B", 1: "D"},
+            "B": {0: "C", 1: "E"},
+            "C": {0: "B", 1: "F"},
+            "D": {0: "E"},
+            "E": {0: "D"},
+            "F": {},
         },
-        4: {
-            "k": 5,
-            "n": 10,
-            "types": ["A", "B", "C", "D", "E"],
-            "true_order": ["D", "B", "E", "A", "C"],
-            "initial_sequence": ["C", "A", "E", "B", "D", "C", "A", "E", "B", "D"],
+    }
+
+    CORRECT_ANSWERS = {
+        "Alpha": {
+            "has_cycle": True,
+            "example_cycle": ["C", "A", "B", "C"],
+            "cycle_actions": [0, 0, 0]
         },
-        5: {
-            "k": 6,
-            "n": 12,
-            "types": ["A", "B", "C", "D", "E", "F"],
-            "true_order": ["E", "C", "A", "F", "D", "B"],
-            "initial_sequence": ["B", "D", "F", "A", "C", "E", "B", "D", "F", "A", "C", "E"],
+        "Beta": {
+            "has_cycle": False,
+            "topo_order": ["A", "B", "C", "D", "E", "F"]
+        },
+        "Gamma": {
+            "has_cycle": True,
+            "example_cycle": ["D", "E", "D"],
+            "cycle_actions": [0, 0]
         },
     }
 
@@ -749,258 +885,239 @@ Note: In the answer, review categories are listed procedurally from earliest to 
         super().__init__(config)
 
     def _initialize_game(self):
-        import random as _random
         diff = int(self.config.difficulty)
-
         if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
+        self.true_graph_name = self.DIFFICULTY_CONFIG[diff]["graph"]
+        self.graph = self.GRAPHS[self.true_graph_name]
         
-        # 使用确定性种子（基于难度 + 可选的 seed 参数）
-        seed = getattr(self.config, 'seed', 42)
-        rng = _random.Random(seed)
+        self.current_node = "A"
+        self.step_count = 0
         
-        # 随机化真实顺序
-        true_order = cfg["types"][:]
-        rng.shuffle(true_order)
-        
-        # 随机化初始序列
-        initial_sequence = [rng.choice(cfg["types"]) for _ in range(cfg["n"])]
-        
-        # 基本信息
-        self._game_info["k"] = cfg["k"]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["n_minus_1"] = cfg["n"] - 1
-        self._game_info["initial_sequence"] = " ".join(initial_sequence)
-        
-        # 游戏状态
-        self.types = cfg["types"]
-        self.true_order = true_order  # 真实的顺序
-        self.initial_sequence = initial_sequence[:]
-        self.current_sequence = initial_sequence[:]
-        
-        # 建立类型到序号的映射（用于比较大小）
-        self.type_rank = {t: i for i, t in enumerate(self.true_order)}
-        
-        # 计算初始混乱度
-        self.initial_chaos = self._calculate_chaos(self.initial_sequence)
-        self.current_chaos = self.initial_chaos
-
-    def _calculate_chaos(self, sequence):
-        """计算序列的混乱度（逆序对数量）"""
-        chaos = 0
-        n = len(sequence)
-        for i in range(n):
-            for j in range(i + 1, n):
-                # 如果 i 位置的类型在真实顺序中排在 j 位置类型之后，则为逆序对
-                if self.type_rank[sequence[i]] > self.type_rank[sequence[j]]:
-                    chaos += 1
-        return chaos
-
-    def _get_swap_delta(self, pos):
-        """计算交换位置 pos 和 pos+1 后混乱度的变化"""
-        if pos < 1 or pos >= len(self.current_sequence):
-            raise ValueError(f"Invalid position: {pos}")
-        
-        idx = pos - 1  # 转换为0索引
-        type1 = self.current_sequence[idx]
-        type2 = self.current_sequence[idx + 1]
-        
-        # 如果类型相同，混乱度不变
-        if type1 == type2:
-            return 0
-        
-        rank1 = self.type_rank[type1]
-        rank2 = self.type_rank[type2]
-        
-        # 如果 type1 在真实顺序中小于 type2，当前是正序，交换后变逆序，混乱度+1
-        # 如果 type1 在真实顺序中大于 type2，当前是逆序，交换后变正序，混乱度-1
-        if rank1 < rank2:
-            return 1
-        else:
-            return -1
-
-    def _perform_swap(self, pos):
-        """实际执行交换操作"""
-        if pos < 1 or pos >= len(self.current_sequence):
-            raise ValueError(f"Invalid position: {pos}")
-        
-        idx = pos - 1  # 转换为0索引
-        self.current_sequence[idx], self.current_sequence[idx + 1] = \
-            self.current_sequence[idx + 1], self.current_sequence[idx]
-        
-        # 重新计算混乱度
-        self.current_chaos = self._calculate_chaos(self.current_sequence)
+        self._game_info = {}
 
     def evaluate(self, parsed_info):
-        """评估提交的答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info.get("answer", "")
         
         try:
-            # 解析答案：应该是逗号分隔的类型列表
-            submitted_order = [t.strip() for t in raw_ans.split(",")]
+            ans_dict = {}
             
-            # 检查是否与真实顺序完全一致
-            return submitted_order == self.true_order
+            graph_match = re.search(r'graph\s*=\s*(\w+)', raw_ans)
+            cycle_match = re.search(r'cycle\s*=\s*(\w+)', raw_ans)
+            evidence_match = re.search(r'evidence\s*=\s*(.+)', raw_ans)
+            
+            if not graph_match or not cycle_match or not evidence_match:
+                return False
+            
+            graph_ans = graph_match.group(1).strip()
+            cycle_ans = cycle_match.group(1).strip()
+            evidence = evidence_match.group(1).strip()
+            
+            if graph_ans != self.true_graph_name:
+                return False
+            
+            correct = self.CORRECT_ANSWERS[self.true_graph_name]
+            
+            if correct["has_cycle"]:
+                if cycle_ans not in ["yes", "有环"]:
+                    return False
+                return self._verify_cycle(evidence)
+            else:
+                if cycle_ans not in ["no", "无环"]:
+                    return False
+                return self._verify_topo(evidence)
+                
+        except Exception as e:
+            return False
+
+    def _verify_cycle(self, evidence):
+        pattern = r'([A-F])\s*-\((\d)\)->\s*'
+        matches = re.findall(pattern, evidence)
+        
+        if not matches:
+            return False
+        
+        nodes = [m[0] for m in matches]
+        actions = [int(m[1]) for m in matches]
+        
+        last_node_match = re.search(r'->\s*([A-F])\s*$', evidence)
+        if not last_node_match:
+            return False
+        last_node = last_node_match.group(1)
+        nodes.append(last_node)
+        
+        if nodes[0] != nodes[-1]:
+            return False
+        
+        for i in range(len(actions)):
+            current = nodes[i]
+            action = actions[i]
+            expected_next = nodes[i + 1]
+            
+            if current not in self.graph:
+                return False
+            if action not in self.graph[current]:
+                return False
+            if self.graph[current][action] != expected_next:
+                return False
+        
+        return True
+
+    def _verify_topo(self, evidence):
+        try:
+            topo = [x.strip() for x in evidence.split(",")]
+            
+            if set(topo) != {"A", "B", "C", "D", "E", "F"}:
+                return False
+            
+            pos = {node: i for i, node in enumerate(topo)}
+            
+            for node in self.graph:
+                for action, target in self.graph[node].items():
+                    if pos[node] >= pos[target]:
+                        return False
+            
+            return True
+            
         except:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑，从原 produce_response 提取"""
-        if self.config.language == "zh":
-            error_format = "错误：格式无效或参数错误。"
-            error_range = "错误：位置超出范围。"
-        else:
-            error_format = "Error: Invalid format or parameter."
-            error_range = "Error: Position out of range."
-
-        # 优先级：query_state > probe > swap > reset
-        if "query_state" in parsed_info:
-            # 返回当前序列和混乱度
-            seq_str = " ".join(self.current_sequence)
-            if self.config.language == "zh":
-                return f"当前序列：{seq_str}\n混乱度：{self.current_chaos}"
+        lang = self.config.language
+        
+        if "action" in parsed_info:
+            action_str = parsed_info["action"].strip()
+            try:
+                action = int(action_str)
+                if action not in [0, 1]:
+                    raise ValueError
+            except:
+                return "错误：操作必须是0或1。" if lang == "zh" else "Error: Action must be 0 or 1."
+            
+            if self.current_node in self.graph and action in self.graph[self.current_node]:
+                target = self.graph[self.current_node][action]
+                self.current_node = target
+                self.step_count += 1
+                if lang == "zh":
+                    return f"成功，抵达 {target}"
+                else:
+                    return f"Success, arrived at {target}"
             else:
-                return f"Current sequence: {seq_str}\nChaos degree: {self.current_chaos}"
-
-        elif "probe" in parsed_info:
-            # 试探操作
-            try:
-                pos = int(parsed_info["probe"].strip())
-                delta = self._get_swap_delta(pos)
-                if self.config.language == "zh":
-                    return f"变化量：{delta}"
+                if lang == "zh":
+                    return f"无效，仍在 {self.current_node}"
                 else:
-                    return f"Delta: {delta}"
-            except (ValueError, IndexError):
-                return error_range
-            except Exception:
-                return error_format
-
-        elif "swap" in parsed_info:
-            # 交换操作
-            try:
-                pos = int(parsed_info["swap"].strip())
-                self._perform_swap(pos)
-                if self.config.language == "zh":
-                    return f"交换完成。当前混乱度：{self.current_chaos}"
-                else:
-                    return f"Swap completed. Current chaos degree: {self.current_chaos}"
-            except (ValueError, IndexError):
-                return error_range
-            except Exception:
-                return error_format
-
+                    return f"Invalid, still at {self.current_node}"
+        
         elif "reset" in parsed_info:
-            # 重置操作
-            self.current_sequence = self.initial_sequence[:]
-            self.current_chaos = self.initial_chaos
-            seq_str = " ".join(self.current_sequence)
-            if self.config.language == "zh":
-                return f"已重置。初始序列：{seq_str}\n初始混乱度：{self.current_chaos}"
-            else:
-                return f"Reset completed. Initial sequence: {seq_str}\nInitial chaos degree: {self.current_chaos}"
-
+            self.current_node = "A"
+            self.step_count = 0
+            return "已复位到 A" if lang == "zh" else "Reset to A"
+        
+        elif "query_position" in parsed_info:
+            return f"在 {self.current_node}" if lang == "zh" else f"At {self.current_node}"
+        
+        elif "query_steps" in parsed_info:
+            return str(self.step_count)
+        
         else:
             raise ValueError("No valid query tag found.")
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
-        n_minus_1 = self._game_info["n_minus_1"]
-        
-        # 1. 状态查询
-        results.append({
-            "query": "<query_state></query_state>",
-            "answer": self._cf_core_produce({"query_state": ""})
-        })
-
-        # 2. 试探操作 (1 到 n-1) — 无副作用，安全
-        for i in range(1, n_minus_1 + 1):
-            results.append({
-                "query": f"<probe>{i}</probe>",
-                "answer": self._cf_core_produce({"probe": str(i)})
-            })
-
-        # 3. 交换操作 — 有状态副作用，在冗余性评估中需逐次恢复
-        backup_seq = self.current_sequence[:]
-        backup_chaos = self.current_chaos
-        for i in range(1, n_minus_1 + 1):
-            ans = self._cf_core_produce({"swap": str(i)})
-            results.append({
-                "query": f"<swap>{i}</swap>",
-                "answer": ans
-            })
-            # 恢复状态
-            self.current_sequence = backup_seq[:]
-            self.current_chaos = backup_chaos
-
-        # 4. 重置操作
-        ans = self._cf_core_produce({"reset": ""})
-        results.append({
-            "query": "<reset></reset>",
-            "answer": ans
-        })
-        self.current_sequence = backup_seq[:]
-        self.current_chaos = backup_chaos
-
-        return results
-
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成错误答案——针对本游戏的返回格式做更精准的篡改"""
-        import re as _re
+        lang = self.config.language
+        nodes = ["A", "B", "C", "D", "E", "F"]
 
-        # 尝试提取并篡改数值（适用于 "Delta: -1"、"Chaos degree: 3" 等）
-        # 查找最后一个整数（可能带负号）
-        nums = _re.findall(r'-?\d+', correct)
-        if nums:
-            last_num = nums[-1]
-            original_val = int(last_num)
-            # 对于 delta 类（-1, 0, 1），翻转符号或+1
-            if original_val == 0:
-                wrong_val = 1
-            elif original_val < 0:
-                wrong_val = abs(original_val)
+        if lang == "zh":
+            for node in nodes:
+                if f"抵达 {node}" in correct:
+                    wrong_nodes = [n for n in nodes if n != node]
+                    return correct.replace(f"抵达 {node}", f"抵达 {wrong_nodes[0]}")
+            if "无效" in correct:
+                return f"成功，抵达 {nodes[0]}"
+            if "复位" in correct:
+                return f"已复位到 B"
+            for node in nodes:
+                if f"在 {node}" in correct:
+                    wrong_nodes = [n for n in nodes if n != node]
+                    return f"在 {wrong_nodes[0]}"
+        else:
+            for node in nodes:
+                if f"arrived at {node}" in correct:
+                    wrong_nodes = [n for n in nodes if n != node]
+                    return correct.replace(f"arrived at {node}", f"arrived at {wrong_nodes[0]}")
+            if "Invalid" in correct:
+                return f"Success, arrived at {nodes[0]}"
+            if "Reset to" in correct:
+                return "Reset to B"
+            for node in nodes:
+                if f"At {node}" in correct:
+                    wrong_nodes = [n for n in nodes if n != node]
+                    return f"At {wrong_nodes[0]}"
+
+        try:
+            val = int(correct)
+            return str(val + 1)
+        except ValueError:
+            pass
+
+        return correct + " [error]"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        lang = self.config.language
+        
+        saved_node = self.current_node
+        saved_steps = self.step_count
+        
+        exploration = [
+            ("action", "0"),
+            ("action", "1"),
+            ("reset", ""),
+            ("action", "1"),
+            ("reset", ""),
+            ("action", "0"),
+            ("action", "0"),
+            ("action", "0"),
+            ("query_position", ""),
+            ("reset", ""),
+            ("action", "1"),
+            ("action", "0"),
+            ("action", "0"),
+            ("query_position", ""),
+            ("query_steps", ""),
+        ]
+        
+        self.current_node = "A"
+        self.step_count = 0
+        
+        for op_type, op_value in exploration:
+            if op_type == "action":
+                query_str = f"<action>{op_value}</action>"
+                action = int(op_value)
+                if self.current_node in self.graph and action in self.graph[self.current_node]:
+                    target = self.graph[self.current_node][action]
+                    self.current_node = target
+                    self.step_count += 1
+                    ans = f"成功，抵达 {target}" if lang == "zh" else f"Success, arrived at {target}"
+                else:
+                    ans = f"无效，仍在 {self.current_node}" if lang == "zh" else f"Invalid, still at {self.current_node}"
+            elif op_type == "reset":
+                query_str = "<reset></reset>"
+                self.current_node = "A"
+                self.step_count = 0
+                ans = "已复位到 A" if lang == "zh" else "Reset to A"
+            elif op_type == "query_position":
+                query_str = "<query_position></query_position>"
+                ans = f"在 {self.current_node}" if lang == "zh" else f"At {self.current_node}"
+            elif op_type == "query_steps":
+                query_str = "<query_steps></query_steps>"
+                ans = str(self.step_count)
             else:
-                wrong_val = -original_val if original_val <= 1 else original_val + 1
+                continue
             
-            # 使用 rfind 确保替换最后一个出现的数字
-            idx = correct.rfind(last_num)
-            if idx != -1:
-                return correct[:idx] + str(wrong_val) + correct[idx + len(last_num):]
-            return correct.replace(last_num, str(wrong_val), 1)
-
-        # 中文替换
-        wrong = correct
-        if "是" in wrong or "否" in wrong:
-            wrong = wrong.replace("是", "TEMP_YES")
-            wrong = wrong.replace("否", "是")
-            wrong = wrong.replace("TEMP_YES", "否")
-
-        # 英文替换
-        def replace_en(match):
-            text = match.group(0)
-            lower = text.lower()
-            if lower == 'yes':
-                return 'No' if text[0].isupper() else 'no'
-            elif lower == 'no':
-                return 'Yes' if text[0].isupper() else 'yes'
-            return text
-
-        if _re.search(r'(?i)\b(yes|no)\b', wrong):
-            wrong = _re.sub(r'(?i)\b(yes|no)\b', replace_en, wrong)
-
-        if wrong == correct:
-            return correct + "_WRONG"
-
-        return wrong
+            results.append({"query": query_str, "answer": ans})
+        
+        self.current_node = saved_node
+        self.step_count = saved_steps
+        
+        return results

@@ -1,500 +1,407 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   条件边计数：权重满足某条件的边共有多少条
-# ============================================================
-
 from .base import Game
 import random
-import re
-import itertools
 
-
-class HiddenGraphGame(Game):
-
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+class DirectedGraphReachabilityGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"隐藏图结构"的推理游戏，规则如下：
+我们来玩一个"有向图可达性推断"游戏，规则如下：
 
-游戏设定了一个无向简单图 G，顶点集合有 {n} 个顶点（编号 1 到 {n}），无自环、无重边。每条边具有整数权重，范围为 0 到 20。我已经秘密确定了参数 K = {k}。定义"满足条件的边"为权重可被 K 整除的边。
+游戏设定了一个整数 N = {n}，顶点集合为 {{0, 1, ..., N-1}}，所有运算按模 N 进行。
 
-你的目标是推断出满足条件的边的总数 M。你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据真实设定如实回答：
+存在一个未知但固定的偏移集合 S，它是 {{1, 2, ..., N-1}} 的子集。对于任意顶点 u，当且仅当 (v - u) mod N 属于 S 时，存在有向边 u -> v。这个结构在所有顶点上完全一致，不存在其他边。
 
-1. Ledger 查询：询问顶点 i 的"满足条件的度数"，即与 i 相连且满足条件的边的条数。回答一个整数。
-2. Probe 查询：询问顶点 i 和 j 之间是否有边及其权重。回答"无边"或"有边，权重=w"（w 为 0 到 20 的整数）。
-3. Scan 查询：对顶点子集 S 进行扫描，类型为"内"或"跨"。
-   - 类型为"内"：返回 S 内部（两端点均在 S）满足条件的边的数量。
-   - 类型为"跨"：返回连接 S 与其补集的满足条件的边的数量。
+可达性定义：从起点到终点可以经由零条或多条有向边连通。零条边表示顶点可达自身。
+
+你的目标是：判定是否存在某个顶点 w，使得从 w 出发可以到达所有顶点 {{0, 1, ..., N-1}}；若存在，给出任意一个这样的顶点编号。
+
+你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实设定如实回答：
+
+1. Probe(u, v)：询问是否存在边 u -> v。回答"是"或"否"。
+2. Route(u, [a1, a2, ..., ak])：从 u 按序尝试走到 a1、a2、...、ak。回答：
+   - 若全部单跳存在："成功，终点 ak"
+   - 否则："失败：第 i 步（从 x 到 ai）不存在"，并给出当前停留顶点 x 与失败步数 i
+3. Outdeg(u)：询问顶点 u 的出度。回答一个整数。
+4. Reach(u, L)：询问从 u 出发在至多 L 跳内可达的不同顶点数量。回答一个整数。
 
 当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个标签。请使用以下 XML 格式：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- Probe 查询（例如询问边 0 -> 1）：
+<query_probe>0,1</query_probe>
 
-- Ledger 查询（例如查询顶点 5）：
-<query_ledger>5</query_ledger>
+- Route 查询（例如从 0 经过 [1,2,3]）：
+<query_route>0,[1,2,3]</query_route>
 
-- Probe 查询（例如查询顶点 1 和 3 之间的边）：
-<query_probe>1,3</query_probe>
+- Outdeg 查询（例如询问顶点 0）：
+<query_outdeg>0</query_outdeg>
 
-- Scan 查询（例如查询顶点集合 1,2,3 的内部满足条件的边）：
-<query_scan>vertices=1,2,3;type=内</query_scan>
+- Reach 查询（例如从顶点 0 出发最多 3 跳）：
+<query_reach>0,3</query_reach>
 
-提交最终答案时，必须说明满足条件的边的总数 M，格式如下：
-<answer>{{m}}</answer>
+提交最终答案时，必须说明是否存在可达全体的顶点，格式如下：
 
-其中 {{m}} 为一个非负整数。
+- 若存在，给出一个示例顶点（例如顶点 0）：
+<answer>exists, vertex=0</answer>
+
+- 若不存在：
+<answer>not_exists</answer>
 """
 
     game_rule_en = """\
-Let's play a "Hidden Graph Structure" deduction game. Here are the rules:
+Let's play a "Directed Graph Reachability Inference" game. Here are the rules:
 
-There is an undirected simple graph G with {n} vertices (numbered 1 to {n}), without self-loops or multiple edges. Each edge has an integer weight ranging from 0 to 20. I have secretly determined a parameter K = {k}. A "qualifying edge" is defined as an edge whose weight is divisible by K.
+The game sets an integer N = {n}, with a vertex set {{0, 1, ..., N-1}}, and all operations are modulo N.
 
-Your goal is to infer the total number M of qualifying edges. You can repeatedly ask me three types of queries (one per turn), and I will answer truthfully:
+There exists an unknown but fixed offset set S, which is a subset of {{1, 2, ..., N-1}}. For any vertex u, there exists a directed edge u -> v if and only if (v - u) mod N belongs to S. This structure is completely consistent across all vertices, and no other edges exist.
 
-1. Ledger Query: Ask for the "qualifying degree" of vertex i, i.e., the count of qualifying edges connected to i. Answer is an integer.
-2. Probe Query: Ask whether there is an edge between vertices i and j and its weight. Answer is "No edge" or "Edge exists, weight=w" (w is an integer from 0 to 20).
-3. Scan Query: Scan a vertex subset S with type "internal" or "crossing".
-   - Type "internal": Returns the count of qualifying edges within S (both endpoints in S).
-   - Type "crossing": Returns the count of qualifying edges connecting S and its complement.
+Reachability definition: From a starting point to an endpoint, you can connect via zero or more directed edges. Zero edges means a vertex can reach itself.
+
+Your goal is: Determine whether there exists a vertex w such that all vertices {{0, 1, ..., N-1}} are reachable from w; if so, provide any one such vertex number.
+
+You can repeatedly ask me the following queries (one query per turn), and I will answer truthfully based on the actual setup:
+
+1. Probe(u, v): Ask if there exists an edge u -> v. Answer "Yes" or "No".
+2. Route(u, [a1, a2, ..., ak]): Try to walk from u sequentially to a1, a2, ..., ak. Answer:
+   - If all single hops exist: "Success, endpoint ak"
+   - Otherwise: "Failed: step i (from x to ai) does not exist", with current vertex x and failed step i
+3. Outdeg(u): Ask for the out-degree of vertex u. Answer an integer.
+4. Reach(u, L): Ask for the number of distinct vertices reachable from u within at most L hops. Answer an integer.
 
 When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-## Query and Answer Format (strictly required)
-
 Each query must contain only one tag. Use the following XML format:
 
-- Ledger Query (e.g., querying vertex 5):
-<query_ledger>5</query_ledger>
+- Probe query (e.g., asking about edge 0 -> 1):
+<query_probe>0,1</query_probe>
 
-- Probe Query (e.g., querying edge between vertices 1 and 3):
-<query_probe>1,3</query_probe>
+- Route query (e.g., from 0 through [1,2,3]):
+<query_route>0,[1,2,3]</query_route>
 
-- Scan Query (e.g., querying internal qualifying edges in vertex set 1,2,3):
-<query_scan>vertices=1,2,3;type=internal</query_scan>
+- Outdeg query (e.g., asking about vertex 0):
+<query_outdeg>0</query_outdeg>
 
-When submitting the final answer, specify the total number M of qualifying edges using this format:
-<answer>{{m}}</answer>
+- Reach query (e.g., from vertex 0 within at most 3 hops):
+<query_reach>0,3</query_reach>
 
-where {{m}} is a non-negative integer.
+When submitting the final answer, specify whether a vertex that reaches all exists:
+
+- If exists, provide an example vertex (e.g., vertex 0):
+<answer>exists, vertex=0</answer>
+
+- If not exists:
+<answer>not_exists</answer>
 """
 
     contextualized_rule_zh_1 = """\
-这是智能交通网络状态评估系统的核心推理模块，规则如下：
+【交通网络枢纽排查】
+本地区包含 N = {n} 个物流中转站，编号为 {{0, 1, ..., N-1}}。目前正在规划一种标准化的单向直飞航线。
 
-我们的交通管理系统监控着一个由 {n} 个关键交通枢纽（编号 1 到 {n}）组成的无向连通道路网 G。枢纽间没有自环道路，任意两枢纽间最多有一条直接相连的主干道。每条道路都有一个实时记录的拥堵指数（权重），范围为 0 到 20 的整数。系统底层已自动生成了当前的拥堵基准参数 K = {k}。我们定义“重点监管路段”为拥堵指数能被 K 整除的道路。
+根据规划，存在一个未知但固定的航线偏移量集合 S。对于任意中转站 u，仅当 (v - u) mod N 属于集合 S 时，才存在一条从 u 直飞 v 的单向航线。这种环形网络的拓扑在所有站点上完全一致。
 
-你的目标是推断出交通网络中重点监管路段的总数 M。你可以反复向系统提交以下三类查询（每次仅限一个查询），系统将如实返回数据：
+“可达性”意味着从一个中转站出发，可以通过零次或多次航班中转到达目标站点。
 
-1. Ledger 查询：询问交通枢纽 i 的“重点监管连接数”，即与该枢纽相连的重点监管路段的数量。回答一个整数。
-2. Probe 查询：询问交通枢纽 i 和 j 之间是否存在主干道及其拥堵指数。回答“无边”（无主干道）或“有边，权重=w”（w 为 0 到 20 的整数）。
-3. Scan 查询：对特定区域内的枢纽子集 S 进行扫描，类型为“内”或“跨”。
-   - 类型为“内”：返回 S 内部（两端点均在 S 内）重点监管路段的数量。
-   - 类型为“跨”：返回连接 S 与区域外（其补集）的重点监管路段的数量。
+你的任务是：找出是否存在一个“核心枢纽站” w，使得从 w 出发能够将货物投递到所有的 {{0, 1, ..., N-1}} 个站点。如果存在，请给出一个符合条件的站点编号。
 
-当你收集足够信息后，请提交最终评估结果。若结果错误或格式不符，排查任务失败。
+你可以通过以下指令向调度中心查询信息：
+1. Probe(u, v)：查询是否存在从站点 u 直飞 v 的航线。
+2. Route(u, [a1, a2, ..., ak])：尝试安排货物从 u 依次经停 a1, a2, ..., ak。
+3. Outdeg(u)：查询站点 u 拥有的直飞出发航线总数。
+4. Reach(u, L)：查询从站点 u 出发，在不超过 L 个航段（跳）内能够覆盖的站点总数。
 
-## 查询与提交答案的格式（必须严格遵守）
+收集到足够信息后，请提交结果。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+每次仅包含一个 XML 标签：
+- Probe 查询：<query_probe>0,1</query_probe>
+- Route 查询：<query_route>0,[1,2,3]</query_route>
+- Outdeg 查询：<query_outdeg>0</query_outdeg>
+- Reach 查询：<query_reach>0,3</query_reach>
 
-- Ledger 查询（例如查询交通枢纽 5）：
-<query_ledger>5</query_ledger>
-
-- Probe 查询（例如查询枢纽 1 和 3 之间的道路）：
-<query_probe>1,3</query_probe>
-
-- Scan 查询（例如查询枢纽集合 1,2,3 的内部重点监管路段）：
-<query_scan>vertices=1,2,3;type=内</query_scan>
-
-提交最终答案时，必须说明重点监管路段的总数 M，格式如下：
-<answer>{{m}}</answer>
-
-其中 {{m}} 为一个非负整数。
+最终答案提交：
+- 若存在核心枢纽，给出一个示例：<answer>exists, vertex=0</answer>
+- 若不存在：<answer>not_exists</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Welcome to the core reasoning module of the Intelligent Traffic Network Status Assessment System. The rules are as follows:
+[Transportation Logistics Scenario]
+This region contains N = {n} logistics transit stations, numbered {{0, 1, ..., N-1}}. A standardized one-way direct flight network is being planned.
 
-Our traffic management system monitors an undirected road network G consisting of {n} key traffic hubs (numbered 1 to {n}). There are no self-looping roads, and at most one direct main road exists between any two hubs. Each road has a real-time congestion index (weight) represented as an integer ranging from 0 to 20. The system has secretly generated the current congestion baseline parameter K = {k}. A "critical monitoring route" is defined as a road whose congestion index is divisible by K.
+According to the plan, there is an unknown but fixed set of route offsets S. For any station u, a direct one-way flight from u to v exists if and only if (v - u) mod N belongs to set S. This circular network topology is completely uniform across all stations.
 
-Your goal is to infer the total number M of critical monitoring routes in the traffic network. You can repeatedly submit the following three types of queries to the system (one per turn), and the system will answer truthfully:
+"Reachability" means that cargo originating from a station can be delivered to a destination station via zero or multiple connecting flights.
 
-1. Ledger Query: Ask for the "critical connection count" of traffic hub i, i.e., the number of critical monitoring routes connected to i. The answer is an integer.
-2. Probe Query: Ask whether there is a main road between hubs i and j and its congestion index. The answer is "No edge" or "Edge exists, weight=w" (w is an integer from 0 to 20).
-3. Scan Query: Scan a specific area containing a hub subset S with type "internal" or "crossing".
-   - Type "internal": Returns the count of critical monitoring routes within S (both endpoints in S).
-   - Type "crossing": Returns the count of critical monitoring routes connecting S and the area outside (its complement).
+Your task is to determine if there exists a "core hub" station w such that cargo can be delivered from w to all {{0, 1, ..., N-1}} stations. If so, provide the ID of any one such station.
 
-When you have gathered enough information, submit your final assessment. If the answer is incorrect or the format is invalid, the troubleshooting task fails.
+You can query the dispatch center for information using the following commands:
+1. Probe(u, v): Query if there is a direct flight from station u to v.
+2. Route(u, [a1, a2, ..., ak]): Attempt to route cargo from u sequentially through a1, a2, ..., ak.
+3. Outdeg(u): Query the total number of outbound direct flights from station u.
+4. Reach(u, L): Query the number of distinct stations that can be reached from u within a maximum of L flight segments (hops).
 
-## Query and Answer Format (strictly required)
+Once you have gathered enough information, submit your final result.
 
-Each query must contain only one tag. Use the following XML format:
+Each query must contain exactly one XML tag:
+- Probe query: <query_probe>0,1</query_probe>
+- Route query: <query_route>0,[1,2,3]</query_route>
+- Outdeg query: <query_outdeg>0</query_outdeg>
+- Reach query: <query_reach>0,3</query_reach>
 
-- Ledger Query (e.g., querying traffic hub 5):
-<query_ledger>5</query_ledger>
-
-- Probe Query (e.g., querying the road between hubs 1 and 3):
-<query_probe>1,3</query_probe>
-
-- Scan Query (e.g., querying internal critical monitoring routes in hub set 1,2,3):
-<query_scan>vertices=1,2,3;type=internal</query_scan>
-
-When submitting the final answer, specify the total number M of critical monitoring routes using this format:
-<answer>{{m}}</answer>
-
-where {{m}} is a non-negative integer.
+Final answer submission:
+- If a core hub exists, provide an example: <answer>exists, vertex=0</answer>
+- If not exists: <answer>not_exists</answer>
 """
 
     contextualized_rule_zh_2 = """\
-这是精准医疗辅助诊断平台的靶向基因分析系统，规则如下：
+【医疗感染源流调追踪】
+在一座拥有 N = {n} 个科室（编号为 {{0, 1, ..., N-1}}）的大型隔离医院中，我们正在调查某种通过气流单向传播的病原体。
 
-系统构建了一个无向的基因相互作用网络 G，包含了 {n} 个关键致病基因节点（编号 1 到 {n}），无自表达环、无多重连接。每对相互作用的基因之间具有一个亲和力指数（权重），范围为 0 到 20 的整数。系统已根据临床数据确定了敏感性阈值系数 K = {k}。我们定义“成药靶点链路”为亲和力指数能被 K 整除的基因间相互作用。
+医院的单向通风系统遵循一个固定的偏移规律集合 S。对于任意科室 u，仅当 (v - u) mod N 属于集合 S 时，存在一条从 u 到 v 的单向气流通道。所有科室的通风设计均完全一致。
 
-你的目标是推断出网络中成药靶点链路的总数 M。你可以反复向系统提出以下三类测序查询（每次仅限一个查询），系统将基于生化实验数据如实回答：
+“可达性”意味着病原体可以通过零条或多条单向通风管道进行跨科室传播。
 
-1. Ledger 查询：询问基因节点 i 的“靶点关联度”，即与基因 i 相连的成药靶点链路的数量。回答一个整数。
-2. Probe 查询：询问基因节点 i 和 j 之间是否存在相互作用链路及其亲和力指数。回答“无边”或“有边，权重=w”（w 为 0 到 20 的整数）。
-3. Scan 查询：对特定基因通路内的节点子集 S 进行扫描，类型为“内”或“跨”。
-   - 类型为“内”：返回子集 S 内部（两端点均在 S 内）成药靶点链路的数量。
-   - 类型为“跨”：返回连接 S 与通路外部（其补集）的成药靶点链路的数量。
+你的任务是：判断是否存在一个“总污染源”科室 w，一旦该科室被污染，病原体将通过气流系统传播到所有 {{0, 1, ..., N-1}} 个科室。如果存在，请提供任意一个可能的科室编号。
 
-当你收集足够信息后，请提交最终的分析结果。若结果错误或格式不符，靶点筛查任务失败。
+你可以向工程部提出以下流调排查：
+1. Probe(u, v)：检测是否存在从科室 u 直达科室 v 的气流通道。
+2. Route(u, [a1, a2, ..., ak])：追踪从 u 开始，依次流经 a1, a2, ..., ak 的气流路径是否连通。
+3. Outdeg(u)：查询从科室 u 直接吹向其他科室的管道数量。
+4. Reach(u, L)：查询从科室 u 的气流在最多跨越 L 个管道节点后能波及的不同科室总数。
 
-## 查询与提交答案的格式（必须严格遵守）
+收集信息后，请提交追踪结论。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+每次仅限一个 XML 标签：
+- Probe 查询：<query_probe>0,1</query_probe>
+- Route 查询：<query_route>0,[1,2,3]</query_route>
+- Outdeg 查询：<query_outdeg>0</query_outdeg>
+- Reach 查询：<query_reach>0,3</query_reach>
 
-- Ledger 查询（例如查询基因 5）：
-<query_ledger>5</query_ledger>
-
-- Probe 查询（例如查询基因 1 和 3 之间的链路）：
-<query_probe>1,3</query_probe>
-
-- Scan 查询（例如查询基因集合 1,2,3 的内部成药靶点链路）：
-<query_scan>vertices=1,2,3;type=内</query_scan>
-
-提交最终答案时，必须说明成药靶点链路的总数 M，格式如下：
-<answer>{{m}}</answer>
-
-其中 {{m}} 为一个非负整数。
+最终答案提交：
+- 若存在总污染源，给出一个示例科室：<answer>exists, vertex=0</answer>
+- 若不存在：<answer>not_exists</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Welcome to the Targeted Gene Analysis System of the Precision Medicine Diagnostic Platform. The rules are as follows:
+[Medical Infection Tracing Scenario]
+In a large isolation hospital with N = {n} departments (numbered {{0, 1, ..., N-1}}), we are investigating a pathogen that spreads via one-way airflow.
 
-The system has constructed an undirected gene interaction network G, containing {n} key pathogenic gene nodes (numbered 1 to {n}), with no self-expression loops or multiple connections. Each pair of interacting genes has an affinity index (weight) ranging from 0 to 20. The system has determined a sensitivity threshold factor K = {k} based on clinical data. A "druggable target link" is defined as a gene interaction whose affinity index is divisible by K.
+The hospital's one-way ventilation system follows a fixed set of offset rules S. For any department u, a one-way airflow duct from u to v exists if and only if (v - u) mod N belongs to set S. This ventilation design is perfectly uniform across all departments.
 
-Your goal is to infer the total number M of druggable target links in the network. You can repeatedly submit the following three types of sequencing queries to the system (one per turn), and the system will answer truthfully based on biochemical experimental data:
+"Reachability" implies that the pathogen can spread across departments via zero or multiple one-way ventilation ducts.
 
-1. Ledger Query: Ask for the "target degree" of gene node i, i.e., the number of druggable target links connected to gene i. The answer is an integer.
-2. Probe Query: Ask whether there is an interaction link between gene nodes i and j and its affinity index. The answer is "No edge" or "Edge exists, weight=w" (w is an integer from 0 to 20).
-3. Scan Query: Scan a specific gene pathway containing a node subset S with type "internal" or "crossing".
-   - Type "internal": Returns the count of druggable target links within S (both endpoints in S).
-   - Type "crossing": Returns the count of druggable target links connecting S and the outside of the pathway (its complement).
+Your task is to determine whether there exists a "primary contamination source" department w such that if contaminated, the pathogen would spread to all {{0, 1, ..., N-1}} departments. If so, provide the ID of any such department.
 
-When you have gathered enough information, submit your final analysis result. If the answer is incorrect or the format is invalid, the target screening task fails.
+You can request the following tracing checks from the engineering team:
+1. Probe(u, v): Detect if there is a direct airflow duct from department u to v.
+2. Route(u, [a1, a2, ..., ak]): Trace if the airflow path from u sequentially through a1, a2, ..., ak is connected.
+3. Outdeg(u): Query the number of direct outward ducts blowing from department u.
+4. Reach(u, L): Query the total number of distinct departments the airflow from u can affect within at most L duct nodes.
 
-## Query and Answer Format (strictly required)
+Once you have gathered sufficient information, submit your conclusion.
 
-Each query must contain only one tag. Use the following XML format:
+Each query must contain exactly one XML tag:
+- Probe query: <query_probe>0,1</query_probe>
+- Route query: <query_route>0,[1,2,3]</query_route>
+- Outdeg query: <query_outdeg>0</query_outdeg>
+- Reach query: <query_reach>0,3</query_reach>
 
-- Ledger Query (e.g., querying gene 5):
-<query_ledger>5</query_ledger>
-
-- Probe Query (e.g., querying the link between genes 1 and 3):
-<query_probe>1,3</query_probe>
-
-- Scan Query (e.g., querying internal druggable target links in gene set 1,2,3):
-<query_scan>vertices=1,2,3;type=internal</query_scan>
-
-When submitting the final answer, specify the total number M of druggable target links using this format:
-<answer>{{m}}</answer>
-
-where {{m}} is a non-negative integer.
+Final answer submission:
+- If a primary source exists, provide an example: <answer>exists, vertex=0</answer>
+- If not exists: <answer>not_exists</answer>
 """
 
     contextualized_rule_zh_3 = """\
-这是自适应教育平台的学科知识图谱分析模块，规则如下：
+【教育先修课体系设计】
+我们正在建立一个包含 N = {n} 个知识模块的课程体系，模块编号为 {{0, 1, ..., N-1}}。
 
-系统内设有一个无向的学科知识网络 G，包含 {n} 个核心知识点（编号 1 到 {n}），知识点间不存在自我依赖或重复映射。每条认知依赖路径（边）具备一个认知负荷值（权重），范围为 0 到 20 的整数。系统底层已配置了教学大纲的考察频率参数 K = {k}。我们定义“核心必考路径”为认知负荷值能被 K 整除的依赖关联。
+课程之间存在单向的先修依赖关系，这些关系由一个固定的偏移规则集合 S 决定。对于任意模块 u，仅当 (v - u) mod N 属于集合 S 时，模块 u 是模块 v 的直接先修课（即学完 u 即可解锁 v）。这一结构模式在整个知识体系中全局一致。
 
-你的目标是推断出知识网络中核心必考路径的总数 M。你可以反复向系统提出以下三类探查查询（每次仅限一个查询），系统将根据教学模型如实回答：
+“可达性”指的是可以通过一条或多条先修依赖链，依次解锁后续课程。
 
-1. Ledger 查询：询问知识点 i 的“核心关联度”，即与知识点 i 相连的核心必考路径的条数。回答一个整数。
-2. Probe 查询：询问知识点 i 和 j 之间是否存在认知依赖路径及其认知负荷值。回答“无边”或“有边，权重=w”（w 为 0 到 20 的整数）。
-3. Scan 查询：对特定模块的知识点子集 S 进行扫描，类型为“内”或“跨”。
-   - 类型为“内”：返回子集 S 内部（两端点均在 S 内）核心必考路径的数量。
-   - 类型为“跨”：返回连接 S 与其他模块知识点（其补集）的核心必考路径的数量。
+你的任务是：判断是否存在一门“核心导论课” w，使得学生只要从这门课开始学习，最终就能逐步解锁并学完全部 {{0, 1, ..., N-1}} 个模块。若存在，请给出任意一门这样的课程编号。
 
-当你收集足够信息后，请提交最终图谱分析结论。若答案错误或格式不符，图谱重构任务失败。
+你可以向教务系统发起以下查询：
+1. Probe(u, v)：询问模块 u 是否是模块 v 的直接先修课。
+2. Route(u, [a1, a2, ..., ak])：验证一条从 u 开始，依次解锁 a1, a2, ..., ak 的学习路径。
+3. Outdeg(u)：询问以模块 u 为直接先修课的后续模块数量。
+4. Reach(u, L)：询问从模块 u 开始，最多经过 L 层先修解锁链，总共能开放多少个模块。
 
-## 查询与提交答案的格式（必须严格遵守）
+信息充分后，请提交你的教研分析结论。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+每次提交仅限一个 XML 标签：
+- Probe 查询：<query_probe>0,1</query_probe>
+- Route 查询：<query_route>0,[1,2,3]</query_route>
+- Outdeg 查询：<query_outdeg>0</query_outdeg>
+- Reach 查询：<query_reach>0,3</query_reach>
 
-- Ledger 查询（例如查询知识点 5）：
-<query_ledger>5</query_ledger>
-
-- Probe 查询（例如查询知识点 1 和 3 之间的依赖路径）：
-<query_probe>1,3</query_probe>
-
-- Scan 查询（例如查询知识点集合 1,2,3 内部的核心必考路径）：
-<query_scan>vertices=1,2,3;type=内</query_scan>
-
-提交最终答案时，必须说明核心必考路径的总数 M，格式如下：
-<answer>{{m}}</answer>
-
-其中 {{m}} 为一个非负整数。
+最终答案提交：
+- 若存在核心导论课，给出课程编号：<answer>exists, vertex=0</answer>
+- 若不存在：<answer>not_exists</answer>
 """
 
     contextualized_rule_en_3 = """\
-[Education Scenario]
-Welcome to the Knowledge Graph Analysis Module of the Adaptive Education Platform. The rules are as follows:
+[Educational Prerequisite System Scenario]
+We are building a curriculum system comprising N = {n} knowledge modules, numbered {{0, 1, ..., N-1}}.
 
-The system features an undirected subject knowledge network G, containing {n} core knowledge nodes (numbered 1 to {n}), with no self-dependencies or duplicate mappings. Each cognitive dependency path (edge) has a cognitive load value (weight) ranging from 0 to 20. The system has configured an assessment frequency parameter K = {k} based on the syllabus. A "core required path" is defined as a dependency whose cognitive load value is divisible by K.
+There are one-way prerequisite dependencies between modules, governed by a fixed set of offset rules S. For any module u, u is a direct prerequisite for v (i.e., completing u unlocks v) if and only if (v - u) mod N belongs to set S. This structural pattern is globally consistent across the entire curriculum.
 
-Your goal is to infer the total number M of core required paths in the knowledge network. You can repeatedly submit the following three types of exploratory queries to the system (one per turn), and the system will answer truthfully based on the pedagogical model:
+"Reachability" means that subsequent courses can be sequentially unlocked through zero or more prerequisite dependency chains.
 
-1. Ledger Query: Ask for the "core correlation degree" of knowledge node i, i.e., the count of core required paths connected to i. The answer is an integer.
-2. Probe Query: Ask whether there is a cognitive dependency path between nodes i and j and its cognitive load value. The answer is "No edge" or "Edge exists, weight=w" (w is an integer from 0 to 20).
-3. Scan Query: Scan a specific module containing a node subset S with type "internal" or "crossing".
-   - Type "internal": Returns the count of core required paths within S (both endpoints in S).
-   - Type "crossing": Returns the count of core required paths connecting S and nodes in other modules (its complement).
+Your task is to determine if there exists a "core introductory course" w such that starting from this course, a student can eventually unlock and study all {{0, 1, ..., N-1}} modules. If so, provide the ID of any one such course.
 
-When you have gathered enough information, submit your final graph analysis conclusion. If the answer is incorrect or the format is invalid, the graph reconstruction task fails.
+You can query the academic system using the following commands:
+1. Probe(u, v): Query if module u is a direct prerequisite for module v.
+2. Route(u, [a1, a2, ..., ak]): Verify a study path starting from u and sequentially unlocking a1, a2, ..., ak.
+3. Outdeg(u): Query the number of subsequent modules that have module u as their direct prerequisite.
+4. Reach(u, L): Query the total number of distinct modules that can be unlocked starting from u within at most L dependency layers.
 
-## Query and Answer Format (strictly required)
+Submit your pedagogical conclusion once you have enough information.
 
-Each query must contain only one tag. Use the following XML format:
+Each query must contain exactly one XML tag:
+- Probe query: <query_probe>0,1</query_probe>
+- Route query: <query_route>0,[1,2,3]</query_route>
+- Outdeg query: <query_outdeg>0</query_outdeg>
+- Reach query: <query_reach>0,3</query_reach>
 
-- Ledger Query (e.g., querying knowledge node 5):
-<query_ledger>5</query_ledger>
-
-- Probe Query (e.g., querying the dependency path between nodes 1 and 3):
-<query_probe>1,3</query_probe>
-
-- Scan Query (e.g., querying internal core required paths in node set 1,2,3):
-<query_scan>vertices=1,2,3;type=internal</query_scan>
-
-When submitting the final answer, specify the total number M of core required paths using this format:
-<answer>{{m}}</answer>
-
-where {{m}} is a non-negative integer.
+Final answer submission:
+- If a core introductory course exists, provide an example: <answer>exists, vertex=0</answer>
+- If not exists: <answer>not_exists</answer>
 """
 
     contextualized_rule_zh_4 = """\
-这是智能制造工厂的设备通信与物流网络排查系统，规则如下：
+【工业流水线物料流转】
+在一个自动化车间内，部署了 N = {n} 个加工工站，编号为 {{0, 1, ..., N-1}}。这些工站由一系列单向物料传送带相连。
 
-工厂内部署了一个无向的生产传输网络 G，包含 {n} 个装配工作站（编号 1 到 {n}），工作站之间没有内部自循环链路，且任意两站点的直接传输通道至多一条。每条通道配备了一个实时负荷指标（权重），数值在 0 到 20 之间。系统安全总控模块隐秘设定了检修基准系数 K = {k}。我们定义“高频检修通道”为负荷指标能被 K 整除的传输通道。
+由于标准化装配要求，传送带的连接服从一个固定的偏移集合 S。对于任意工站 u，当且仅当 (v - u) mod N 属于集合 S 时，存在一条从 u 流向 v 的单向传送带。所有工站的物料输出逻辑完全一致。
 
-你的目标是推断出整个车间内高频检修通道的总数 M。你可以反复向工业控制系统发起以下三类检测指令（每次仅限一个查询），系统将如实返回传感器数据：
+“可达性”是指物料可以从一个工站被放入，经过一条或多条传送带接力，最终抵达目标工站。
 
-1. Ledger 查询：询问工作站 i 的“隐患通道接入数”，即与该工作站直接相连的高频检修通道条数。回答一个整数。
-2. Probe 查询：询问工作站 i 和 j 之间是否存在物理传输通道及其负荷指标。回答“无边”或“有边，权重=w”（w 为 0 到 20 的整数）。
-3. Scan 查询：对特定生产线（工作站子集 S）进行扫描，类型为“内”或“跨”。
-   - 类型为“内”：返回子集 S 内部（两端点均在 S 内）高频检修通道的数量。
-   - 类型为“跨”：返回连接 S 与其他生产线（其补集）的高频检修通道的数量。
+你的任务是：诊断是否存在一个“总控投料站” w，使得将原材料投入 w 后，物料能够顺着流水线被输送至所有的 {{0, 1, ..., N-1}} 个工站。如果存在，请指出任意一个这样的投料站编号。
 
-当你收集足够信息后，请提交最终安全评估报告。若上报数据错误或格式不符，排查任务将直接中止。
+你可以向中控系统发起以下探测指令：
+1. Probe(u, v)：探测是否存在从工站 u 直达工站 v 的单向传送带。
+2. Route(u, [a1, a2, ..., ak])：模拟物料从 u 投放，能否依次流转经过 a1, a2, ..., ak。
+3. Outdeg(u)：查询工站 u 连接出的直接传送带数量。
+4. Reach(u, L)：查询从工站 u 投料，经过最多 L 次传送带接力，物料能够抵达的不同工站数量。
 
-## 查询与提交答案的格式（必须严格遵守）
+排查完毕后，请提交诊断报告。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+单次只能发送一个 XML 标签：
+- Probe 探测：<query_probe>0,1</query_probe>
+- Route 模拟：<query_route>0,[1,2,3]</query_route>
+- Outdeg 统计：<query_outdeg>0</query_outdeg>
+- Reach 统计：<query_reach>0,3</query_reach>
 
-- Ledger 查询（例如查询工作站 5）：
-<query_ledger>5</query_ledger>
-
-- Probe 查询（例如查询工作站 1 和 3 之间的传输通道）：
-<query_probe>1,3</query_probe>
-
-- Scan 查询（例如查询工作站集合 1,2,3 内部的高频检修通道）：
-<query_scan>vertices=1,2,3;type=内</query_scan>
-
-提交最终答案时，必须说明高频检修通道的总数 M，格式如下：
-<answer>{{m}}</answer>
-
-其中 {{m}} 为一个非负整数。
+最终答案提交：
+- 若存在总控投料站，给出站点编号：<answer>exists, vertex=0</answer>
+- 若不存在：<answer>not_exists</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Welcome to the Equipment Communication and Logistics Network Troubleshooting System of the Smart Manufacturing Factory. The rules are as follows:
+[Industrial Assembly Line Scenario]
+In an automated workshop, N = {n} processing stations are deployed, numbered {{0, 1, ..., N-1}}. These stations are connected by a series of one-way material conveyor belts.
 
-The factory has deployed an undirected production transmission network G, containing {n} assembly stations (numbered 1 to {n}), with no internal self-looping links and at most one direct transfer channel between any two stations. Each channel is equipped with a real-time load index (weight) ranging from 0 to 20. The safety control module has secretly set a maintenance baseline factor K = {k}. A "high-frequency maintenance channel" is defined as a transfer channel whose load index is divisible by K.
+Due to standardized assembly requirements, the conveyor connections follow a fixed offset set S. For any station u, a one-way conveyor belt from u to v exists if and only if (v - u) mod N belongs to set S. This material output logic is perfectly uniform across all stations.
 
-Your goal is to infer the total number M of high-frequency maintenance channels across the workshop. You can repeatedly issue the following three types of detection commands to the industrial control system (one per turn), and the system will return truthful sensor data:
+"Reachability" means that materials introduced at a station can be transported to a target station via zero or multiple relay conveyor belts.
 
-1. Ledger Query: Ask for the "hazard channel connection count" of station i, i.e., the number of high-frequency maintenance channels connected to station i. The answer is an integer.
-2. Probe Query: Ask whether there is a physical transfer channel between stations i and j and its load index. The answer is "No edge" or "Edge exists, weight=w" (w is an integer from 0 to 20).
-3. Scan Query: Scan a specific production line containing a station subset S with type "internal" or "crossing".
-   - Type "internal": Returns the count of high-frequency maintenance channels within S (both endpoints in S).
-   - Type "crossing": Returns the count of high-frequency maintenance channels connecting S to other production lines (its complement).
+Your task is to diagnose whether there exists a "master feeding station" w such that raw materials fed into w can be transported along the assembly line to all {{0, 1, ..., N-1}} stations. If so, indicate the ID of any one such feeding station.
 
-When you have gathered enough information, submit your final safety assessment report. If the reported data is incorrect or the format is invalid, the troubleshooting task will be aborted immediately.
+You can issue the following probing commands to the central control system:
+1. Probe(u, v): Detect if there is a direct one-way conveyor belt from station u to v.
+2. Route(u, [a1, a2, ..., ak]): Simulate whether material fed at u can sequentially flow through a1, a2, ..., ak.
+3. Outdeg(u): Query the number of outbound conveyor belts connected from station u.
+4. Reach(u, L): Query the total number of distinct stations materials can reach from station u within at most L conveyor relays.
 
-## Query and Answer Format (strictly required)
+Submit your diagnostic report once the inspection is complete.
 
-Each query must contain only one tag. Use the following XML format:
+Each query must contain exactly one XML tag:
+- Probe query: <query_probe>0,1</query_probe>
+- Route query: <query_route>0,[1,2,3]</query_route>
+- Outdeg query: <query_outdeg>0</query_outdeg>
+- Reach query: <query_reach>0,3</query_reach>
 
-- Ledger Query (e.g., querying station 5):
-<query_ledger>5</query_ledger>
-
-- Probe Query (e.g., querying the channel between stations 1 and 3):
-<query_probe>1,3</query_probe>
-
-- Scan Query (e.g., querying internal high-frequency maintenance channels in station set 1,2,3):
-<query_scan>vertices=1,2,3;type=internal</query_scan>
-
-When submitting the final answer, specify the total number M of high-frequency maintenance channels using this format:
-<answer>{{m}}</answer>
-
-where {{m}} is a non-negative integer.
+Final answer submission:
+- If a master feeding station exists, provide an example: <answer>exists, vertex=0</answer>
+- If not exists: <answer>not_exists</answer>
 """
 
     contextualized_rule_zh_5 = """\
-这是金融犯罪侦查局的反洗钱资金追踪系统，规则如下：
+【法律条款引用溯源】
+一份新颁布的法典包含 N = {n} 个法理节点（条款），编号为 {{0, 1, ..., N-1}}。这些条款之间存在严格的单向引用关系。
 
-专案组掌握了一个无向的涉案资金网络 G，包含 {n} 个受监控的涉案实体（编号 1 到 {n}），实体间不存在自我交易或多重对冲账户。每条资金往来通道（边）具有一个由算法评定的风险权重，范围为 0 到 20 的整数。经侦模型已后台锁定了洗钱特征系数 K = {k}。我们定义“高危洗钱链路”为风险权重能被 K 整除的资金通道。
+法典的编纂采用了一种结构化的引用逻辑，即固定的偏移集合 S。对于任意条款 u，当且仅当 (v - u) mod N 属于集合 S 时，条款 u 会明确直接引用条款 v 作为下位释明。这一法律逻辑框架在所有条款上保持一致。
 
-你的目标是推断出整个案件网络中高危洗钱链路的总数 M。你可以反复向系统下达以下三类侦查指令（每次仅限一个查询），系统将根据真实的银行流水如实反馈：
+“可达性”是指从一个条款出发，可以通过零次或多次递归引用，推演出另一个条款的内容。
 
-1. Ledger 查询：询问涉案实体 i 的“涉案风险度”，即与该实体存在直接往来的高危洗钱链路数量。回答一个整数。
-2. Probe 查询：询问实体 i 和 j 之间是否存在资金往来通道及其风险权重。回答“无边”或“有边，权重=w”（w 为 0 到 20 的整数）。
-3. Scan 查询：对特定犯罪团伙（实体子集 S）进行资金穿透扫描，类型为“内”或“跨”。
-   - 类型为“内”：返回子集 S 内部（交易双方均在 S 内）高危洗钱链路的数量。
-   - 类型为“跨”：返回连接 S 与网络外部（其补集）的高危洗钱链路的数量。
+你的职责是：分析是否存在一个“基础法理条款” w，使得只要确立了条款 w，就能通过层层引用逻辑涵盖并解释所有的 {{0, 1, ..., N-1}} 个法理节点。如果存在，请提供任意一个此类条款的编号。
 
-当你收集足够信息后，请提交最终的结案审计结果。若定罪数据错误或格式不符，案件侦破失败。
+你可以向法务数据库检索以下关联信息：
+1. Probe(u, v)：查询条款 u 是否直接引用了条款 v。
+2. Route(u, [a1, a2, ..., ak])：验证从条款 u 出发，能否按照 a1, a2, ..., ak 的顺序进行合法引用推演。
+3. Outdeg(u)：查询条款 u 直接引用了多少个其他条款。
+4. Reach(u, L)：查询从条款 u 展开，最多经过 L 层引用深度，能够覆盖到的不同条款总数。
 
-## 查询与提交答案的格式（必须严格遵守）
+完成法理推演后，请提交你的法务分析结论。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+每次检索需提供唯一的 XML 标签：
+- Probe 检索：<query_probe>0,1</query_probe>
+- Route 检索：<query_route>0,[1,2,3]</query_route>
+- Outdeg 检索：<query_outdeg>0</query_outdeg>
+- Reach 检索：<query_reach>0,3</query_reach>
 
-- Ledger 查询（例如查询涉案实体 5）：
-<query_ledger>5</query_ledger>
-
-- Probe 查询（例如查询实体 1 和 3 之间的资金往来）：
-<query_probe>1,3</query_probe>
-
-- Scan 查询（例如查询实体集合 1,2,3 内部的高危洗钱链路）：
-<query_scan>vertices=1,2,3;type=内</query_scan>
-
-提交最终答案时，必须说明高危洗钱链路的总数 M，格式如下：
-<answer>{{m}}</answer>
-
-其中 {{m}} 为一个非负整数。
+最终答案提交：
+- 若存在基础法理条款，给出条款编号：<answer>exists, vertex=0</answer>
+- 若不存在：<answer>not_exists</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the Anti-Money Laundering Funds Tracking System of the Financial Crime Investigation Bureau. The rules are as follows:
+[Legal Code Citation Tracing Scenario]
+A newly promulgated legal code contains N = {n} jurisprudential nodes (clauses), numbered {{0, 1, ..., N-1}}. These clauses exhibit a strict one-way citation relationship.
 
-The task force is monitoring an undirected transaction network G, containing {n} involved entities (numbered 1 to {n}), with no self-dealing transactions or multiple hedging accounts. Each financial transfer channel (edge) has a risk weight evaluated by the algorithm, ranging from 0 to 20. The economic crime model has locked in a money laundering characteristic factor K = {k}. A "high-risk money laundering link" is defined as a transfer channel whose risk weight is divisible by K.
+The drafting of the code employs a structured citation logic determined by a fixed offset set S. For any clause u, clause u explicitly cites clause v as its subordinate interpretation if and only if (v - u) mod N belongs to set S. This legal logic framework remains consistent across all clauses.
 
-Your goal is to infer the total number M of high-risk money laundering links within the case network. You can repeatedly issue the following three types of investigative commands to the system (one per turn), and the system will return factual feedback based on real bank statements:
+"Reachability" refers to the ability to deduce the content of a target clause starting from an initial clause through zero or multiple recursive citations.
 
-1. Ledger Query: Ask for the "case risk degree" of entity i, i.e., the number of high-risk money laundering links directly connected to it. The answer is an integer.
-2. Probe Query: Ask whether there is a financial transfer channel between entities i and j and its risk weight. The answer is "No edge" or "Edge exists, weight=w" (w is an integer from 0 to 20).
-3. Scan Query: Conduct a financial penetration scan on a specific syndicate containing an entity subset S with type "internal" or "crossing".
-   - Type "internal": Returns the count of high-risk money laundering links within S (both parties in S).
-   - Type "crossing": Returns the count of high-risk money laundering links connecting S to the outside network (its complement).
+Your duty is to analyze whether there exists a "fundamental jurisprudential clause" w such that establishing clause w allows for the interpretation of all {{0, 1, ..., N-1}} jurisprudential nodes through cascaded citation logic. If so, provide the ID of any such clause.
 
-When you have gathered enough information, submit your final audit result for closing the case. If the conviction data is incorrect or the format is invalid, the case investigation fails.
+You can retrieve the following relational data from the legal database:
+1. Probe(u, v): Query if clause u directly cites clause v.
+2. Route(u, [a1, a2, ..., ak]): Verify if a legitimate citation deduction can proceed from clause u sequentially through a1, a2, ..., ak.
+3. Outdeg(u): Query the number of other clauses directly cited by clause u.
+4. Reach(u, L): Query the total number of distinct clauses covered starting from clause u within a maximum citation depth of L.
 
-## Query and Answer Format (strictly required)
+Submit your legal analysis conclusion upon completing the deduction.
 
-Each query must contain only one tag. Use the following XML format:
+Each retrieval must contain exactly one XML tag:
+- Probe query: <query_probe>0,1</query_probe>
+- Route query: <query_route>0,[1,2,3]</query_route>
+- Outdeg query: <query_outdeg>0</query_outdeg>
+- Reach query: <query_reach>0,3</query_reach>
 
-- Ledger Query (e.g., querying involved entity 5):
-<query_ledger>5</query_ledger>
-
-- Probe Query (e.g., querying the financial transfer between entities 1 and 3):
-<query_probe>1,3</query_probe>
-
-- Scan Query (e.g., querying internal high-risk money laundering links in entity set 1,2,3):
-<query_scan>vertices=1,2,3;type=internal</query_scan>
-
-When submitting the final answer, specify the total number M of high-risk money laundering links using this format:
-<answer>{{m}}</answer>
-
-where {{m}} is a non-negative integer.
+Final answer submission:
+- If a fundamental jurisprudential clause exists, provide an example: <answer>exists, vertex=0</answer>
+- If not exists: <answer>not_exists</answer>
 """
 
-    tags = ["answer", "query_ledger", "query_probe", "query_scan"]
+    tags = ["answer", "query_probe", "query_route", "query_outdeg", "query_reach"]
+    
+    reasoning_type = "归纳推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "n": 4,
-                "k": 2,
-                "edges": [(1, 2, 2), (2, 3, 4), (3, 4, 5)],
-                "answer": 2,
-            },
-            2: {
-                "n": 5,
-                "k": 3,
-                "edges": [(1, 2, 3), (1, 3, 6), (2, 4, 5), (3, 4, 9), (4, 5, 7)],
-                "answer": 3,
-            },
-            3: {
-                "n": 6,
-                "k": 4,
-                "edges": [(1, 2, 4), (1, 3, 8), (2, 3, 3), (2, 4, 12), (3, 5, 5), (4, 5, 16), (4, 6, 7), (5, 6, 20)],
-                "answer": 5,
-            },
-            4: {
-                "n": 7,
-                "k": 5,
-                "edges": [(1, 2, 5), (1, 3, 10), (1, 4, 3), (2, 3, 15), (2, 5, 7), (3, 4, 20), (3, 6, 9), (4, 5, 11), (5, 6, 10), (5, 7, 5), (6, 7, 13)],
-                "answer": 6,
-            },
-            5: {
-                "n": 8,
-                "k": 2,
-                "edges": [(1, 2, 2), (1, 3, 4), (1, 4, 6), (2, 3, 8), (2, 5, 3), (3, 4, 10), (3, 6, 5), (4, 5, 12), (4, 7, 7), (5, 6, 14), (5, 8, 9), (6, 7, 16), (6, 8, 11), (7, 8, 18)],
-                "answer": 10,
-            },
+            1: {"n": 5, "offsets": [1]},
+            2: {"n": 6, "offsets": [1, 2]},
+            3: {"n": 8, "offsets": [2, 3]},
+            4: {"n": 10, "offsets": [2, 4]},
+            5: {"n": 12, "offsets": [3, 6]},
         },
         "en": {
-            1: {
-                "n": 4,
-                "k": 2,
-                "edges": [(1, 2, 2), (2, 3, 4), (3, 4, 5)],
-                "answer": 2,
-            },
-            2: {
-                "n": 5,
-                "k": 3,
-                "edges": [(1, 2, 3), (1, 3, 6), (2, 4, 5), (3, 4, 9), (4, 5, 7)],
-                "answer": 3,
-            },
-            3: {
-                "n": 6,
-                "k": 4,
-                "edges": [(1, 2, 4), (1, 3, 8), (2, 3, 3), (2, 4, 12), (3, 5, 5), (4, 5, 16), (4, 6, 7), (5, 6, 20)],
-                "answer": 5,
-            },
-            4: {
-                "n": 7,
-                "k": 5,
-                "edges": [(1, 2, 5), (1, 3, 10), (1, 4, 3), (2, 3, 15), (2, 5, 7), (3, 4, 20), (3, 6, 9), (4, 5, 11), (5, 6, 10), (5, 7, 5), (6, 7, 13)],
-                "answer": 6,
-            },
-            5: {
-                "n": 8,
-                "k": 2,
-                "edges": [(1, 2, 2), (1, 3, 4), (1, 4, 6), (2, 3, 8), (2, 5, 3), (3, 4, 10), (3, 6, 5), (4, 5, 12), (4, 7, 7), (5, 6, 14), (5, 8, 9), (6, 7, 16), (6, 8, 11), (7, 8, 18)],
-                "answer": 10,
-            },
+            1: {"n": 5, "offsets": [1]},
+            2: {"n": 6, "offsets": [1, 2]},
+            3: {"n": 8, "offsets": [2, 3]},
+            4: {"n": 10, "offsets": [2, 4]},
+            5: {"n": 12, "offsets": [3, 6]},
         },
     }
 
@@ -511,207 +418,202 @@ where {{m}} is a non-negative integer.
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["k"] = cfg["k"]
-        
-        # 构建图结构
         self.n = cfg["n"]
-        self.k = cfg["k"]
-        self.edges = cfg["edges"]  # list of (i, j, weight)
-        self.answer = cfg["answer"]
+        self.offsets = set(cfg["offsets"])
         
-        # 构建邻接表和权重映射，用于快速查询
-        self.graph = {}  # {(i,j): weight}
-        self.qualifying_degree = [0] * (self.n + 1)  # 每个顶点的满足条件的度数
+        self._game_info["n"] = self.n
         
-        for i, j, w in self.edges:
-            # 无向图，存储两个方向
-            self.graph[(min(i, j), max(i, j))] = w
-            # 如果权重可被 K 整除，更新度数
-            if w % self.k == 0:
-                self.qualifying_degree[i] += 1
-                self.qualifying_degree[j] += 1
+        self.reachable = {}
+        for u in range(self.n):
+            self.reachable[u] = self._compute_reachable(u)
+        
+        self.universal_vertices = []
+        for u in range(self.n):
+            if len(self.reachable[u]) == self.n:
+                self.universal_vertices.append(u)
+        
+        self.exists_universal = len(self.universal_vertices) > 0
+
+    def _compute_reachable(self, start):
+        visited = set([start])
+        queue = [start]
+        
+        while queue:
+            u = queue.pop(0)
+            for offset in self.offsets:
+                v = (u + offset) % self.n
+                if v not in visited:
+                    visited.add(v)
+                    queue.append(v)
+        
+        return visited
+
+    def _has_edge(self, u, v):
+        offset = (v - u) % self.n
+        return offset in self.offsets
+
+    def _compute_reachable_within_hops(self, start, max_hops):
+        if max_hops < 0:
+            return 0
+        
+        visited = set([start])
+        current_level = {start}
+        
+        for hop in range(max_hops):
+            next_level = set()
+            for u in current_level:
+                for offset in self.offsets:
+                    v = (u + offset) % self.n
+                    if v not in visited:
+                        visited.add(v)
+                        next_level.add(v)
+            current_level = next_level
+            if not current_level:
+                break
+        
+        return len(visited)
 
     def evaluate(self, parsed_info):
-        # 解析答案: 应该是一个整数
-        try:
-            model_answer = int(parsed_info["answer"].strip())
-            return model_answer == self.answer
-        except:
+        raw_ans = parsed_info["answer"].strip()
+        
+        if raw_ans.startswith("not_exists"):
+            return not self.exists_universal
+        elif raw_ans.startswith("exists"):
+            try:
+                parts = raw_ans.split(",")
+                vertex_part = None
+                for part in parts:
+                    if "vertex=" in part:
+                        vertex_part = part.split("=")[1].strip()
+                        break
+                
+                if vertex_part is None:
+                    return False
+                
+                vertex = int(vertex_part)
+                
+                if vertex < 0 or vertex >= self.n:
+                    return False
+                
+                return len(self.reachable[vertex]) == self.n
+            except:
+                return False
+        else:
             return False
 
-    def _cf_core_produce(self, parsed_info):
-        # 根据查询类型返回相应结果
-        if "query_ledger" in parsed_info:
-            try:
-                vertex = int(parsed_info["query_ledger"].strip())
-                if vertex < 1 or vertex > self.n:
-                    return "错误：顶点编号超出范围。" if self.config.language == "zh" else "Error: Vertex ID out of range."
-                return str(self.qualifying_degree[vertex])
-            except:
-                return "错误：无效的 Ledger 查询格式。" if self.config.language == "zh" else "Error: Invalid Ledger query format."
-
-        elif "query_probe" in parsed_info:
-            try:
-                raw = parsed_info["query_probe"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    raise ValueError
-                i, j = int(parts[0]), int(parts[1])
-                if i < 1 or i > self.n or j < 1 or j > self.n or i == j:
-                    raise ValueError
-                
-                edge_key = (min(i, j), max(i, j))
-                if edge_key in self.graph:
-                    weight = self.graph[edge_key]
-                    if self.config.language == "zh":
-                        return f"有边，权重={weight}"
-                    else:
-                        return f"Edge exists, weight={weight}"
-                else:
-                    return "无边" if self.config.language == "zh" else "No edge"
-            except:
-                return "错误：无效的 Probe 查询格式。" if self.config.language == "zh" else "Error: Invalid Probe query format."
-
-        elif "query_scan" in parsed_info:
-            try:
-                raw = parsed_info["query_scan"].strip()
-                # 解析格式: vertices=1,2,3;type=内
-                parts = raw.split(";")
-                if len(parts) != 2:
-                    raise ValueError
-                
-                vertices_part = None
-                type_part = None
-                for part in parts:
-                    if "vertices=" in part:
-                        vertices_part = part.split("=", 1)[1]
-                    elif "type=" in part:
-                        type_part = part.split("=", 1)[1]
-                
-                if not vertices_part or not type_part:
-                    raise ValueError
-                
-                # 解析顶点集合
-                vertex_set = set(int(v.strip()) for v in vertices_part.split(",") if v.strip())
-                if not vertex_set:
-                    raise ValueError
-                for v in vertex_set:
-                    if v < 1 or v > self.n:
-                        raise ValueError
-                
-                # 解析类型
-                scan_type = type_part.strip()
-                if self.config.language == "zh":
-                    is_internal = (scan_type == "内")
-                    is_crossing = (scan_type == "跨")
-                else:
-                    is_internal = (scan_type == "internal")
-                    is_crossing = (scan_type == "crossing")
-                
-                if not is_internal and not is_crossing:
-                    raise ValueError
-                
-                # 计数满足条件的边
-                count = 0
-                for (i, j), w in self.graph.items():
-                    if w % self.k != 0:
-                        continue
-                    
-                    i_in = i in vertex_set
-                    j_in = j in vertex_set
-                    
-                    if is_internal and i_in and j_in:
-                        count += 1
-                    elif is_crossing and (i_in != j_in):
-                        count += 1
-                
-                return str(count)
-            except:
-                return "错误：无效的 Scan 查询格式。" if self.config.language == "zh" else "Error: Invalid Scan query format."
-
-        else:
-            raise ValueError("No valid query tag found.")
-
-    def _cf_make_wrong(self, correct):
-        # 纯数字：+1
-        if correct.strip().isdigit():
-            return str(int(correct.strip()) + 1)
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        if self.config.language == "zh":
-            if correct == "无边":
-                return "有边，权重=0"
-            if correct.startswith("有边，权重="):
-                # 修改权重
-                try:
-                    w = int(correct.split("=")[1])
-                    new_w = (w + 1) if w < 20 else (w - 1)
-                    return f"有边，权重={new_w}"
-                except:
-                    return correct + "_WRONG"
-        else:
-            if correct == "No edge":
-                return "Edge exists, weight=0"
-            if correct.startswith("Edge exists, weight="):
-                try:
-                    w = int(correct.split("=")[1])
-                    new_w = (w + 1) if w < 20 else (w - 1)
-                    return f"Edge exists, weight={new_w}"
-                except:
-                    return correct + "_WRONG"
+        mapping = {
+            "是": "否",
+            "否": "是",
+            "Yes": "No",
+            "No": "Yes",
+            "yes": "no",
+            "no": "yes"
+        }
+        
+        if correct in mapping:
+            return mapping[correct]
+        
+        if "成功" in correct or "Success" in correct:
+            return "失败：第 1 步不存在" if self.config.language == "zh" else "Failed: step 1 does not exist"
+        
+        if "失败" in correct or "Failed" in correct:
+            return "成功，终点 0" if self.config.language == "zh" else "Success, endpoint 0"
         
         return correct + "_WRONG"
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
+    def _cf_core_produce(self, parsed_info):
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
 
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
-        is_zh = (self.config.language == "zh")
-
-        # 1. Ledger Queries
-        for i in range(1, self.n + 1):
-            tag = "query_ledger"
-            content = str(i)
-            query_str = f"<{tag}>{content}</{tag}>"
-            parsed = {tag: content}
-            ans = self._cf_core_produce(parsed)
-            queries.append({"query": query_str, "answer": ans})
-
-        # 2. Probe Queries
-        for i in range(1, self.n + 1):
-            for j in range(i + 1, self.n + 1):
-                tag = "query_probe"
-                content = f"{i},{j}"
-                query_str = f"<{tag}>{content}</{tag}>"
-                parsed = {tag: content}
-                ans = self._cf_core_produce(parsed)
-                queries.append({"query": query_str, "answer": ans})
-
-        # 3. Scan Queries
-        # 枚举所有非空且非全集的子集
-        # 对于 N 个顶点，子集大小 r 从 1 到 N-1
-        type_opts = ["内", "跨"] if is_zh else ["internal", "crossing"]
-        vertices_list = list(range(1, self.n + 1))
-        
-        max_subset_size = min(self.n - 1, 3)  # 限制最大子集大小为 3
-        for r in range(1, max_subset_size + 1):
-            for subset in itertools.combinations(vertices_list, r):
-                subset_str = ",".join(map(str, subset))
+        try:
+            if "query_probe" in parsed_info:
+                raw = parsed_info["query_probe"].strip()
+                u, v = [int(x.strip()) for x in raw.split(",")]
                 
-                for t in type_opts:
-                    tag = "query_scan"
-                    content = f"vertices={subset_str};type={t}"
-                    query_str = f"<{tag}>{content}</{tag}>"
-                    parsed = {tag: content}
-                    ans = self._cf_core_produce(parsed)
-                    queries.append({"query": query_str, "answer": ans})
+                if u < 0 or u >= self.n or v < 0 or v >= self.n:
+                    return "错误：顶点编号超出范围。" if self.config.language == "zh" else "Error: Vertex number out of range."
+                
+                return yes_res if self._has_edge(u, v) else no_res
 
+            elif "query_route" in parsed_info:
+                raw = parsed_info["query_route"].strip()
+                parts = raw.split("[", 1)
+                if len(parts) != 2:
+                    return "错误：格式无效。" if self.config.language == "zh" else "Error: Invalid format."
+                
+                u_str = parts[0].strip().rstrip(",")
+                u = int(u_str.strip())
+                
+                path_str = parts[1].strip().rstrip("]")
+                path = [int(x.strip()) for x in path_str.split(",") if x.strip()]
+                
+                if u < 0 or u >= self.n:
+                    return "错误：起点编号超出范围。" if self.config.language == "zh" else "Error: Start vertex out of range."
+                
+                current = u
+                for i, next_vertex in enumerate(path, 1):
+                    if next_vertex < 0 or next_vertex >= self.n:
+                        return "错误：路径中顶点编号超出范围。" if self.config.language == "zh" else "Error: Vertex in path out of range."
+                    
+                    if not self._has_edge(current, next_vertex):
+                        if self.config.language == "zh":
+                            return f"失败：第 {i} 步（从 {current} 到 {next_vertex}）不存在"
+                        else:
+                            return f"Failed: step {i} (from {current} to {next_vertex}) does not exist"
+                    current = next_vertex
+                
+                if self.config.language == "zh":
+                    return f"成功，终点 {current}"
+                else:
+                    return f"Success, endpoint {current}"
+
+            elif "query_outdeg" in parsed_info:
+                u = int(parsed_info["query_outdeg"].strip())
+                
+                if u < 0 or u >= self.n:
+                    return "错误：顶点编号超出范围。" if self.config.language == "zh" else "Error: Vertex number out of range."
+                
+                return str(len(self.offsets))
+
+            elif "query_reach" in parsed_info:
+                raw = parsed_info["query_reach"].strip()
+                u, L = [int(x.strip()) for x in raw.split(",")]
+                
+                if u < 0 or u >= self.n:
+                    return "错误：顶点编号超出范围。" if self.config.language == "zh" else "Error: Vertex number out of range."
+                
+                if L < 0:
+                    return "错误：跳数不能为负。" if self.config.language == "zh" else "Error: Hops cannot be negative."
+                
+                count = self._compute_reachable_within_hops(u, L)
+                return str(count)
+
+            else:
+                raise ValueError("No valid query tag found.")
+                
+        except Exception as e:
+            return f"错误：{str(e)}" if self.config.language == "zh" else f"Error: {str(e)}"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        
+        for u in range(self.n):
+            for v in range(self.n):
+                content = f"{u},{v}"
+                
+                parsed_info = {"query_probe": content}
+                
+                answer = self._cf_core_produce(parsed_info)
+                
+                queries.append({
+                    "query": f"<query_probe>{content}</query_probe>",
+                    "answer": answer
+                })
+        
         return queries

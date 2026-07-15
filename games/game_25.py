@@ -1,660 +1,574 @@
-# -*- coding: utf-8 -*-
-
-from .base import Game
 import re
+from typing import List, Dict
+from .base import Game
 
-class TransitiveOrderGame(Game):
+class HiddenTreeStructureGame(Game):
+    reasoning_type = "演绎推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们来玩一个"传递序推理"游戏，规则如下：
+我们现在来玩一个"隐藏树结构"的推理游戏，规则如下：
 
-游戏设定了一个包含 {n} 个元素的集合，每个元素用编号 1 到 {n} 标识。这些元素之间存在一个隐藏的严格线性顺序关系（不存在并列、不存在循环）。对于任意两个不同的元素 X 和 Y，要么 X 在 Y 之前，要么 Y 在 X 之前，并且这种顺序关系满足传递性。
+游戏设定了一棵包含 {n} 个节点的有根树。根节点为 {root}，所有节点的标识为 {nodes}。树的边关系是固定的但对你隐藏。
 
-我已经指定了两个目标元素：**元素 {target_P}** 和 **元素 {target_Q}**。
+术语说明：
+- 对于任意节点 v，其"子树规模"定义为以 v 为根的子树中的节点总数（包括 v 自身）。
+- 祖先关系是自反的，即任意节点 v 都是它自己的祖先。
+- 叶节点指没有子节点的节点，其子树规模为 1。
 
-你的任务是：在不直接询问这两个目标元素的先后关系的前提下，通过询问其他元素对的先后关系，利用传递性推导出目标元素 {target_P} 和 {target_Q} 的先后顺序，并提供一条完整的证据链证明你的结论。
+你的目标是确定目标节点集合 {targets} 中每个节点的子树规模。
 
-## 允许的操作
+你可以通过以下三种方式向我提问（每次仅限一个问题）：
 
-每轮你可以进行以下操作之一：
+1. 祖先判定：询问节点 A 是否为节点 B 的祖先。我会回答"是"或"否"。注意：任意节点都是自己的祖先。
+2. 叶子判定：询问节点 X 是否为叶节点。我会回答"是"或"否"。若为叶节点，则其子树规模为 1。
+3. 双节点测量：同时测量两个节点 U 和 V 的子树规模之和。注意：U 和 V 必须互不为祖先或后代关系，否则测量无效。若有效，我会返回子树规模之和（整数）；若无效，我会返回"无效"并说明原因。
 
-1. **比较查询**：询问"元素 X 是否在元素 Y 之前？"
-   - 约束：X 和 Y 必须是 1 到 {n} 之间的不同编号
-   - **禁止直接询问目标元素对**（不能问 {target_P} 和 {target_Q} 的关系）
-   - 我会回答"是"或"否"
+重要限制：
+- 双节点测量必须确保两个节点互不为祖先或后代关系。
+- 累计发生 3 次无效的双节点测量请求将导致游戏失败。
+- 提交的最终答案若有任何错误将导致游戏失败。
 
-2. **历史回顾**：请求查看所有已回答过的比较查询及其结果
-   - 这不会提供新信息，仅用于回顾
+当你收集到足够信息后，请提交最终答案。
 
-## 提交答案
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你准备好提交答案时，需要提供：
-1. **结论**：说明 {target_P} 在 {target_Q} 之前，还是 {target_Q} 在 {target_P} 之前
-2. **证据链**：给出一条基于已回答查询的推导链，证明你的结论
-   - 证据链必须包含至少 3 条直接比较
-   - 每条比较必须来自历史查询的回答
-   - 通过传递性逐步连接，形成从一个目标元素到另一个的完整路径
+- 祖先判定（例如问节点 1 是否为节点 3 的祖先）：
+<query_ancestor>1,3</query_ancestor>
 
-## 格式要求
+- 叶子判定（例如问节点 5 是否为叶节点）：
+<query_leaf>5</query_leaf>
 
-**比较查询**（询问元素 3 是否在元素 7 之前）：
-<query_compare>3,7</query_compare>
+- 双节点测量（例如测量节点 2 和节点 4 的子树规模之和）：
+<query_pair>2,4</query_pair>
 
-**历史回顾**：
-<query_history></query_history>
+提交最终答案时，列出每个目标节点及其子树规模，格式如下（用分号分隔多个节点）：
 
-**提交最终答案**（假设结论是 {target_P} 在 {target_Q} 之前，证据链为 {target_P}→5→8→{target_Q}）：
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-注意：
-- 结论格式为"A<B"表示 A 在 B 之前
-- 证据链用逗号分隔多条比较关系，每条比较用"X<Y"表示 X 在 Y 之前
-- 证据链必须形成连续的传递路径
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     game_rule_en = """\
-Let's play a "Transitive Order Deduction" game. Here are the rules:
+Let's play a "Hidden Tree Structure" deduction game. Here are the rules:
 
-The game involves a set of {n} elements, each identified by a number from 1 to {n}. There exists a hidden strict linear order among these elements (no ties, no cycles). For any two different elements X and Y, either X comes before Y or Y comes before X, and this ordering satisfies transitivity.
+The game features a rooted tree with {n} nodes. The root node is {root}, and all node identifiers are {nodes}. The tree's edge relationships are fixed but hidden from you.
 
-I have designated two target elements: **Element {target_P}** and **Element {target_Q}**.
+Terminology:
+- For any node v, its "subtree size" is defined as the total number of nodes in the subtree rooted at v (including v itself).
+- The ancestor relationship is reflexive, meaning any node v is an ancestor of itself.
+- A leaf node is a node with no children, and its subtree size is 1.
 
-Your task is: without directly asking about the relationship between these two target elements, deduce the order of {target_P} and {target_Q} by querying relationships between other element pairs, using transitivity, and provide a complete evidence chain to prove your conclusion.
+Your goal is to determine the subtree size of each node in the target node set {targets}.
 
-## Allowed Operations
+You can ask me questions in three ways (one question per turn):
 
-Each turn you may perform one of the following:
+1. Ancestor Query: Ask whether node A is an ancestor of node B. I will answer "Yes" or "No". Note: Any node is an ancestor of itself.
+2. Leaf Query: Ask whether node X is a leaf node. I will answer "Yes" or "No". If it is a leaf, its subtree size is 1.
+3. Pair Measurement: Simultaneously measure the sum of subtree sizes of two nodes U and V. Note: U and V must not be in an ancestor-descendant relationship, otherwise the measurement is invalid. If valid, I will return the sum (an integer); if invalid, I will return "Invalid" with a reason.
 
-1. **Comparison Query**: Ask "Does element X come before element Y?"
-   - Constraint: X and Y must be different numbers between 1 and {n}
-   - **Direct comparison of target elements is forbidden** (cannot ask about {target_P} and {target_Q})
-   - I will answer "Yes" or "No"
+Important Constraints:
+- Pair measurements must ensure the two nodes are not in an ancestor-descendant relationship.
+- Accumulating 3 invalid pair measurement requests will result in game failure.
+- Submitting a final answer with any errors will result in game failure.
 
-2. **History Review**: Request to see all answered comparison queries and their results
-   - This provides no new information, only for review
+When you have collected enough information, submit your final answer.
 
-## Submitting Your Answer
+Each query must contain only one tag. Use the following XML format:
 
-When ready to submit, you must provide:
-1. **Conclusion**: State whether {target_P} comes before {target_Q}, or vice versa
-2. **Evidence Chain**: Provide a deduction chain based on answered queries to prove your conclusion
-   - The chain must contain at least 3 direct comparisons
-   - Each comparison must come from historical query answers
-   - Must form a complete path from one target element to the other through transitivity
+- Ancestor Query (e.g., asking if node 1 is an ancestor of node 3):
+<query_ancestor>1,3</query_ancestor>
 
-## Format Requirements
+- Leaf Query (e.g., asking if node 5 is a leaf):
+<query_leaf>5</query_leaf>
 
-**Comparison Query** (asking if element 3 comes before element 7):
-<query_compare>3,7</query_compare>
+- Pair Measurement (e.g., measuring the sum of subtree sizes of nodes 2 and 4):
+<query_pair>2,4</query_pair>
 
-**History Review**:
-<query_history></query_history>
+When submitting the final answer, list each target node and its subtree size in the following format (separate multiple nodes with semicolons):
 
-**Submit Final Answer** (assuming conclusion is {target_P} before {target_Q}, with chain {target_P}→5→8→{target_Q}):
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-Note:
-- Conclusion format "A<B" means A comes before B
-- Evidence chain uses comma to separate multiple comparisons, each as "X<Y" meaning X before Y
-- The chain must form a continuous transitive path
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_zh_1 = """\
-【交通系统：航班调度】
+我们现在来执行一项“隐藏路网拓扑分析”任务，规则如下：
 
-智能调度系统设定了一个包含 {n} 个关键航班的起降队列，每个航班用编号 1 到 {n} 标识。这些航班之间存在一个隐藏的严格起降顺序（不存在同时起降、不存在循环调度）。对于任意两个不同的航班 X 和 Y，要么 X 在 Y 之前起降，要么 Y 在 X 之前起降，并且这种调度顺序满足传递性。
+任务设定了一个包含 {n} 个路口节点的交通路网树状结构。总枢纽节点为 {root}，所有节点的标识为 {nodes}。路网的单向道路连接关系是固定的但对你隐藏。
 
-调度中心已经指定了两个关键航班：**航班 {target_P}** 和 **航班 {target_Q}**。
+术语说明：
+- 对于任意节点 v，其“下游路网覆盖规模”定义为以 v 为起点的下游分支中的节点总数（包括 v 自身）。
+- 上游关系是自反的，即任意节点 v 都是它自己的上游。
+- 终端节点指没有更下游节点的死胡同路口，其路网覆盖规模为 1。
 
-你的任务是：在不直接向系统询问这两个关键航班先后关系的前提下，通过询问其他航班对的调度先后关系，利用传递性推导出航班 {target_P} 和 {target_Q} 的起降顺序，并提供一条完整的证据链证明你的结论。
+你的目标是确定目标节点集合 {targets} 中每个节点的下游路网覆盖规模。
 
-## 允许的操作
+你可以通过以下三种方式向我发起查询（每次仅限一个查询）：
 
-每轮你可以进行以下操作之一：
+1. 上下游判定：询问节点 A 是否为节点 B 的上游。我会回答“是”或“否”。注意：任意节点都是自己的上游。
+2. 终端判定：询问节点 X 是否为终端节点。我会回答“是”或“否”。若为终端节点，则其路网覆盖规模为 1。
+3. 双节点联合测算：同时测算两个节点 U 和 V 的下游路网覆盖规模之和。注意：U 和 V 必须互不为上下游关系，否则测算无效。若有效，我会返回规模之和（整数）；若无效，我会返回“无效”并说明原因。
 
-1. **比较查询**：询问"航班 X 是否在航班 Y 之前起降？"
-   - 约束：X 和 Y 必须是 1 到 {n} 之间的不同编号
-   - **禁止直接询问关键航班对**（不能问 {target_P} 和 {target_Q} 的关系）
-   - 系统会回答"是"或"否"
+重要限制：
+- 双节点联合测算必须确保两个节点互不为上下游关系。
+- 累计发生 3 次无效的双节点测算请求将导致任务失败。
+- 提交的最终答案若有任何错误将导致任务失败。
 
-2. **历史回顾**：请求查看所有已回答过的调度查询及其结果
-   - 这不会提供新信息，仅用于回顾
+当你收集到足够信息后，请提交最终答案。
 
-## 提交答案
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你准备好提交答案时，需要提供：
-1. **结论**：说明 {target_P} 在 {target_Q} 之前起降，还是 {target_Q} 在 {target_P} 之前起降
-2. **证据链**：给出一条基于已回答查询的推导链，证明你的调度结论
-   - 证据链必须包含至少 3 条直接比较
-   - 每条比较必须来自历史查询的回答
-   - 通过传递性逐步连接，形成从一个关键航班到另一个的完整路径
+- 上下游判定（对应祖先判定，例如问节点 1 是否为节点 3 的上游）：
+<query_ancestor>1,3</query_ancestor>
 
-## 格式要求
+- 终端判定（对应叶子判定，例如问节点 5 是否为终端节点）：
+<query_leaf>5</query_leaf>
 
-**比较查询**（询问航班 3 是否在航班 7 之前起降）：
-<query_compare>3,7</query_compare>
+- 双节点联合测算（例如测算节点 2 和节点 4 的路网覆盖规模之和）：
+<query_pair>2,4</query_pair>
 
-**历史回顾**：
-<query_history></query_history>
+提交最终答案时，列出每个目标节点及其下游路网覆盖规模，格式如下（用分号分隔多个节点）：
 
-**提交最终答案**（假设结论是 {target_P} 在 {target_Q} 之前起降，证据链为 {target_P}→5→8→{target_Q}）：
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-注意：
-- 结论格式为"A<B"表示 航班 A 在 航班 B 之前起降
-- 证据链用逗号分隔多条比较关系，每条比较用"X<Y"表示 航班 X 在 航班 Y 之前起降
-- 证据链必须形成连续的传递路径
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic System: Flight Scheduling]
+[Transport Scenario]
+Let's execute a "Hidden Road Network Topology Analysis" task. Here are the rules:
 
-The intelligent scheduling system has set a takeoff and landing queue containing {n} key flights, each identified by a number from 1 to {n}. There exists a hidden strict scheduling order among these flights (no simultaneous takeoffs/landings, no cycles). For any two different flights X and Y, either X takes off before Y or Y takes off before X, and this scheduling order satisfies transitivity.
+The task features a traffic network tree structure with {n} intersection nodes. The main hub node is {root}, and all node identifiers are {nodes}. The network's one-way road connections are fixed but hidden from you.
 
-The control center has designated two key flights: **Flight {target_P}** and **Flight {target_Q}**.
+Terminology:
+- For any node v, its "downstream coverage size" is defined as the total number of nodes in the downstream branches starting from v (including v itself).
+- The upstream relationship is reflexive, meaning any node v is an upstream node of itself.
+- A terminal node is a dead-end with no downstream nodes, and its coverage size is 1.
 
-Your task is: without directly asking the system about the relationship between these two key flights, deduce the order of Flight {target_P} and Flight {target_Q} by querying relationships between other flight pairs, using transitivity, and provide a complete evidence chain to prove your conclusion.
+Your goal is to determine the downstream coverage size of each node in the target node set {targets}.
 
-## Allowed Operations
+You can ask me questions in three ways (one query per turn):
 
-Each turn you may perform one of the following:
+1. Upstream Query: Ask whether node A is upstream of node B. I will answer "Yes" or "No". Note: Any node is upstream of itself.
+2. Terminal Query: Ask whether node X is a terminal node. I will answer "Yes" or "No". If it is a terminal node, its coverage size is 1.
+3. Pair Measurement: Simultaneously measure the sum of downstream coverage sizes of two nodes U and V. Note: U and V must not be in an upstream-downstream relationship, otherwise the measurement is invalid. If valid, I will return the sum (an integer); if invalid, I will return "Invalid" with a reason.
 
-1. **Comparison Query**: Ask "Does flight X take off before flight Y?"
-   - Constraint: X and Y must be different numbers between 1 and {n}
-   - **Direct comparison of key flights is forbidden** (cannot ask about {target_P} and {target_Q})
-   - The system will answer "Yes" or "No"
+Important Constraints:
+- Pair measurements must ensure the two nodes are not in an upstream-downstream relationship.
+- Accumulating 3 invalid pair measurement requests will result in task failure.
+- Submitting a final answer with any errors will result in task failure.
 
-2. **History Review**: Request to see all answered scheduling queries and their results
-   - This provides no new information, only for review
+When you have collected enough information, submit your final answer.
 
-## Submitting Your Answer
+Each query must contain only one tag. Use the following XML format:
 
-When ready to submit, you must provide:
-1. **Conclusion**: State whether Flight {target_P} takes off before Flight {target_Q}, or vice versa
-2. **Evidence Chain**: Provide a deduction chain based on answered queries to prove your conclusion
-   - The chain must contain at least 3 direct comparisons
-   - Each comparison must come from historical query answers
-   - Must form a complete path from one key flight to the other through transitivity
+- Upstream Query (corresponds to ancestor query, e.g., asking if node 1 is upstream of node 3):
+<query_ancestor>1,3</query_ancestor>
 
-## Format Requirements
+- Terminal Query (corresponds to leaf query, e.g., asking if node 5 is a terminal node):
+<query_leaf>5</query_leaf>
 
-**Comparison Query** (asking if flight 3 takes off before flight 7):
-<query_compare>3,7</query_compare>
+- Pair Measurement (e.g., measuring the sum of downstream coverage sizes of nodes 2 and 4):
+<query_pair>2,4</query_pair>
 
-**History Review**:
-<query_history></query_history>
+When submitting the final answer, list each target node and its downstream coverage size in the following format (separate multiple nodes with semicolons):
 
-**Submit Final Answer** (assuming conclusion is {target_P} before {target_Q}, with chain {target_P}→5→8→{target_Q}):
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-Note:
-- Conclusion format "A<B" means Flight A takes off before Flight B
-- Evidence chain uses comma to separate multiple comparisons, each as "X<Y" meaning Flight X before Flight Y
-- The chain must form a continuous transitive path
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_zh_2 = """\
-【医疗系统：患者治疗优先级队列】
+我们现在来执行一项“隐性病毒传播链追踪”任务，规则如下：
 
-医院急诊分诊系统设定了一个包含 {n} 名患者的等待队列，每位患者用编号 1 到 {n} 标识。这些患者之间存在一个隐藏的严格治疗优先级顺序（不存在同等优先级、不存在循环依赖）。对于任意两名不同的患者 X 和 Y，要么 X 的优先级高于 Y，要么 Y 的优先级高于 X，并且这种优先级排序满足传递性。
+系统记录了一条包含 {n} 个感染者节点的树状传播链。零号病人节点为 {root}，所有感染者的标识为 {nodes}。具体的传染路径是固定的但目前对你隐藏。
 
-主治医师已经指定了两名需要特别关注的患者：**患者 {target_P}** 和 **患者 {target_Q}**。
+术语说明：
+- 对于任意感染者 v，其“感染分支规模”定义为由 v 直接及间接引发感染的总人数（包括 v 自身）。
+- 传播源关系是自反的，即任意感染者 v 都是自己的传播源。
+- 传播终点指没有再传染给其他人的感染者，其感染分支规模为 1。
 
-你的任务是：在不直接向系统询问这两名患者优先级关系的前提下，通过询问其他患者对的优先级关系，利用传递性推导出患者 {target_P} 和 {target_Q} 的真实治疗优先级顺序，并提供一条完整的证据链证明你的诊断结论。
+你的目标是确定目标感染者集合 {targets} 中每个感染者的感染分支规模。
 
-## 允许的操作
+你可以通过以下三种方式向我发起排查（每次仅限一个排查）：
 
-每轮你可以进行以下操作之一：
+1. 传播源判定：询问感染者 A 是否为感染者 B 的传播源。我会回答“是”或“否”。注意：任意感染者都是自己的传播源。
+2. 终点判定：询问感染者 X 是否为传播终点。我会回答“是”或“否”。若为传播终点，则其感染分支规模为 1。
+3. 双节点联合排查：同时测算两个感染者 U 和 V 的感染分支规模之和。注意：U 和 V 必须互不为传播源及后续感染者关系，否则排查无效。若有效，我会返回规模之和（整数）；若无效，我会返回“无效”并说明原因。
 
-1. **比较查询**：询问"患者 X 的优先级是否高于患者 Y？"
-   - 约束：X 和 Y 必须是 1 到 {n} 之间的不同编号
-   - **禁止直接询问关键患者对**（不能问 {target_P} 和 {target_Q} 的关系）
-   - 分诊系统会回答"是"或"否"
+重要限制：
+- 双节点联合排查必须确保两人不在同一条纵向传播路径上。
+- 累计发生 3 次无效的双节点排查请求将导致任务失败。
+- 提交的最终答案若有任何错误将导致任务失败。
 
-2. **历史回顾**：请求查看所有已回答过的优先级查询及其结果
-   - 这不会提供新信息，仅用于回顾
+当你收集到足够信息后，请提交最终答案。
 
-## 提交答案
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你准备好提交答案时，需要提供：
-1. **结论**：说明 患者 {target_P} 优先级是否高于 患者 {target_Q}，反之亦然
-2. **证据链**：给出一条基于已回答查询的推导链，证明你的排程结论
-   - 证据链必须包含至少 3 条直接比较
-   - 每条比较必须来自历史查询的回答
-   - 通过传递性逐步连接，形成从一名关键患者到另一名的完整路径
+- 传播源判定（对应祖先判定，例如问节点 1 是否为节点 3 的传播源）：
+<query_ancestor>1,3</query_ancestor>
 
-## 格式要求
+- 终点判定（对应叶子判定，例如问节点 5 是否为传播终点）：
+<query_leaf>5</query_leaf>
 
-**比较查询**（询问患者 3 优先级是否高于患者 7）：
-<query_compare>3,7</query_compare>
+- 双节点联合排查（例如测算节点 2 和节点 4 的感染分支规模之和）：
+<query_pair>2,4</query_pair>
 
-**历史回顾**：
-<query_history></query_history>
+提交最终答案时，列出每个目标节点及其感染分支规模，格式如下（用分号分隔多个节点）：
 
-**提交最终答案**（假设结论是 {target_P} 优先级高于 {target_Q}，证据链为 {target_P}→5→8→{target_Q}）：
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-注意：
-- 结论格式为"A<B"表示 患者 A 的优先级高于 患者 B
-- 证据链用逗号分隔多条比较关系，每条比较用"X<Y"表示 患者 X 的优先级高于 患者 Y
-- 证据链必须形成连续的传递路径
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical System: Patient Priority Queue]
+[Medical Scenario]
+Let's execute a "Hidden Virus Transmission Chain Tracking" task. Here are the rules:
 
-The hospital's emergency triage system has set a waiting queue containing {n} patients, each identified by a number from 1 to {n}. There exists a hidden strict treatment priority order among these patients (no equal priorities, no cycles). For any two different patients X and Y, either X has a higher priority than Y, or Y has a higher priority than X, and this priority ordering satisfies transitivity.
+The system has recorded a virus transmission tree structure with {n} patient nodes. The patient zero node is {root}, and all patient identifiers are {nodes}. The specific infection paths are fixed but currently hidden from you.
 
-The attending physician has designated two patients requiring special attention: **Patient {target_P}** and **Patient {target_Q}**.
+Terminology:
+- For any patient v, their "infection branch size" is defined as the total number of people directly and indirectly infected by v (including v themselves).
+- The transmission source relationship is reflexive, meaning any patient v is their own transmission source.
+- A transmission endpoint is a patient who did not infect anyone else, and their infection branch size is 1.
 
-Your task is: without directly asking the system about the relationship between these two critical patients, deduce the priority order of Patient {target_P} and Patient {target_Q} by querying relationships between other patient pairs, using transitivity, and provide a complete evidence chain to prove your triage conclusion.
+Your goal is to determine the infection branch size of each patient in the target set {targets}.
 
-## Allowed Operations
+You can initiate screenings with me in three ways (one screening per turn):
 
-Each turn you may perform one of the following:
+1. Source Query: Ask whether patient A is the transmission source of patient B. I will answer "Yes" or "No". Note: Any patient is their own transmission source.
+2. Endpoint Query: Ask whether patient X is a transmission endpoint. I will answer "Yes" or "No". If it is an endpoint, its infection branch size is 1.
+3. Pair Screening: Simultaneously measure the sum of infection branch sizes of two patients U and V. Note: U and V must not be in a transmission source-successor relationship, otherwise the screening is invalid. If valid, I will return the sum (an integer); if invalid, I will return "Invalid" with a reason.
 
-1. **Comparison Query**: Ask "Does patient X have a higher priority than patient Y?"
-   - Constraint: X and Y must be different numbers between 1 and {n}
-   - **Direct comparison of critical patients is forbidden** (cannot ask about {target_P} and {target_Q})
-   - The triage system will answer "Yes" or "No"
+Important Constraints:
+- Pair screenings must ensure the two patients are not on the same vertical transmission path.
+- Accumulating 3 invalid pair screening requests will result in task failure.
+- Submitting a final answer with any errors will result in task failure.
 
-2. **History Review**: Request to see all answered priority queries and their results
-   - This provides no new information, only for review
+When you have collected enough information, submit your final answer.
 
-## Submitting Your Answer
+Each query must contain only one tag. Use the following XML format:
 
-When ready to submit, you must provide:
-1. **Conclusion**: State whether Patient {target_P} has a higher priority than Patient {target_Q}, or vice versa
-2. **Evidence Chain**: Provide a deduction chain based on answered queries to prove your conclusion
-   - The chain must contain at least 3 direct comparisons
-   - Each comparison must come from historical query answers
-   - Must form a complete path from one critical patient to the other through transitivity
+- Source Query (corresponds to ancestor query, e.g., asking if node 1 is the transmission source of node 3):
+<query_ancestor>1,3</query_ancestor>
 
-## Format Requirements
+- Endpoint Query (corresponds to leaf query, e.g., asking if node 5 is a transmission endpoint):
+<query_leaf>5</query_leaf>
 
-**Comparison Query** (asking if patient 3 has a higher priority than patient 7):
-<query_compare>3,7</query_compare>
+- Pair Screening (e.g., measuring the sum of infection branch sizes of nodes 2 and 4):
+<query_pair>2,4</query_pair>
 
-**History Review**:
-<query_history></query_history>
+When submitting the final answer, list each target node and its infection branch size in the following format (separate multiple nodes with semicolons):
 
-**Submit Final Answer** (assuming conclusion is {target_P} higher than {target_Q}, with chain {target_P}→5→8→{target_Q}):
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-Note:
-- Conclusion format "A<B" means Patient A has a higher priority than Patient B
-- Evidence chain uses comma to separate multiple comparisons, each as "X<Y" meaning Patient X has higher priority than Patient Y
-- The chain must form a continuous transitive path
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_zh_3 = """\
-【教育系统：知识图谱先修路径】
+我们现在来进行一项“隐藏知识依赖树构建”任务，规则如下：
 
-课程教务系统配置了一个包含 {n} 个核心知识模块的学习路径图，每个模块用编号 1 到 {n} 标识。这些知识模块之间存在一个隐藏的严格先修顺序（不存在平行教学、不存在循环依赖）。对于任意两个不同的模块 X 和 Y，要么 X 必须在 Y 之前教授，要么 Y 必须在 X 之前教授，并且这种教学先后关系满足传递性。
+系统包含一棵有 {n} 个节点的知识点依赖树结构。基础核心知识点为 {root}，所有节点的标识为 {nodes}。知识点之间的先修学习关系是固定的但对你隐藏。
 
-教研组已经指定了两个关键知识模块：**模块 {target_P}** 和 **模块 {target_Q}**。
+术语说明：
+- 对于任意知识点 v，其“衍生知识点规模”定义为掌握 v 后可直接及间接解锁的所有衍生知识点总数（包括 v 自身）。
+- 前置依赖关系是自反的，即任意知识点 v 都是它自己的前置依赖。
+- 终极应用知识点指没有基于它的更高阶知识节点，其衍生知识点规模为 1。
 
-你的任务是：在不直接向系统询问这两个关键模块先后关系的前提下，通过询问其他知识模块对的教学先后关系，利用传递性推导出模块 {target_P} 和 {target_Q} 的正确教学顺序，并提供一条完整的证据链证明你的课程编排结论。
+你的目标是确定目标节点集合 {targets} 中每个节点的衍生知识点规模。
 
-## 允许的操作
+你可以通过以下三种方式向我发起核查（每次仅限一个核查）：
 
-每轮你可以进行以下操作之一：
+1. 前置判定：询问知识点 A 是否为知识点 B 的前置依赖。我会回答“是”或“否”。注意：任意知识点都是自己的前置依赖。
+2. 终极判定：询问知识点 X 是否为终极应用知识点。我会回答“是”或“否”。若为终极应用，则其衍生知识点规模为 1。
+3. 双节点联合评估：同时测算两个知识点 U 和 V 的衍生知识点规模之和。注意：U 和 V 必须互不为前置或后续关系，否则评估无效。若有效，我会返回规模之和（整数）；若无效，我会返回“无效”并说明原因。
 
-1. **比较查询**：询问"模块 X 是否在模块 Y 之前教授？"
-   - 约束：X 和 Y 必须是 1 到 {n} 之间的不同编号
-   - **禁止直接询问关键模块对**（不能问 {target_P} 和 {target_Q} 的关系）
-   - 系统会回答"是"或"否"
+重要限制：
+- 双节点联合评估必须确保两个知识点互不为前置依赖关系。
+- 累计发生 3 次无效的双节点评估请求将导致任务失败。
+- 提交的最终答案若有任何错误将导致任务失败。
 
-2. **历史回顾**：请求查看所有已回答过的先修查询及其结果
-   - 这不会提供新信息，仅用于回顾
+当你收集到足够信息后，请提交最终答案。
 
-## 提交答案
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你准备好提交答案时，需要提供：
-1. **结论**：说明 模块 {target_P} 是否在 模块 {target_Q} 之前教授，反之亦然
-2. **证据链**：给出一条基于已回答查询的推导链，证明你的教研结论
-   - 证据链必须包含至少 3 条直接比较
-   - 每条比较必须来自历史查询的回答
-   - 通过传递性逐步连接，形成从一个关键模块到另一个的完整教学路径
+- 前置判定（对应祖先判定，例如问节点 1 是否为节点 3 的前置依赖）：
+<query_ancestor>1,3</query_ancestor>
 
-## 格式要求
+- 终极判定（对应叶子判定，例如问节点 5 是否为终极应用知识点）：
+<query_leaf>5</query_leaf>
 
-**比较查询**（询问模块 3 是否在模块 7 之前教授）：
-<query_compare>3,7</query_compare>
+- 双节点联合评估（例如测算节点 2 和节点 4 的衍生知识点规模之和）：
+<query_pair>2,4</query_pair>
 
-**历史回顾**：
-<query_history></query_history>
+提交最终答案时，列出每个目标节点及其衍生知识点规模，格式如下（用分号分隔多个节点）：
 
-**提交最终答案**（假设结论是 {target_P} 在 {target_Q} 之前教授，证据链为 {target_P}→5→8→{target_Q}）：
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-注意：
-- 结论格式为"A<B"表示 模块 A 必须在 模块 B 之前教授
-- 证据链用逗号分隔多条比较关系，每条比较用"X<Y"表示 模块 X 在 模块 Y 之前教授
-- 证据链必须形成连续的传递路径
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_en_3 = """\
-[Education System: Prerequisite Knowledge Path]
+[Education Scenario]
+Let's conduct a "Hidden Knowledge Dependency Tree Building" task. Here are the rules:
 
-The academic administration system has configured a learning path graph containing {n} core knowledge modules, each identified by a number from 1 to {n}. There exists a hidden strict prerequisite order among these modules (no parallel teaching, no cyclical dependencies). For any two different modules X and Y, either X must be taught before Y, or Y must be taught before X, and this teaching order satisfies transitivity.
+The system contains a knowledge dependency tree structure with {n} concept nodes. The foundational core concept is {root}, and all node identifiers are {nodes}. The prerequisite learning relationships between concepts are fixed but hidden from you.
 
-The teaching research group has designated two critical modules: **Module {target_P}** and **Module {target_Q}**.
+Terminology:
+- For any concept v, its "derived knowledge size" is defined as the total number of derived concepts that can be unlocked directly and indirectly after mastering v (including v itself).
+- The prerequisite dependency relationship is reflexive, meaning any concept v is a prerequisite of itself.
+- An ultimate application concept refers to a node with no higher-order concepts based on it, and its derived knowledge size is 1.
 
-Your task is: without directly asking the system about the relationship between these two critical modules, deduce the correct teaching order of Module {target_P} and Module {target_Q} by querying relationships between other module pairs, using transitivity, and provide a complete evidence chain to prove your curriculum conclusion.
+Your goal is to determine the derived knowledge size of each concept in the target node set {targets}.
 
-## Allowed Operations
+You can initiate verifications with me in three ways (one verification per turn):
 
-Each turn you may perform one of the following:
+1. Prerequisite Query: Ask whether concept A is a prerequisite dependency of concept B. I will answer "Yes" or "No". Note: Any concept is a prerequisite of itself.
+2. Ultimate Query: Ask whether concept X is an ultimate application concept. I will answer "Yes" or "No". If it is an ultimate application, its derived knowledge size is 1.
+3. Pair Measurement: Simultaneously evaluate the sum of derived knowledge sizes of two concepts U and V. Note: U and V must not be in a prerequisite-successor relationship, otherwise the evaluation is invalid. If valid, I will return the sum (an integer); if invalid, I will return "Invalid" with a reason.
 
-1. **Comparison Query**: Ask "Is module X taught before module Y?"
-   - Constraint: X and Y must be different numbers between 1 and {n}
-   - **Direct comparison of critical modules is forbidden** (cannot ask about {target_P} and {target_Q})
-   - The system will answer "Yes" or "No"
+Important Constraints:
+- Pair measurements must ensure the two concepts are not prerequisite dependencies of each other.
+- Accumulating 3 invalid pair measurement requests will result in task failure.
+- Submitting a final answer with any errors will result in task failure.
 
-2. **History Review**: Request to see all answered prerequisite queries and their results
-   - This provides no new information, only for review
+When you have collected enough information, submit your final answer.
 
-## Submitting Your Answer
+Each query must contain only one tag. Use the following XML format:
 
-When ready to submit, you must provide:
-1. **Conclusion**: State whether Module {target_P} is taught before Module {target_Q}, or vice versa
-2. **Evidence Chain**: Provide a deduction chain based on answered queries to prove your conclusion
-   - The chain must contain at least 3 direct comparisons
-   - Each comparison must come from historical query answers
-   - Must form a complete path from one critical module to the other through transitivity
+- Prerequisite Query (corresponds to ancestor query, e.g., asking if node 1 is a prerequisite of node 3):
+<query_ancestor>1,3</query_ancestor>
 
-## Format Requirements
+- Ultimate Query (corresponds to leaf query, e.g., asking if node 5 is an ultimate application concept):
+<query_leaf>5</query_leaf>
 
-**Comparison Query** (asking if module 3 is taught before module 7):
-<query_compare>3,7</query_compare>
+- Pair Measurement (e.g., evaluating the sum of derived knowledge sizes of nodes 2 and 4):
+<query_pair>2,4</query_pair>
 
-**History Review**:
-<query_history></query_history>
+When submitting the final answer, list each target node and its derived knowledge size in the following format (separate multiple nodes with semicolons):
 
-**Submit Final Answer** (assuming conclusion is {target_P} before {target_Q}, with chain {target_P}→5→8→{target_Q}):
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-Note:
-- Conclusion format "A<B" means Module A must be taught before Module B
-- Evidence chain uses comma to separate multiple comparisons, each as "X<Y" meaning Module X is taught before Module Y
-- The chain must form a continuous transitive path
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_zh_4 = """\
-【工业制造：流水线工序排程】
+我们现在来执行一项“隐藏物料清单(BOM)层级分析”任务，规则如下：
 
-智能制造系统设定了一个包含 {n} 个标准加工工序的装配流水线，每个工序用编号 1 到 {n} 标识。这些工序之间存在一个隐藏的严格执行先后顺序（不存在并行工序、不存在循环依赖）。对于任意两个不同的工序 X 和 Y，要么 X 在 Y 之前执行，要么 Y 在 X 之前执行，并且这种工艺排序满足传递性。
+系统记录了一套包含 {n} 个部件节点的BOM展开树结构。顶级装配体节点为 {root}，所有部件的标识为 {nodes}。装配间的包含层级关系是固定的但对你隐藏。
 
-生产主管已经指定了两个关键节点工序：**工序 {target_P}** 和 **工序 {target_Q}**。
+术语说明：
+- 对于任意部件 v，其“包含零部件总规模”定义为以 v 为根的子装配体中包含的所有零部件层级总数（包括 v 自身）。
+- 祖先装配体关系是自反的，即任意部件 v 都是它自己的祖先装配体。
+- 基础原材料指不可再往下拆分的底层零件，其包含零部件总规模为 1。
 
-你的任务是：在不直接向系统询问这两个关键工序先后关系的前提下，通过询问其他工序对的执行先后关系，利用传递性推导出工序 {target_P} 和 {target_Q} 的正确排程顺序，并提供一条完整的证据链证明你的排产结论。
+你的目标是确定目标部件集合 {targets} 中每个部件的包含零部件总规模。
 
-## 允许的操作
+你可以通过以下三种方式向我发起核查（每次仅限一个核查）：
 
-每轮你可以进行以下操作之一：
+1. 层级判定：询问部件 A 是否为部件 B 的祖先装配体。我会回答“是”或“否”。注意：任意部件都是自己的祖先装配体。
+2. 原材料判定：询问部件 X 是否为基础原材料。我会回答“是”或“否”。若为基础原材料，则其包含零部件总规模为 1。
+3. 双节点联合核算：同时核算两个部件 U 和 V 的包含零部件总规模之和。注意：U 和 V 必须互不为包含与被包含的垂直关系，否则核算无效。若有效，我会返回规模之和（整数）；若无效，我会返回“无效”并说明原因。
 
-1. **比较查询**：询问"工序 X 是否在工序 Y 之前执行？"
-   - 约束：X 和 Y 必须是 1 到 {n} 之间的不同编号
-   - **禁止直接询问关键工序对**（不能问 {target_P} 和 {target_Q} 的关系）
-   - 控制系统会回答"是"或"否"
+重要限制：
+- 双节点联合核算必须确保两个部件不存在上下级装配关系。
+- 累计发生 3 次无效的双节点核算请求将导致任务失败。
+- 提交的最终答案若有任何错误将导致任务失败。
 
-2. **历史回顾**：请求查看所有已回答过的排程查询及其结果
-   - 这不会提供新信息，仅用于回顾
+当你收集到足够信息后，请提交最终答案。
 
-## 提交答案
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你准备好提交答案时，需要提供：
-1. **结论**：说明 工序 {target_P} 是否在 工序 {target_Q} 之前执行，反之亦然
-2. **证据链**：给出一条基于已回答查询的推导链，证明你的排程结论
-   - 证据链必须包含至少 3 条直接比较
-   - 每条比较必须来自历史查询的回答
-   - 通过传递性逐步连接，形成从一个关键工序到另一个的完整加工路径
+- 层级判定（对应祖先判定，例如问节点 1 是否为节点 3 的祖先装配体）：
+<query_ancestor>1,3</query_ancestor>
 
-## 格式要求
+- 原材料判定（对应叶子判定，例如问节点 5 是否为基础原材料）：
+<query_leaf>5</query_leaf>
 
-**比较查询**（询问工序 3 是否在工序 7 之前执行）：
-<query_compare>3,7</query_compare>
+- 双节点联合核算（例如核算节点 2 和节点 4 的包含零部件总规模之和）：
+<query_pair>2,4</query_pair>
 
-**历史回顾**：
-<query_history></query_history>
+提交最终答案时，列出每个目标节点及其包含零部件总规模，格式如下（用分号分隔多个节点）：
 
-**提交最终答案**（假设结论是 {target_P} 在 {target_Q} 之前执行，证据链为 {target_P}→5→8→{target_Q}）：
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-注意：
-- 结论格式为"A<B"表示 工序 A 在 工序 B 之前执行
-- 证据链用逗号分隔多条比较关系，每条比较用"X<Y"表示 工序 X 在 工序 Y 之前执行
-- 证据链必须形成连续的传递路径
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing: Assembly Line Process Scheduling]
+[Industry Scenario]
+Let's execute a "Hidden Bill of Materials (BOM) Hierarchy Analysis" task. Here are the rules:
 
-The intelligent manufacturing system has set an assembly line containing {n} standard processing steps, each identified by a number from 1 to {n}. There exists a hidden strict execution order among these steps (no parallel processing, no cyclical dependencies). For any two different steps X and Y, either X is executed before Y, or Y is executed before X, and this process sequencing satisfies transitivity.
+The system records a BOM expansion tree structure with {n} component nodes. The top-level assembly node is {root}, and all component identifiers are {nodes}. The inclusion hierarchical relationships between assemblies are fixed but hidden from you.
 
-The production supervisor has designated two critical node steps: **Step {target_P}** and **Step {target_Q}**.
+Terminology:
+- For any component v, its "contained components size" is defined as the total number of sub-components in the assembly hierarchy rooted at v (including v itself).
+- The ancestor assembly relationship is reflexive, meaning any component v is an ancestor assembly of itself.
+- A basic raw material refers to an indivisible bottom-level part, and its contained components size is 1.
 
-Your task is: without directly asking the system about the relationship between these two critical steps, deduce the correct scheduling order of Step {target_P} and Step {target_Q} by querying relationships between other step pairs, using transitivity, and provide a complete evidence chain to prove your production scheduling conclusion.
+Your goal is to determine the contained components size of each component in the target node set {targets}.
 
-## Allowed Operations
+You can initiate verifications with me in three ways (one verification per turn):
 
-Each turn you may perform one of the following:
+1. Hierarchy Query: Ask whether component A is an ancestor assembly of component B. I will answer "Yes" or "No". Note: Any component is an ancestor assembly of itself.
+2. Raw Material Query: Ask whether component X is a basic raw material. I will answer "Yes" or "No". If it is a basic raw material, its contained components size is 1.
+3. Pair Accounting: Simultaneously account for the sum of contained components sizes of two components U and V. Note: U and V must not be in a vertical inclusion relationship, otherwise the accounting is invalid. If valid, I will return the sum (an integer); if invalid, I will return "Invalid" with a reason.
 
-1. **Comparison Query**: Ask "Is step X executed before step Y?"
-   - Constraint: X and Y must be different numbers between 1 and {n}
-   - **Direct comparison of critical steps is forbidden** (cannot ask about {target_P} and {target_Q})
-   - The control system will answer "Yes" or "No"
+Important Constraints:
+- Pair accounting must ensure the two components do not have an upstream-downstream assembly relationship.
+- Accumulating 3 invalid pair accounting requests will result in task failure.
+- Submitting a final answer with any errors will result in task failure.
 
-2. **History Review**: Request to see all answered scheduling queries and their results
-   - This provides no new information, only for review
+When you have collected enough information, submit your final answer.
 
-## Submitting Your Answer
+Each query must contain only one tag. Use the following XML format:
 
-When ready to submit, you must provide:
-1. **Conclusion**: State whether Step {target_P} is executed before Step {target_Q}, or vice versa
-2. **Evidence Chain**: Provide a deduction chain based on answered queries to prove your conclusion
-   - The chain must contain at least 3 direct comparisons
-   - Each comparison must come from historical query answers
-   - Must form a complete path from one critical step to the other through transitivity
+- Hierarchy Query (corresponds to ancestor query, e.g., asking if node 1 is an ancestor assembly of node 3):
+<query_ancestor>1,3</query_ancestor>
 
-## Format Requirements
+- Raw Material Query (corresponds to leaf query, e.g., asking if node 5 is a basic raw material):
+<query_leaf>5</query_leaf>
 
-**Comparison Query** (asking if step 3 is executed before step 7):
-<query_compare>3,7</query_compare>
+- Pair Accounting (e.g., accounting for the sum of contained components sizes of nodes 2 and 4):
+<query_pair>2,4</query_pair>
 
-**History Review**:
-<query_history></query_history>
+When submitting the final answer, list each target node and its contained components size in the following format (separate multiple nodes with semicolons):
 
-**Submit Final Answer** (assuming conclusion is {target_P} before {target_Q}, with chain {target_P}→5→8→{target_Q}):
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-Note:
-- Conclusion format "A<B" means Step A is executed before Step B
-- Evidence chain uses comma to separate multiple comparisons, each as "X<Y" meaning Step X is executed before Step Y
-- The chain must form a continuous transitive path
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_zh_5 = """\
-【司法系统：案件事实时间线重构】
+我们现在来执行一项“隐蔽股权控制架构核查”任务，规则如下：
 
-案件取证系统记录了包含 {n} 个关键事件的证据链条，每个案件事件用编号 1 到 {n} 标识。这些事件之间存在一个隐藏的严格发生时间顺序（不存在同时发生、不存在时间逻辑闭环）。对于任意两个不同的事件 X 和 Y，要么 X 发生在 Y 之前，要么 Y 发生在 X 之前，并且这种时间线顺序满足传递性。
+案件涉及一个包含 {n} 个公司实体的股权控制树状结构。最终控股母公司节点为 {root}，所有公司的标识为 {nodes}。公司间的控股层级关系是固定的但目前对你隐藏。
 
-法官已经指定了两个决定定罪的关键事件：**事件 {target_P}** 和 **事件 {target_Q}**。
+术语说明：
+- 对于任意公司 v，其“下辖企业总规模”定义为由 v 直接及间接控股的所有企业总数（包括 v 自身）。
+- 控股母公司关系是自反的，即任意公司 v 都是它自己的控股母公司。
+- 底层业务公司指没有再进一步控股其他实体的末端企业，其下辖企业总规模为 1。
 
-你的任务是：在不直接向系统询问这两个关键事件先后关系的前提下，通过询问其他案件事件对的时间先后关系，利用传递性推导出事件 {target_P} 和 {target_Q} 的客观发生顺序，并提供一条完整的证据链证明你的司法时间线结论。
+你的目标是确定目标公司集合 {targets} 中每个公司的下辖企业总规模。
 
-## 允许的操作
+你可以通过以下三种方式向我发起审计查询（每次仅限一个查询）：
 
-每轮你可以进行以下操作之一：
+1. 控股判定：询问公司 A 是否为公司 B 的控股母公司。我会回答“是”或“否”。注意：任意公司都是自己的控股母公司。
+2. 底层判定：询问公司 X 是否为底层业务公司。我会回答“是”或“否”。若为底层业务公司，则其下辖企业总规模为 1。
+3. 双节点联合审计：同时审计两家公司 U 和 V 的下辖企业总规模之和。注意：U 和 V 必须互不为垂直控股关系，否则审计无效。若有效，我会返回规模之和（整数）；若无效，我会返回“无效”并说明原因。
 
-1. **比较查询**：询问"事件 X 是否发生在事件 Y 之前？"
-   - 约束：X 和 Y 必须是 1 到 {n} 之间的不同编号
-   - **禁止直接询问关键事件对**（不能问 {target_P} 和 {target_Q} 的关系）
-   - 证物系统会回答"是"或"否"
+重要限制：
+- 双节点联合审计必须确保两家实体不存在上下级的控股关联。
+- 累计发生 3 次无效的双节点审计请求将导致任务失败。
+- 提交的最终答案若有任何错误将导致任务失败。
 
-2. **历史回顾**：请求查看所有已回答过的时间线查询及其结果
-   - 这不会提供新信息，仅用于回顾
+当你收集到足够信息后，请提交最终答案。
 
-## 提交答案
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你准备好提交答案时，需要提供：
-1. **结论**：说明 事件 {target_P} 是否发生在 事件 {target_Q} 之前，反之亦然
-2. **证据链**：给出一条基于已回答查询的推导链，证明你的时间线重构结论
-   - 证据链必须包含至少 3 条直接比较
-   - 每条比较必须来自历史查询的回答
-   - 通过传递性逐步连接，形成从一个关键事件到另一个的完整发生路径
+- 控股判定（对应祖先判定，例如问节点 1 是否为节点 3 的控股母公司）：
+<query_ancestor>1,3</query_ancestor>
 
-## 格式要求
+- 底层判定（对应叶子判定，例如问节点 5 是否为底层业务公司）：
+<query_leaf>5</query_leaf>
 
-**比较查询**（询问事件 3 是否发生在事件 7 之前）：
-<query_compare>3,7</query_compare>
+- 双节点联合审计（例如审计节点 2 和节点 4 的下辖企业总规模之和）：
+<query_pair>2,4</query_pair>
 
-**历史回顾**：
-<query_history></query_history>
+提交最终答案时，列出每个目标节点及其下辖企业总规模，格式如下（用分号分隔多个节点）：
 
-**提交最终答案**（假设结论是 {target_P} 发生在 {target_Q} 之前，证据链为 {target_P}→5→8→{target_Q}）：
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-注意：
-- 结论格式为"A<B"表示 事件 A 发生在 事件 B 之前
-- 证据链用逗号分隔多条比较关系，每条比较用"X<Y"表示 事件 X 发生在 事件 Y 之前
-- 证据链必须形成连续的传递路径
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Judicial System: Case Timeline Reconstruction]
+[Legal Scenario]
+Let's execute a "Hidden Equity Control Structure Verification" task. Here are the rules:
 
-The forensic evidence system has recorded an evidence chain containing {n} key case events, each identified by a number from 1 to {n}. There exists a hidden strict chronological order among these events (no simultaneous occurrences, no temporal paradoxes). For any two different events X and Y, either X occurred before Y, or Y occurred before X, and this timeline ordering satisfies transitivity.
+The case involves an equity control tree structure with {n} company entities. The ultimate controlling parent company node is {root}, and all company identifiers are {nodes}. The controlling hierarchical relationships between companies are fixed but currently hidden from you.
 
-The judge has designated two critical events decisive for the verdict: **Event {target_P}** and **Event {target_Q}**.
+Terminology:
+- For any company v, its "subsidiary enterprise size" is defined as the total number of enterprises directly and indirectly controlled by v (including v itself).
+- The controlling parent company relationship is reflexive, meaning any company v is a controlling parent of itself.
+- A bottom-level operating company refers to a terminal enterprise that does not control any other entities, and its subsidiary enterprise size is 1.
 
-Your task is: without directly asking the system about the relationship between these two critical events, deduce the objective chronological order of Event {target_P} and Event {target_Q} by querying relationships between other event pairs, using transitivity, and provide a complete evidence chain to prove your judicial timeline conclusion.
+Your goal is to determine the subsidiary enterprise size of each company in the target set {targets}.
 
-## Allowed Operations
+You can initiate audit queries with me in three ways (one query per turn):
 
-Each turn you may perform one of the following:
+1. Control Query: Ask whether company A is a controlling parent company of company B. I will answer "Yes" or "No". Note: Any company is a controlling parent of itself.
+2. Bottom-level Query: Ask whether company X is a bottom-level operating company. I will answer "Yes" or "No". If it is a bottom-level operating company, its subsidiary enterprise size is 1.
+3. Pair Audit: Simultaneously audit the sum of subsidiary enterprise sizes of two companies U and V. Note: U and V must not be in a vertical control relationship, otherwise the audit is invalid. If valid, I will return the sum (an integer); if invalid, I will return "Invalid" with a reason.
 
-1. **Comparison Query**: Ask "Did event X occur before event Y?"
-   - Constraint: X and Y must be different numbers between 1 and {n}
-   - **Direct comparison of critical events is forbidden** (cannot ask about {target_P} and {target_Q})
-   - The forensics system will answer "Yes" or "No"
+Important Constraints:
+- Pair audits must ensure the two entities do not have an upstream-downstream control association.
+- Accumulating 3 invalid pair audit requests will result in task failure.
+- Submitting a final answer with any errors will result in task failure.
 
-2. **History Review**: Request to see all answered timeline queries and their results
-   - This provides no new information, only for review
+When you have collected enough information, submit your final answer.
 
-## Submitting Your Answer
+Each query must contain only one tag. Use the following XML format:
 
-When ready to submit, you must provide:
-1. **Conclusion**: State whether Event {target_P} occurred before Event {target_Q}, or vice versa
-2. **Evidence Chain**: Provide a deduction chain based on answered queries to prove your conclusion
-   - The chain must contain at least 3 direct comparisons
-   - Each comparison must come from historical query answers
-   - Must form a complete path from one critical event to the other through transitivity
+- Control Query (corresponds to ancestor query, e.g., asking if node 1 is a controlling parent company of node 3):
+<query_ancestor>1,3</query_ancestor>
 
-## Format Requirements
+- Bottom-level Query (corresponds to leaf query, e.g., asking if node 5 is a bottom-level operating company):
+<query_leaf>5</query_leaf>
 
-**Comparison Query** (asking if event 3 occurred before event 7):
-<query_compare>3,7</query_compare>
+- Pair Audit (e.g., auditing the sum of subsidiary enterprise sizes of nodes 2 and 4):
+<query_pair>2,4</query_pair>
 
-**History Review**:
-<query_history></query_history>
+When submitting the final answer, list each target node and its subsidiary enterprise size in the following format (separate multiple nodes with semicolons):
 
-**Submit Final Answer** (assuming conclusion is {target_P} before {target_Q}, with chain {target_P}→5→8→{target_Q}):
-<answer>conclusion={target_P}<{target_Q}, chain={target_P}<5,5<8,8<{target_Q}</answer>
-
-Note:
-- Conclusion format "A<B" means Event A occurred before Event B
-- Evidence chain uses comma to separate multiple comparisons, each as "X<Y" meaning Event X occurred before Event Y
-- The chain must form a continuous transitive path
+<answer>node=1,size=5;node=3,size=2</answer>
 """
 
-    tags = ["answer", "query_compare", "query_history"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
+    tags = ["answer", "query_ancestor", "query_leaf", "query_pair"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 7,
-                "order": "1,3,5,2,7,4,6",  # 隐藏的全序
-                "target_P": "1",
-                "target_Q": "7",
-                # 最短路径示例: 1<3, 3<5, 5<7 (3步)
+                "n": 5, "root": "1", "nodes": "1,2,3,4,5", "targets": "2",
+                "parent": {"2": "1", "3": "1", "4": "1", "5": "1"},
+                "answer": {"2": 1},
             },
             2: {
-                "n": 8,
-                "order": "2,5,1,7,3,8,4,6",
-                "target_P": "2",
-                "target_Q": "8",
-                # 最短路径示例: 2<5, 5<1, 1<8 (3步)
+                "n": 7, "root": "1", "nodes": "1,2,3,4,5,6,7", "targets": "2,3",
+                "parent": {"2": "1", "3": "1", "4": "2", "5": "2", "6": "3", "7": "3"},
+                "answer": {"2": 3, "3": 3},
             },
             3: {
-                "n": 9,
-                "order": "3,1,6,4,8,2,9,5,7",
-                "target_P": "3",
-                "target_Q": "9",
-                # 最短路径示例: 3<1, 1<6, 6<4, 4<9 (4步)
+                "n": 10, "root": "1", "nodes": "1,2,3,4,5,6,7,8,9,10", "targets": "2,4,5",
+                "parent": {"2": "1", "3": "1", "4": "2", "5": "2", "6": "2", "7": "3", "8": "3", "9": "5", "10": "5"},
+                "answer": {"2": 6, "4": 1, "5": 3},
             },
             4: {
-                "n": 10,
-                "order": "5,2,8,1,9,3,7,10,4,6",
-                "target_P": "5",
-                "target_Q": "10",
-                # 最短路径示例: 5<2, 2<8, 8<1, 1<10 (4步)
+                "n": 12, "root": "1", "nodes": "1,2,3,4,5,6,7,8,9,10,11,12", "targets": "2,3,6,8",
+                "parent": {"2": "1", "3": "1", "4": "2", "5": "2", "6": "2", "7": "3", "8": "3", "9": "6", "10": "6", "11": "8", "12": "8"},
+                "answer": {"2": 7, "3": 5, "6": 3, "8": 3},
             },
             5: {
-                "n": 10,
-                "order": "4,7,1,9,5,2,10,8,3,6",
-                "target_P": "4",
-                "target_Q": "6",
-                # 最短路径示例: 4<7, 7<1, 1<9, 9<5, 5<6 (5步)
+                "n": 15, "root": "1", "nodes": "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15", "targets": "2,3,5,7,10",
+                "parent": {"2": "1", "3": "1", "4": "2", "5": "2", "6": "3", "7": "3", "8": "5", "9": "5", "10": "5", "11": "7", "12": "7", "13": "10", "14": "10", "15": "10"},
+                "answer": {"2": 9, "3": 5, "5": 7, "7": 3, "10": 4},
             },
         },
         "en": {
             1: {
-                "n": 7,
-                "order": "1,3,5,2,7,4,6",
-                "target_P": "1",
-                "target_Q": "7",
+                "n": 5, "root": "1", "nodes": "1,2,3,4,5", "targets": "2",
+                "parent": {"2": "1", "3": "1", "4": "1", "5": "1"},
+                "answer": {"2": 1},
             },
             2: {
-                "n": 8,
-                "order": "2,5,1,7,3,8,4,6",
-                "target_P": "2",
-                "target_Q": "8",
+                "n": 7, "root": "1", "nodes": "1,2,3,4,5,6,7", "targets": "2,3",
+                "parent": {"2": "1", "3": "1", "4": "2", "5": "2", "6": "3", "7": "3"},
+                "answer": {"2": 3, "3": 3},
             },
             3: {
-                "n": 9,
-                "order": "3,1,6,4,8,2,9,5,7",
-                "target_P": "3",
-                "target_Q": "9",
+                "n": 10, "root": "1", "nodes": "1,2,3,4,5,6,7,8,9,10", "targets": "2,4,5",
+                "parent": {"2": "1", "3": "1", "4": "2", "5": "2", "6": "2", "7": "3", "8": "3", "9": "5", "10": "5"},
+                "answer": {"2": 6, "4": 1, "5": 3},
             },
             4: {
-                "n": 10,
-                "order": "5,2,8,1,9,3,7,10,4,6",
-                "target_P": "5",
-                "target_Q": "10",
+                "n": 12, "root": "1", "nodes": "1,2,3,4,5,6,7,8,9,10,11,12", "targets": "2,3,6,8",
+                "parent": {"2": "1", "3": "1", "4": "2", "5": "2", "6": "2", "7": "3", "8": "3", "9": "6", "10": "6", "11": "8", "12": "8"},
+                "answer": {"2": 7, "3": 5, "6": 3, "8": 3},
             },
             5: {
-                "n": 10,
-                "order": "4,7,1,9,5,2,10,8,3,6",
-                "target_P": "4",
-                "target_Q": "6",
+                "n": 15, "root": "1", "nodes": "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15", "targets": "2,3,5,7,10",
+                "parent": {"2": "1", "3": "1", "4": "2", "5": "2", "6": "3", "7": "3", "8": "5", "9": "5", "10": "5", "11": "7", "12": "7", "13": "10", "14": "10", "15": "10"},
+                "answer": {"2": 9, "3": 5, "5": 7, "7": 3, "10": 4},
             },
         },
     }
 
     def __init__(self, config):
-        # 先初始化查询历史，再调用父类初始化
-        self.query_history = []
+        self.invalid_query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：设置隐藏顺序、目标元素"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 强制转为整数，防止类型不一致
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -663,198 +577,191 @@ Note:
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
-        self._game_info["target_P"] = cfg["target_P"]
-        self._game_info["target_Q"] = cfg["target_Q"]
+        self._game_info["root"] = cfg["root"]
+        self._game_info["nodes"] = cfg["nodes"]
+        self._game_info["targets"] = cfg["targets"]
         
-        # 解析隐藏的线性顺序
-        order_list = [x.strip() for x in cfg["order"].split(",")]
-        self.order_map = {}  # element -> position
-        for pos, elem in enumerate(order_list):
-            self.order_map[elem] = pos
+        self.parent_map = cfg["parent"]
         
-        self.target_P = cfg["target_P"]
-        self.target_Q = cfg["target_Q"]
-        self.query_history = []  # 记录所有查询历史
+        self.correct_answer = cfg["answer"]
+        
+        self.nodes_set = set(cfg["nodes"].split(","))
+        self._build_tree_structure()
 
-    def _is_before(self, x, y):
-        """判断元素 x 是否在元素 y 之前"""
-        return self.order_map[x] < self.order_map[y]
+    def _build_tree_structure(self):
+        self.children_map = {}
+        for node in self.nodes_set:
+            self.children_map[node] = []
+        
+        for child, parent in self.parent_map.items():
+            if parent not in self.children_map:
+                self.children_map[parent] = []
+            self.children_map[parent].append(child)
+        
+        self.subtree_size = {}
+        
+        def compute_size(node):
+            if node in self.subtree_size:
+                return self.subtree_size[node]
+            size = 1
+            for child in self.children_map.get(node, []):
+                size += compute_size(child)
+            self.subtree_size[node] = size
+            return size
+        
+        root = self._game_info["root"]
+        compute_size(root)
+        
+        self.ancestors = {}
+        for node in self.nodes_set:
+            self.ancestors[node] = set([node])
+            current = node
+            while current in self.parent_map:
+                current = self.parent_map[current]
+                self.ancestors[node].add(current)
 
-    def _is_valid_element(self, elem):
-        """检查元素是否有效"""
-        return elem in self.order_map
+    def _is_ancestor(self, a, b):
+        return a in self.ancestors.get(b, set())
+
+    def _is_leaf(self, node):
+        return len(self.children_map.get(node, [])) == 0
 
     def evaluate(self, parsed_info):
-        """评估最终答案的正确性"""
         raw_ans = parsed_info["answer"]
         
         try:
-            # 解析答案格式: conclusion=A<B, chain=X<Y,Y<Z,...
-            # 先找 conclusion= 和 chain= 的位置
-            conclusion_match = re.search(r'conclusion\s*=\s*(\S+)', raw_ans)
-            chain_match = re.search(r'chain\s*=\s*(.+)', raw_ans)
+            pairs = [x.strip() for x in raw_ans.split(";") if x.strip()]
+            submitted_answer = {}
             
-            if not conclusion_match or not chain_match:
-                return False
-            
-            conclusion = conclusion_match.group(1).strip().rstrip(',')
-            chain_str = chain_match.group(1).strip()
-            
-            # 检查结论格式: A<B
-            if "<" not in conclusion:
-                return False
-            first, second = [x.strip() for x in conclusion.split("<", 1)]
-            
-            # 验证结论涉及的是目标元素
-            if not ({first, second} == {self.target_P, self.target_Q}):
-                return False
-            
-            # 检查结论是否正确
-            conclusion_correct = False
-            if first == self.target_P and second == self.target_Q:
-                conclusion_correct = self._is_before(self.target_P, self.target_Q)
-            elif first == self.target_Q and second == self.target_P:
-                conclusion_correct = self._is_before(self.target_Q, self.target_P)
-            else:
-                return False
-            
-            if not conclusion_correct:
-                return False
-            
-            # 解析证据链: X<Y,Y<Z,Z<W
-            chain_parts = [x.strip() for x in chain_str.split(",")]
-            if len(chain_parts) < 3:  # 至少需要3条比较
-                return False
-            
-            # 验证证据链的每一步——直接用 order_map 验证而非依赖 query_history
-            chain_elements = []
-            for comparison in chain_parts:
-                if "<" not in comparison:
-                    return False
-                a, b = [x.strip() for x in comparison.split("<", 1)]
+            for pair in pairs:
+                kv_dict = {}
+                for kv in pair.split(","):
+                    k, v = kv.split("=")
+                    kv_dict[k.strip()] = v.strip()
                 
-                # 检查元素是否有效
-                if not self._is_valid_element(a) or not self._is_valid_element(b):
+                if "node" not in kv_dict or "size" not in kv_dict:
                     return False
                 
-                # 检查比较关系是否正确（根据真实顺序）
-                if not self._is_before(a, b):
-                    return False
-                
-                chain_elements.append((a, b))
+                node = kv_dict["node"]
+                size = int(kv_dict["size"])
+                submitted_answer[node] = size
             
-            # 验证证据链的连续性（传递性）
-            for i in range(len(chain_elements) - 1):
-                if chain_elements[i][1] != chain_elements[i + 1][0]:
-                    return False
-            
-            # 验证证据链的起点和终点与结论一致
-            if chain_elements[0][0] != first or chain_elements[-1][1] != second:
+            if set(submitted_answer.keys()) != set(self.correct_answer.keys()):
                 return False
+            
+            for node, size in submitted_answer.items():
+                if self.correct_answer[node] != size:
+                    return False
             
             return True
             
-        except Exception:
+        except Exception as e:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的响应生成逻辑"""
-        lang = self.config.language
-        yes_res = "是" if lang == "zh" else "Yes"
-        no_res = "否" if lang == "zh" else "No"
-        error_invalid = "无效问题：" if lang == "zh" else "Invalid query: "
-        error_forbidden = "禁止直接比较目标元素。" if lang == "zh" else "Direct comparison of target elements is forbidden."
-        error_format = "格式错误或元素不存在。" if lang == "zh" else "Format error or element does not exist."
-        
-        # 处理历史回顾请求
-        if "query_history" in parsed_info:
-            if not self.query_history:
-                return "暂无查询历史。" if lang == "zh" else "No query history yet."
-            
-            history_lines = []
-            for idx, ((x, y), result) in enumerate(self.query_history, 1):
-                res_text = yes_res if result else no_res
-                if lang == "zh":
-                    history_lines.append(f"{idx}. 元素 {x} 是否在元素 {y} 之前？ 答：{res_text}")
-                else:
-                    history_lines.append(f"{idx}. Does element {x} come before element {y}? Answer: {res_text}")
-            
-            return "\n".join(history_lines)
-        
-        # 处理比较查询
-        if "query_compare" in parsed_info:
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            invalid_msg = "无效（原因：两节点存在祖先-后代关系）"
+            error_msg = "错误：节点不存在或格式错误。"
+            limit_msg = "无效查询次数已达到3次，游戏失败。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            invalid_msg = "Invalid (reason: ancestor-descendant relationship exists)"
+            error_msg = "Error: Node does not exist or format error."
+            limit_msg = "Invalid query count reached 3, game failed."
+
+        if "query_ancestor" in parsed_info:
             try:
-                raw = parsed_info["query_compare"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_invalid + error_format
-                
-                x, y = parts[0], parts[1]
-                
-                # 检查元素是否有效
-                if not self._is_valid_element(x) or not self._is_valid_element(y):
-                    return error_invalid + error_format
-                
-                # 检查是否相同
-                if x == y:
-                    return error_invalid + ("元素不能相同。" if lang == "zh" else "Elements must be different.")
-                
-                # 检查是否直接比较目标元素
-                if {x, y} == {self.target_P, self.target_Q}:
-                    return error_invalid + error_forbidden
-                
-                # 执行比较
-                result = self._is_before(x, y)
-                self.query_history.append(((x, y), result))
-                
-                return yes_res if result else no_res
-                
-            except Exception as e:
-                return error_invalid + error_format
-        
-        raise ValueError("No valid query tag found.")
+                raw = parsed_info["query_ancestor"]
+                a, b = [x.strip() for x in raw.split(",")]
+                if a not in self.nodes_set or b not in self.nodes_set:
+                    return error_msg
+                return yes_res if self._is_ancestor(a, b) else no_res
+            except:
+                return error_msg
 
-    def get_all_possible_queries(self) -> list:
+        elif "query_leaf" in parsed_info:
+            try:
+                node = parsed_info["query_leaf"].strip()
+                if node not in self.nodes_set:
+                    return error_msg
+                return yes_res if self._is_leaf(node) else no_res
+            except:
+                return error_msg
+
+        elif "query_pair" in parsed_info:
+            try:
+                raw = parsed_info["query_pair"]
+                u, v = [x.strip() for x in raw.split(",")]
+                if u not in self.nodes_set or v not in self.nodes_set:
+                    return error_msg
+                
+                if self._is_ancestor(u, v) or self._is_ancestor(v, u):
+                    self.invalid_query_count += 1
+                    if self.invalid_query_count >= 3:
+                        self.state.set_state("failed", "too many invalid queries")
+                        return limit_msg
+                    return invalid_msg
+                
+                return str(self.subtree_size[u] + self.subtree_size[v])
+            except:
+                return error_msg
+
+        else:
+            raise ValueError("No valid query tag found.")
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+
+        if correct == yes_res:
+            return no_res
+        if correct == no_res:
+            return yes_res
+
+        try:
+            val = int(correct)
+            return str(val + 1)
+        except ValueError:
+            pass
+
+        return "999"
+
+    def get_all_possible_queries(self) -> List[Dict]:
         queries = []
-        n        = self._game_info["n"]
-        target_P = str(self._game_info["target_P"])
-        target_Q = str(self._game_info["target_Q"])
-        lang     = self.config.language
-        yes_res  = "是" if lang == "zh" else "Yes"
-        no_res   = "否" if lang == "zh" else "No"
+        nodes = sorted(list(self.nodes_set), key=lambda x: int(x) if x.isdigit() else x)
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
 
-        elements = [str(i) for i in range(1, n + 1)]
+        for node in nodes:
+            ans = yes_res if self._is_leaf(node) else no_res
+            queries.append({
+                "query": f"<query_leaf>{node}</query_leaf>",
+                "answer": ans
+            })
 
-        for x in elements:
-            for y in elements:
-                if x == y:
-                    continue
-                # 禁止直接比较目标元素对
-                if {x, y} == {target_P, target_Q}:
-                    continue
-                ans = yes_res if self._is_before(x, y) else no_res
+        for u in nodes:
+            for v in nodes:
+                ans = yes_res if self._is_ancestor(u, v) else no_res
                 queries.append({
-                    "query":  f"<query_compare>{x},{y}</query_compare>",
-                    "answer": ans,
+                    "query": f"<query_ancestor>{u},{v}</query_ancestor>",
+                    "answer": ans
+                })
+
+        for i, u in enumerate(nodes):
+            for v in nodes[i+1:]:
+                if self._is_ancestor(u, v) or self._is_ancestor(v, u):
+                    continue
+                
+                size_sum = self.subtree_size[u] + self.subtree_size[v]
+                queries.append({
+                    "query": f"<query_pair>{u},{v}</query_pair>",
+                    "answer": str(size_sum)
                 })
 
         return queries
-
-    def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        if self.config.language == "zh":
-            if correct == "是":
-                return "否"
-            elif correct == "否":
-                return "是"
-        else:  # en
-            # 忽略大小写，保持原始大小写风格
-            if correct.lower() == "yes":
-                return "No" if correct[0].isupper() else "no"
-            elif correct.lower() == "no":
-                return "Yes" if correct[0].isupper() else "yes"
-        
-        return correct + "_WRONG"

@@ -1,539 +1,602 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   删节点后连通性：删除某节点后，连通分量数量如何变化
-# ============================================================
-
 from .base import Game
-import random
-import itertools
+import re
 
-
-class GraphCriticalVertexGame(Game):
+class TreeCutInferenceGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"图关键顶点推理"游戏，规则如下：
+我们来玩一个"树边切割推理"游戏。规则如下：
 
-游戏设定了一个未知的连通简单无向图 G，图中有 {n} 个顶点，编号为 1 到 {n}。该图无自环、无重边，边的连接关系对你不可见但固定不变。
+游戏设定了一棵有 11 个节点的无根树，节点编号为 1 到 11。树的边集合为：
+{edges_display}
 
-你的目标是找到一个特殊的顶点 K，使得删除该顶点及其所有关联边后，剩余图的连通分量个数最多。如果有多个顶点满足条件，选择编号最小的那个。同时，你需要报告删除该顶点后的连通分量个数 g。
+树中有两个特殊节点：起点 S = {s_node}，目标点 T = {t_node}。
 
-你可以通过以下三种查询来获取信息（请尽可能少地使用查询次数）：
+对于树中的任意一条边 (u-v)，如果从树中删除该边，会将树分割成两个连通分量。设这两个分量的节点数分别为 x 和 11-x。
 
-1. **COUNT 查询**：询问删除某个顶点 X 后，剩余图有多少个连通分量。
-2. **CONNECT 查询**：询问删除某个顶点 X 后，顶点 A 和 B 是否在同一个连通分量中（A、B、X 必须是不同的顶点）。
-3. **SIZES 查询**：询问删除某个顶点 X 后，各连通分量的大小（每个分量包含的顶点数，不含 X 本身），返回结果按非降序排列。
+系统内部设定了一个固定但未知的"排序规则"R，用于将无序的两个数字转换为有序对 [a, b]（其中 a+b=11）。排序规则有且仅有三种可能：
+- 规则 A：a 是包含起点 S 的分量的节点数，b 是另一侧的节点数
+- 规则 B：a 是两个数中较小的那个，b 是较大的那个
+- 规则 C：a 是两个数中较大的那个，b 是较小的那个
 
-注意：COUNT 和 SIZES 查询的总使用次数不能超过 {count_limit} 次，所有查询的总次数不能超过 {query_limit} 次。
+你的目标是：
+1. 通过若干次试切操作，推断出真实的排序规则 R
+2. 选择一条边进行最终切断，使得在该规则 R 下，返回的有序对 [a, b] 中"第一个数字 a 所对应的连通分量"包含目标点 T
 
-## 查询和提交答案的格式（必须严格遵守）
+你可以进行以下操作：
 
-每次只能提交一个查询或答案。请使用以下 XML 格式：
+1. 试切查询：选择一条存在的边 u-v 进行试切（不会真正改变树结构），系统会返回根据排序规则 R 生成的有序对"a b"。
 
-- COUNT 查询（例如查询删除顶点 3 后的连通分量数）：
-<query_count>3</query_count>
+格式：
+<query_cut>u,v</query_cut>
 
-- CONNECT 查询（例如查询删除顶点 5 后，顶点 1 和 2 是否连通）：
-<query_connect>5,1,2</query_connect>
+例如：
+<query_cut>1,2</query_cut>
 
-- SIZES 查询（例如查询删除顶点 2 后各连通分量的大小）：
-<query_sizes>2</query_sizes>
+系统会返回两个整数，如"5 6"。
 
-提交最终答案时，必须指定顶点编号 K 和对应的连通分量个数 g，格式如下：
+2. 最终提交：当你认为已经推断出规则后，提交你的答案。
 
-<answer>K=3, g=2</answer>
+格式：
+<answer>rule=X, cut=u,v</answer>
+
+其中 X 是你推断的规则（A、B 或 C），u,v 是你选择最终切断的边。
+
+例如：
+<answer>rule=A, cut=3,6</answer>
+
+- 你必须至少进行 2 次试切查询后才能提交最终答案
+- 每次只能包含一个操作标签
+- 试切的边必须在边集合中真实存在
+
+你的答案必须同时满足以下条件才算成功：
+1. 推断的规则 X 与真实规则 R 一致
+2. 对于你选择切断的边，在规则 R 下返回的有序对 [a, b] 中，第一个数字 a 对应的连通分量包含目标点 T
+3. 提交前已进行至少 2 次试切查询
 """
 
     game_rule_en = """\
-Let's play a "Graph Critical Vertex Reasoning" game. Here are the rules:
+Let's play a "Tree Edge Cut Inference" game. Here are the rules:
 
-The game features an unknown connected simple undirected graph G with {n} vertices numbered from 1 to {n}. The graph has no self-loops and no multiple edges. The edge connections are hidden but fixed.
+The game features an unrooted tree with 11 nodes, numbered 1 to 11. The edge set is:
+{edges_display}
 
-Your goal is to find a special vertex K such that removing this vertex and all its incident edges results in the maximum number of connected components in the remaining graph. If multiple vertices satisfy this condition, choose the one with the smallest number. Additionally, you need to report the number of connected components g after removing this vertex.
+There are two special nodes in the tree: source node S = {s_node}, target node T = {t_node}.
 
-You can use the following three types of queries to gather information (use as few queries as possible):
+For any edge (u-v) in the tree, removing that edge splits the tree into two connected components. Let the sizes of these two components be x and 11-x respectively.
 
-1. **COUNT Query**: Ask how many connected components remain after removing vertex X.
-2. **CONNECT Query**: Ask whether vertices A and B are in the same connected component after removing vertex X (A, B, and X must be distinct vertices).
-3. **SIZES Query**: Ask for the sizes of each connected component after removing vertex X (number of vertices in each component, excluding X itself), returned in non-decreasing order.
+The system has set a fixed but unknown "ordering rule" R that converts the unordered pair of numbers into an ordered pair [a, b] (where a+b=11). There are exactly three possible ordering rules:
+- Rule A: a is the number of nodes in the component containing source S, b is the other side
+- Rule B: a is the smaller of the two numbers, b is the larger one
+- Rule C: a is the larger of the two numbers, b is the smaller one
 
-Note: The total number of COUNT and SIZES queries combined cannot exceed {count_limit}, and the total number of all queries cannot exceed {query_limit}.
+Your objectives are:
+1. Infer the true ordering rule R through several test cuts
+2. Select an edge for the final cut such that under rule R, in the returned ordered pair [a, b], "the connected component corresponding to the first number a" contains target node T
 
-## Query and Answer Format (strictly required)
+You can perform the following operations:
 
-Each submission must contain only one query or answer. Use the following XML format:
+1. Test Cut Query: Select an existing edge u-v for a test cut (does not actually change the tree structure), and the system will return an ordered pair "a b" generated according to ordering rule R.
 
-- COUNT Query (e.g., query the number of components after removing vertex 3):
-<query_count>3</query_count>
+Format:
+<query_cut>u,v</query_cut>
 
-- CONNECT Query (e.g., query if vertices 1 and 2 are connected after removing vertex 5):
-<query_connect>5,1,2</query_connect>
+Example:
+<query_cut>1,2</query_cut>
 
-- SIZES Query (e.g., query the component sizes after removing vertex 2):
-<query_sizes>2</query_sizes>
+The system will return two integers, like "5 6".
 
-When submitting the final answer, specify the vertex number K and the corresponding number of components g in the following format:
+2. Final Submission: When you believe you have inferred the rule, submit your answer.
 
-<answer>K=3, g=2</answer>
+Format:
+<answer>rule=X, cut=u,v</answer>
+
+Where X is the rule you inferred (A, B, or C), and u,v is the edge you choose to cut.
+
+Example:
+<answer>rule=A, cut=3,6</answer>
+
+- You must perform at least 2 test cut queries before submitting your final answer
+- Each turn can only contain one operation tag
+- The edge for test cut must actually exist in the edge set
+
+Your answer must satisfy all the following conditions to succeed:
+1. The inferred rule X matches the true rule R
+2. For the edge you choose to cut, under rule R, in the returned ordered pair [a, b], the connected component corresponding to the first number a contains target node T
+3. At least 2 test cut queries have been performed before submission
 """
 
-    # ============================================================
-    # 场景 1：交通
-    # ============================================================
     contextualized_rule_zh_1 = """\
-交通网络漏洞排查任务启动。规则如下：
+基于智能交通系统的路网连通性测试。系统记录了一个由 11 个交通枢纽构成的无环路网，枢纽编号为 1 到 11。当前可用的路段集合为：
+{edges_display}
 
-你面对的是一个未知的城市道路互通网络 G，包含 {n} 个交通枢纽，编号从 1 到 {n}。枢纽之间由双向道路连接，没有自环路和重复路线。道路连接的具体情况对你保密，但保持固定。
+路网中有两个特殊定位点：主物流中心 S = {s_node}，紧急救援区 T = {t_node}。
 
-你的目标是找出最脆弱的核心交通枢纽 K。如果因突发事故彻底封闭该枢纽及其所有进出道路，剩余的城市交通网将被切割成最多的相互隔离的交通区域。如果存在多个枢纽满足此条件，请选择编号最小的一个。同时，你必须报告封闭该枢纽后，剩余网络被分割成的隔离区域数量 g。
+针对任意一条路段 (u-v)，如果实施封路（切断该边），整个路网将被划分为两个独立的连通路网。设这两个子路网包含的枢纽数分别为 x 和 11-x。
 
-你可以通过以下三种探测指令收集情报（请尽量节省探测次数）：
+监控系统内置了一个固定但未知的"数据上报规则" R，用于将这两个无序的枢纽数量转换为有序对 [a, b]（a+b=11）进行上报。该规则有且仅有三种可能：
+- 规则 A：a 是包含主物流中心 S 的子路网枢纽数，b 是另一侧的枢纽数
+- 规则 B：a 是两个路网中枢纽数较小的那个，b 是较大的那个
+- 规则 C：a 是两个路网中枢纽数较大的那个，b 是较小的那个
 
-1. **COUNT 查询**：询问封闭枢纽 X 后，剩余交通网会分裂成几个隔离区域。
-2. **CONNECT 查询**：询问封闭枢纽 X 后，枢纽 A 和枢纽 B 是否还能通过其他道路互通（A、B、X 必须是不同的枢纽）。
-3. **SIZES 查询**：询问封闭枢纽 X 后，各个隔离区域的规模（即每个区域包含的枢纽数量，不包括 X 本身），返回结果按非降序排列。
+你的目标是：
+1. 通过若干次模拟封路，推断出真实的上报规则 R
+2. 最终选择一条路段进行真实切断，使得在该规则 R 下，系统上报的有序对 [a, b] 中，"第一个数字 a 所对应的连通路网"必须包含紧急救援区 T
 
-注意：COUNT 和 SIZES 查询的总使用次数不能超过 {count_limit} 次，所有查询的总次数不能超过 {query_limit} 次。
+你可以进行以下操作：
 
-## 查询和提交答案的格式（必须严格遵守）
+1. 模拟封路查询：选择一条存在的路段 u-v 进行测试（不会真正改变物理路网），系统会返回按规则 R 生成的有序对"a b"。
 
-每次只能提交一个查询或答案。请使用以下 XML 格式：
+格式：
+<query_cut>u,v</query_cut>
 
-- COUNT 查询（例如查询封闭枢纽 3 后的隔离区域数）：
-<query_count>3</query_count>
+例如：
+<query_cut>1,2</query_cut>
 
-- CONNECT 查询（例如查询封闭枢纽 5 后，枢纽 1 和 2 是否还能互通）：
-<query_connect>5,1,2</query_connect>
+系统会返回两个整数，如"5 6"。
 
-- SIZES 查询（例如查询封闭枢纽 2 后各隔离区域的规模）：
-<query_sizes>2</query_sizes>
+2. 最终提交：当你认为已经推断出规则后，提交你的行动方案。
 
-提交最终调查报告时，必须指定核心枢纽编号 K 和对应的隔离区域数量 g，格式如下：
+格式：
+<answer>rule=X, cut=u,v</answer>
 
-<answer>K=3, g=2</answer>
+其中 X 是你推断的规则（A、B 或 C），u,v 是你选择最终切断的路段。
+
+例如：
+<answer>rule=A, cut=3,6</answer>
+
+- 你必须至少进行 2 次模拟封路查询后才能提交最终答案
+- 每次交互只能包含一个操作标签
+- 测试的路段必须在给定的集合中真实存在
+
+你的答案必须同时满足以下条件才算成功：
+1. 推断的规则 X 与真实规则 R 一致
+2. 对于你选择切断的路段，在规则 R 下返回的有序对 [a, b] 中，第一个数字 a 对应的子路网包含紧急救援区 T
+3. 提交前已进行至少 2 次模拟查询
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Traffic Network Vulnerability Assessment initiated. Here are the rules:
+Let's conduct a connectivity test for an intelligent traffic system. The system maps an acyclic road network with 11 traffic hubs, numbered 1 to 11. The available road segments are:
+{edges_display}
 
-You are dealing with an unknown city road intersection network G, consisting of {n} traffic hubs numbered from 1 to {n}. The hubs are connected by two-way roads with no self-loops and no multiple routes. The specific road connections are hidden but fixed.
+There are two critical locations in the network: Main Logistics Hub S = {s_node}, and Emergency Rescue Zone T = {t_node}.
 
-Your goal is to identify the most critical traffic hub K. If this hub and all its connecting roads are completely closed due to an emergency, the remaining city traffic network will be shattered into the maximum number of isolated traffic zones. If multiple hubs satisfy this condition, choose the one with the smallest number. Additionally, you must report the number of isolated traffic zones g that remain after closing this hub.
+For any road segment (u-v), if a roadblock is implemented (cutting the edge), the network splits into two independent connected sub-networks. Let the number of hubs in these two sub-networks be x and 11-x respectively.
 
-You can use the following three types of reconnaissance queries to gather intelligence (use as few queries as possible):
+The monitoring system has a fixed but unknown "data reporting rule" R that converts the unordered sizes of the two sub-networks into an ordered pair [a, b] (where a+b=11) for reporting. There are exactly three possible rules:
+- Rule A: a is the number of hubs in the sub-network containing the Main Logistics Hub S, b is the other side
+- Rule B: a is the smaller of the two numbers, b is the larger one
+- Rule C: a is the larger of the two numbers, b is the smaller one
 
-1. **COUNT Query**: Ask how many isolated traffic zones remain after closing hub X.
-2. **CONNECT Query**: Ask whether hub A and hub B can still reach each other through other roads after closing hub X (A, B, and X must be distinct hubs).
-3. **SIZES Query**: Ask for the scale of each isolated traffic zone after closing hub X (number of hubs in each zone, excluding X itself), returned in non-decreasing order.
+Your objectives are:
+1. Infer the true reporting rule R through several simulated roadblocks
+2. Select a road segment for the final block such that under rule R, in the reported ordered pair [a, b], "the sub-network corresponding to the first number a" contains the Emergency Rescue Zone T
 
-Note: The total number of COUNT and SIZES queries combined cannot exceed {count_limit}, and the total number of all queries cannot exceed {query_limit}.
+You can perform the following operations:
 
-## Query and Answer Format (strictly required)
+1. Simulated Roadblock Query: Select an existing road segment u-v for a test (does not actually change the physical network), and the system will return an ordered pair "a b" generated according to rule R.
 
-Each submission must contain only one query or answer. Use the following XML format:
+Format:
+<query_cut>u,v</query_cut>
 
-- COUNT Query (e.g., query the number of isolated zones after closing hub 3):
-<query_count>3</query_count>
+Example:
+<query_cut>1,2</query_cut>
 
-- CONNECT Query (e.g., query if hubs 1 and 2 are still connected after closing hub 5):
-<query_connect>5,1,2</query_connect>
+The system will return two integers, like "5 6".
 
-- SIZES Query (e.g., query the sizes of the isolated zones after closing hub 2):
-<query_sizes>2</query_sizes>
+2. Final Submission: When you believe you have inferred the rule, submit your action plan.
 
-When submitting the final assessment report, specify the critical hub number K and the corresponding number of isolated zones g in the following format:
+Format:
+<answer>rule=X, cut=u,v</answer>
 
-<answer>K=3, g=2</answer>
+Where X is the rule you inferred (A, B, or C), and u,v is the road segment you choose to block.
+
+Example:
+<answer>rule=A, cut=3,6</answer>
+
+- You must perform at least 2 simulated roadblock queries before submitting your final answer
+- Each turn can only contain one operation tag
+- The road segment for testing must actually exist in the given set
+
+Your answer must satisfy all the following conditions to succeed:
+1. The inferred rule X matches the true rule R
+2. For the road segment you choose to block, under rule R, in the returned ordered pair [a, b], the sub-network corresponding to the first number a contains the Emergency Rescue Zone T
+3. At least 2 simulated queries have been performed before submission
 """
 
-    # ============================================================
-    # 场景 2：医疗
-    # ============================================================
     contextualized_rule_zh_2 = """\
-传染病阻断与隔离规划启动。规则如下：
+我们来进行一项神经通路阻断的临床推演。在指定的微观神经网络中，包含 11 个核心脑区节点，编号为 1 到 11。已知的神经递质通路（边）集合为：
+{edges_display}
 
-系统记录了一个未知的流行病接触网络 G，包含 {n} 个密切接触的社区，编号从 1 到 {n}。社区之间存在人员往来路线，没有自我闭环和重复登记的路线。接触网的具体结构对你保密但保持不变。
+该神经网络中包含两个关键节点：核心痛觉中枢 S = {s_node}，靶向治疗区 T = {t_node}。
 
-你的目标是找到最具超级传播风险的枢纽社区 K。如果对该社区实施全面硬隔离（切断其所有对外联系），剩余的接触网络将被切断成最多的、相互独立的无风险隔离带。如果有多个社区满足条件，选择编号最小的那个。同时，你需要报告隔离该社区后，剩余接触网形成的独立隔离带数量 g。
+针对任意一条通路 (u-v)，如果实施定向阻断（切断该通路），整个神经网络将解耦为两个独立的神经子系统。设这两个子系统的节点数分别为 x 和 11-x。
 
-你可以通过以下三种流调查询来获取信息（请尽可能少地使用查询次数）：
+诊断设备内置了一个固定但未知的"成像读数规则" R，用于将这两个无序的节点数量转换为有序对 [a, b]（a+b=11）进行显示。该规则有且仅有三种可能：
+- 规则 A：a 是包含核心痛觉中枢 S 的子系统节点数，b 是另一侧的节点数
+- 规则 B：a 是两个系统中节点数较小的那个，b 是较大的那个
+- 规则 C：a 是两个系统中节点数较大的那个，b 是较小的那个
 
-1. **COUNT 查询**：询问隔离社区 X 后，剩余网络会分为几个独立的隔离带。
-2. **CONNECT 查询**：询问隔离社区 X 后，社区 A 和社区 B 之间是否仍存在潜在的交叉感染风险链路（A、B、X 必须是不同的社区）。
-3. **SIZES 查询**：询问隔离社区 X 后，各个独立隔离带的规模（每个带包含的社区数，不含 X 本身），返回结果按非降序排列。
+你的目标是：
+1. 通过若干次模拟阻断，推断出真实的成像读数规则 R
+2. 最终选择一条通路进行真实切断，使得在该规则 R 下，设备显示的有序对 [a, b] 中，"第一个数字 a 所对应的神经子系统"必须包含靶向治疗区 T
 
-注意：COUNT 和 SIZES 查询的总使用次数不能超过 {count_limit} 次，所有查询的总次数不能超过 {query_limit} 次。
+你可以进行以下操作：
 
-## 查询和提交答案的格式（必须严格遵守）
+1. 模拟阻断查询：选择一条存在的通路 u-v 进行测试，系统会返回按规则 R 生成的有序对"a b"。
 
-每次只能提交一个查询或答案。请使用以下 XML 格式：
+格式：
+<query_cut>u,v</query_cut>
 
-- COUNT 查询（例如查询隔离社区 3 后的独立隔离带数）：
-<query_count>3</query_count>
+例如：
+<query_cut>1,2</query_cut>
 
-- CONNECT 查询（例如查询隔离社区 5 后，社区 1 和 2 是否仍存在感染链路）：
-<query_connect>5,1,2</query_connect>
+2. 最终提交：当你认为已经推断出规则后，提交你的手术方案。
 
-- SIZES 查询（例如查询隔离社区 2 后各隔离带的规模）：
-<query_sizes>2</query_sizes>
+格式：
+<answer>rule=X, cut=u,v</answer>
 
-提交最终防控方案时，必须指定被隔离的社区编号 K 和对应的隔离带数量 g，格式如下：
+其中 X 是你推断的规则（A、B 或 C），u,v 是你选择最终切断的通路。
 
-<answer>K=3, g=2</answer>
+- 你必须至少进行 2 次模拟阻断查询后才能提交最终答案
+- 每次交互只能包含一个操作标签
+- 测试的通路必须在集合中真实存在
+
+你的答案必须同时满足以下条件才算成功：
+1. 推断的规则 X 与真实规则 R 一致
+2. 对于你选择切断的通路，在规则 R 下返回的有序对 [a, b] 中，第一个数字 a 对应的子系统包含靶向治疗区 T
+3. 提交前已进行至少 2 次模拟查询
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Epidemic Transmission Blockade and Quarantine Planning initiated. Here are the rules:
+Let's conduct a clinical deduction for neural pathway blockade. In a specific micro-neural network, there are 11 core brain region nodes, numbered 1 to 11. The known set of neurotransmitter pathways (edges) is:
+{edges_display}
 
-The system has logged an unknown epidemiological contact network G, comprising {n} closely interacting communities numbered from 1 to {n}. Travel routes exist between communities, with no self-loops and no duplicate logged routes. The exact structure of the contact network is hidden but constant.
+There are two critical nodes in this network: Core Pain Center S = {s_node}, and Targeted Therapy Zone T = {t_node}.
 
-Your goal is to find the most high-risk super-spreader hub community K. If a strict hard quarantine is imposed on this community (severing all its external contacts), the remaining contact network will be fragmented into the maximum number of independent, risk-free isolated zones. If multiple communities satisfy this condition, choose the one with the smallest number. Additionally, you need to report the number of independent isolated zones g formed after quarantining this community.
+For any pathway (u-v), if a targeted blockade is implemented (cutting the pathway), the entire neural network decouples into two independent neural subsystems. Let the number of nodes in these two subsystems be x and 11-x respectively.
 
-You can use the following three types of epidemiological queries to gather information (use as few queries as possible):
+The diagnostic imaging equipment has a fixed but unknown "imaging readout rule" R that converts the unordered sizes of the two subsystems into an ordered pair [a, b] (where a+b=11) for display. There are exactly three possible rules:
+- Rule A: a is the number of nodes in the subsystem containing the Core Pain Center S, b is the other side
+- Rule B: a is the smaller of the two numbers, b is the larger one
+- Rule C: a is the larger of the two numbers, b is the smaller one
 
-1. **COUNT Query**: Ask how many independent isolated zones remain after quarantining community X.
-2. **CONNECT Query**: Ask whether there is still a potential cross-infection link between community A and community B after quarantining community X (A, B, and X must be distinct communities).
-3. **SIZES Query**: Ask for the scale of each independent isolated zone after quarantining community X (number of communities in each zone, excluding X itself), returned in non-decreasing order.
+Your objectives are:
+1. Infer the true imaging readout rule R through several simulated blockades
+2. Select a pathway for the final block such that under rule R, in the displayed ordered pair [a, b], "the neural subsystem corresponding to the first number a" contains the Targeted Therapy Zone T
 
-Note: The total number of COUNT and SIZES queries combined cannot exceed {count_limit}, and the total number of all queries cannot exceed {query_limit}.
+You can perform the following operations:
 
-## Query and Answer Format (strictly required)
+1. Simulated Blockade Query: Select an existing pathway u-v for a test, and the system will return an ordered pair "a b" generated according to rule R.
 
-Each submission must contain only one query or answer. Use the following XML format:
+Format:
+<query_cut>u,v</query_cut>
 
-- COUNT Query (e.g., query the number of isolated zones after quarantining community 3):
-<query_count>3</query_count>
+Example:
+<query_cut>1,2</query_cut>
 
-- CONNECT Query (e.g., query if a risk link still exists between communities 1 and 2 after quarantining community 5):
-<query_connect>5,1,2</query_connect>
+2. Final Submission: When you believe you have inferred the rule, submit your surgical plan.
 
-- SIZES Query (e.g., query the scales of the isolated zones after quarantining community 2):
-<query_sizes>2</query_sizes>
+Format:
+<answer>rule=X, cut=u,v</answer>
 
-When submitting the final prevention plan, specify the quarantined community number K and the corresponding number of isolated zones g in the following format:
+Where X is the rule you inferred (A, B, or C), and u,v is the pathway you choose to block.
 
-<answer>K=3, g=2</answer>
+- You must perform at least 2 simulated queries before submitting your final answer
+- Each turn can only contain one operation tag
+- The pathway for testing must actually exist in the set
+
+Your answer must satisfy all the following conditions to succeed:
+1. The inferred rule X matches the true rule R
+2. For the pathway you choose to block, under rule R, in the returned ordered pair [a, b], the subsystem corresponding to the first number a contains the Targeted Therapy Zone T
+3. At least 2 simulated queries have been performed before submission
 """
 
-    # ============================================================
-    # 场景 3：教育
-    # ============================================================
     contextualized_rule_zh_3 = """\
-知识点依赖图谱分析任务启动。规则如下：
+我们来规划一个课程模块拆解方案。当前学科的知识图谱包含 11 个核心知识点（节点），编号为 1 到 11。知识点之间的前置关联路径（边）集合为：
+{edges_display}
 
-你面对的是一个未知的学科知识概念依赖网络 G，包含 {n} 个核心概念，编号从 1 到 {n}。概念之间通过认知关联双向相连，没有自循环和重复的关联。概念依赖的具体拓扑结构对你隐藏但固定不变。
+该图谱中设定了两个重点考察对象：认知起点 S = {s_node}，进阶考核点 T = {t_node}。
 
-你的目标是找到最基础的桥梁概念 K。如果在教学大纲中移除该概念（即学生未能掌握该概念及其所有推导关联），剩余的学科知识网将被切割成最多的、互不相通的独立知识模块。如果有多个概念满足此条件，选择编号最小的那个。同时，你需要报告移除该概念后，学科知识被分割成的独立模块数量 g。
+针对任意一条关联路径 (u-v)，如果解除该关联（切断该路径），整个图谱将被拆分为两个独立的学习模块。设这两个模块包含的知识点数量分别为 x 和 11-x。
 
-你可以通过以下三种认知探测查询来获取信息（请尽可能少地使用查询次数）：
+教务评估系统内置了一个固定但未知的"模块输出规则" R，用于将这两个无序的数量转换为有序对 [a, b]（a+b=11）进行系统登记。该规则有且仅有三种可能：
+- 规则 A：a 是包含认知起点 S 的模块知识点数，b 是另一侧的知识点数
+- 规则 B：a 是两个模块中知识点较少的那个，b 是较多的那个
+- 规则 C：a 是两个模块中知识点较多的那个，b 是较少的那个
 
-1. **COUNT 查询**：询问移除概念 X 后，剩余知识网会分裂成几个独立模块。
-2. **CONNECT 查询**：询问移除概念 X 后，学生能否在概念 A 和概念 B 之间建立认知推理链路（A、B、X 必须是不同的概念）。
-3. **SIZES 查询**：询问移除概念 X 后，各个独立知识模块的规模（即每个模块包含的概念数，不含 X 本身），返回结果按非降序排列。
+你的目标是：
+1. 通过若干次模拟拆分解除，推断出真实的输出规则 R
+2. 最终选择一条路径进行真实拆分，使得在该规则 R 下，系统输出的有序对 [a, b] 中，"第一个数字 a 所对应的学习模块"必须包含进阶考核点 T
 
-注意：COUNT 和 SIZES 查询的总使用次数不能超过 {count_limit} 次，所有查询的总次数不能超过 {query_limit} 次。
+你可以进行以下操作：
 
-## 查询和提交答案的格式（必须严格遵守）
+1. 模拟拆分查询：选择一条存在的关联路径 u-v 进行测试，系统会返回按规则 R 生成的有序对"a b"。
 
-每次只能提交一个查询或答案。请使用以下 XML 格式：
+格式：
+<query_cut>u,v</query_cut>
 
-- COUNT 查询（例如查询移除概念 3 后的独立模块数）：
-<query_count>3</query_count>
+例如：
+<query_cut>1,2</query_cut>
 
-- CONNECT 查询（例如查询移除概念 5 后，概念 1 和 2 是否仍能逻辑关联）：
-<query_connect>5,1,2</query_connect>
+2. 最终提交：当你认为已经推断出规则后，提交你的教务方案。
 
-- SIZES 查询（例如查询移除概念 2 后各独立知识模块的规模）：
-<query_sizes>2</query_sizes>
+格式：
+<answer>rule=X, cut=u,v</answer>
 
-提交最终教学大纲调整方案时，必须指定桥梁概念编号 K 和对应的独立模块数量 g，格式如下：
+其中 X 是你推断的规则（A、B 或 C），u,v 是你选择最终解除的路径。
 
-<answer>K=3, g=2</answer>
+- 你必须至少进行 2 次模拟查询后才能提交最终答案
+- 每次交互只能包含一个操作标签
+- 测试的路径必须在给定的集合中真实存在
+
+你的答案必须同时满足以下条件才算成功：
+1. 推断的规则 X 与真实规则 R 一致
+2. 对于你选择解除的关联，在规则 R 下返回的有序对 [a, b] 中，第一个数字 a 对应的学习模块包含进阶考核点 T
+3. 提交前已进行至少 2 次模拟查询
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Knowledge Concept Dependency Graph Analysis initiated. Here are the rules:
+Let's plan a curriculum module decoupling scheme. The current subject's knowledge graph contains 11 core concepts (nodes), numbered 1 to 11. The set of prerequisite links (edges) between concepts is:
+{edges_display}
 
-You are analyzing an unknown subject knowledge concept dependency network G, containing {n} core concepts numbered from 1 to {n}. The concepts are connected bidirectionally by cognitive links, with no self-loops and no duplicate links. The specific topology of concept dependencies is hidden but fixed.
+There are two key focus objects in this graph: Foundational Concept S = {s_node}, and Advanced Target Concept T = {t_node}.
 
-Your goal is to find the most fundamental bridging concept K. If this concept is removed from the syllabus (i.e., students fail to grasp it and all its derivative links), the remaining subject knowledge network will be shattered into the maximum number of mutually disjoint knowledge modules. If multiple concepts satisfy this condition, choose the one with the smallest number. Additionally, you need to report the number of disjoint knowledge modules g that the subject is split into after removing this concept.
+For any prerequisite link (u-v), if the association is removed (cutting the link), the entire graph decouples into two independent learning modules. Let the number of concepts in these two modules be x and 11-x respectively.
 
-You can use the following three types of cognitive probing queries to gather information (use as few queries as possible):
+The curriculum evaluation system has a fixed but unknown "module output rule" R that converts the unordered sizes of the two modules into an ordered pair [a, b] (where a+b=11) for registration. There are exactly three possible rules:
+- Rule A: a is the number of concepts in the module containing the Foundational Concept S, b is the other side
+- Rule B: a is the smaller of the two numbers, b is the larger one
+- Rule C: a is the larger of the two numbers, b is the smaller one
 
-1. **COUNT Query**: Ask how many disjoint knowledge modules remain after removing concept X.
-2. **CONNECT Query**: Ask whether students can still establish a cognitive reasoning link between concept A and concept B after removing concept X (A, B, and X must be distinct concepts).
-3. **SIZES Query**: Ask for the scale of each disjoint knowledge module after removing concept X (number of concepts in each module, excluding X itself), returned in non-decreasing order.
+Your objectives are:
+1. Infer the true output rule R through several simulated decouplings
+2. Select a link for the final separation such that under rule R, in the registered ordered pair [a, b], "the learning module corresponding to the first number a" contains the Advanced Target Concept T
 
-Note: The total number of COUNT and SIZES queries combined cannot exceed {count_limit}, and the total number of all queries cannot exceed {query_limit}.
+You can perform the following operations:
 
-## Query and Answer Format (strictly required)
+1. Simulated Decoupling Query: Select an existing link u-v for a test, and the system will return an ordered pair "a b" generated according to rule R.
 
-Each submission must contain only one query or answer. Use the following XML format:
+Format:
+<query_cut>u,v</query_cut>
 
-- COUNT Query (e.g., query the number of disjoint modules after removing concept 3):
-<query_count>3</query_count>
+Example:
+<query_cut>1,2</query_cut>
 
-- CONNECT Query (e.g., query if a logical link can still be formed between concepts 1 and 2 after removing concept 5):
-<query_connect>5,1,2</query_connect>
+2. Final Submission: When you believe you have inferred the rule, submit your curriculum plan.
 
-- SIZES Query (e.g., query the sizes of disjoint knowledge modules after removing concept 2):
-<query_sizes>2</query_sizes>
+Format:
+<answer>rule=X, cut=u,v</answer>
 
-When submitting the final syllabus adjustment plan, specify the bridging concept number K and the corresponding number of disjoint modules g in the following format:
+Where X is the rule you inferred (A, B, or C), and u,v is the link you choose to decouple.
 
-<answer>K=3, g=2</answer>
+- You must perform at least 2 simulated queries before submitting your final answer
+- Each turn can only contain one operation tag
+- The link for testing must actually exist in the set
+
+Your answer must satisfy all the following conditions to succeed:
+1. The inferred rule X matches the true rule R
+2. For the link you choose to decouple, under rule R, in the returned ordered pair [a, b], the module corresponding to the first number a contains the Advanced Target Concept T
+3. At least 2 simulated queries have been performed before submission
 """
 
-    # ============================================================
-    # 场景 4：制造业/工业
-    # ============================================================
     contextualized_rule_zh_4 = """\
-工业微电网抗毁性压力测试启动。规则如下：
+我们来进行一次工业流水线的隔离测试。该无环生产网由 11 个生产工作站（节点）组成，编号为 1 到 11。目前启用的传输履带（边）集合为：
+{edges_display}
 
-系统接入了一个未知的工业控制输电网络 G，包含 {n} 个关键中继站，编号从 1 到 {n}。中继站之间由输电线路双向连接，不存在自回馈线路或多余的重复并网线。电网的实际布线方案对你保密但恒定不变。
+在生产网中，定位了两个关键节点：主控调度站 S = {s_node}，核心质检仓 T = {t_node}。
 
-你的目标是找出最核心的单点故障中继站 K。如果该中继站因超载发生故障导致彻底停机，剩余电网将被迫断开，解列成最多的孤岛微电网（相互间无法传输电力）。如果存在多个中继站满足此条件，选择编号最小的那个。同时，你需要报告该站故障后，剩余电网解列成的微电网数量 g。
+针对任意一条传输履带 (u-v)，如果将其关停进行维护（切断该边），整个生产网将被隔离为两条独立的生产子流水线。设这两条子线包含的工作站数量分别为 x 和 11-x。
 
-你可以通过以下三种测控指令来获取电网结构信息（请尽可能少地使用查询次数）：
+SCADA中控系统内置了一个固定但未知的"阵列排序规则" R，用于将这两条子线的规模转换为有序对 [a, b]（a+b=11）显示在监控大屏上。该规则有且仅有三种可能：
+- 规则 A：a 是包含主控调度站 S 的子流水线站数，b 是另一侧的站数
+- 规则 B：a 是两条子线中规模较小的那个，b 是较大的那个
+- 规则 C：a 是两条子线中规模较大的那个，b 是较小的那个
 
-1. **COUNT 查询**：询问中继站 X 停机后，剩余电网会解列成几个孤立的微电网。
-2. **CONNECT 查询**：询问中继站 X 停机后，中继站 A 和 B 之间是否还能维持电力调配（A、B、X 必须是不同的中继站）。
-3. **SIZES 查询**：询问中继站 X 停机后，各个孤岛微电网的装机规模（每个微电网包含的中继站数量，不含停机的 X），返回结果按非降序排列。
+你的目标是：
+1. 通过若干次模拟关停测试，推断出真实的阵列排序规则 R
+2. 最终选择一条履带进行真实关停，使得在该规则 R 下，大屏上显示的有序对 [a, b] 中，"第一个数字 a 所对应的生产子流水线"必须包含核心质检仓 T
 
-注意：COUNT 和 SIZES 查询的总使用次数不能超过 {count_limit} 次，所有查询的总次数不能超过 {query_limit} 次。
+你可以进行以下操作：
 
-## 查询和提交答案的格式（必须严格遵守）
+1. 模拟关停查询：选择一条存在的履带 u-v 进行模拟关停测试，系统会返回按规则 R 生成的有序对"a b"。
 
-每次只能提交一个查询或答案。请使用以下 XML 格式：
+格式：
+<query_cut>u,v</query_cut>
 
-- COUNT 查询（例如查询中继站 3 停机后的微电网数量）：
-<query_count>3</query_count>
+例如：
+<query_cut>1,2</query_cut>
 
-- CONNECT 查询（例如查询中继站 5 停机后，中继站 1 和 2 是否还能电力调配）：
-<query_connect>5,1,2</query_connect>
+2. 最终提交：当你认为已经推断出规则后，提交你的隔离方案。
 
-- SIZES 查询（例如查询中继站 2 停机后各微电网的装机规模）：
-<query_sizes>2</query_sizes>
+格式：
+<answer>rule=X, cut=u,v</answer>
 
-提交最终抗毁性评估报告时，必须指定核心中继站编号 K 和对应的微电网解列数量 g，格式如下：
+其中 X 是你推断的规则（A、B 或 C），u,v 是你选择最终关停的履带。
 
-<answer>K=3, g=2</answer>
+- 你必须至少进行 2 次模拟查询后才能提交最终答案
+- 每次交互只能包含一个操作标签
+- 测试的履带必须在给定的集合中真实存在
+
+你的答案必须同时满足以下条件才算成功：
+1. 推断的规则 X 与真实规则 R 一致
+2. 对于你选择关停的履带，在规则 R 下返回的有序对 [a, b] 中，第一个数字 a 对应的生产子流水线包含核心质检仓 T
+3. 提交前已进行至少 2 次模拟查询
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Industrial Micro-grid Resilience Stress Test initiated. Here are the rules:
+[Manufacturing Scenario]
+Let's perform an isolation test on an industrial assembly line. The acyclic production network consists of 11 workstations (nodes), numbered 1 to 11. The currently active conveyor belt links (edges) are:
+{edges_display}
 
-The system is connected to an unknown industrial control power network G, comprising {n} critical relay stations numbered from 1 to {n}. The stations are connected bidirectionally by power lines, with no self-feedback loops or redundant parallel lines. The actual wiring schematic is classified but strictly constant.
+Two critical nodes are located in the production network: Main Control Dispatch Station S = {s_node}, and Core Quality Checkpoint T = {t_node}.
 
-Your objective is to identify the most critical single-point-of-failure relay station K. If this station shuts down completely due to a catastrophic overload, the remaining power grid will be forced to island into the maximum number of isolated micro-grids (unable to transfer power between each other). If multiple stations satisfy this condition, choose the one with the smallest number. Additionally, you need to report the number of isolated micro-grids g that the remaining network splits into after this station fails.
+For any conveyor belt (u-v), if it is shut down for maintenance (cutting the edge), the entire production network will be isolated into two independent production sub-lines. Let the number of workstations in these two sub-lines be x and 11-x respectively.
 
-You can use the following three types of telemetry commands to gather grid structure information (use as few queries as possible):
+The SCADA central control system has a fixed but unknown "array sorting rule" R that converts the sizes of the two sub-lines into an ordered pair [a, b] (where a+b=11) displayed on the monitoring screen. There are exactly three possible rules:
+- Rule A: a is the number of workstations in the sub-line containing the Main Control Dispatch Station S, b is the other side
+- Rule B: a is the smaller of the two numbers, b is the larger one
+- Rule C: a is the larger of the two numbers, b is the smaller one
 
-1. **COUNT Query**: Ask how many isolated micro-grids remain after shutting down station X.
-2. **CONNECT Query**: Ask whether power dispatch can still be maintained between station A and station B after shutting down station X (A, B, and X must be distinct stations).
-3. **SIZES Query**: Ask for the capacity scale of each isolated micro-grid after shutting down station X (number of stations in each micro-grid, excluding the failed X), returned in non-decreasing order.
+Your objectives are:
+1. Infer the true array sorting rule R through several simulated shutdowns
+2. Select a conveyor belt for the final shutdown such that under rule R, in the displayed ordered pair [a, b], "the production sub-line corresponding to the first number a" contains the Core Quality Checkpoint T
 
-Note: The total number of COUNT and SIZES queries combined cannot exceed {count_limit}, and the total number of all queries cannot exceed {query_limit}.
+You can perform the following operations:
 
-## Query and Answer Format (strictly required)
+1. Simulated Shutdown Query: Select an existing belt u-v for a simulated test, and the system will return an ordered pair "a b" generated according to rule R.
 
-Each submission must contain only one query or answer. Use the following XML format:
+Format:
+<query_cut>u,v</query_cut>
 
-- COUNT Query (e.g., query the number of micro-grids after shutting down station 3):
-<query_count>3</query_count>
+Example:
+<query_cut>1,2</query_cut>
 
-- CONNECT Query (e.g., query if power dispatch between stations 1 and 2 is viable after shutting down station 5):
-<query_connect>5,1,2</query_connect>
+2. Final Submission: When you believe you have inferred the rule, submit your isolation plan.
 
-- SIZES Query (e.g., query the capacity scales of the micro-grids after shutting down station 2):
-<query_sizes>2</query_sizes>
+Format:
+<answer>rule=X, cut=u,v</answer>
 
-When submitting the final resilience assessment report, specify the critical relay station number K and the corresponding number of islanded micro-grids g in the following format:
+Where X is the rule you inferred (A, B, or C), and u,v is the belt you choose to shut down.
 
-<answer>K=3, g=2</answer>
+- You must perform at least 2 simulated queries before submitting your final answer
+- Each turn can only contain one operation tag
+- The belt for testing must actually exist in the given set
+
+Your answer must satisfy all the following conditions to succeed:
+1. The inferred rule X matches the true rule R
+2. For the belt you choose to shut down, under rule R, in the returned ordered pair [a, b], the sub-line corresponding to the first number a contains the Core Quality Checkpoint T
+3. At least 2 simulated queries have been performed before submission
 """
 
-    # ============================================================
-    # 场景 5：法律
-    # ============================================================
     contextualized_rule_zh_5 = """\
-犯罪辛迪加网络瓦解行动启动。规则如下：
+我们来进行一次复杂的资金网络穿透审查。系统调取了一个由 11 个关联账户/空壳公司（节点）构成的无环资金网，编号为 1 到 11。目前查明的资金往来记录（边）集合为：
+{edges_display}
 
-警方拦截到了一个未知的犯罪组织通讯网络 G，图中有 {n} 名嫌疑人，编号为 1 到 {n}。嫌疑人之间通过秘密渠道双向联络，没有自我通讯、也没有多重重复渠道。联络网络的具体架构属于高度机密，对你不可见但保持不变。
+在此资金网中，审计锁定了两个核心主体：核心母公司 S = {s_node}，隐匿资金池 T = {t_node}。
 
-你的目标是锁定最核心的犯罪头目 K。一旦对其实施精准抓捕并切断其所有联络线，剩余的犯罪网络将会瘫痪，并分裂成最多的、无法互相协同的孤立团伙。如果有多个嫌疑人满足条件，请选择编号最小的那名。同时，你需要报告抓捕该嫌疑人后，犯罪组织瓦解成的孤立团伙个数 g。
+针对任意一条资金往来 (u-v)，如果由法务部门发起冻结（切断该交易线），整个网络将被强制剥离为两个独立的资产包。设这两个资产包所包含的账户数量分别为 x 和 11-x。
 
-你可以通过以下三种技术侦查手段来获取情报（请尽可能少地使用侦查次数以防打草惊蛇）：
+法务审计系统内置了一个固定但未知的"报表生成规则" R，用于将这两个独立资产包的规模转换为有序对 [a, b]（a+b=11）进行上报。该规则有且仅有三种可能：
+- 规则 A：a 是包含核心母公司 S 的资产包账户数，b 是另一侧的账户数
+- 规则 B：a 是两个资产包中规模较小的那个，b 是较大的那个
+- 规则 C：a 是两个资产包中规模较大的那个，b 是较小的那个
 
-1. **COUNT 查询**：询问抓捕嫌疑人 X 后，剩余网络会分裂成几个孤立团伙。
-2. **CONNECT 查询**：询问抓捕嫌疑人 X 后，嫌疑人 A 和嫌疑人 B 是否还能通过下线互相传递情报（A、B、X 必须是不同的嫌疑人）。
-3. **SIZES 查询**：询问抓捕嫌疑人 X 后，各孤立团伙的规模（每个团伙残存的嫌疑人数，不含被捕的 X），返回结果按非降序排列。
+你的目标是：
+1. 通过若干次模拟冻结，推断出真实的报表生成规则 R
+2. 最终选择一条资金线进行真实冻结，使得在该规则 R 下，上报的有序对 [a, b] 中，"第一个数字 a 所对应的资产包"必须包含隐匿资金池 T
 
-注意：COUNT 和 SIZES 查询的总使用次数不能超过 {count_limit} 次，所有查询的总次数不能超过 {query_limit} 次。
+你可以进行以下操作：
 
-## 查询和提交答案的格式（必须严格遵守）
+1. 模拟冻结查询：选择一条存在的资金线 u-v 进行模拟穿透，系统会返回按规则 R 生成的有序对"a b"。
 
-每次只能提交一个查询或答案。请使用以下 XML 格式：
+格式：
+<query_cut>u,v</query_cut>
 
-- COUNT 查询（例如查询抓捕嫌疑人 3 后的孤立团伙数）：
-<query_count>3</query_count>
+例如：
+<query_cut>1,2</query_cut>
 
-- CONNECT 查询（例如查询抓捕嫌疑人 5 后，嫌疑人 1 和 2 是否还能联络）：
-<query_connect>5,1,2</query_connect>
+2. 最终提交：当你认为已经推断出规则后，提交你的冻结执行案。
 
-- SIZES 查询（例如查询抓捕嫌疑人 2 后各孤立团伙的规模）：
-<query_sizes>2</query_sizes>
+格式：
+<answer>rule=X, cut=u,v</answer>
 
-提交最终收网行动目标时，必须指定核心嫌疑人编号 K 和对应的孤立团伙个数 g，格式如下：
+其中 X 是你推断的规则（A、B 或 C），u,v 是你选择最终冻结的资金线。
 
-<answer>K=3, g=2</answer>
+- 你必须至少进行 2 次模拟查询后才能提交最终答案
+- 每次交互只能包含一个操作标签
+- 测试的资金线必须在给定的集合中真实存在
+
+你的答案必须同时满足以下条件才算成功：
+1. 推断的规则 X 与真实规则 R 一致
+2. 对于你选择冻结的往来，在规则 R 下返回的有序对 [a, b] 中，第一个数字 a 对应的资产包包含隐匿资金池 T
+3. 提交前已进行至少 2 次模拟查询
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Criminal Syndicate Dismantling Operation initiated. Here are the rules:
+[Law Scenario]
+Let's conduct a complex financial network penetration audit. The system maps an acyclic financial network consisting of 11 associated accounts/shell companies (nodes), numbered 1 to 11. The currently identified financial transaction links (edges) are:
+{edges_display}
 
-The police have intercepted an unknown criminal organization communication network G, featuring {n} suspects numbered from 1 to {n}. Suspects communicate bidirectionally via secret channels, with no self-communication and no redundant duplicate channels. The exact architecture of the communication network is highly classified, hidden from you but strictly fixed.
+In this network, the audit has locked onto two core entities: Ultimate Parent Company S = {s_node}, and Key Suspect Entity T = {t_node}.
 
-Your objective is to pinpoint the most critical crime kingpin K. Once precision arrest is executed on this suspect and all their communication lines are severed, the remaining criminal network will be paralyzed and fragmented into the maximum number of isolated sub-gangs incapable of coordinating with one another. If multiple suspects satisfy this condition, choose the one with the smallest number. Additionally, you need to report the number of isolated sub-gangs g that the organization dismantles into after arresting this suspect.
+For any financial transaction (u-v), if an asset freeze is initiated by the legal department (cutting the transaction line), the entire network will be forcefully separated into two independent asset pools. Let the number of accounts in these two pools be x and 11-x respectively.
 
-You can use the following three types of technical reconnaissance to gather intelligence (use as few queries as possible to avoid alerting the syndicate):
+The forensic audit system has a fixed but unknown "report generation rule" R that converts the sizes of the two asset pools into an ordered pair [a, b] (where a+b=11) for reporting. There are exactly three possible rules:
+- Rule A: a is the number of accounts in the asset pool containing the Ultimate Parent Company S, b is the other side
+- Rule B: a is the smaller of the two numbers, b is the larger one
+- Rule C: a is the larger of the two numbers, b is the smaller one
 
-1. **COUNT Query**: Ask how many isolated sub-gangs remain after arresting suspect X.
-2. **CONNECT Query**: Ask whether suspect A and suspect B can still relay intelligence to each other through subordinates after arresting suspect X (A, B, and X must be distinct suspects).
-3. **SIZES Query**: Ask for the scale of each isolated sub-gang after arresting suspect X (number of remaining suspects in each gang, excluding the arrested X), returned in non-decreasing order.
+Your objectives are:
+1. Infer the true report generation rule R through several simulated freezes
+2. Select a transaction line for the final freeze such that under rule R, in the reported ordered pair [a, b], "the asset pool corresponding to the first number a" contains the Key Suspect Entity T
 
-Note: The total number of COUNT and SIZES queries combined cannot exceed {count_limit}, and the total number of all queries cannot exceed {query_limit}.
+You can perform the following operations:
 
-## Query and Answer Format (strictly required)
+1. Simulated Freeze Query: Select an existing transaction line u-v for a simulated penetration, and the system will return an ordered pair "a b" generated according to rule R.
 
-Each submission must contain only one query or answer. Use the following XML format:
+Format:
+<query_cut>u,v</query_cut>
 
-- COUNT Query (e.g., query the number of isolated sub-gangs after arresting suspect 3):
-<query_count>3</query_count>
+Example:
+<query_cut>1,2</query_cut>
 
-- CONNECT Query (e.g., query if suspects 1 and 2 can still communicate after arresting suspect 5):
-<query_connect>5,1,2</query_connect>
+2. Final Submission: When you believe you have inferred the rule, submit your freeze execution plan.
 
-- SIZES Query (e.g., query the sizes of the isolated sub-gangs after arresting suspect 2):
-<query_sizes>2</query_sizes>
+Format:
+<answer>rule=X, cut=u,v</answer>
 
-When submitting the final takedown target, specify the core suspect number K and the corresponding number of isolated sub-gangs g in the following format:
+Where X is the rule you inferred (A, B, or C), and u,v is the transaction line you choose to freeze.
 
-<answer>K=3, g=2</answer>
+- You must perform at least 2 simulated queries before submitting your final answer
+- Each turn can only contain one operation tag
+- The transaction line for testing must actually exist in the given set
+
+Your answer must satisfy all the following conditions to succeed:
+1. The inferred rule X matches the true rule R
+2. For the transaction you choose to freeze, under rule R, in the returned ordered pair [a, b], the asset pool corresponding to the first number a contains the Key Suspect Entity T
+3. At least 2 simulated queries have been performed before submission
 """
 
-    tags = ["answer", "query_count", "query_connect", "query_sizes"]
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+    tags = ["answer", "query_cut"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "树"
 
-    # 难度配置：
-    # 1 (简单) - N=6, 简单的星形图变体
-    # 2 (中等偏下) - N=7, 路径加一些分支
-    # 3 (中等偏上) - N=9, 稍复杂的连通图
-    # 4 (较难) - N=10, 多个候选关键顶点
-    # 5 (难) - N=12, 复杂结构，需要仔细推理
+    TREE_EDGES = [
+        (1, 2), (1, 3), (2, 4), (2, 5), (3, 6),
+        (6, 7), (6, 8), (3, 9), (9, 10), (10, 11)
+    ]
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "n": 6,
-                # 星形图：1 连接到 2,3,4,5,6
-                # 删除 1 后得到 5 个分量（最多）
-                "edges": [(1,2), (1,3), (1,4), (1,5), (1,6)],
-                "answer_k": 1,
-                "answer_g": 5,
-            },
-            2: {
-                "n": 7,
-                # 路径 1-2-3-4 加上 3 连接 5,6,7
-                # 删除 3 后得到 4 个分量（最多）
-                "edges": [(1,2), (2,3), (3,4), (3,5), (3,6), (3,7)],
-                "answer_k": 3,
-                "answer_g": 4,
-            },
-            3: {
-                "n": 9,
-                # 两个三角形通过顶点 5 连接
-                # 1-2-3-1（三角形），5-6-7-5（三角形），3-5，4-5，5-8，5-9
-                # 删除 5 后得到 5 个分量
-                "edges": [(1,2), (2,3), (3,1), (3,5), (4,5), (5,6), (6,7), (7,5), (5,8), (5,9)],
-                "answer_k": 5,
-                "answer_g": 5,
-            },
-            4: {
-                "n": 10,
-                # 复杂结构：1 是一个枢纽，连接多个小结构
-                # 1 连接 2,3,4,5
-                # 2-6, 3-7, 4-8, 5-9-10
-                # 删除 1 后得到 4 个分量
-                "edges": [(1,2), (1,3), (1,4), (1,5), (2,6), (3,7), (4,8), (5,9), (9,10)],
-                "answer_k": 1,
-                "answer_g": 4,
-            },
-            5: {
-                "n": 12,
-                # 高度对称的复杂图
-                # 顶点 6 和 7 是两个中心，但 6 删除后分量更多
-                # 1-6, 2-6, 3-6, 4-6, 5-6
-                # 6-7
-                # 7-8, 7-9, 7-10
-                # 10-11, 10-12
-                # 删除 6 后得到 6 个分量（1,2,3,4,5各一个，7-8-9-10-11-12 为一个）
-                # 实际上删除 6 后：{1},{2},{3},{4},{5},{7,8,9,10,11,12} = 6 个分量
-                "edges": [(1,6), (2,6), (3,6), (4,6), (5,6), (6,7), (7,8), (7,9), (7,10), (10,11), (10,12)],
-                "answer_k": 6,
-                "answer_g": 6,
-            },
+            1: {"s_node": 2, "t_node": 5, "rule": "B"},
+            2: {"s_node": 1, "t_node": 7, "rule": "A"},
+            3: {"s_node": 3, "t_node": 11, "rule": "C"},
+            4: {"s_node": 1, "t_node": 10, "rule": "A"},
+            5: {"s_node": 4, "t_node": 11, "rule": "B"},
         },
         "en": {
-            1: {
-                "n": 6,
-                "edges": [(1,2), (1,3), (1,4), (1,5), (1,6)],
-                "answer_k": 1,
-                "answer_g": 5,
-            },
-            2: {
-                "n": 7,
-                "edges": [(1,2), (2,3), (3,4), (3,5), (3,6), (3,7)],
-                "answer_k": 3,
-                "answer_g": 4,
-            },
-            3: {
-                "n": 9,
-                "edges": [(1,2), (2,3), (3,1), (3,5), (4,5), (5,6), (6,7), (7,5), (5,8), (5,9)],
-                "answer_k": 5,
-                "answer_g": 5,
-            },
-            4: {
-                "n": 10,
-                "edges": [(1,2), (1,3), (1,4), (1,5), (2,6), (3,7), (4,8), (5,9), (9,10)],
-                "answer_k": 1,
-                "answer_g": 4,
-            },
-            5: {
-                "n": 12,
-                "edges": [(1,6), (2,6), (3,6), (4,6), (5,6), (6,7), (7,8), (7,9), (7,10), (10,11), (10,12)],
-                "answer_k": 6,
-                "answer_g": 6,
-            },
+            1: {"s_node": 2, "t_node": 5, "rule": "B"},
+            2: {"s_node": 1, "t_node": 7, "rule": "A"},
+            3: {"s_node": 3, "t_node": 11, "rule": "C"},
+            4: {"s_node": 1, "t_node": 10, "rule": "A"},
+            5: {"s_node": 4, "t_node": 11, "rule": "B"},
         },
     }
 
     def __init__(self, config):
-        # 初始化查询计数器
-        self.query_count_total = 0
-        self.query_count_limited = 0  # COUNT 和 SIZES 的合计
+        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
         diff = self.config.difficulty
+
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -541,258 +604,180 @@ When submitting the final takedown target, specify the core suspect number K and
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        n = cfg["n"]
         
-        self._game_info["n"] = n
-        self._game_info["query_limit"] = 3 * n
-        self._game_info["count_limit"] = n // 2
+        self.s_node = cfg["s_node"]
+        self.t_node = cfg["t_node"]
+        self.true_rule = cfg["rule"]
         
-        # 构建图的邻接表表示
-        self.n = n
-        self.edges = cfg["edges"]
-        self.adj = {i: set() for i in range(1, n + 1)}
-        for u, v in self.edges:
-            self.adj[u].add(v)
-            self.adj[v].add(u)
+        edges_str = ", ".join([f"{u}-{v}" for u, v in self.TREE_EDGES])
         
-        # 存储正确答案
-        self.answer_k = cfg["answer_k"]
-        self.answer_g = cfg["answer_g"]
+        self._game_info["edges_display"] = edges_str
+        self._game_info["s_node"] = self.s_node
+        self._game_info["t_node"] = self.t_node
         
-        # 查询限制
-        self.query_limit = self._game_info["query_limit"]
-        self.count_limit = self._game_info["count_limit"]
+        self.adj = {i: [] for i in range(1, 12)}
+        for u, v in self.TREE_EDGES:
+            self.adj[u].append(v)
+            self.adj[v].append(u)
+        
+        self.edge_set = set()
+        for u, v in self.TREE_EDGES:
+            self.edge_set.add((min(u, v), max(u, v)))
 
-    def _count_components(self, removed_vertex):
-        """计算删除指定顶点后的连通分量个数"""
-        vertices = set(range(1, self.n + 1)) - {removed_vertex}
+    def _find_component_with_s(self, removed_edge):
+        u, v = removed_edge
         visited = set()
-        components = 0
+        queue = [self.s_node]
+        visited.add(self.s_node)
         
-        def dfs(v):
-            visited.add(v)
-            for neighbor in self.adj[v]:
-                if neighbor not in visited and neighbor in vertices:
-                    dfs(neighbor)
+        while queue:
+            node = queue.pop(0)
+            for neighbor in self.adj[node]:
+                if (node == u and neighbor == v) or (node == v and neighbor == u):
+                    continue
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
         
-        for v in vertices:
-            if v not in visited:
-                components += 1
-                dfs(v)
-        
-        return components
+        return visited
 
-    def _get_component_sizes(self, removed_vertex):
-        """计算删除指定顶点后各连通分量的大小，按非降序返回"""
-        vertices = set(range(1, self.n + 1)) - {removed_vertex}
-        visited = set()
-        sizes = []
+    def _apply_ordering_rule(self, edge):
+        component_with_s = self._find_component_with_s(edge)
+        size_with_s = len(component_with_s)
+        size_without_s = 11 - size_with_s
         
-        def dfs(v):
-            visited.add(v)
-            size = 1
-            for neighbor in self.adj[v]:
-                if neighbor not in visited and neighbor in vertices:
-                    size += dfs(neighbor)
-            return size
-        
-        for v in vertices:
-            if v not in visited:
-                size = dfs(v)
-                sizes.append(size)
-        
-        sizes.sort()
-        return sizes
+        if self.true_rule == "A":
+            return (size_with_s, size_without_s)
+        elif self.true_rule == "B":
+            return (min(size_with_s, size_without_s), max(size_with_s, size_without_s))
+        elif self.true_rule == "C":
+            return (max(size_with_s, size_without_s), min(size_with_s, size_without_s))
+        else:
+            raise ValueError(f"Unknown rule: {self.true_rule}")
 
-    def _are_connected(self, removed_vertex, a, b):
-        """判断删除指定顶点后，a 和 b 是否在同一连通分量中"""
-        if a == removed_vertex or b == removed_vertex:
-            return False
+    def _check_t_in_first_component(self, edge):
+        component_with_s = self._find_component_with_s(edge)
+        size_with_s = len(component_with_s)
+        size_without_s = 11 - size_with_s
         
-        vertices = set(range(1, self.n + 1)) - {removed_vertex}
-        visited = set()
+        a, b = self._apply_ordering_rule(edge)
         
-        def dfs(v, target):
-            if v == target:
-                return True
-            visited.add(v)
-            for neighbor in self.adj[v]:
-                if neighbor not in visited and neighbor in vertices:
-                    if dfs(neighbor, target):
-                        return True
-            return False
+        if self.true_rule == "A":
+            first_component = component_with_s
+        elif self.true_rule == "B":
+            if size_with_s <= size_without_s:
+                first_component = component_with_s
+            else:
+                first_component = set(range(1, 12)) - component_with_s
+        elif self.true_rule == "C":
+            if size_with_s >= size_without_s:
+                first_component = component_with_s
+            else:
+                first_component = set(range(1, 12)) - component_with_s
+        else:
+            raise ValueError(f"Unknown rule: {self.true_rule}")
         
-        return dfs(a, b)
+        return self.t_node in first_component
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"]
-        
-        # 解析答案: K=x, g=y
-        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
-        ans_dict = {}
-        for kv in kv_pairs:
-            k, v = kv.split("=", 1)
-            ans_dict[k.strip().upper()] = v.strip()
-        
-        if "K" not in ans_dict or "G" not in ans_dict:
-            return False
+        raw_ans = parsed_info.get("answer", "")
         
         try:
-            model_k = int(ans_dict["K"])
-            model_g = int(ans_dict["G"])
-        except:
+            rule_match = re.search(r'rule\s*=\s*([A-Ca-c])', raw_ans)
+            cut_match = re.search(r'cut\s*=\s*(\d+)\s*,\s*(\d+)', raw_ans)
+            
+            if not rule_match or not cut_match:
+                return False
+            
+            guessed_rule = rule_match.group(1).upper()
+            u, v = int(cut_match.group(1)), int(cut_match.group(2))
+            edge = (min(u, v), max(u, v))
+            
+        except Exception:
             return False
         
-        # 检查答案是否正确
-        return model_k == self.answer_k and model_g == self.answer_g
-
-    def _cf_make_wrong(self, correct):
-        """
-        将正确的查询响应篡改为一个错误值，用于反事实干预。
-        """
-        # correct 是一个字符串，可能是数字（COUNT结果）、YES/NO、或列表字符串
-        yes_res = "是" if self.config.language == "zh" else "YES"
-        no_res = "否" if self.config.language == "zh" else "NO"
+        if self.query_count < 2:
+            self.state.state_reason = "insufficient queries (less than 2)"
+            return False
         
-        # 如果是 YES/NO 类型，翻转
-        if correct == yes_res:
-            return no_res
-        if correct == no_res:
-            return yes_res
+        if guessed_rule != self.true_rule:
+            self.state.state_reason = f"incorrect rule (guessed {guessed_rule}, actual {self.true_rule})"
+            return False
         
-        # 如果是纯数字（COUNT 查询结果），加1或减1
-        try:
-            val = int(correct)
-            return str(val + 1) if val > 1 else str(val + 2)
-        except ValueError:
-            pass
+        if edge not in self.edge_set:
+            self.state.state_reason = "edge does not exist"
+            return False
         
-        # 如果是 SIZES 列表格式 "[s1, s2, ...]"，修改第一个元素
-        if correct.startswith("[") and correct.endswith("]"):
-            inner = correct[1:-1].strip()
-            if inner:
-                parts = [p.strip() for p in inner.split(",")]
-                try:
-                    parts[0] = str(int(parts[0]) + 1)
-                except ValueError:
-                    parts[0] = "999"
-                return "[" + ", ".join(parts) + "]"
+        if not self._check_t_in_first_component(edge):
+            self.state.state_reason = "target T not in first component"
+            return False
         
-        # 兜底：返回一个明显错误的值
-        return correct + "_wrong"
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        """原始的响应产生逻辑"""
-        yes_res = "是" if self.config.language == "zh" else "YES"
-        no_res = "否" if self.config.language == "zh" else "NO"
-        invalid_res = "无效查询" if self.config.language == "zh" else "INVALID"
-        over_limit_res = "查询次数超限" if self.config.language == "zh" else "Query limit exceeded"
-        
-        # 检查总查询次数（先检查再递增）
-        if self.query_count_total >= self.query_limit:
-            raise ValueError(over_limit_res)
-        
-        # 处理 COUNT 查询
-        if "query_count" in parsed_info:
-            # 先检查 count_limit，再递增
-            if self.query_count_limited + 1 > self.count_limit:
-                raise ValueError(over_limit_res)
-            
-            self.query_count_total += 1
-            self.query_count_limited += 1
-            
-            try:
-                x = int(parsed_info["query_count"].strip())
-                if x < 1 or x > self.n:
-                    return invalid_res
-                
-                count = self._count_components(x)
-                return str(count)
-            except ValueError:
-                return invalid_res
-        
-        # 处理 CONNECT 查询
-        elif "query_connect" in parsed_info:
-            self.query_count_total += 1
-            
-            try:
-                parts = [p.strip() for p in parsed_info["query_connect"].split(",")]
-                if len(parts) != 3:
-                    return invalid_res
-                
-                x, a, b = int(parts[0]), int(parts[1]), int(parts[2])
-                
-                if not all(1 <= v <= self.n for v in [x, a, b]):
-                    return invalid_res
-                if len(set([x, a, b])) != 3:
-                    return invalid_res
-                
-                connected = self._are_connected(x, a, b)
-                return yes_res if connected else no_res
-            except (ValueError, IndexError):
-                return invalid_res
-        
-        # 处理 SIZES 查询
-        elif "query_sizes" in parsed_info:
-            # 先检查 count_limit，再递增
-            if self.query_count_limited + 1 > self.count_limit:
-                raise ValueError(over_limit_res)
-            
-            self.query_count_total += 1
-            self.query_count_limited += 1
-            
-            try:
-                x = int(parsed_info["query_sizes"].strip())
-                if x < 1 or x > self.n:
-                    return invalid_res
-                
-                sizes = self._get_component_sizes(x)
-                return "[" + ", ".join(map(str, sizes)) + "]"
-            except ValueError:
-                return invalid_res
-        
-        else:
+        if "query_cut" not in parsed_info:
             raise ValueError("No valid query tag found.")
+        
+        try:
+            raw_query = parsed_info["query_cut"]
+            parts = [x.strip() for x in raw_query.split(",")]
+            
+            if len(parts) != 2:
+                raise ValueError("Invalid edge format")
+            
+            u, v = int(parts[0]), int(parts[1])
+            edge = (min(u, v), max(u, v))
+            
+            if edge not in self.edge_set:
+                if self.config.language == "zh":
+                    return "错误：该边不存在于树中。"
+                else:
+                    return "Error: Edge does not exist in the tree."
+            
+            a, b = self._apply_ordering_rule(edge)
+            
+            self.query_count += 1
+            
+            return f"{a} {b}"
+            
+        except ValueError as e:
+            if self.config.language == "zh":
+                return f"错误：无效的边格式。"
+            else:
+                return f"Error: Invalid edge format."
+        except Exception as e:
+            if self.config.language == "zh":
+                return f"错误：{str(e)}"
+            else:
+                return f"Error: {str(e)}"
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        parts = correct.strip().split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            a, b = int(parts[0]), int(parts[1])
+            if a != b:
+                return f"{b} {a}"
+            else:
+                return f"{a + 1} {b - 1}"
+        
+        if correct.startswith("Error") or correct.startswith("错误"):
+            return correct + "_WRONG"
+        
+        return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
         results = []
-        n = self.n
-        yes_res = "是" if self.config.language == "zh" else "YES"
-        no_res = "否" if self.config.language == "zh" else "NO"
+        sorted_edges = sorted(list(self.edge_set))
         
-        # 1. 遍历 COUNT 和 SIZES 查询
-        for x in range(1, n + 1):
-            # COUNT
-            q_count = f"<query_count>{x}</query_count>"
-            count_val = self._count_components(x)
-            ans_count = str(count_val)
-            results.append({"query": q_count, "answer": ans_count})
+        for u, v in sorted_edges:
+            query = f"<query_cut>{u},{v}</query_cut>"
             
-            # SIZES
-            q_sizes = f"<query_sizes>{x}</query_sizes>"
-            sizes_val = self._get_component_sizes(x)
-            ans_sizes = "[" + ", ".join(map(str, sizes_val)) + "]"
-            results.append({"query": q_sizes, "answer": ans_sizes})
+            a, b = self._apply_ordering_rule((u, v))
+            answer = f"{a} {b}"
             
-        # 2. 遍历 CONNECT 查询
-        # 对于每个被删除的顶点 x，枚举剩余顶点中的无序对 (a, b)
-        for x in range(1, n + 1):
-            remaining = [v for v in range(1, n + 1) if v != x]
-            for a, b in itertools.combinations(remaining, 2):
-                q_connect = f"<query_connect>{x},{a},{b}</query_connect>"
-                connected = self._are_connected(x, a, b)
-                ans_connect = yes_res if connected else no_res
-                results.append({"query": q_connect, "answer": ans_connect})
+            results.append({
+                "query": query,
+                "answer": answer
+            })
             
         return results

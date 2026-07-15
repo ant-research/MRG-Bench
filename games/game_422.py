@@ -1,478 +1,550 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   边存在性：两个给定节点之间是否存在直接相连的边
-# ============================================================
-
-import random
-import itertools
 from .base import Game
+import random
 
-
-class AdjacentElementGame(Game):
+class OrderInferenceGame(Game):
+    reasoning_type = "溯因推理"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们来玩一个"相邻元素判定"的推理游戏，规则如下：
+我们现在来玩一个"序列推理"游戏，规则如下：
 
-游戏设定了一个包含 {n} 个元素的集合 S = {elements}。存在一个固定但未知的线性顺序，集合中的所有元素在这个顺序中排成一列。两个元素称为"相邻"，当且仅当它们在该顺序中占据连续的两个位置，中间没有其他元素。
+游戏设定了一个长度为 8 的全序序列，元素集合为 S = {{F, L, A, B, C, D, E, G}}。
+每个元素都有一个唯一的位置编号（1到8），其中已知：
+- F 的位置是 1（最前）
+- L 的位置是 8（最后）
+- 其余六个元素（A, B, C, D, E, G）的相对位置未知
 
-目标对：你需要判断元素 {target_a} 和 {target_b} 是否在未知顺序中相邻。
+我已经秘密选定了一个"响应规则"（从三种可能的规则中选择），并且指定了一对目标元素：{target_u} 和 {target_v}。
 
-允许的查询：你可以反复提出以下类型的查询（每次仅限一个查询）：
+这三种可能的响应规则是：
+- 规则 A（诚实）：总是如实回答查询的问题。
+- 规则 B（完全反转）：总是给出与事实相反的回答。如果真实情况是"是"，会回答"否"；如果是"否"，会回答"是"。
+- 规则 C（奇距反转）：如果查询的双方之间的真实位置绝对距离 |pos(X) - pos(Y)| 为偶数，会给出相反的回答；如果距离为奇数，会如实回答。
 
-- 介值查询：询问元素 Y 是否位于元素 X 和 Z 之间。
-  我会回答"是"或"否"。回答"是"表示在未知顺序中，Y 位于 X 和 Z 之间（不论 X 在 Z 前还是 Z 在 X 前）；否则回答"否"。
+你的任务是：
+1. 通过提问推断出我使用的是哪种响应规则
+2. 判断目标对中 {target_u} 和 {target_v} 的真实前后关系
 
-提交答案：当你收集到足够信息后，请提交最终判定结果。
+你可以反复向我提出二元比较查询，询问"元素 X 是否在元素 Y 之前？"
+我会回答"是"或"否"，但我的回答会根据我选定的响应规则进行转换。
 
-## 查询与提交格式
+注意：你需要进行足够的有效比较（不同的元素对组合）才能推断出规则和答案。
 
-介值查询格式（询问 Y 是否位于 X 和 Z 之间）：
-<query_between>Y,X,Z</query_between>
+使用以下 XML 格式提出比较查询（例如询问 A 是否在 B 之前）：
 
-提交最终答案格式（判定是否相邻）：
-<answer>adjacent=yes</answer>
-或
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-注意：
-1. 每次只能提出一个查询
-2. 查询中的元素必须两两不同且都在集合 S 中
-3. 答案必须严格按照上述格式提交
-4. 请尽可能少地使用查询次数
+当你准备好给出最终答案时，必须同时说明：
+1. 你推断的响应规则类型（rule）：使用 A、B 或 C
+2. 目标对的真实前后关系（order）：使用 before 或 after
+
+格式如下（假设推断规则为 A，且第一个元素在第二个元素之前）：
+
+<answer>rule=A, order=before</answer>
+
+其中 order=before 表示 {target_u} 在 {target_v} 之前，order=after 表示 {target_u} 在 {target_v} 之后。
 """
 
     game_rule_en = """\
-Let's play an "Adjacent Element Detection" deduction game. Here are the rules:
+Let's play an "Order Inference" game. Here are the rules:
 
-The game defines a set S with {n} elements: S = {elements}. There exists a fixed but unknown linear order in which all elements are arranged in a sequence. Two elements are called "adjacent" if and only if they occupy two consecutive positions in this order with no other element between them.
+The game has a totally ordered sequence of length 8, with element set S = {{F, L, A, B, C, D, E, G}}.
+Each element has a unique position number (1 to 8), and it is known that:
+- F is at position 1 (first)
+- L is at position 8 (last)
+- The relative positions of the other six elements (A, B, C, D, E, G) are unknown
 
-Target pair: You need to determine whether elements {target_a} and {target_b} are adjacent in the unknown order.
+I have secretly selected a "response rule" (from three possible rules) and designated a target pair of elements: {target_u} and {target_v}.
 
-Allowed queries: You can repeatedly ask the following type of query (one query per turn):
+The three possible response rules are:
+- Rule A (Honest): Always truthfully answers the query.
+- Rule B (Full Inversion): Always gives the opposite of the truth. If the truth is "Yes", it says "No"; if the truth is "No", it says "Yes".
+- Rule C (Even-Distance Inversion): If the absolute true distance |pos(X) - pos(Y)| between the two queried items is even, it inverts the truth; if the distance is odd, it answers truthfully.
 
-- Between Query: Ask whether element Y is located between elements X and Z.
-  I will answer "Yes" or "No". "Yes" means that in the unknown order, Y is positioned between X and Z (regardless of whether X comes before Z or Z comes before X); otherwise, the answer is "No".
+Your task is to:
+1. Infer which response rule I am using through queries
+2. Determine the true order relationship between {target_u} and {target_v}
 
-Submit answer: When you have gathered enough information, submit your final determination.
+You can repeatedly ask me binary comparison queries: "Is element X before element Y?"
+I will answer "Yes" or "No", but my answers will be transformed according to the response rule I selected.
 
-## Query and Answer Format
+Note: You need to make enough effective comparisons (different element pair combinations) to infer the rule and answer.
 
-Between query format (asking if Y is between X and Z):
-<query_between>Y,X,Z</query_between>
+Use the following XML format for comparison queries (e.g., asking if A is before B):
 
-Final answer submission format (determining adjacency):
-<answer>adjacent=yes</answer>
-or
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-Notes:
-1. Only one query can be asked per turn
-2. All elements in a query must be distinct and belong to set S
-3. The answer must strictly follow the format above
-4. Try to use as few queries as possible
+When you are ready to give your final answer, you must specify both:
+1. Your inferred response rule type (rule): use A, B, or C
+2. The true order of the target pair (order): use before or after
+
+Format as follows (assuming inferred rule is A and the first element is before the second):
+
+<answer>rule=A, order=before</answer>
+
+Where order=before means {target_u} is before {target_v}, and order=after means {target_u} is after {target_v}.
 """
 
     contextualized_rule_zh_1 = """\
-我们正在进行一项"轨道交通线网排查"任务，规则如下：
+我们现在来进行一项"轨道交通站点排查"任务，规则如下：
 
-系统设定了一条包含 {n} 个关键站点的公交线路 S = {elements}。存在一个固定但未知的线性站点顺序，集合中的所有站点在这个顺序中排成一列。两个站点称为"相邻"，当且仅当它们在该线路中占据连续的两个位置，中间没有其他站点。
+一条单向地铁线路上共有 8 个站点，站点代号集合为 S = {{F, L, A, B, C, D, E, G}}。
+每个站点都有一个唯一的顺序编号（1到8），其中已知：
+- 站点 F 是始发站，位置是 1（最前）
+- 站点 L 是终点站，位置是 8（最后）
+- 其余六个站点（A, B, C, D, E, G）的沿途相对先后顺序未知
 
-目标对：你需要判断站点 {target_a} 和 {target_b} 是否在未知线路顺序中相邻。
+系统的"信号响应规则"出现了异常（在三种可能的规则中固定了一种），并且调度中心指定了一对目标站点：{target_u} 和 {target_v} 需要你查明顺序。
 
-允许的查询：你可以反复提出以下类型的查询（每次仅限一个查询）：
+这三种可能的响应规则是：
+- 规则 A（诚实）：总是如实回答查询的问题。
+- 规则 B（完全反转）：总是给出与事实相反的回答。如果真实情况是"是"，会回答"否"；如果是"否"，会回答"是"。
+- 规则 C（奇距反转）：如果查询的双方之间的真实位置绝对距离 |pos(X) - pos(Y)| 为偶数，会给出相反的回答；如果距离为奇数，会如实回答。
 
-- 介值查询：询问站点 Y 是否位于站点 X 和 Z 之间。
-  我会回答"是"或"否"。回答"是"表示在未知线路顺序中，Y 位于 X 和 Z 之间（不论 X 在 Z 前还是 Z 在 X 前）；否则回答"否"。
+你的任务是：
+1. 通过提问推断出系统当前使用的是哪种信号响应规则
+2. 判断目标站点对中 {target_u} 和 {target_v} 的真实先后到达关系
 
-提交答案：当你收集到足够信息后，请提交最终判定结果。
+你可以反复向我提出二元比较查询，询问"列车是否先到达站点 X 再到达站点 Y？"
+我会回答"是"或"否"，但我的回答会根据当前的信号响应规则进行转换反馈。
 
-## 查询与提交格式
+注意：你需要进行足够的有效比较（不同的站点对组合）才能推断出故障规则和真实顺序。
 
-介值查询格式（询问 Y 是否位于 X 和 Z 之间）：
-<query_between>Y,X,Z</query_between>
+使用以下 XML 格式提出比较查询（例如询问是否先到 A 再到 B）：
 
-提交最终答案格式（判定是否相邻）：
-<answer>adjacent=yes</answer>
-或
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-注意：
-1. 每次只能提出一个查询
-2. 查询中的站点必须两两不同且都在集合 S 中
-3. 答案必须严格按照上述格式提交
-4. 请尽可能少地使用查询次数
+当你准备好给出最终排查结果时，必须同时说明：
+1. 你推断的响应规则类型（rule）：使用 A、B 或 C
+2. 目标站点的真实先后关系（order）：使用 before 或 after
+
+格式如下（假设推断规则为 A，且列车先到达第一个站点）：
+
+<answer>rule=A, order=before</answer>
+
+其中 order=before 表示先到达 {target_u} 再到达 {target_v}，order=after 表示先到达 {target_v} 再到达 {target_u}。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-We are conducting an "Urban Rail Network Inspection" task. Here are the rules:
+[Transportation Scenario]
+Let's conduct an "Urban Transit Station Sequence" diagnostic task. Here are the operational rules:
 
-The system defines a transit line with {n} key stations: S = {elements}. There exists a fixed but unknown linear order in which all stations are arranged on the line. Two stations are called "adjacent" if and only if they occupy two consecutive positions in this order with no other station between them.
+A unidirectional subway line has exactly 8 stations, with the station code set S = {{F, L, A, B, C, D, E, G}}.
+Each station has a unique sequence number (1 to 8), and it is known that:
+- Station F is the origin, at position 1 (first)
+- Station L is the terminus, at position 8 (last)
+- The relative sequence of the other six stations (A, B, C, D, E, G) is unknown
 
-Target pair: You need to determine whether stations {target_a} and {target_b} are adjacent in the unknown order.
+The system has locked into a secret "signal response rule" (one of three possible rules), and the dispatch center has designated a target pair of stations: {target_u} and {target_v}.
 
-Allowed queries: You can repeatedly ask the following type of query (one query per turn):
+The three possible response rules are:
+- Rule A (Honest): Always truthfully answers the query.
+- Rule B (Full Inversion): Always gives the opposite of the truth. If the truth is "Yes", it says "No"; if the truth is "No", it says "Yes".
+- Rule C (Even-Distance Inversion): If the absolute true distance |pos(X) - pos(Y)| between the two queried items is even, it inverts the truth; if the distance is odd, it answers truthfully.
 
-- Between Query: Ask whether station Y is located between stations X and Z.
-  I will answer "Yes" or "No". "Yes" means that in the unknown order, Y is positioned between X and Z (regardless of whether X comes before Z or Z comes before X); otherwise, the answer is "No".
+Your task is to:
+1. Infer which signal response rule the system is currently using through queries
+2. Determine the true arrival order between station {target_u} and station {target_v}
 
-Submit answer: When you have gathered enough information, submit your final determination.
+You can repeatedly ask me binary comparison queries: "Does the train arrive at station X before station Y?"
+I will answer "Yes" or "No", but my answers will be transformed according to the selected signal response rule.
 
-## Query and Answer Format
+Note: You need to make enough effective comparisons (different station pair combinations) to infer the rule and the correct sequence.
 
-Between query format (asking if Y is between X and Z):
-<query_between>Y,X,Z</query_between>
+Use the following XML format for comparison queries (e.g., asking if station A is before B):
 
-Final answer submission format (determining adjacency):
-<answer>adjacent=yes</answer>
-or
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-Notes:
-1. Only one query can be asked per turn
-2. All stations in a query must be distinct and belong to set S
-3. The answer must strictly follow the format above
-4. Try to use as few queries as possible
+When you are ready to submit your final diagnostic report, you must specify both:
+1. Your inferred response rule type (rule): use A, B, or C
+2. The true arrival order of the target pair (order): use before or after
+
+Format as follows (assuming inferred rule is A and the first station is visited before the second):
+
+<answer>rule=A, order=before</answer>
+
+Where order=before means the train arrives at {target_u} before {target_v}, and order=after means it arrives at {target_u} after {target_v}.
 """
 
     contextualized_rule_zh_2 = """\
-我们正在评估一项"临床标准治疗路径"，规则如下：
+我们现在来进行一项"疾病病理阶段回溯"分析，规则如下：
 
-该路径包含 {n} 个特定的治疗节点 S = {elements}。这些节点按照一个固定但未知的严格线性顺序排列执行。两个治疗节点称为"相邻"，当且仅当它们在流程中紧密衔接，中间没有任何其他过渡阶段或节点。
+某未知疾病的完整发展周期包含 8 个病理阶段，阶段代号集合为 S = {{F, L, A, B, C, D, E, G}}。
+每个阶段都有一个唯一的时间序编号（1到8），其中已知：
+- 阶段 F 是初始感染期，位置是 1（最前）
+- 阶段 L 是最终转归期，位置是 8（最后）
+- 其余六个并发阶段（A, B, C, D, E, G）的相对发生顺序未知
 
-目标对：你需要判断治疗节点 {target_a} 和 {target_b} 是否在未知流程顺序中相邻。
+监控仪器的"数据响应规则"被设定成了某种特定模式（从三种可能的规则中选择了一种），并且我们需要确认一对核心病理阶段：{target_u} 和 {target_v} 的先后关系。
 
-允许的查询：你可以反复提出以下类型的查询（每次仅限一个查询）：
+这三种可能的响应规则是：
+- 规则 A（诚实）：总是如实回答查询的问题。
+- 规则 B（完全反转）：总是给出与事实相反的回答。如果真实情况是"是"，会回答"否"；如果是"否"，会回答"是"。
+- 规则 C（奇距反转）：如果查询的双方之间的真实位置绝对距离 |pos(X) - pos(Y)| 为偶数，会给出相反的回答；如果距离为奇数，会如实回答。
 
-- 介值查询：询问治疗节点 Y 是否发生于节点 X 和 Z 之间。
-  我会回答"是"或"否"。回答"是"表示在未知流程顺序中，Y 位于 X 和 Z 之间（不论 X 在 Z 前还是 Z 在 X 前）；否则回答"否"。
+你的任务是：
+1. 通过提问推断出监控仪器使用的是哪种数据响应规则
+2. 判断目标对中阶段 {target_u} 和阶段 {target_v} 的真实发生先后关系
 
-提交答案：当你收集到足够信息后，请提交最终判定结果。
+你可以反复向我提出二元比较查询，询问"病理阶段 X 是否在阶段 Y 之前发生？"
+我会回答"是"或"否"，但我的回答会根据设定的数据响应规则进行转换。
 
-## 查询与提交格式
+注意：你需要进行足够的有效比较（不同的阶段对组合）才能推断出规则和答案。
 
-介值查询格式（询问 Y 是否发生于 X 和 Z 之间）：
-<query_between>Y,X,Z</query_between>
+使用以下 XML 格式提出比较查询（例如询问阶段 A 是否在 B 之前发生）：
 
-提交最终答案格式（判定是否相邻）：
-<answer>adjacent=yes</answer>
-或
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-注意：
-1. 每次只能提出一个查询
-2. 查询中的节点必须两两不同且都在集合 S 中
-3. 答案必须严格按照上述格式提交
-4. 请尽可能少地使用查询次数
+当你准备好给出最终分析结论时，必须同时说明：
+1. 你推断的响应规则类型（rule）：使用 A、B 或 C
+2. 目标病理阶段的真实先后关系（order）：使用 before 或 after
+
+格式如下（假设推断规则为 A，且第一个阶段在第二个阶段之前发生）：
+
+<answer>rule=A, order=before</answer>
+
+其中 order=before 表示 {target_u} 在 {target_v} 之前发生，order=after 表示 {target_u} 在 {target_v} 之后发生。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-We are evaluating a "Clinical Standard Treatment Pathway". Here are the rules:
+Let's conduct a "Pathological Stage Retrospective" analysis. Here are the clinical rules:
 
-The pathway includes {n} specific treatment nodes: S = {elements}. These nodes are arranged in a fixed but unknown strict linear sequence. Two treatment nodes are called "adjacent" if and only if they are closely connected in the process with no other transitional stage between them.
+The complete progression cycle of an unknown disease consists of 8 pathological stages, with the stage code set S = {{F, L, A, B, C, D, E, G}}.
+Each stage has a unique chronological sequence number (1 to 8), and it is known that:
+- Stage F is the initial infection phase, at position 1 (first)
+- Stage L is the final clinical outcome, at position 8 (last)
+- The relative occurrence order of the other six stages (A, B, C, D, E, G) is unknown
 
-Target pair: You need to determine whether treatment nodes {target_a} and {target_b} are adjacent in the unknown pathway sequence.
+The monitoring instrument's "data response rule" is locked into a specific mode (one of three possible rules), and we need to verify the temporal relationship of a target pair of core stages: {target_u} and {target_v}.
 
-Allowed queries: You can repeatedly ask the following type of query (one query per turn):
+The three possible response rules are:
+- Rule A (Honest): Always truthfully answers the query.
+- Rule B (Full Inversion): Always gives the opposite of the truth. If the truth is "Yes", it says "No"; if the truth is "No", it says "Yes".
+- Rule C (Even-Distance Inversion): If the absolute true distance |pos(X) - pos(Y)| between the two queried items is even, it inverts the truth; if the distance is odd, it answers truthfully.
 
-- Between Query: Ask whether node Y occurs between nodes X and Z.
-  I will answer "Yes" or "No". "Yes" means that in the unknown pathway sequence, Y is positioned between X and Z (regardless of whether X comes before Z or Z comes before X); otherwise, the answer is "No".
+Your task is to:
+1. Infer which data response rule the instrument is using through queries
+2. Determine the true chronological order between stage {target_u} and stage {target_v}
 
-Submit answer: When you have gathered enough information, submit your final determination.
+You can repeatedly ask me binary comparison queries: "Did pathological stage X occur before stage Y?"
+I will answer "Yes" or "No", but my answers will be transformed according to the active data response rule.
 
-## Query and Answer Format
+Note: You need to make enough effective clinical comparisons (different stage pair combinations) to infer the rule and the correct sequence.
 
-Between query format (asking if Y is between X and Z):
-<query_between>Y,X,Z</query_between>
+Use the following XML format for comparison queries (e.g., asking if stage A occurred before B):
 
-Final answer submission format (determining adjacency):
-<answer>adjacent=yes</answer>
-or
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-Notes:
-1. Only one query can be asked per turn
-2. All nodes in a query must be distinct and belong to set S
-3. The answer must strictly follow the format above
-4. Try to use as few queries as possible
+When you are ready to submit your final diagnostic conclusion, you must specify both:
+1. Your inferred response rule type (rule): use A, B, or C
+2. The true chronological order of the target pair (order): use before or after
+
+Format as follows (assuming inferred rule is A and the first stage occurred before the second):
+
+<answer>rule=A, order=before</answer>
+
+Where order=before means {target_u} occurred before {target_v}, and order=after means {target_u} occurred after {target_v}.
 """
 
     contextualized_rule_zh_3 = """\
-我们正在进行一项"核心课程体系规划"任务，规则如下：
+我们现在来进行一项"课程先修关系梳理"任务，规则如下：
 
-教学大纲包含 {n} 个核心知识模块 S = {elements}。存在一个固定但未知的线性教学顺序，所有模块在这个顺序中依次教授。两个知识模块称为"相邻"，当且仅当它们在教学大纲中占据连续的两个教学单元，中间没有穿插其他模块。
+某专业的培养方案包含 8 个核心模块，模块代码集合为 S = {{F, L, A, B, C, D, E, G}}。
+每个模块都有一个唯一的授课顺位（1到8），其中已知：
+- 模块 F 是新生导论，位置是 1（最前）
+- 模块 L 是毕业设计，位置是 8（最后）
+- 其余六个模块（A, B, C, D, E, G）的相对授课顺序未知
 
-目标对：你需要判断知识模块 {target_a} 和 {target_b} 是否在未知的教学顺序中相邻。
+教务系统的"依赖查询响应规则"目前处于盲测状态（从三种可能的规则中选择了一种），并且系统要求我们验证一对目标模块：{target_u} 和 {target_v} 的先修关系。
 
-允许的查询：你可以反复提出以下类型的查询（每次仅限一个查询）：
+这三种可能的响应规则是：
+- 规则 A（诚实）：总是如实回答查询的问题。
+- 规则 B（完全反转）：总是给出与事实相反的回答。如果真实情况是"是"，会回答"否"；如果是"否"，会回答"是"。
+- 规则 C（奇距反转）：如果查询的双方之间的真实位置绝对距离 |pos(X) - pos(Y)| 为偶数，会给出相反的回答；如果距离为奇数，会如实回答。
 
-- 介值查询：询问知识模块 Y 是否安排在模块 X 和 Z 之间。
-  我会回答"是"或"否"。回答"是"表示在未知教学顺序中，Y 位于 X 和 Z 之间（不论 X 在 Z 前还是 Z 在 X 前）；否则回答"否"。
+你的任务是：
+1. 通过提问推断出教务系统使用的是哪种响应规则
+2. 判断目标对中模块 {target_u} 和模块 {target_v} 的真实授课先后关系
 
-提交答案：当你收集到足够信息后，请提交最终判定结果。
+你可以反复向我提出二元比较查询，询问"模块 X 是否在模块 Y 之前授课？"
+我会回答"是"或"否"，但我的回答会根据教务系统的查询响应规则进行转换。
 
-## 查询与提交格式
+注意：你需要进行足够的有效比较（不同的模块对组合）才能推断出规则和正确的授课大纲。
 
-介值查询格式（询问 Y 是否安排在 X 和 Z 之间）：
-<query_between>Y,X,Z</query_between>
+使用以下 XML 格式提出比较查询（例如询问 A 是否在 B 之前授课）：
 
-提交最终答案格式（判定是否相邻）：
-<answer>adjacent=yes</answer>
-或
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-注意：
-1. 每次只能提出一个查询
-2. 查询中的模块必须两两不同且都在集合 S 中
-3. 答案必须严格按照上述格式提交
-4. 请尽可能少地使用查询次数
+当你准备好提交最终大纲审核时，必须同时说明：
+1. 你推断的响应规则类型（rule）：使用 A、B 或 C
+2. 目标模块对的真实先后关系（order）：使用 before 或 after
+
+格式如下（假设推断规则为 A，且第一个模块在第二个模块之前授课）：
+
+<answer>rule=A, order=before</answer>
+
+其中 order=before 表示 {target_u} 先于 {target_v} 授课，order=after 表示 {target_u} 晚于 {target_v} 授课。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-We are conducting a "Core Curriculum System Planning" task. Here are the rules:
+Let's conduct a "Curriculum Prerequisite Mapping" task. Here are the academic rules:
 
-The syllabus contains {n} core knowledge modules: S = {elements}. There exists a fixed but unknown linear teaching order in which all modules are taught sequentially. Two knowledge modules are called "adjacent" if and only if they occupy two consecutive teaching units in the syllabus with no other module interspersed between them.
+A degree program's curriculum contains 8 core modules, with the module code set S = {{F, L, A, B, C, D, E, G}}.
+Each module has a unique teaching sequence number (1 to 8), and it is known that:
+- Module F is the freshman introductory course, at position 1 (first)
+- Module L is the capstone project, at position 8 (last)
+- The relative teaching sequence of the other six modules (A, B, C, D, E, G) is unknown
 
-Target pair: You need to determine whether knowledge modules {target_a} and {target_b} are adjacent in the unknown teaching order.
+The academic system's "dependency query response rule" is currently in a blind-test mode (one of three possible rules), and we must verify the prerequisite relationship of a target pair of modules: {target_u} and {target_v}.
 
-Allowed queries: You can repeatedly ask the following type of query (one query per turn):
+The three possible response rules are:
+- Rule A (Honest): Always truthfully answers the query.
+- Rule B (Full Inversion): Always gives the opposite of the truth. If the truth is "Yes", it says "No"; if the truth is "No", it says "Yes".
+- Rule C (Even-Distance Inversion): If the absolute true distance |pos(X) - pos(Y)| between the two queried items is even, it inverts the truth; if the distance is odd, it answers truthfully.
 
-- Between Query: Ask whether module Y is scheduled between modules X and Z.
-  I will answer "Yes" or "No". "Yes" means that in the unknown teaching order, Y is positioned between X and Z (regardless of whether X comes before Z or Z comes before X); otherwise, the answer is "No".
+Your task is to:
+1. Infer which response rule the academic system is using through queries
+2. Determine the true teaching order between module {target_u} and module {target_v}
 
-Submit answer: When you have gathered enough information, submit your final determination.
+You can repeatedly ask me binary comparison queries: "Is module X taught before module Y?"
+I will answer "Yes" or "No", but my answers will be transformed according to the system's response rule.
 
-## Query and Answer Format
+Note: You need to make enough effective academic comparisons (different module pair combinations) to infer the rule and the correct syllabus.
 
-Between query format (asking if Y is between X and Z):
-<query_between>Y,X,Z</query_between>
+Use the following XML format for comparison queries (e.g., asking if module A is taught before B):
 
-Final answer submission format (determining adjacency):
-<answer>adjacent=yes</answer>
-or
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-Notes:
-1. Only one query can be asked per turn
-2. All modules in a query must be distinct and belong to set S
-3. The answer must strictly follow the format above
-4. Try to use as few queries as possible
+When you are ready to submit your final curriculum review, you must specify both:
+1. Your inferred response rule type (rule): use A, B, or C
+2. The true teaching order of the target pair (order): use before or after
+
+Format as follows (assuming inferred rule is A and the first module is taught before the second):
+
+<answer>rule=A, order=before</answer>
+
+Where order=before means {target_u} is taught before {target_v}, and order=after means {target_u} is taught after {target_v}.
 """
 
     contextualized_rule_zh_4 = """\
-我们正在优化一条"精密制造流水线"，规则如下：
+我们现在来进行一项"流水线工序校验"任务，规则如下：
 
-该流水线包含 {n} 道关键加工工序 S = {elements}。存在一个固定但未知的线性执行顺序，所有工序在这个顺序中排成一列。两道工序称为"相邻"，当且仅当它们在流水线上紧邻、占据连续的两个加工步骤，中间没有任何其他工序。
+一条自动化装配线共有 8 道核心工序，工序代码集合为 S = {{F, L, A, B, C, D, E, G}}。
+每道工序都有一个唯一的执行顺序（1到8），其中已知：
+- 工序 F 是原料投料，位置是 1（最前）
+- 工序 L 是成品包装，位置是 8（最后）
+- 其余六道工序（A, B, C, D, E, G）的相对执行顺序未知
 
-目标对：你需要判断加工工序 {target_a} 和 {target_b} 是否在未知流水线顺序中相邻。
+工控系统的"传感器反馈规则"目前处于校准模式（从三种可能的规则中固定了一种），并且总工要求我们排查一对目标工序：{target_u} 和 {target_v} 的先后执行关系。
 
-允许的查询：你可以反复提出以下类型的查询（每次仅限一个查询）：
+这三种可能的响应规则是：
+- 规则 A（诚实）：总是如实回答查询的问题。
+- 规则 B（完全反转）：总是给出与事实相反的回答。如果真实情况是"是"，会回答"否"；如果是"否"，会回答"是"。
+- 规则 C（奇距反转）：如果查询的双方之间的真实位置绝对距离 |pos(X) - pos(Y)| 为偶数，会给出相反的回答；如果距离为奇数，会如实回答。
 
-- 介值查询：询问加工工序 Y 是否位于工序 X 和 Z 之间。
-  我会回答"是"或"否"。回答"是"表示在未知流水线顺序中，Y 位于 X 和 Z 之间（不论 X 在 Z 前还是 Z 在 X 前）；否则回答"否"。
+你的任务是：
+1. 通过提问推断出工控系统使用的是哪种传感器反馈规则
+2. 判断目标对中工序 {target_u} 和工序 {target_v} 的真实执行先后关系
 
-提交答案：当你收集到足够信息后，请提交最终判定结果。
+你可以反复向我提出二元比较查询，询问"工序 X 是否在工序 Y 之前执行？"
+我会回答"是"或"否"，但我的回答会根据当前的传感器反馈规则进行转换输出。
 
-## 查询与提交格式
+注意：你需要进行足够的有效比较（不同的工序对组合）才能推断出规则和正确的工艺流程。
 
-介值查询格式（询问 Y 是否位于 X 和 Z 之间）：
-<query_between>Y,X,Z</query_between>
+使用以下 XML 格式提出比较查询（例如询问工序 A 是否在 B 之前执行）：
 
-提交最终答案格式（判定是否相邻）：
-<answer>adjacent=yes</answer>
-或
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-注意：
-1. 每次只能提出一个查询
-2. 查询中的工序必须两两不同且都在集合 S 中
-3. 答案必须严格按照上述格式提交
-4. 请尽可能少地使用查询次数
+当你准备好输出最终校准报告时，必须同时说明：
+1. 你推断的传感器反馈规则类型（rule）：使用 A、B 或 C
+2. 目标工序对的真实先后关系（order）：使用 before 或 after
+
+格式如下（假设推断规则为 A，且第一道工序在第二道工序之前执行）：
+
+<answer>rule=A, order=before</answer>
+
+其中 order=before 表示 {target_u} 在 {target_v} 之前执行，order=after 表示 {target_u} 在 {target_v} 之后执行。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industry Scenario]
-We are optimizing a "Precision Manufacturing Assembly Line". Here are the rules:
+Let's conduct an "Assembly Line Process Verification" task. Here are the operational rules:
 
-The assembly line consists of {n} critical processing steps: S = {elements}. There exists a fixed but unknown linear execution sequence in which all steps are arranged. Two steps are called "adjacent" if and only if they occupy two consecutive processing stages on the line with no other step between them.
+An automated assembly line consists of 8 core processes, with the process code set S = {{F, L, A, B, C, D, E, G}}.
+Each process has a unique execution sequence (1 to 8), and it is known that:
+- Process F is raw material intake, at position 1 (first)
+- Process L is final packaging, at position 8 (last)
+- The relative execution sequence of the other six processes (A, B, C, D, E, G) is unknown
 
-Target pair: You need to determine whether processing steps {target_a} and {target_b} are adjacent in the unknown assembly line sequence.
+The industrial control system's "sensor feedback rule" is currently in a calibration mode (locked to one of three possible rules), and the chief engineer requires us to verify the execution order of a target pair of processes: {target_u} and {target_v}.
 
-Allowed queries: You can repeatedly ask the following type of query (one query per turn):
+The three possible response rules are:
+- Rule A (Honest): Always truthfully answers the query.
+- Rule B (Full Inversion): Always gives the opposite of the truth. If the truth is "Yes", it says "No"; if the truth is "No", it says "Yes".
+- Rule C (Even-Distance Inversion): If the absolute true distance |pos(X) - pos(Y)| between the two queried items is even, it inverts the truth; if the distance is odd, it answers truthfully.
 
-- Between Query: Ask whether step Y is located between steps X and Z.
-  I will answer "Yes" or "No". "Yes" means that in the unknown assembly line sequence, Y is positioned between X and Z (regardless of whether X comes before Z or Z comes before X); otherwise, the answer is "No".
+Your task is to:
+1. Infer which sensor feedback rule the control system is using through queries
+2. Determine the true execution order between process {target_u} and process {target_v}
 
-Submit answer: When you have gathered enough information, submit your final determination.
+You can repeatedly ask me binary comparison queries: "Is process X executed before process Y?"
+I will answer "Yes" or "No", but my answers will be transformed according to the active sensor feedback rule.
 
-## Query and Answer Format
+Note: You need to make enough effective process comparisons (different process pair combinations) to infer the rule and the correct manufacturing workflow.
 
-Between query format (asking if Y is between X and Z):
-<query_between>Y,X,Z</query_between>
+Use the following XML format for comparison queries (e.g., asking if process A is executed before B):
 
-Final answer submission format (determining adjacency):
-<answer>adjacent=yes</answer>
-or
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-Notes:
-1. Only one query can be asked per turn
-2. All processing steps in a query must be distinct and belong to set S
-3. The answer must strictly follow the format above
-4. Try to use as few queries as possible
+When you are ready to output your final calibration report, you must specify both:
+1. Your inferred sensor feedback rule type (rule): use A, B, or C
+2. The true execution order of the target pair (order): use before or after
+
+Format as follows (assuming inferred rule is A and the first process is executed before the second):
+
+<answer>rule=A, order=before</answer>
+
+Where order=before means {target_u} is executed before {target_v}, and order=after means {target_u} is executed after {target_v}.
 """
 
     contextualized_rule_zh_5 = """\
-我们正在审查一个"标准法定审理程序"，规则如下：
+我们现在来进行一项"诉讼程序时间线重构"任务，规则如下：
 
-案件的审理过程涉及 {n} 个法定环节 S = {elements}。这些环节按照一个固定但未知的严格法定线性顺序执行。两个法定环节称为"相邻"，当且仅当它们在程序上具有直接的先后顺承关系，中间没有穿插其他法定步骤。
+一宗复杂的商业诉讼案件包含了 8 个关键的法定程序，程序代号集合为 S = {{F, L, A, B, C, D, E, G}}。
+每个程序都有一个唯一的发生顺位（1到8），其中已知：
+- 程序 F 是提交诉状，位置是 1（最前）
+- 程序 L 是宣读判决，位置是 8（最后）
+- 其余六个程序（A, B, C, D, E, G）的相对发生顺序未知
 
-目标对：你需要判断法定环节 {target_a} 和 {target_b} 是否在未知的法定顺序中相邻。
+由于案宗档案受损，目前的"质证响应规则"是由当事人提供的（从三种可能的陈述规则中固定了一种），并且法庭要求查清一对核心程序：{target_u} 和 {target_v} 的先后关系。
 
-允许的查询：你可以反复提出以下类型的查询（每次仅限一个查询）：
+这三种可能的响应规则是：
+-规则 A（诚实）：总是如实回答查询的问题。
+- 规则 B（完全反转）：总是给出与事实相反的回答。如果真实情况是"是"，会回答"否"；如果是"否"，会回答"是"。
+- 规则 C（奇距反转）：如果查询的双方之间的真实位置绝对距离 |pos(X) - pos(Y)| 为偶数，会给出相反的回答；如果距离为奇数，会如实回答。
 
-- 介值查询：询问法定环节 Y 是否必须在环节 X 和 Z 之间履行。
-  我会回答"是"或"否"。回答"是"表示在未知法定顺序中，Y 位于 X 和 Z 之间（不论 X 在 Z 前还是 Z 在 X 前）；否则回答"否"。
+你的任务是：
+1. 通过提问推断出当事人目前使用的是哪种质证响应规则
+2. 判断目标对中程序 {target_u} 和程序 {target_v} 的真实发生先后关系
 
-提交答案：当你收集到足够信息后，请提交最终判定结果。
+你可以反复向我提出二元比较查询，询问"程序 X 是否在程序 Y 之前发生？"
+我会回答"是"或"否"，但我的回答会根据当事人所设定的质证响应规则进行转换。
 
-## 查询与提交格式
+注意：你需要进行足够的有效比较（不同的程序对组合）才能推断出陈述规则和真实的案情时间线。
 
-介值查询格式（询问 Y 是否位于 X 和 Z 之间）：
-<query_between>Y,X,Z</query_between>
+使用以下 XML 格式提出比较查询（例如询问程序 A 是否在 B 之前发生）：
 
-提交最终答案格式（判定是否相邻）：
-<answer>adjacent=yes</answer>
-或
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-注意：
-1. 每次只能提出一个查询
-2. 查询中的环节必须两两不同且都在集合 S 中
-3. 答案必须严格按照上述格式提交
-4. 请尽可能少地使用查询次数
+当你准备好提交最终法庭调查报告时，必须同时说明：
+1. 你推断的响应规则类型（rule）：使用 A、B 或 C
+2. 目标程序对的真实先后关系（order）：使用 before 或 after
+
+格式如下（假设推断规则为 A，且第一个程序在第二个程序之前发生）：
+
+<answer>rule=A, order=before</answer>
+
+其中 order=before 表示 {target_u} 在 {target_v} 之前发生，order=after 表示 {target_u} 在 {target_v} 之后发生。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-We are reviewing a "Standard Statutory Trial Procedure". Here are the rules:
+Let's conduct a "Litigation Timeline Reconstruction" task. Here are the procedural rules:
 
-The case trial process involves {n} statutory steps: S = {elements}. These steps are executed according to a fixed but unknown strict statutory linear sequence. Two statutory steps are called "adjacent" if and only if they have a direct sequential relationship in the procedure with no other statutory step in between.
+A complex commercial litigation case involves 8 key statutory procedures, with the procedure code set S = {{F, L, A, B, C, D, E, G}}.
+Each procedure has a unique chronological sequence (1 to 8), and it is known that:
+- Procedure F is filing the complaint, at position 1 (first)
+- Procedure L is the final verdict delivery, at position 8 (last)
+- The relative sequence of the other six procedures (A, B, C, D, E, G) is unknown
 
-Target pair: You need to determine whether statutory steps {target_a} and {target_b} are adjacent in the unknown statutory sequence.
+Due to damaged case files, the current "cross-examination response rule" is provided by a witness (locked to one of three possible narrative rules), and the court demands verification of the chronological order of a target pair of core procedures: {target_u} and {target_v}.
 
-Allowed queries: You can repeatedly ask the following type of query (one query per turn):
+The three possible response rules are:
+- Rule A (Honest): Always truthfully answers the query.
+- Rule B (Full Inversion): Always gives the opposite of the truth. If the truth is "Yes", it says "No"; if the truth is "No", it says "Yes".
+- Rule C (Even-Distance Inversion): If the absolute true distance |pos(X) - pos(Y)| between the two queried items is even, it inverts the truth; if the distance is odd, it answers truthfully.
 
-- Between Query: Ask whether statutory step Y must be fulfilled between steps X and Z.
-  I will answer "Yes" or "No". "Yes" means that in the unknown statutory sequence, Y is positioned between X and Z (regardless of whether X comes before Z or Z comes before X); otherwise, the answer is "No".
+Your task is to:
+1. Infer which response rule the witness is using through queries
+2. Determine the true chronological order between procedure {target_u} and procedure {target_v}
 
-Submit answer: When you have gathered enough information, submit your final determination.
+You can repeatedly ask me binary comparison queries: "Did procedure X legally precede procedure Y?"
+I will answer "Yes" or "No", but my answers will be transformed according to the witness's established response rule.
 
-## Query and Answer Format
+Note: You need to make enough effective legal comparisons (different procedure pair combinations) to infer the rule and reconstruct the true factual timeline.
 
-Between query format (asking if Y is between X and Z):
-<query_between>Y,X,Z</query_between>
+Use the following XML format for comparison queries (e.g., asking if procedure A preceded B):
 
-Final answer submission format (determining adjacency):
-<answer>adjacent=yes</answer>
-or
-<answer>adjacent=no</answer>
+<query>A,B</query>
 
-Notes:
-1. Only one query can be asked per turn
-2. All steps in a query must be distinct and belong to set S
-3. The answer must strictly follow the format above
-4. Try to use as few queries as possible
+When you are ready to submit your final court investigation report, you must specify both:
+1. Your inferred response rule type (rule): use A, B, or C
+2. The true chronological order of the target pair (order): use before or after
+
+Format as follows (assuming inferred rule is A and the first procedure preceded the second):
+
+<answer>rule=A, order=before</answer>
+
+Where order=before means {target_u} occurred before {target_v}, and order=after means {target_u} occurred after {target_v}.
 """
 
-    tags = ["answer", "query_between"]
-    reasoning_type = "演绎推理"
-    data_structure = "图"
-
-    # 难度配置：
-    # 1 (简单)        - N=4, 目标对相邻
-    # 2 (中等偏下)    - N=6, 目标对不相邻，距离为2
-    # 3 (中等偏上)    - N=7, 目标对相邻
-    # 4 (较难)        - N=8, 目标对不相邻，距离为3
-    # 5 (难)          - N=10, 目标对不相邻，距离为4
+    tags = ["answer", "query"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 4,
-                "elements": ["A", "B", "C", "D"],
-                "order": ["A", "B", "C", "D"],  # 真实顺序
-                "target_a": "B",
-                "target_b": "C",  # B和C相邻
+                "sequence": ["F", "A", "B", "C", "D", "E", "G", "L"],
+                "rule_type": "A",
+                "target_pair": ("A", "G"),
             },
             2: {
-                "n": 6,
-                "elements": ["A", "B", "C", "D", "E", "F"],
-                "order": ["A", "C", "E", "B", "D", "F"],
-                "target_a": "A",
-                "target_b": "B",  # A和B不相邻，中间有C和E
+                "sequence": ["F", "B", "D", "A", "E", "C", "G", "L"],
+                "rule_type": "B",
+                "target_pair": ("D", "C"),
             },
             3: {
-                "n": 7,
-                "elements": ["A", "B", "C", "D", "E", "F", "G"],
-                "order": ["D", "A", "F", "B", "G", "C", "E"],
-                "target_a": "F",
-                "target_b": "B",  # F和B相邻
+                "sequence": ["F", "C", "A", "E", "B", "G", "D", "L"],
+                "rule_type": "C",
+                "target_pair": ("A", "G"),
             },
             4: {
-                "n": 8,
-                "elements": ["A", "B", "C", "D", "E", "F", "G", "H"],
-                "order": ["C", "E", "A", "G", "B", "F", "D", "H"],
-                "target_a": "E",
-                "target_b": "B",  # E和B不相邻，中间有A、G
+                "sequence": ["F", "D", "B", "G", "A", "E", "C", "L"],
+                "rule_type": "C",
+                "target_pair": ("G", "A"),
             },
             5: {
-                "n": 10,
-                "elements": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
-                "order": ["B", "F", "D", "H", "A", "I", "C", "E", "G", "J"],
-                "target_a": "B",
-                "target_b": "A",  # B和A不相邻，中间有F、D、H
+                "sequence": ["F", "E", "G", "D", "C", "A", "B", "L"],
+                "rule_type": "C",
+                "target_pair": ("G", "D"),
             },
         },
         "en": {
             1: {
-                "n": 4,
-                "elements": ["A", "B", "C", "D"],
-                "order": ["A", "B", "C", "D"],
-                "target_a": "B",
-                "target_b": "C",
+                "sequence": ["F", "A", "B", "C", "D", "E", "G", "L"],
+                "rule_type": "A",
+                "target_pair": ("A", "G"),
             },
             2: {
-                "n": 6,
-                "elements": ["A", "B", "C", "D", "E", "F"],
-                "order": ["A", "C", "E", "B", "D", "F"],
-                "target_a": "A",
-                "target_b": "B",
+                "sequence": ["F", "B", "D", "A", "E", "C", "G", "L"],
+                "rule_type": "B",
+                "target_pair": ("D", "C"),
             },
             3: {
-                "n": 7,
-                "elements": ["A", "B", "C", "D", "E", "F", "G"],
-                "order": ["D", "A", "F", "B", "G", "C", "E"],
-                "target_a": "F",
-                "target_b": "B",
+                "sequence": ["F", "C", "A", "E", "B", "G", "D", "L"],
+                "rule_type": "C",
+                "target_pair": ("A", "G"),
             },
             4: {
-                "n": 8,
-                "elements": ["A", "B", "C", "D", "E", "F", "G", "H"],
-                "order": ["C", "E", "A", "G", "B", "F", "D", "H"],
-                "target_a": "E",
-                "target_b": "B",
+                "sequence": ["F", "D", "B", "G", "A", "E", "C", "L"],
+                "rule_type": "C",
+                "target_pair": ("G", "A"),
             },
             5: {
-                "n": 10,
-                "elements": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
-                "order": ["B", "F", "D", "H", "A", "I", "C", "E", "G", "J"],
-                "target_a": "B",
-                "target_b": "A",
+                "sequence": ["F", "E", "G", "D", "C", "A", "B", "L"],
+                "rule_type": "C",
+                "target_pair": ("G", "D"),
             },
         },
     }
@@ -481,9 +553,8 @@ Notes:
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏配置和顺序"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保是整数
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -492,157 +563,132 @@ Notes:
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 设置游戏基本信息
-        self._game_info["n"] = cfg["n"]
-        self._game_info["elements"] = "{" + ", ".join(cfg["elements"]) + "}"
-        self._game_info["target_a"] = cfg["target_a"]
-        self._game_info["target_b"] = cfg["target_b"]
+        self.sequence = cfg["sequence"]
+        self.pos_map = {elem: idx + 1 for idx, elem in enumerate(self.sequence)}
         
-        # 存储真实的线性顺序
-        self.order = cfg["order"]
-        self.elements = cfg["elements"]
-        self.target_a = cfg["target_a"]
-        self.target_b = cfg["target_b"]
+        self.rule_type = cfg["rule_type"]
         
-        # 构建位置索引字典：element -> position
-        self.position = {elem: idx for idx, elem in enumerate(self.order)}
+        self.target_pair = cfg["target_pair"]
         
-        # 计算真实答案：A和B是否相邻
-        pos_a = self.position[self.target_a]
-        pos_b = self.position[self.target_b]
-        self.ground_truth_adjacent = abs(pos_a - pos_b) == 1
+        self.query_history = set()
+        
+        self._game_info = {
+            "target_u": self.target_pair[0],
+            "target_v": self.target_pair[1]
+        }
+
+    def _apply_rule(self, x, y):
+        pos_x = self.pos_map[x]
+        pos_y = self.pos_map[y]
+        true_result = pos_x < pos_y
+        
+        if self.rule_type == "A":
+            return true_result
+        elif self.rule_type == "B":
+            return not true_result
+        elif self.rule_type == "C":
+            distance = abs(pos_x - pos_y)
+            if distance % 2 == 0:
+                return not true_result
+            else:
+                return true_result
+        else:
+            raise ValueError(f"Unknown rule type: {self.rule_type}")
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip().lower()
+        raw_ans = parsed_info["answer"]
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
         
-        # 解析答案格式：adjacent=yes 或 adjacent=no
-        if "=" not in raw_ans:
+        if "rule" not in ans_dict or "order" not in ans_dict:
             return False
-            
-        try:
-            key, value = raw_ans.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            
-            if key != "adjacent":
-                return False
-            
-            # 判断答案是否正确
-            if value == "yes":
-                model_answer = True
-            elif value == "no":
-                model_answer = False
-            else:
-                return False
-                
-            return model_answer == self.ground_truth_adjacent
-            
-        except:
+        
+        if ans_dict["rule"] != self.rule_type:
             return False
+        
+        u, v = self.target_pair
+        true_order = "before" if self.pos_map[u] < self.pos_map[v] else "after"
+        
+        return ans_dict["order"] == true_order
 
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑：处理介值查询并产生真实响应"""
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_format = "错误：查询格式无效。请使用格式 <query_between>Y,X,Z</query_between>"
-            error_elements = "错误：查询中的元素必须两两不同且都在集合中。"
+            error_format = "错误：查询格式无效，请使用 <query>X,Y</query> 格式。"
+            error_element = "错误：元素不在集合中，请使用 F, L, A, B, C, D, E, G 中的元素。"
+            error_same = "错误：不能查询相同的元素。"
         else:
             yes_res, no_res = "Yes", "No"
-            error_format = "Error: Invalid query format. Please use format <query_between>Y,X,Z</query_between>"
-            error_elements = "Error: Query elements must be distinct and all belong to set S."
+            error_format = "Error: Invalid query format. Please use <query>X,Y</query> format."
+            error_element = "Error: Element not in set. Please use elements from F, L, A, B, C, D, E, G."
+            error_same = "Error: Cannot query the same element."
 
-        if "query_between" not in parsed_info:
+        if "query" not in parsed_info:
             raise ValueError("No valid query tag found.")
         
         try:
-            # 解析查询：Y,X,Z
-            raw = parsed_info["query_between"].strip()
+            raw = parsed_info["query"]
             parts = [x.strip() for x in raw.split(",")]
             
-            if len(parts) != 3:
+            if len(parts) != 2:
                 return error_format
             
-            y, x, z = parts
+            x, y = parts
             
-            # 验证元素有效性
-            if y not in self.elements or x not in self.elements or z not in self.elements:
-                return error_elements
+            valid_elements = {"F", "L", "A", "B", "C", "D", "E", "G"}
+            if x not in valid_elements or y not in valid_elements:
+                return error_element
             
-            # 验证元素两两不同
-            if len(set([y, x, z])) != 3:
-                return error_elements
+            if x == y:
+                return error_same
             
-            # 判断 Y 是否在 X 和 Z 之间
-            pos_y = self.position[y]
-            pos_x = self.position[x]
-            pos_z = self.position[z]
+            query_key = tuple(sorted([x, y]))
+            self.query_history.add(query_key)
             
-            # Y 在 X 和 Z 之间意味着：
-            # (X < Y < Z) 或 (Z < Y < X)
-            is_between = (pos_x < pos_y < pos_z) or (pos_z < pos_y < pos_x)
-            
-            return yes_res if is_between else no_res
+            result = self._apply_rule(x, y)
+            return yes_res if result else no_res
             
         except Exception as e:
             return error_format
 
     def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        if correct.isdigit():
-            return str(int(correct) + 1)
+        try:
+            int_val = int(correct)
+            return str(int_val + 1)
+        except ValueError:
+            pass
         
-        if self.config.language == "zh":
-            if correct == "是":
-                return "否"
-            elif correct == "否":
-                return "是"
-        else:
-            if correct.lower() == "yes":
-                return "No"
-            elif correct.lower() == "no":
-                return "Yes"
+        if correct == "是": return "否"
+        if correct == "否": return "是"
+        if correct == "Yes": return "No"
+        if correct == "No": return "Yes"
         
         return correct + "_WRONG"
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 合法的 XML 标签字符串
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
+    def get_all_possible_queries(self):
+        valid_elements = ["F", "L", "A", "B", "C", "D", "E", "G"]
         
-        # 根据语言确定回答文本
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
         else:
             yes_res, no_res = "Yes", "No"
             
-        # 遍历所有可能的3元素排列 (Y, X, Z)
-        # 游戏规则要求元素必须两两不同且都在集合S中
-        for y, x, z in itertools.permutations(self.elements, 3):
-            # 构建查询字符串，包含 XML 标签
-            query_content = f"<query_between>{y},{x},{z}</query_between>"
-            
-            # 直接计算逻辑，避免修改状态
-            pos_y = self.position[y]
-            pos_x = self.position[x]
-            pos_z = self.position[z]
-            
-            # Y 在 X 和 Z 之间意味着：(X < Y < Z) 或 (Z < Y < X)
-            is_between = (pos_x < pos_y < pos_z) or (pos_z < pos_y < pos_x)
-            
-            answer = yes_res if is_between else no_res
-            
-            results.append({
-                "query": query_content,
-                "answer": answer
-            })
-            
-        return results
+        queries = []
+        
+        for x in valid_elements:
+            for y in valid_elements:
+                if x == y:
+                    continue
+                
+                result = self._apply_rule(x, y)
+                ans_str = yes_res if result else no_res
+                
+                queries.append({
+                    "query": f"<query>{x},{y}</query>",
+                    "answer": ans_str
+                })
+                
+        return queries

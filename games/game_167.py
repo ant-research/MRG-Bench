@@ -1,396 +1,519 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   根节点：整棵树的根节点是哪个
-# ============================================================
-
 import random
 from .base import Game
 
-
-class HiddenTreeRootGame(Game):
+class HiddenPermutationEndpointGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"隐藏树根"的推理游戏，规则如下：
+我们现在来玩一个"隐藏排列端点推理"游戏，规则如下：
 
-游戏设定了一棵包含 {n} 个节点的有根树（连通无环图），节点名称为：{node_names}。树的根节点已被秘密选定，但不会告诉你。树中存在从根节点向外指向子节点的有向关系，形成了祖先—后代关系。
+游戏设定了一个正整数 N（N 大于等于 3），存在一个隐藏序列 a[1..N]，它是集合 {{1,2,...,N}} 的一个排列（所有元素互异且恰好覆盖该集合）。本局游戏中 N = {n}。
 
-你的目标是通过询问推断出这棵树的根节点。你可以反复向我提出以下类型的问题：
+你的目标是从以下两个目标中选择其一，并确定对应端点的确切数值：
+- 目标A：确定 a[1] 的数值（序列首端）。
+- 目标B：确定 a[N] 的数值（序列末端）。
 
-- Reach 查询：询问节点 u 是否为节点 v 的祖先（包括 u 等于 v 的情况）。我会回答"是"或"否"。
+你可以反复向我提出以下两类二元比较询问，我会根据真实设定如实回答"是"或"否"：
 
-你需要在收集足够信息后提交最终答案。若答案错误或格式不符，游戏失败。
+1. 首端比较：询问"a[1] 是否大于 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
+2. 末端比较：询问"a[N] 是否大于 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
 
-## 询问与提交答案的格式（必须严格遵守）
+回答含义：
+- "是"表示左侧端点的值严格大于 a[k]。
+- "否"表示左侧端点的值严格小于 a[k]（因为序列中元素互异，不存在相等情况）。
 
-每次询问使用以下 XML 格式：
+当你收集到足够信息后，请提交你的最终答案。若答案错误或格式不符，游戏失败。
 
-- Reach 查询（例如询问节点 A 是否为节点 B 的祖先）：
-<query_reach>A,B</query_reach>
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，指定你认为的根节点名称，格式如下：
+- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
+<query_head>5</query_head>
 
-<answer>Root=A</answer>
+- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
+<query_tail>3</query_tail>
 
-注意：请尽可能少地进行查询，在确定答案后即可提交。
+提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
+
+<answer>target=A, value=3</answer>
+
+或
+
+<answer>target=B, value=7</answer>
+
+注意：请尽可能高效地推理出答案。
 """
 
     game_rule_en = """\
-Let's play a "Hidden Tree Root" deduction game. Here are the rules:
+Let's play a "Hidden Permutation Endpoint Deduction" game. Here are the rules:
 
-The game has set up a rooted tree (connected acyclic graph) containing {n} nodes with names: {node_names}. The root node has been secretly chosen but will not be revealed to you. The tree has directed relationships from the root outward to child nodes, forming ancestor-descendant relationships.
+The game is set with a positive integer N (N greater than or equal to 3). There exists a hidden sequence a[1..N], which is a permutation of the set {{1,2,...,N}} (all elements are distinct and exactly cover the set). In this game, N = {n}.
 
-Your goal is to deduce the root node of this tree through queries. You can repeatedly ask me the following type of question:
+Your goal is to choose one of the following two targets and determine the exact value of the corresponding endpoint:
+- Target A: Determine the value of a[1] (the head of the sequence).
+- Target B: Determine the value of a[N] (the tail of the sequence).
 
-- Reach Query: Ask whether node u is an ancestor of node v (including the case where u equals v). I will answer "Yes" or "No".
+You can repeatedly ask me the following two types of binary comparison queries, and I will answer truthfully with "Yes" or "No":
 
-You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the game fails.
+1. Head Comparison: Ask "Is a[1] greater than a[k]?", where k can be any integer from 2 to N.
+2. Tail Comparison: Ask "Is a[N] greater than a[k]?", where k can be any integer from 1 to N-1.
 
-## Query and Answer Format (must be strictly followed)
+Answer meanings:
+- "Yes" means the left endpoint value is strictly greater than a[k].
+- "No" means the left endpoint value is strictly less than a[k] (since elements are distinct, equality does not exist).
 
-Each query uses the following XML format:
+When you have collected enough information, submit your final answer. If the answer is incorrect or the format is invalid, the game fails.
 
-- Reach Query (e.g., asking if node A is an ancestor of node B):
-<query_reach>A,B</query_reach>
+Each query must contain only one tag. Use the following XML format:
 
-When submitting the final answer, specify the root node name you believe is correct, using this format:
+- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
+<query_head>5</query_head>
 
-<answer>Root=A</answer>
+- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
+<query_tail>3</query_tail>
 
-Note: Please use as few queries as possible and submit once you are confident of the answer.
+When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
+
+<answer>target=A, value=3</answer>
+
+or
+
+<answer>target=B, value=7</answer>
+
+Note: Please deduce the answer as efficiently as possible.
 """
 
     contextualized_rule_zh_1 = """\
-我们在进行一项"追踪总调度中心"的交通流向排查任务。
+欢迎使用智能交通路网评估系统。我们需要对一条包含 N 个关键拥堵节点的单行主干道进行评估。
+当前路段包含节点序列 a[1..N]，每个节点的"拥堵指数"构成了集合 {{1,2,...,N}} 的一个完整排列（所有节点指数互异）。本局路况评估中，N = {n}。
 
-当前交通网络包含 {n} 个路口节点，名称为：{node_names}。道路均为单向行驶，且呈现出从某一个隐藏的"总调度中心"向外发散的无环树状结构。
+你的目标是从以下两个目标中选择其一，并确定对应节点的确切拥堵指数：
+- 目标A：确定起点节点 a[1]（序列首端）的拥堵指数。
+- 目标B：确定终点节点 a[N]（序列末端）的拥堵指数。
 
-你的目标是通过查询上下游关系，找出这个"总调度中心"。你可以反复向我提出以下查询：
+你可以反复向系统提出以下两类二元比较询问，系统会根据路网监测数据如实反馈"是"或"否"：
 
-- Reach 查询：询问路口 u 是否为路口 v 的上游（即车辆能否从 u 顺向行驶到 v，包含 u 等于 v 的情况）。我会回答"是"或"否"。
+1. 首端比较：询问"起点 a[1] 的拥堵指数是否大于节点 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
+2. 末端比较：询问"终点 a[N] 的拥堵指数是否大于节点 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
 
-你需要通过收集信息来提交最终答案。若答案错误或格式不符，任务失败。
+回答含义：
+- "是"表示左侧指定节点的指数严格大于 a[k]。
+- "否"表示左侧指定节点的指数严格小于 a[k]（因各节点指数互异，不存在相等情况）。
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够信息后，请提交你的最终评估报告。若答案错误或格式不符，评估任务失败。
 
-每次询问使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- Reach 查询（例如询问路口 A 是否为路口 B 的上游）：
-<query_reach>A,B</query_reach>
+- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
+<query_head>5</query_head>
 
-提交最终答案时，指定你认为的总调度中心所在路口，格式如下：
+- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
 
-注意：请尽可能少地进行查询，在确定答案后即可提交。
+<answer>target=A, value=3</answer>
+
+或
+
+<answer>target=B, value=7</answer>
+
+注意：请尽可能高效地推理出目标指数。
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-We are conducting a "Trace the Central Dispatch Station" traffic flow investigation.
+[Traffic Scenario]
+Welcome to the Intelligent Traffic Network Evaluation System. We need to evaluate a one-way arterial road containing N key congestion nodes.
+The current road segment consists of a node sequence a[1..N], where the "congestion index" of each node forms a complete permutation of the set {{1,2,...,N}} (all nodes have distinct indices). In this evaluation, N = {n}.
 
-The current traffic network contains {n} intersection nodes, named: {node_names}. All roads are one-way and form a directed acyclic tree structure branching out from a hidden "Central Dispatch Station".
+Your goal is to choose one of the following two targets and determine the exact congestion index of the corresponding node:
+- Target A: Determine the congestion index of the starting node a[1] (the head of the sequence).
+- Target B: Determine the congestion index of the terminal node a[N] (the tail of the sequence).
 
-Your goal is to identify this "Central Dispatch Station" by querying upstream-downstream relationships. You can repeatedly ask me the following type of question:
+You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the monitoring data:
 
-- Reach Query: Ask whether intersection u is an upstream node of intersection v (i.e., whether a vehicle can travel downstream from u to v, including the case where u equals v). I will answer "Yes" or "No".
+1. Head Comparison: Ask "Is the congestion index of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
+2. Tail Comparison: Ask "Is the congestion index of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
 
-You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the task fails.
+Answer meanings:
+- "Yes" means the specified node's index on the left is strictly greater than a[k].
+- "No" means the specified node's index on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
 
-## Query and Answer Format (must be strictly followed)
+When you have collected enough information, submit your final evaluation report. If the answer is incorrect or the format is invalid, the evaluation fails.
 
-Each query uses the following XML format:
+Each query must contain only one tag. Use the following XML format:
 
-- Reach Query (e.g., asking if intersection A is upstream of intersection B):
-<query_reach>A,B</query_reach>
+- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
+<query_head>5</query_head>
 
-When submitting the final answer, specify the intersection you believe is the Central Dispatch Station, using this format:
+- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
 
-Note: Please use as few queries as possible and submit once you are confident of the answer.
+<answer>target=A, value=3</answer>
+
+or
+
+<answer>target=B, value=7</answer>
+
+Note: Please deduce the target index as efficiently as possible.
 """
 
     contextualized_rule_zh_2 = """\
-我们在进行一项"定位零号病人"的流行病学溯源任务。
+欢迎使用病毒基因序列分析系统。我们需要对一种新型病毒的基因序列进行解析，该序列包含 N 个独特的靶点片段。
+当前基因序列为 a[1..N]，每个片段的"突变威胁度"评级构成了集合 {{1,2,...,N}} 的一个完整排列（所有靶点评级互异）。本次分析中，N = {n}。
 
-已确认一个包含 {n} 名患者的传播链条，患者编号为：{node_names}。病毒由一名未知的"零号病人"开始，呈树状单向传播给了其他所有人。
+你的目标是从以下两个目标中选择其一，并确定对应靶点的确切突变威胁度评级：
+- 目标A：确定首端靶点 a[1] 的突变威胁度评级。
+- 目标B：确定末端靶点 a[N] 的突变威胁度评级。
 
-你的目标是通过询问传播关系推断出这位"零号病人"。你可以反复向我提出以下类型的问题：
+你可以反复向系统提出以下两类二元比较询问，系统会根据化验测序数据如实反馈"是"或"否"：
 
-- Reach 查询：询问患者 u 是否为患者 v 的直接或间接感染源（包括 u 等于 v 的情况）。我会回答"是"或"否"。
+1. 首端比较：询问"首端靶点 a[1] 的突变威胁度是否大于靶点 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
+2. 末端比较：询问"末端靶点 a[N] 的突变威胁度是否大于靶点 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
 
-你需要通过收集信息来提交最终答案。若答案错误或格式不符，排查失败。
+回答含义：
+- "是"表示左侧指定靶点的威胁度严格大于 a[k]。
+- "否"表示左侧指定靶点的威胁度严格小于 a[k]（因各靶点评级互异，不存在相等情况）。
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够信息后，请提交你的最终测序报告。若答案错误或格式不符，分析任务失败。
 
-每次询问使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- Reach 查询（例如询问患者 A 是否为患者 B 的感染源）：
-<query_reach>A,B</query_reach>
+- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
+<query_head>5</query_head>
 
-提交最终答案时，指定你认为的零号病人编号，格式如下：
+- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
 
-注意：请尽可能少地进行查询，在确定答案后即可提交。
+<answer>target=A, value=3</answer>
+
+或
+
+<answer>target=B, value=7</answer>
+
+注意：请尽可能高效地推理出目标评级。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-We are conducting an epidemiological tracing task to "Locate Patient Zero".
+Welcome to the Viral Genomic Sequence Analysis System. We need to analyze the genome sequence of a novel virus, which contains N unique target segments.
+The current genome sequence is a[1..N], where the "mutation threat level" rating of each segment forms a complete permutation of the set {{1,2,...,N}} (all targets have distinct ratings). In this analysis, N = {n}.
 
-A transmission chain involving {n} patients has been confirmed, with patient IDs: {node_names}. The virus spread in a one-way tree structure starting from an unknown "Patient Zero" to all others.
+Your goal is to choose one of the following two targets and determine the exact mutation threat level rating of the corresponding target:
+- Target A: Determine the mutation threat level rating of the initial target segment a[1] (the head of the sequence).
+- Target B: Determine the mutation threat level rating of the terminal target segment a[N] (the tail of the sequence).
 
-Your goal is to deduce "Patient Zero" by querying transmission relationships. You can repeatedly ask me the following type of question:
+You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the sequencing data:
 
-- Reach Query: Ask whether patient u is a direct or indirect infection source for patient v (including the case where u equals v). I will answer "Yes" or "No".
+1. Head Comparison: Ask "Is the mutation threat level of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
+2. Tail Comparison: Ask "Is the mutation threat level of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
 
-You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the tracing fails.
+Answer meanings:
+- "Yes" means the specified target's threat level on the left is strictly greater than a[k].
+- "No" means the specified target's threat level on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
 
-## Query and Answer Format (must be strictly followed)
+When you have collected enough information, submit your final sequencing report. If the answer is incorrect or the format is invalid, the analysis fails.
 
-Each query uses the following XML format:
+Each query must contain only one tag. Use the following XML format:
 
-- Reach Query (e.g., asking if patient A is an infection source for patient B):
-<query_reach>A,B</query_reach>
+- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
+<query_head>5</query_head>
 
-When submitting the final answer, specify the patient ID you believe is Patient Zero, using this format:
+- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
 
-Note: Please use as few queries as possible and submit once you are confident of the answer.
+<answer>target=A, value=3</answer>
+
+or
+
+<answer>target=B, value=7</answer>
+
+Note: Please deduce the target rating as efficiently as possible.
 """
 
     contextualized_rule_zh_3 = """\
-我们在进行一项"挖掘基石课程"的教学体系分析任务。
+欢迎来到自适应智能题库系统。系统为你准备了一场知识竞赛，包含一组 N 道连贯的闯关题目。
+当前题目序列为 a[1..N]，每道题目的"难度系数"构成了集合 {{1,2,...,N}} 的一个完整排列（所有题目难度系数互异）。本场竞赛中，N = {n}。
 
-某专业有 {n} 门必修课程，代号为：{node_names}。这些课程之间存在严格的先修依赖关系，形成了一棵从唯一的"基石课程"发散出来的依赖树。
+你的目标是从以下两个目标中选择其一，并确定对应关卡的确切难度系数：
+- 目标A：确定首道关卡 a[1]（序列首端）的难度系数。
+- 目标B：确定末道关卡 a[N]（序列末端）的难度系数。
 
-你的目标是通过询问先决条件来找出这门"基石课程"。你可以反复向我提出以下类型的问题：
+你可以反复向系统提出以下两类二元比较询问，系统会根据题库参数如实反馈"是"或"否"：
 
-- Reach 查询：询问课程 u 是否为课程 v 的直接或间接先修课（包括 u 等于 v 的情况）。我会回答"是"或"否"。
+1. 首端比较：询问"首道关卡 a[1] 的难度系数是否大于题目 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
+2. 末端比较：询问"末道关卡 a[N] 的难度系数是否大于题目 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
 
-你需要通过收集信息来提交最终答案。若答案错误或格式不符，分析失败。
+回答含义：
+- "是"表示左侧指定题目的难度系数严格大于 a[k]。
+- "否"表示左侧指定题目的难度系数严格小于 a[k]（因各题难度系数互异，不存在相等情况）。
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够信息后，请提交你的最终答卷。若答案错误或格式不符，闯关挑战失败。
 
-每次询问使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- Reach 查询（例如询问课程 A 是否为课程 B 的先修课）：
-<query_reach>A,B</query_reach>
+- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
+<query_head>5</query_head>
 
-提交最终答案时，指定你认为的基石课程代号，格式如下：
+- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
 
-注意：请尽可能少地进行查询，在确定答案后即可提交。
+<answer>target=A, value=3</answer>
+
+或
+
+<answer>target=B, value=7</answer>
+
+注意：请尽可能高效地推理出目标难度系数。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-We are conducting a curriculum analysis task to "Uncover the Foundational Course".
+Welcome to the Adaptive Intelligent Question Bank System. The system has prepared a knowledge competition for you, featuring a continuous set of N challenge questions.
+The current question sequence is a[1..N], where the "difficulty coefficient" of each question forms a complete permutation of the set {{1,2,...,N}} (all questions have distinct difficulty coefficients). In this competition, N = {n}.
 
-A major has {n} required courses, coded as: {node_names}. There are strict prerequisite dependencies among these courses, forming a dependency tree branching out from a single "Foundational Course".
+Your goal is to choose one of the following two targets and determine the exact difficulty coefficient of the corresponding challenge:
+- Target A: Determine the difficulty coefficient of the first challenge a[1] (the head of the sequence).
+- Target B: Determine the difficulty coefficient of the final challenge a[N] (the tail of the sequence).
 
-Your goal is to identify this "Foundational Course" by querying prerequisites. You can repeatedly ask me the following type of question:
+You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the question bank parameters:
 
-- Reach Query: Ask whether course u is a direct or indirect prerequisite for course v (including the case where u equals v). I will answer "Yes" or "No".
+1. Head Comparison: Ask "Is the difficulty coefficient of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
+2. Tail Comparison: Ask "Is the difficulty coefficient of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
 
-You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the analysis fails.
+Answer meanings:
+- "Yes" means the specified question's difficulty coefficient on the left is strictly greater than a[k].
+- "No" means the specified question's difficulty coefficient on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
 
-## Query and Answer Format (must be strictly followed)
+When you have collected enough information, submit your final answer sheet. If the answer is incorrect or the format is invalid, the challenge fails.
 
-Each query uses the following XML format:
+Each query must contain only one tag. Use the following XML format:
 
-- Reach Query (e.g., asking if course A is a prerequisite for course B):
-<query_reach>A,B</query_reach>
+- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
+<query_head>5</query_head>
 
-When submitting the final answer, specify the course code you believe is the Foundational Course, using this format:
+- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
 
-Note: Please use as few queries as possible and submit once you are confident of the answer.
+<answer>target=A, value=3</answer>
+
+or
+
+<answer>target=B, value=7</answer>
+
+Note: Please deduce the target difficulty coefficient as efficiently as possible.
 """
 
     contextualized_rule_zh_4 = """\
-我们在进行一项"排查主配料中心"的工业流水线审查任务。
+欢迎使用智能流水线能耗监测系统。我们需要评估一条精密制造流水线上 N 道连续生产工序的能耗情况。
+当前流水线由工序序列 a[1..N] 构成，每道工序的"核心能耗等级"构成了集合 {{1,2,...,N}} 的一个完整排列（所有工序能耗等级互异）。本次监测中，N = {n}。
 
-当前生产线包含 {n} 个加工工位，编号为：{node_names}。物料从一个隐藏的"主配料中心"流出，经过逐级分发和加工，形成了无环的树状流水线拓扑结构。
+你的目标是从以下两个目标中选择其一，并确定对应工序的确切核心能耗等级：
+- 目标A：确定初始工序 a[1]（序列首端）的核心能耗等级。
+- 目标B：确定末端工序 a[N]（序列末端）的核心能耗等级。
 
-你的目标是通过查询物料的流向推断出这个"主配料中心"。你可以反复向我提出以下类型的问题：
+你可以反复向系统提出以下两类二元比较询问，系统会根据仪表采集数据如实反馈"是"或"否"：
 
-- Reach 查询：询问工位 u 是否处于工位 v 的上游（即物料是否从 u 流向 v，包括 u 等于 v 的情况）。我会回答"是"或"否"。
+1. 首端比较：询问"初始工序 a[1] 的核心能耗等级是否大于工序 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
+2. 末端比较：询问"末端工序 a[N] 的核心能耗等级是否大于工序 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
 
-你需要通过收集信息来提交最终答案。若答案错误或格式不符，审查失败。
+回答含义：
+- "是"表示左侧指定工序的能耗等级严格大于 a[k]。
+- "否"表示左侧指定工序的能耗等级严格小于 a[k]（因各工序能耗等级互异，不存在相等情况）。
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够信息后，请提交你的最终排查报告。若答案错误或格式不符，能耗诊断失败。
 
-每次询问使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- Reach 查询（例如询问工位 A 是否为工位 B 的上游）：
-<query_reach>A,B</query_reach>
+- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
+<query_head>5</query_head>
 
-提交最终答案时，指定你认为的主配料中心所在工位，格式如下：
+- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
 
-注意：请尽可能少地进行查询，在确定答案后即可提交。
+<answer>target=A, value=3</answer>
+
+或
+
+<answer>target=B, value=7</answer>
+
+注意：请尽可能高效地推理出目标能耗等级。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-We are conducting an industrial pipeline audit to "Trace the Primary Distribution Point".
+[Manufacturing/Industry Scenario]
+Welcome to the Intelligent Assembly Line Energy Monitoring System. We need to evaluate the energy consumption of N continuous production processes on a precision manufacturing assembly line.
+The current line consists of a process sequence a[1..N], where the "core energy consumption level" of each process forms a complete permutation of the set {{1,2,...,N}} (all processes have distinct energy levels). In this monitoring session, N = {n}.
 
-The current production line contains {n} processing workstations, numbered: {node_names}. Materials flow from a hidden "Primary Distribution Point", being distributed and processed step-by-step to form an acyclic tree topology.
+Your goal is to choose one of the following two targets and determine the exact core energy consumption level of the corresponding process:
+- Target A: Determine the core energy consumption level of the initial process a[1] (the head of the sequence).
+- Target B: Determine the core energy consumption level of the final process a[N] (the tail of the sequence).
 
-Your goal is to deduce this "Primary Distribution Point" by querying the material flow. You can repeatedly ask me the following type of question:
+You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the instrument data:
 
-- Reach Query: Ask whether workstation u is upstream of workstation v (i.e., whether materials flow from u to v, including the case where u equals v). I will answer "Yes" or "No".
+1. Head Comparison: Ask "Is the core energy consumption level of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
+2. Tail Comparison: Ask "Is the core energy consumption level of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
 
-You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the audit fails.
+Answer meanings:
+- "Yes" means the specified process's energy level on the left is strictly greater than a[k].
+- "No" means the specified process's energy level on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
 
-## Query and Answer Format (must be strictly followed)
+When you have collected enough information, submit your final diagnostic report. If the answer is incorrect or the format is invalid, the energy diagnosis fails.
 
-Each query uses the following XML format:
+Each query must contain only one tag. Use the following XML format:
 
-- Reach Query (e.g., asking if workstation A is upstream of workstation B):
-<query_reach>A,B</query_reach>
+- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
+<query_head>5</query_head>
 
-When submitting the final answer, specify the workstation you believe is the Primary Distribution Point, using this format:
+- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
 
-Note: Please use as few queries as possible and submit once you are confident of the answer.
+<answer>target=A, value=3</answer>
+
+or
+
+<answer>target=B, value=7</answer>
+
+Note: Please deduce the target energy level as efficiently as possible.
 """
 
     contextualized_rule_zh_5 = """\
-我们在进行一项"追踪主源头账户"的反洗钱资金流向调查任务。
+欢迎使用司法证据链分析系统。在一个复杂案件的证据链条中，存在 N 份按时间先后顺序排列的关键证据。
+当前的证据序列为 a[1..N]，每份证据的"法庭证明力等级"构成了集合 {{1,2,...,N}} 的一个完整排列（所有证据的证明力等级互异）。本案侦查中，N = {n}。
 
-监控网络捕获了 {n} 个涉案银行账户，账号为：{node_names}。黑钱从一个神秘的"主源头账户"汇出，经过层层转账，形成了树状的资金流向网络。
+你的目标是从以下两个目标中选择其一，并确定对应证据的确切证明力等级：
+- 目标A：查明初始证据 a[1]（序列首端）的法庭证明力等级。
+- 目标B：查明最终证据 a[N]（序列末端）的法庭证明力等级。
 
-你的目标是通过查询资金流向来揪出这个"主源头账户"。你可以反复向我提出以下类型的问题：
+你可以反复向系统提出以下两类二元比较询问，系统会根据卷宗核查数据如实反馈"是"或"否"：
 
-- Reach 查询：询问账户 u 的资金是否直接或间接流入了账户 v（包括 u 等于 v 的情况）。我会回答"是"或"否"。
+1. 首端比较：询问"初始证据 a[1] 的证明力等级是否大于证据 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
+2. 末端比较：询问"最终证据 a[N] 的证明力等级是否大于证据 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
 
-你需要通过收集信息来提交最终答案。若答案错误或格式不符，调查失败。
+回答含义：
+- "是"表示左侧指定证据的证明力严格大于 a[k]。
+- "否"表示左侧指定证据的证明力严格小于 a[k]（因各证据证明力互异，不存在相等情况）。
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够信息后，请提交你的最终结案判定。若答案错误或格式不符，逻辑推演失败。
 
-每次询问使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- Reach 查询（例如询问账户 A 的资金是否流入账户 B）：
-<query_reach>A,B</query_reach>
+- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
+<query_head>5</query_head>
 
-提交最终答案时，指定你认为的主源头账户，格式如下：
+- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
 
-注意：请尽可能少地进行查询，在确定答案后即可提交。
+<answer>target=A, value=3</answer>
+
+或
+
+<answer>target=B, value=7</answer>
+
+注意：请尽可能高效地推理出目标证明力等级。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-We are conducting an anti-money laundering funds flow investigation to "Trace the Primary Offshore Account".
+[Legal Scenario]
+Welcome to the Judicial Evidence Chain Analysis System. In the evidence chain of a complex case, there are N key pieces of evidence arranged in chronological order.
+The current evidence sequence is a[1..N], where the "court probative value level" of each piece of evidence forms a complete permutation of the set {{1,2,...,N}} (all evidence pieces have distinct probative value levels). In this investigation, N = {n}.
 
-The monitoring network has captured {n} involved bank accounts, named: {node_names}. Illicit funds were transferred from a mysterious "Primary Offshore Account" and went through multiple layers of transfers, forming a tree-like network of funds flow.
+Your goal is to choose one of the following two targets and determine the exact probative value level of the corresponding evidence:
+- Target A: Determine the court probative value level of the initial evidence a[1] (the head of the sequence).
+- Target B: Determine the court probative value level of the final evidence a[N] (the tail of the sequence).
 
-Your goal is to expose this "Primary Offshore Account" by querying the funds flow. You can repeatedly ask me the following type of question:
+You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the case files:
 
-- Reach Query: Ask whether funds from account u flowed directly or indirectly into account v (including the case where u equals v). I will answer "Yes" or "No".
+1. Head Comparison: Ask "Is the probative value level of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
+2. Tail Comparison: Ask "Is the probative value level of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
 
-You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the investigation fails.
+Answer meanings:
+- "Yes" means the specified evidence's probative value on the left is strictly greater than a[k].
+- "No" means the specified evidence's probative value on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
 
-## Query and Answer Format (must be strictly followed)
+When you have collected enough information, submit your final judgment. If the answer is incorrect or the format is invalid, the logical deduction fails.
 
-Each query uses the following XML format:
+Each query must contain only one tag. Use the following XML format:
 
-- Reach Query (e.g., asking if funds from account A flowed into account B):
-<query_reach>A,B</query_reach>
+- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
+<query_head>5</query_head>
 
-When submitting the final answer, specify the account you believe is the Primary Offshore Account, using this format:
+- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
+<query_tail>3</query_tail>
 
-<answer>Root=A</answer>
+When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
 
-Note: Please use as few queries as possible and submit once you are confident of the answer.
+<answer>target=A, value=3</answer>
+
+or
+
+<answer>target=B, value=7</answer>
+
+Note: Please deduce the target probative value level as efficiently as possible.
 """
 
-    tags = ["answer", "query_reach"]
+    tags = ["answer", "query_head", "query_tail"]
     
-    reasoning_type = "归纳推理"
-    data_structure = "树"
-
-    # 难度配置说明：
-    # 1 (简单)        - N=4, 线性链式结构
-    # 2 (中等偏下)    - N=5, 简单分叉
-    # 3 (中等偏上)    - N=6, 多层分叉
-    # 4 (较难)        - N=7, 复杂分叉
-    # 5 (难)          - N=8, 高度复杂结构
+    reasoning_type = "演绎推理"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 4,
-                "nodes": ["A", "B", "C", "D"],
-                "edges": [("A", "B"), ("B", "C"), ("C", "D")],  # A->B->C->D 链式
-                "root": "A"
+                "n": 5,
+                "permutation": [3, 1, 5, 2, 4],
             },
             2: {
-                "n": 5,
-                "nodes": ["A", "B", "C", "D", "E"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E")],  # A为根，两层
-                "root": "A"
+                "n": 7,
+                "permutation": [2, 7, 1, 5, 4, 3, 6],
             },
             3: {
-                "n": 6,
-                "nodes": ["A", "B", "C", "D", "E", "F"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F")],
-                "root": "A"
+                "n": 10,
+                "permutation": [8, 3, 10, 1, 6, 4, 9, 2, 7, 5],
             },
             4: {
-                "n": 7,
-                "nodes": ["A", "B", "C", "D", "E", "F", "G"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("C", "G")],
-                "root": "A"
+                "n": 15,
+                "permutation": [12, 5, 14, 2, 9, 11, 3, 15, 6, 1, 13, 7, 10, 4, 8],
             },
             5: {
-                "n": 8,
-                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("F", "G"), ("F", "H")],
-                "root": "A"
+                "n": 20,
+                "permutation": [15, 8, 19, 3, 12, 7, 16, 1, 10, 14, 5, 18, 9, 2, 11, 20, 6, 13, 4, 17],
             },
         },
         "en": {
             1: {
-                "n": 4,
-                "nodes": ["A", "B", "C", "D"],
-                "edges": [("A", "B"), ("B", "C"), ("C", "D")],
-                "root": "A"
+                "n": 5,
+                "permutation": [3, 1, 5, 2, 4],
             },
             2: {
-                "n": 5,
-                "nodes": ["A", "B", "C", "D", "E"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E")],
-                "root": "A"
+                "n": 7,
+                "permutation": [2, 7, 1, 5, 4, 3, 6],
             },
             3: {
-                "n": 6,
-                "nodes": ["A", "B", "C", "D", "E", "F"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F")],
-                "root": "A"
+                "n": 10,
+                "permutation": [8, 3, 10, 1, 6, 4, 9, 2, 7, 5],
             },
             4: {
-                "n": 7,
-                "nodes": ["A", "B", "C", "D", "E", "F", "G"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("C", "G")],
-                "root": "A"
+                "n": 15,
+                "permutation": [12, 5, 14, 2, 9, 11, 3, 15, 6, 1, 13, 7, 10, 4, 8],
             },
             5: {
-                "n": 8,
-                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("F", "G"), ("F", "H")],
-                "root": "A"
+                "n": 20,
+                "permutation": [15, 8, 19, 3, 12, 7, 16, 1, 10, 14, 5, 18, 9, 2, 11, 20, 6, 13, 4, 17],
             },
         },
     }
@@ -400,11 +523,7 @@ Note: Please use as few queries as possible and submit once you are confident of
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = self.config.difficulty
-
-        # 防御性类型转换：确保 difficulty 为整数
-        if isinstance(diff, str):
-            diff = int(diff)
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -412,171 +531,140 @@ Note: Please use as few queries as possible and submit once you are confident of
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 使用确定性种子进行随机置换，确保同一配置下每次构建结果一致
-        # 用 (语言, 难度) 作为种子，保证可复现
-        rng = random.Random(hash((lang, diff, "HiddenTreeRootGame")))
-        
-        original_nodes = cfg["nodes"][:]
-        shuffled_nodes = original_nodes[:]
-        rng.shuffle(shuffled_nodes)
-        
-        # 建立原始名称到新名称的映射
-        name_map = {orig: new for orig, new in zip(original_nodes, shuffled_nodes)}
-        
         self._game_info["n"] = cfg["n"]
-        self.nodes = shuffled_nodes
-        self._game_info["node_names"] = ", ".join(self.nodes)
-        # 边也需要映射
-        self.edges = [(name_map[p], name_map[c]) for p, c in cfg["edges"]]
-        self.root = name_map[cfg["root"]]
         
-        # 构建后代关系表
-        self.descendants_map = {node: {node} for node in self.nodes}
-        self.parent_map = {}
+        self.permutation = cfg["permutation"]
+        self.n = cfg["n"]
         
-        # 根据边构建父子关系
-        for parent, child in self.edges:
-            self.parent_map[child] = parent
+        if len(self.permutation) != self.n:
+            raise ValueError(f"Permutation length {len(self.permutation)} does not match N={self.n}")
+        if set(self.permutation) != set(range(1, self.n + 1)):
+            raise ValueError(f"Permutation is not a valid permutation of {{1..{self.n}}}")
         
-        # 使用递归计算每个节点的所有后代
-        def get_all_descendants(node):
-            """递归获取节点的所有后代（包括自己）"""
-            descendants = {node}
-            for parent, child in self.edges:
-                if parent == node:
-                    descendants.update(get_all_descendants(child))
-            return descendants
-        
-        for node in self.nodes:
-            self.descendants_map[node] = get_all_descendants(node)
-        
-        # 查询计数器
-        self.query_count = 0
-
-    def _is_ancestor(self, u, v):
-        """判断 u 是否为 v 的祖先（包括 u == v）"""
-        # u 是 v 的祖先，当且仅当 v 在 u 的后代集合中
-        return v in self.descendants_map.get(u, set())
+        self.query_history = []
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        # 解析答案格式: Root=X
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"]
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            parts = kv.split("=", 1)
+            if len(parts) == 2:
+                k, v = parts
+                ans_dict[k.strip()] = v.strip()
         
-        # 尝试解析 Root=X 格式
-        if "=" not in raw_ans:
+        if "target" not in ans_dict or "value" not in ans_dict:
             return False
         
+        target = ans_dict["target"].upper()
+        
         try:
-            parts = raw_ans.split("=", 1)
-            if len(parts) != 2:
-                return False
-            
-            key, value = parts[0].strip(), parts[1].strip()
-            if key.lower() != "root":
-                return False
-            
-            submitted_root = value.strip()
-            
-            # 检查提交的根节点是否在节点列表中
-            if submitted_root not in self.nodes:
-                return False
-            
-            # 检查是否与真实根节点匹配
-            return submitted_root == self.root
-            
-        except Exception:
+            value = int(ans_dict["value"])
+        except:
+            return False
+        
+        if target == "A":
+            return value == self.permutation[0]
+        elif target == "B":
+            return value == self.permutation[-1]
+        else:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑处理"""
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_format = "错误：查询格式无效。请使用格式 <query_reach>u,v</query_reach>"
-            error_node = "错误：节点名称无效。有效节点为：{}"
+            error_format = "错误：格式无效或索引超出范围。"
+            error_invalid = "错误：无效的查询标签。"
+            error_multiple = "错误：每次只能提出一个查询。"
         else:
             yes_res, no_res = "Yes", "No"
-            error_format = "Error: Invalid query format. Please use format <query_reach>u,v</query_reach>"
-            error_node = "Error: Invalid node name. Valid nodes are: {}"
+            error_format = "Error: Invalid format or index out of range."
+            error_invalid = "Error: Invalid query tag."
+            error_multiple = "Error: Only one query is allowed per turn."
 
-        if "query_reach" in parsed_info:
+        has_head = "query_head" in parsed_info
+        has_tail = "query_tail" in parsed_info
+
+        if has_head and has_tail:
+            return error_multiple
+
+        if has_head:
             try:
-                raw = parsed_info["query_reach"].strip()
-                if not raw:
+                k_str = parsed_info["query_head"].strip()
+                k = int(k_str)
+                if k < 2 or k > self.n:
                     return error_format
                 
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_format
+                a_1 = self.permutation[0]
+                a_k = self.permutation[k - 1]
                 
-                u, v = parts[0], parts[1]
-                
-                # 检查节点是否有效
-                if u not in self.nodes or v not in self.nodes:
-                    return error_node.format(", ".join(self.nodes))
-                
-                # 增加查询计数
-                self.query_count += 1
-                
-                # 判断 u 是否为 v 的祖先
-                result = self._is_ancestor(u, v)
-                return yes_res if result else no_res
-                
-            except Exception:
+                self.query_history.append(("head", k, a_1 > a_k))
+                return yes_res if a_1 > a_k else no_res
+            except:
                 return error_format
-        else:
-            raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成错误答案"""
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
+        elif has_tail:
+            try:
+                k_str = parsed_info["query_tail"].strip()
+                k = int(k_str)
+                if k < 1 or k > self.n - 1:
+                    return error_format
+                
+                a_n = self.permutation[-1]
+                a_k = self.permutation[k - 1]
+                
+                self.query_history.append(("tail", k, a_n > a_k))
+                return yes_res if a_n > a_k else no_res
+            except:
+                return error_format
+
+        else:
+            return error_invalid
+
+    def _cf_make_wrong(self, correct):
         if correct == "是":
             return "否"
-        if correct == "否":
+        elif correct == "否":
             return "是"
-        if correct == "Yes":
+        elif correct.lower() == "yes":
             return "No"
-        if correct == "No":
+        elif correct.lower() == "no":
             return "Yes"
         
+        try:
+            val = int(correct)
+            return str(val + 1)
+        except ValueError:
+            pass
+
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 合法的 XML 标签字符串
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
         results = []
         
-        # 根据语言配置确定回答
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
         else:
             yes_res, no_res = "Yes", "No"
             
-        # 枚举所有可能的节点对 (u, v)
-        for u in self.nodes:
-            for v in self.nodes:
-                # 构造查询内容，包裹为合法 XML 标签
-                query_str = f"<query_reach>{u},{v}</query_reach>"
-                
-                # 直接调用内部逻辑判断是否为祖先
-                # 不调用 produce_response 以避免增加 query_count 或触发反事实逻辑
-                is_anc = self._is_ancestor(u, v)
-                answer = yes_res if is_anc else no_res
-                
-                results.append({
-                    "query": query_str,
-                    "answer": answer
-                })
-                
+        a_1 = self.permutation[0]
+        for k in range(2, self.n + 1):
+            a_k = self.permutation[k - 1]
+            ans = yes_res if a_1 > a_k else no_res
+            
+            results.append({
+                "query": f"<query_head>{k}</query_head>",
+                "answer": ans
+            })
+            
+        a_n = self.permutation[-1]
+        for k in range(1, self.n):
+            a_k = self.permutation[k - 1]
+            ans = yes_res if a_n > a_k else no_res
+            
+            results.append({
+                "query": f"<query_tail>{k}</query_tail>",
+                "answer": ans
+            })
+            
         return results

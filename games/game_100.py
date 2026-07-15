@@ -1,1015 +1,1024 @@
-import random
 from .base import Game
+import re
+import itertools
 
-class DirectedGraphReachabilityGame(Game):
+class GraphPathEnumerationGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"有向图可达性推理"游戏，规则如下：
+我们现在来玩一个"图推断与路径枚举"的推理游戏，规则如下：
 
-游戏设定了一个固定但未知的有向简单图 G = (V, E)，其中：
-- V 是顶点集合，包含编号 1 到 {n} 的顶点，已知。
-- E 是有向边集合，初始时完全未知。该图无自环、无重边。
+游戏设定了一个顶点集合 V = {{A1, A2, A3, B1, B2, B3}}，起点 s = A1，终点 t = B3。
+存在一个未知但固定的无向简单图 E*，所有我的回答均基于同一个 E*。
 
-我已选定两个目标顶点：起点 S = {s}，终点 T = {t}。
+你的目标是：推断出从 A1 到 B3 的全部不同简单路径（路径中不重复经过任何顶点），并提交完整清单。
 
-你的目标是：判定 S 与 T 是否互相可达（即 S 能到达 T 且 T 能到达 S），并提供可验证的证据。
+你可以向我提出以下两类查询：
 
-你可以通过以下两类查询来探索图的结构（每次只能进行一个查询）：
+1. 边探测查询：询问两个顶点之间是否存在边。
+   - 格式：<query_edge>X-Y</query_edge>
+   - 示例：<query_edge>A1-A2</query_edge>
+   - 回答："有" 或 "无"
+   - 配额限制：最多 {edge_quota} 次
 
-1. 出邻接查询：询问顶点 X 的所有直接出邻接点。我会返回 X 指向的所有顶点编号的完整列表。
-2. 边存在性查询：询问是否存在从顶点 X 到顶点 Y 的有向边。我会回答"是"或"否"。
-
-当你收集到足够信息后，请提交最终答案。答案必须包含：
-- 结论：互相可达 或 不可达
-- 证据：
-  - 若结论为"互相可达"：提供从 S 到 T 的路径和从 T 到 S 的路径（用顶点编号序列表示，如 1->3->5）。
-  - 若结论为"不可达"：提供一个闭包集合 R，说明为何至少一个方向不可达。具体要求：
-    - R 必须包含起始点但不包含目标点
-    - R 中每个顶点的所有出邻接点都已被查询过，且都在 R 中
-    - 这证明起始点无法离开 R 到达目标点
-
-## 查询与提交格式
-
-每次只能包含一个查询标签。请使用以下 XML 格式：
-
-- 出邻接查询（例如查询顶点 3）：
-<query_out>3</query_out>
-
-- 边存在性查询（例如查询从 2 到 5 的边）：
-<query_edge>2,5</query_edge>
-
-提交最终答案时，格式如下：
-
-- 若互相可达（需提供两条路径）：
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- 若不可达（需提供闭包集合）：
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. 路径检验查询：检验一条从 A1 到 B3 的路径是否合法。
+   - 格式：<query_path>X1-X2-...-Xk</query_path>
+   - 要求：X1 必须是 A1，Xk 必须是 B3，且路径中所有顶点两两不同
+   - 示例：<query_path>A1-A2-B2-B3</query_path>
+   - 回答：
+     * 若合法："成立：这是从A1到B3的简单通路。"
+     * 若不合法："不成立：在第t步（Xt到Xt+1）处非法（原因：无此边 或 重复顶点）"
+   - 配额限制：最多 {path_quota} 次
 
 注意：
-- 路径中的每条边必须已被查询确认。
-- 闭包中的每个顶点的出邻接必须已被完整查询。
-- 答案格式错误或证据不足将导致游戏失败。
+- 每次只能提出一个查询
+- 非法格式或不属于上述两类的查询将被记为"无效提问"，累计 3 次无效提问将导致游戏失败
+- 无效提问不占用上述配额
+
+当你认为已经找到所有路径时，请提交最终答案。格式如下：
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+每条路径必须：
+- 以 A1 开始，以 B3 结束
+- 顶点两两不同（简单路径）
+- 路径中相邻顶点之间存在边
+
+提交后我会评判：
+- 若所有路径都合法且完备（找到了全部路径）：游戏成功
+- 若所有路径都合法但不完备（还有遗漏）：会告知缺少的路径数量
+- 若存在不合法或重复的路径：会逐条指出问题
+
+游戏失败条件：
+- 配额耗尽后未提交完备清单
+- 最终清单含不合法路径
+- 无效提问累计达到 3 次
+
+请开始你的推理和查询。
 """
 
     game_rule_en = """\
-Let's play a "Directed Graph Reachability Inference" game. Here are the rules:
+Let's play a "Graph Inference and Path Enumeration" deduction game. Here are the rules:
 
-The game is set on a fixed but unknown directed simple graph G = (V, E), where:
-- V is the vertex set containing vertices numbered 1 to {n}, which is known.
-- E is the directed edge set, initially completely unknown. The graph has no self-loops and no multi-edges.
+The game has a vertex set V = {{A1, A2, A3, B1, B2, B3}}, with start point s = A1 and end point t = B3.
+There exists an unknown but fixed undirected simple graph E*. All my responses are based on the same E*.
 
-I have selected two target vertices: source S = {s}, and target T = {t}.
+Your goal is: to infer all distinct simple paths (paths without repeating any vertex) from A1 to B3, and submit a complete list.
 
-Your goal is: determine whether S and T are mutually reachable (i.e., S can reach T and T can reach S), and provide verifiable evidence.
+You can ask me the following two types of queries:
 
-You can explore the graph structure through the following two types of queries (one query per turn):
+1. Edge Probe Query: Ask whether an edge exists between two vertices.
+   - Format: <query_edge>X-Y</query_edge>
+   - Example: <query_edge>A1-A2</query_edge>
+   - Response: "Yes" or "No"
+   - Quota limit: at most {edge_quota} times
 
-1. Out-neighbor Query: Ask for all direct out-neighbors of vertex X. I will return a complete list of all vertex IDs that X points to.
-2. Edge Existence Query: Ask whether there is a directed edge from vertex X to vertex Y. I will answer "Yes" or "No".
-
-When you have collected enough information, submit your final answer. The answer must include:
-- Conclusion: reachable or unreachable
-- Evidence:
-  - If conclusion is "reachable": Provide a path from S to T and a path from T to S (represented as vertex sequences, e.g., 1->3->5).
-  - If conclusion is "unreachable": Provide a closure set R explaining why at least one direction is unreachable. Specific requirements:
-    - R must contain the starting point but not the target point
-    - All out-neighbors of every vertex in R must have been queried and all are in R
-    - This proves the starting point cannot leave R to reach the target
-
-## Query and Answer Format
-
-Each turn must contain only one query tag. Use the following XML format:
-
-- Out-neighbor Query (e.g., querying vertex 3):
-<query_out>3</query_out>
-
-- Edge Existence Query (e.g., querying edge from 2 to 5):
-<query_edge>2,5</query_edge>
-
-When submitting the final answer, use the following format:
-
-- If mutually reachable (provide two paths):
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- If unreachable (provide closure set):
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. Path Verification Query: Verify whether a path from A1 to B3 is valid.
+   - Format: <query_path>X1-X2-...-Xk</query_path>
+   - Requirements: X1 must be A1, Xk must be B3, and all vertices in the path must be distinct
+   - Example: <query_path>A1-A2-B2-B3</query_path>
+   - Response:
+     * If valid: "Valid: This is a simple path from A1 to B3."
+     * If invalid: "Invalid: Violation at step t (Xt to Xt+1) (reason: no such edge or repeated vertex)"
+   - Quota limit: at most {path_quota} times
 
 Note:
-- Every edge in the paths must have been confirmed by prior queries.
-- The out-neighbors of every vertex in the closure must have been fully queried.
-- Invalid answer format or insufficient evidence will result in game failure.
+- Only one query per turn
+- Queries with illegal format or not belonging to the above two types will be marked as "invalid query", and 3 cumulative invalid queries will result in game failure
+- Invalid queries do not consume the above quotas
+
+When you believe you have found all paths, please submit your final answer in this format:
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+Each path must:
+- Start with A1 and end with B3
+- Have all distinct vertices (simple path)
+- Have edges between adjacent vertices in the path
+
+After submission, I will judge:
+- If all paths are valid and complete (found all paths): game success
+- If all paths are valid but incomplete (some missing): will inform the number of missing paths
+- If there are invalid or duplicate paths: will point out the problems for each
+
+Game failure conditions:
+- Failed to submit a complete list after quotas exhausted
+- Final list contains invalid paths
+- Cumulative invalid queries reach 3
+
+Please start your reasoning and queries.
 """
 
-    # --- 场景 1：交通 ---
     contextualized_rule_zh_1 = """\
-我们正在进行"城市单向路网连通性分析"。规则如下：
+我们现在来进行一项“智慧物流路网探明”的推演任务，规则如下：
 
-系统设定了一个固定但未知的城市路网 G = (V, E)，其中：
-- V 是路口集合，包含编号 1 到 {n} 的路口，已知。
-- E 是单向道路集合，初始时完全未知。无自环、无重边。
+系统设定了一个物流枢纽节点集合 V = {{A1, A2, A3, B1, B2, B3}}，起始仓 s = A1，目的仓 t = B3。
+在这些节点间存在一个未知但固定的双向物理通路网络 E*，所有我的反馈均基于同一个 E* 给出。
 
-我已选定两个关键路口：救援站 S = {s}，事故点 T = {t}。
+你的目标是：推断出从 A1 到 B3 的全部不同简单运输路线（路线中不重复经过任何枢纽节点），并提交完整清单。
 
-你的目标是：判定 S 与 T 是否互相可达（即救援车能从 S 抵达 T，且任务完成后能从 T 返回 S），并提供可验证的路线证据。
+你可以向我提出以下两类指令：
 
-你可以通过以下两类勘测来探索路网（每次只能进行一个查询）：
+1. 航线探测查询：询问两个物流节点之间是否存在直接通路。
+   - 格式：<query_edge>X-Y</query_edge>
+   - 示例：<query_edge>A1-A2</query_edge>
+   - 回答："有" 或 "无"
+   - 配额限制：最多 {edge_quota} 次
 
-1. 出邻接查询：询问路口 X 的所有直接下游路口。我会返回 X 直通的所有路口编号的完整列表。
-2. 边存在性查询：询问是否存在从路口 X 直达路口 Y 的单向道路。我会回答"是"或"否"。
-
-当你收集到足够信息后，请提交最终答案。答案必须包含：
-- 结论：互相可达 或 不可达
-- 证据：
-  - 若结论为"互相可达"：提供从 S 到 T 的路线和从 T 到 S 的路线（用路口编号序列表示，如 1->3->5）。
-  - 若结论为"不可达"：提供一个闭包集合 R，说明为何至少一个方向不可达。具体要求：
-    - R 必须包含起始点但不包含目标点
-    - R 中每个路口的所有下游路口都已被勘测过，且都在 R 中
-    - 这证明车辆无法离开 R 到达目标区域
-
-## 查询与提交格式
-
-每次只能包含一个查询标签。请使用以下 XML 格式：
-
-- 出邻接查询（例如勘测路口 3）：
-<query_out>3</query_out>
-
-- 边存在性查询（例如勘测从 2 到 5 的道路）：
-<query_edge>2,5</query_edge>
-
-提交最终答案时，格式如下：
-
-- 若互相可达（需提供两条路线）：
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- 若不可达（需提供闭包集合）：
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. 路线合规检验：检验一条从 A1 到 B3 的完整运输路线是否合法可行。
+   - 格式：<query_path>X1-X2-...-Xk</query_path>
+   - 要求：X1 必须是 A1，Xk 必须是 B3，且路线中所有枢纽节点两两不同
+   - 示例：<query_path>A1-A2-B2-B3</query_path>
+   - 回答：
+     * 若合法："成立：这是从A1到B3的简单通路。"
+     * 若不合法："不成立：在第t步（Xt到Xt+1）处非法（原因：无此边 或 重复顶点）"
+   - 配额限制：最多 {path_quota} 次
 
 注意：
-- 路线中的每条道路必须已被勘测确认。
-- 闭包中的每个路口的下游路口必须已被完整勘测。
-- 答案格式错误或证据不足将导致评估失败。
+- 每次交互只能提出一个查询
+- 非法格式或不属于上述两类的查询将被记为"无效提问"，累计 3 次无效提问将导致系统锁定（任务失败）
+- 无效提问不占用上述可用配额
+
+当你认为已经掌握所有合法运输路线时，请提交最终路书。格式如下：
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+每条运输路线必须：
+- 以 A1 开始，以 B3 结束
+- 枢纽节点两两不同（避免循环折返的简单路径）
+- 路线中相邻节点之间必须存在真实通路
+
+提交后我将进行评判：
+- 若所有路线都合法且完备（找齐了全部路线）：任务成功
+- 若所有路线都合法但不完备（存在遗漏）：会告知缺少的路线数量
+- 若存在不合法或重复的路线：会逐条指出问题所在
+
+任务失败条件：
+- 配额耗尽后未提交完备的路线清单
+- 最终清单包含不合法的路线
+- 无效提问累计达到 3 次
+
+请开始你的路网探测和推理。
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-We are conducting a "City One-Way Road Network Connectivity Analysis". Here are the rules:
+Let's execute a "Smart Logistics Network Routing" inference task. Here are the rules:
 
-The system is set on a fixed but unknown city road network G = (V, E), where:
-- V is the set of intersections numbered 1 to {n}, which is known.
-- E is the set of one-way roads, initially completely unknown. No self-loops and no multi-edges.
+The system defines a set of logistics hub nodes V = {{A1, A2, A3, B1, B2, B3}}, with origin s = A1 and destination t = B3.
+There exists an unknown but fixed undirected physical route network E*. All my feedback will be based on the same E*.
 
-I have selected two key locations: Rescue Station S = {s}, and Incident Site T = {t}.
+Your goal is: to infer all distinct simple transport routes (routes without repeating any hub) from A1 to B3, and submit a complete manifest.
 
-Your goal is: determine whether S and T are mutually reachable (i.e., a rescue vehicle can travel from S to T, and return from T to S), and provide verifiable route evidence.
+You can issue the following two types of queries to the system:
 
-You can explore the network through the following two types of surveys (one query per turn):
+1. Route Probe Query: Ask whether a direct transport link exists between two hubs.
+   - Format: <query_edge>X-Y</query_edge>
+   - Example: <query_edge>A1-A2</query_edge>
+   - Response: "Yes" or "No"
+   - Quota limit: at most {edge_quota} times
 
-1. Out-neighbor Query: Ask for all direct downstream intersections of intersection X. I will return a complete list of all intersection IDs that X directly leads to.
-2. Edge Existence Query: Ask whether there is a direct one-way road from intersection X to intersection Y. I will answer "Yes" or "No".
-
-When you have collected enough information, submit your final answer. The answer must include:
-- Conclusion: reachable or unreachable
-- Evidence:
-  - If conclusion is "reachable": Provide a route from S to T and a route from T to S (represented as intersection sequences, e.g., 1->3->5).
-  - If conclusion is "unreachable": Provide a closure set R explaining why at least one direction is unreachable. Specific requirements:
-    - R must contain the starting point but not the target point
-    - All downstream intersections of every intersection in R must have been surveyed and all are in R
-    - This proves the vehicle cannot leave R to reach the target area
-
-## Query and Answer Format
-
-Each turn must contain only one query tag. Use the following XML format:
-
-- Out-neighbor Query (e.g., surveying intersection 3):
-<query_out>3</query_out>
-
-- Edge Existence Query (e.g., surveying road from 2 to 5):
-<query_edge>2,5</query_edge>
-
-When submitting the final answer, use the following format:
-
-- If mutually reachable (provide two routes):
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- If unreachable (provide closure set):
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. Route Verification Query: Verify whether a complete transport route from A1 to B3 is valid.
+   - Format: <query_path>X1-X2-...-Xk</query_path>
+   - Requirements: X1 must be A1, Xk must be B3, and all hubs in the route must be distinct
+   - Example: <query_path>A1-A2-B2-B3</query_path>
+   - Response:
+     * If valid: "Valid: This is a simple path from A1 to B3."
+     * If invalid: "Invalid: Violation at step t (Xt to Xt+1) (reason: no such edge or repeated vertex)"
+   - Quota limit: at most {path_quota} times
 
 Note:
-- Every road in the routes must have been confirmed by prior surveys.
-- The downstream intersections of every intersection in the closure must have been fully surveyed.
-- Invalid answer format or insufficient evidence will result in evaluation failure.
+- Only one query per turn
+- Queries with illegal format or not belonging to the above two types will be marked as "invalid query", and 3 cumulative invalid queries will result in system lockout (task failure)
+- Invalid queries do not consume the above operational quotas
+
+When you believe you have mapped all valid routes, please submit your final manifest in this format:
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+Each route must:
+- Start with A1 and end with B3
+- Have all distinct hubs (simple path to avoid loops)
+- Have actual transport links between adjacent hubs in the route
+
+After submission, the system will judge:
+- If all routes are valid and complete (found all routes): task success
+- If all routes are valid but incomplete (some missing): will inform the number of missing routes
+- If there are invalid or duplicate routes: will point out the problems for each
+
+Task failure conditions:
+- Failed to submit a complete manifest after quotas exhausted
+- Final manifest contains invalid routes
+- Cumulative invalid queries reach 3
+
+Please start your network probing and reasoning.
 """
 
-    # --- 场景 2：医疗 ---
     contextualized_rule_zh_2 = """\
-欢迎使用"医疗跨院转诊通道评估系统"。规则如下：
+我们现在来进行一项“医院转运通道规划”的推演任务，规则如下：
 
-系统包含了一个固定但未知的医疗转诊网络 G = (V, E)，其中：
-- V 是医疗机构集合，包含编号 1 到 {n} 的机构，已知。
-- E 是单向转诊通道集合，初始时完全未知。无自环、无重边。
+系统设定了一个科室病区集合 V = {{A1, A2, A3, B1, B2, B3}}，起始病区 s = A1，目标隔离区 t = B3。
+在这些病区间存在一个未知但固定的双向物理隔离通道网络 E*，所有我的反馈均基于同一个 E* 给出。
 
-我已选定两个关键机构：首诊医院 S = {s}，专科医院 T = {t}。
+你的目标是：推断出从 A1 到 B3 的全部不同简单转运路径（路径中不重复经过任何病区），并提交完整清单。
 
-你的目标是：判定 S 与 T 之间是否具备双向闭环转诊能力（即 S 能将患者转至 T，且 T 能将康复期患者转回 S），并提供可验证的流转证据。
+你可以向我提出以下两类指令：
 
-你可以通过以下两类查询来评估转诊网络（每次只能进行一个查询）：
+1. 通道探测查询：询问两个病区之间是否存在直接隔离通道。
+   - 格式：<query_edge>X-Y</query_edge>
+   - 示例：<query_edge>A1-A2</query_edge>
+   - 回答："有" 或 "无"
+   - 配额限制：最多 {edge_quota} 次
 
-1. 出邻接查询：查询机构 X 的所有直接转诊接收方。我会返回 X 开通直达通道的所有机构编号的完整列表。
-2. 边存在性查询：确认机构 X 是否开通了直达机构 Y 的转诊通道。我会回答"是"或"否"。
-
-当你收集到足够信息后，请提交最终答案。答案必须包含：
-- 结论：互相可达 或 不可达
-- 证据：
-  - 若结论为"互相可达"：提供从 S 到 T 的转诊路径和从 T 到 S 的转诊路径（用机构编号序列表示，如 1->3->5）。
-  - 若结论为"不可达"：提供一个转诊闭包集合 R，说明为何至少一个方向无法连通。具体要求：
-    - R 必须包含起始点但不包含目标点
-    - R 中每个机构的所有接收方都已被查询过，且都在 R 中
-    - 这证明患者无法离开 R 转诊到目标机构
-
-## 查询与提交格式
-
-每次只能包含一个查询标签。请使用以下 XML 格式：
-
-- 出邻接查询（例如查询机构 3）：
-<query_out>3</query_out>
-
-- 边存在性查询（例如确认从 2 到 5 的通道）：
-<query_edge>2,5</query_edge>
-
-提交最终答案时，格式如下：
-
-- 若互相可达（需提供两条路径）：
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- 若不可达（需提供闭包集合）：
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. 转运预案检验：检验一条从 A1 到 B3 的完整转运路径是否合法可行。
+   - 格式：<query_path>X1-X2-...-Xk</query_path>
+   - 要求：X1 必须是 A1，Xk 必须是 B3，且路径中所有病区两两不同
+   - 示例：<query_path>A1-A2-B2-B3</query_path>
+   - 回答：
+     * 若合法："成立：这是从A1到B3的简单通路。"
+     * 若不合法："不成立：在第t步（Xt到Xt+1）处非法（原因：无此边 或 重复顶点）"
+   - 配额限制：最多 {path_quota} 次
 
 注意：
-- 路径中的每条转诊通道必须已被查询确认。
-- 闭包中的每个机构的接收方必须已被完整查询。
-- 答案格式错误或证据不足将导致评估失败。
+- 每次交互只能提出一个查询
+- 非法格式或不属于上述两类的查询将被记为"无效提问"，累计 3 次无效提问将导致预案锁定（任务失败）
+- 无效提问不占用上述可用配额
+
+当你认为已经掌握所有合法转运路径时，请提交最终转运清单。格式如下：
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+每条转运路径必须：
+- 以 A1 开始，以 B3 结束
+- 病区两两不同（避免交叉感染的简单路径）
+- 路径中相邻病区之间必须存在真实的通道
+
+提交后我将进行评判：
+- 若所有预案都合法且完备（找齐了全部路径）：任务成功
+- 若所有预案都合法但不完备（存在遗漏）：会告知缺少的路径数量
+- 若存在不合法或重复的路径：会逐条指出问题所在
+
+任务失败条件：
+- 配额耗尽后未提交完备的转运清单
+- 最终清单包含不合法的路径
+- 无效提问累计达到 3 次
+
+请开始你的通道探测和推理。
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Welcome to the "Medical Cross-Hospital Referral Channel Assessment System". Here are the rules:
+[Medical Scenario]
+Let's execute a "Hospital Transfer Corridor Mapping" inference task. Here are the rules:
 
-The system involves a fixed but unknown medical referral network G = (V, E), where:
-- V is the set of medical institutions numbered 1 to {n}, which is known.
-- E is the set of one-way referral channels, initially completely unknown. No self-loops and no multi-edges.
+The system defines a set of ward nodes V = {{A1, A2, A3, B1, B2, B3}}, with origin s = A1 and target isolation ward t = B3.
+There exists an unknown but fixed undirected physical isolation corridor network E*. All my feedback will be based on the same E*.
 
-I have selected two key institutions: Primary Hospital S = {s}, and Specialized Hospital T = {t}.
+Your goal is: to infer all distinct simple transfer paths (paths without repeating any ward) from A1 to B3, and submit a complete manifest.
 
-Your goal is: determine whether S and T have a two-way closed-loop referral capability (i.e., S can transfer a patient to T, and T can transfer a recovering patient back to S), and provide verifiable flow evidence.
+You can issue the following two types of queries:
 
-You can assess the network through the following two types of queries (one query per turn):
+1. Corridor Probe Query: Ask whether a direct isolation corridor exists between two wards.
+   - Format: <query_edge>X-Y</query_edge>
+   - Example: <query_edge>A1-A2</query_edge>
+   - Response: "Yes" or "No"
+   - Quota limit: at most {edge_quota} times
 
-1. Out-neighbor Query: Ask for all direct referral recipients of institution X. I will return a complete list of all institution IDs that X has a direct channel to.
-2. Edge Existence Query: Ask whether institution X has an active direct referral channel to institution Y. I will answer "Yes" or "No".
-
-When you have collected enough information, submit your final answer. The answer must include:
-- Conclusion: reachable or unreachable
-- Evidence:
-  - If conclusion is "reachable": Provide a referral path from S to T and a path from T to S (represented as institution sequences, e.g., 1->3->5).
-  - If conclusion is "unreachable": Provide a referral closure set R explaining why at least one direction is disconnected. Specific requirements:
-    - R must contain the starting point but not the target point
-    - All recipients of every institution in R must have been queried and all are in R
-    - This proves a patient cannot leave R to be transferred to the target institution
-
-## Query and Answer Format
-
-Each turn must contain only one query tag. Use the following XML format:
-
-- Out-neighbor Query (e.g., querying institution 3):
-<query_out>3</query_out>
-
-- Edge Existence Query (e.g., querying channel from 2 to 5):
-<query_edge>2,5</query_edge>
-
-When submitting the final answer, use the following format:
-
-- If mutually reachable (provide two paths):
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- If unreachable (provide closure set):
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. Transfer Plan Verification Query: Verify whether a complete transfer path from A1 to B3 is valid.
+   - Format: <query_path>X1-X2-...-Xk</query_path>
+   - Requirements: X1 must be A1, Xk must be B3, and all wards in the path must be distinct
+   - Example: <query_path>A1-A2-B2-B3</query_path>
+   - Response:
+     * If valid: "Valid: This is a simple path from A1 to B3."
+     * If invalid: "Invalid: Violation at step t (Xt to Xt+1) (reason: no such edge or repeated vertex)"
+   - Quota limit: at most {path_quota} times
 
 Note:
-- Every channel in the paths must have been confirmed by prior queries.
-- The recipients of every institution in the closure must have been fully queried.
-- Invalid answer format or insufficient evidence will result in evaluation failure.
+- Only one query per turn
+- Queries with illegal format or not belonging to the above two types will be marked as "invalid query", and 3 cumulative invalid queries will result in plan lockout (task failure)
+- Invalid queries do not consume the above operational quotas
+
+When you believe you have mapped all valid transfer paths, please submit your final manifest in this format:
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+Each path must:
+- Start with A1 and end with B3
+- Have all distinct wards (simple path to avoid cross-infection)
+- Have actual corridors between adjacent wards in the path
+
+After submission, the system will judge:
+- If all plans are valid and complete (found all paths): task success
+- If all plans are valid but incomplete (some missing): will inform the number of missing paths
+- If there are invalid or duplicate paths: will point out the problems for each
+
+Task failure conditions:
+- Failed to submit a complete manifest after quotas exhausted
+- Final manifest contains invalid paths
+- Cumulative invalid queries reach 3
+
+Please start your corridor probing and reasoning.
 """
 
-    # --- 场景 3：教育 ---
     contextualized_rule_zh_3 = """\
-我们来玩"学科知识点连贯性验证"。规则如下：
+我们现在来进行一项“校园学术交流网络探明”的推演任务，规则如下：
 
-知识库中设定了一个固定但未知的概念网络 G = (V, E)，其中：
-- V 是核心概念集合，包含编号 1 到 {n} 的概念，已知。
-- E 是先决条件关联集合（单向），初始时完全未知。无自环、无重边。
+系统设定了一个学术部门集合 V = {{A1, A2, A3, B1, B2, B3}}，起始部门 s = A1，目标设施 t = B3。
+在这些部门间存在一个未知但固定的双向学术互访网络 E*，所有我的反馈均基于同一个 E* 给出。
 
-我已选定两个关键概念：起始概念 S = {s}，目标概念 T = {t}。
+你的目标是：推断出从 A1 到 B3 的全部不同简单交流路线（路线中不重复经过任何部门），并提交完整清单。
 
-你的目标是：判定 S 与 T 是否构成一个认知循环（即掌握 S 后通过系列进阶能理解 T，且理解 T 后能反哺加深对 S 的理解，互相可达），并提供可验证的学习路径证据。
+你可以向我提出以下两类指令：
 
-你可以通过以下两类查询来探索概念网络（每次只能进行一个查询）：
+1. 合作通道探测：询问两个部门之间是否存在直接的学术互访通道。
+   - 格式：<query_edge>X-Y</query_edge>
+   - 示例：<query_edge>A1-A2</query_edge>
+   - 回答："有" 或 "无"
+   - 配额限制：最多 {edge_quota} 次
 
-1. 出邻接查询：查询概念 X 直接作为先决条件的所有后续概念。我会返回以 X 为直接基础的所有概念编号的完整列表。
-2. 边存在性查询：询问概念 X 是否是概念 Y 的直接先决条件。我会回答"是"或"否"。
-
-当你收集到足够信息后，请提交最终答案。答案必须包含：
-- 结论：互相可达 或 不可达
-- 证据：
-  - 若结论为"互相可达"：提供从 S 到 T 的进阶路径和从 T 到 S 的反哺路径（用概念编号序列表示，如 1->3->5）。
-  - 若结论为"不可达"：提供一个认知闭包集合 R，说明为何至少一个方向无法连通。具体要求：
-    - R 必须包含起始概念但不包含目标概念
-    - R 中每个概念的所有后续概念都已被查询过，且都在 R 中
-    - 这证明学习者无法突破 R 的范围去掌握目标概念
-
-## 查询与提交格式
-
-每次只能包含一个查询标签。请使用以下 XML 格式：
-
-- 出邻接查询（例如查询概念 3）：
-<query_out>3</query_out>
-
-- 边存在性查询（例如询问 2 是否为 5 的先决条件）：
-<query_edge>2,5</query_edge>
-
-提交最终答案时，格式如下：
-
-- 若互相可达（需提供两条路径）：
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- 若不可达（需提供闭包集合）：
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. 交流行程检验：检验一条从 A1 到 B3 的完整学术交流路线是否合规。
+   - 格式：<query_path>X1-X2-...-Xk</query_path>
+   - 要求：X1 必须是 A1，Xk 必须是 B3，且路线中所有部门两两不同
+   - 示例：<query_path>A1-A2-B2-B3</query_path>
+   - 回答：
+     * 若合法："成立：这是从A1到B3的简单通路。"
+     * 若不合法："不成立：在第t步（Xt到Xt+1）处非法（原因：无此边 或 重复顶点）"
+   - 配额限制：最多 {path_quota} 次
 
 注意：
-- 路径中的每次关联必须已被查询确认。
-- 闭包中的每个概念的后续关联必须已被完整查询。
-- 答案格式错误或证据不足将导致验证失败。
+- 每次交互只能提出一个查询
+- 非法格式或不属于上述两类的查询将被记为"无效提问"，累计 3 次无效提问将导致系统锁定（任务失败）
+- 无效提问不占用上述可用配额
+
+当你认为已经掌握所有合规交流路线时，请提交最终行程单。格式如下：
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+每条交流路线必须：
+- 以 A1 开始，以 B3 结束
+- 部门两两不同（避免重复造访的简单路径）
+- 路线中相邻部门之间必须存在真实互访通道
+
+提交后我将进行评判：
+- 若所有路线都合法且完备（找齐了全部路线）：任务成功
+- 若所有路线都合法但不完备（存在遗漏）：会告知缺少的路线数量
+- 若存在不合法或重复的路线：会逐条指出问题所在
+
+任务失败条件：
+- 配额耗尽后未提交完备的行程清单
+- 最终清单包含不合法的路线
+- 无效提问累计达到 3 次
+
+请开始你的网络探测和推理。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play "Academic Knowledge Concept Coherence Verification". Here are the rules:
+Let's execute a "Campus Academic Exchange Network Inference" task. Here are the rules:
 
-The knowledge base defines a fixed but unknown concept network G = (V, E), where:
-- V is the set of core concepts numbered 1 to {n}, which is known.
-- E is the set of one-way prerequisite relationships, initially completely unknown. No self-loops and no multi-edges.
+The system defines a set of academic department nodes V = {{A1, A2, A3, B1, B2, B3}}, with origin s = A1 and target facility t = B3.
+There exists an unknown but fixed undirected academic visit channel network E*. All my feedback will be based on the same E*.
 
-I have selected two key concepts: Starting Concept S = {s}, and Target Concept T = {t}.
+Your goal is: to infer all distinct simple exchange routes (routes without repeating any department) from A1 to B3, and submit a complete manifest.
 
-Your goal is: determine whether S and T form a cognitive loop (i.e., mastering S allows progression to understand T, and understanding T reinforces S, making them mutually reachable), and provide verifiable learning path evidence.
+You can issue the following two types of queries:
 
-You can explore the network through the following two types of queries (one query per turn):
+1. Channel Probe Query: Ask whether a direct academic visit channel exists between two departments.
+   - Format: <query_edge>X-Y</query_edge>
+   - Example: <query_edge>A1-A2</query_edge>
+   - Response: "Yes" or "No"
+   - Quota limit: at most {edge_quota} times
 
-1. Out-neighbor Query: Ask for all concepts that directly require concept X as a prerequisite. I will return a complete list of all concept IDs directly building upon X.
-2. Edge Existence Query: Ask whether concept X is a direct prerequisite for concept Y. I will answer "Yes" or "No".
-
-When you have collected enough information, submit your final answer. The answer must include:
-- Conclusion: reachable or unreachable
-- Evidence:
-  - If conclusion is "reachable": Provide a progression path from S to T and a reinforcement path from T to S (represented as concept sequences, e.g., 1->3->5).
-  - If conclusion is "unreachable": Provide a cognitive closure set R explaining why at least one direction is disconnected. Specific requirements:
-    - R must contain the starting concept but not the target concept
-    - All subsequent concepts of every concept in R must have been queried and all are in R
-    - This proves a learner cannot progress beyond R to master the target concept
-
-## Query and Answer Format
-
-Each turn must contain only one query tag. Use the following XML format:
-
-- Out-neighbor Query (e.g., querying concept 3):
-<query_out>3</query_out>
-
-- Edge Existence Query (e.g., querying if 2 is prerequisite for 5):
-<query_edge>2,5</query_edge>
-
-When submitting the final answer, use the following format:
-
-- If mutually reachable (provide two paths):
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- If unreachable (provide closure set):
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. Exchange Route Verification Query: Verify whether a complete academic exchange route from A1 to B3 is valid.
+   - Format: <query_path>X1-X2-...-Xk</query_path>
+   - Requirements: X1 must be A1, Xk must be B3, and all departments in the route must be distinct
+   - Example: <query_path>A1-A2-B2-B3</query_path>
+   - Response:
+     * If valid: "Valid: This is a simple path from A1 to B3."
+     * If invalid: "Invalid: Violation at step t (Xt to Xt+1) (reason: no such edge or repeated vertex)"
+   - Quota limit: at most {path_quota} times
 
 Note:
-- Every relationship in the paths must have been confirmed by prior queries.
-- The subsequent concepts of every concept in the closure must have been fully queried.
-- Invalid answer format or insufficient evidence will result in verification failure.
+- Only one query per turn
+- Queries with illegal format or not belonging to the above two types will be marked as "invalid query", and 3 cumulative invalid queries will result in system lockout (task failure)
+- Invalid queries do not consume the above operational quotas
+
+When you believe you have mapped all valid exchange routes, please submit your final manifest in this format:
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+Each route must:
+- Start with A1 and end with B3
+- Have all distinct departments (simple path to avoid repeated visits)
+- Have actual visit channels between adjacent departments in the route
+
+After submission, the system will judge:
+- If all routes are valid and complete (found all routes): task success
+- If all routes are valid but incomplete (some missing): will inform the number of missing routes
+- If there are invalid or duplicate routes: will point out the problems for each
+
+Task failure conditions:
+- Failed to submit a complete manifest after quotas exhausted
+- Final manifest contains invalid routes
+- Cumulative invalid queries reach 3
+
+Please start your network probing and reasoning.
 """
 
-    # --- 场景 4：制造业/工业 ---
     contextualized_rule_zh_4 = """\
-这是"自动化流水线物料流转排查"任务。规则如下：
+我们现在来进行一项“智能工厂物料流转梳理”的推演任务，规则如下：
 
-车间内有一套固定但未知的物料流转系统 G = (V, E)，其中：
-- V 是工作站集合，包含编号 1 到 {n} 的工作站，已知。
-- E 是单向传送带集合，初始时完全未知。无自环、无重边。
+系统设定了一个加工工作站集合 V = {{A1, A2, A3, B1, B2, B3}}，原料输入站 s = A1，成品输出站 t = B3。
+在这些工作站间存在一个未知但固定的双向传送带网络 E*，所有我的反馈均基于同一个 E* 给出。
 
-我已选定两个关键工位：原料区 S = {s}，总装区 T = {t}。
+你的目标是：推断出从 A1 到 B3 的全部不同简单流转工序路线（路线中不重复经过任何工作站），并提交完整清单。
 
-你的目标是：验证 S 与 T 之间是否形成完整的闭环流转（即物料能从 S 流向 T，且空载具能从 T 流回 S），并提供可验证的路线证据。
+你可以向我提出以下两类指令：
 
-你可以通过以下两类指令来排查车间布局（每次只能发送一个指令）：
+1. 传输链路探测：询问两个工作站之间是否存在直接的传送带链路。
+   - 格式：<query_edge>X-Y</query_edge>
+   - 示例：<query_edge>A1-A2</query_edge>
+   - 回答："有" 或 "无"
+   - 配额限制：最多 {edge_quota} 次
 
-1. 出邻接查询：扫描工作站 X 的所有直接下游工作站。我会返回 X 直接通向的所有工作站编号的完整列表。
-2. 边存在性查询：检测工作站 X 到工作站 Y 是否有直达传送带。我会回答"是"或"否"。
-
-当你收集到足够信息后，请提交最终排查报告。答案必须包含：
-- 结论：互相可达 或 不可达
-- 证据：
-  - 若结论为"互相可达"：提供从 S 到 T 的物料路线和从 T 到 S 的载具回流路线（用工作站编号序列表示，如 1->3->5）。
-  - 若结论为"不可达"：提供一个滞留闭包集合 R，说明为何至少一个方向流转中断。具体要求：
-    - R 必须包含起始站但不包含目标站
-    - R 中每个工作站的下游工作站都已被扫描过，且都在 R 中
-    - 这证明物料或载具无法离开 R 到达目标区域
-
-## 查询与提交格式
-
-每次只能包含一个查询标签。请使用以下 XML 格式：
-
-- 出邻接查询（例如扫描工作站 3）：
-<query_out>3</query_out>
-
-- 边存在性查询（例如检测 2 到 5 的传送带）：
-<query_edge>2,5</query_edge>
-
-提交最终答案时，格式如下：
-
-- 若互相可达（需提供两条路线）：
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- 若不可达（需提供闭包集合）：
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. 流转工序检验：检验一条从 A1 到 B3 的完整物料流转路线是否可行。
+   - 格式：<query_path>X1-X2-...-Xk</query_path>
+   - 要求：X1 必须是 A1，Xk 必须是 B3，且路线中所有工作站两两不同
+   - 示例：<query_path>A1-A2-B2-B3</query_path>
+   - 回答：
+     * 若合法："成立：这是从A1到B3的简单通路。"
+     * 若不合法："不成立：在第t步（Xt到Xt+1）处非法（原因：无此边 或 重复顶点）"
+   - 配额限制：最多 {path_quota} 次
 
 注意：
-- 路线中的每条传送带必须已被扫描确认。
-- 闭包中的每个工作站的下游情况必须已被完整检测。
-- 报告格式错误或证据不足将导致排查失败。
+- 每次交互只能提出一个查询
+- 非法格式或不属于上述两类的查询将被记为"无效提问"，累计 3 次无效提问将导致系统停机（任务失败）
+- 无效提问不占用上述可用配额
+
+当你认为已经掌握所有可行流转路线时，请提交最终工序清单。格式如下：
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+每条流转路线必须：
+- 以 A1 开始，以 B3 结束
+- 工作站两两不同（避免循环加工的简单路径）
+- 路线中相邻工作站之间必须存在真实传送链路
+
+提交后我将进行评判：
+- 若所有路线都合法且完备（找齐了全部路线）：任务成功
+- 若所有路线都合法但不完备（存在遗漏）：会告知缺少的路线数量
+- 若存在不合法或重复路线：会逐条指出问题所在
+
+任务失败条件：
+- 配额耗尽后未提交完备的工序清单
+- 最终清单包含不合法的路线
+- 无效提问累计达到 3 次
+
+请开始你的链路探测和推理。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-This is the "Automated Assembly Line Material Flow Troubleshooting" task. Here are the rules:
+[Manufacturing/Industrial Scenario]
+Let's execute a "Smart Factory Material Flow Mapping" inference task. Here are the rules:
 
-The factory floor contains a fixed but unknown material flow system G = (V, E), where:
-- V is the set of workstations numbered 1 to {n}, which is known.
-- E is the set of one-way conveyor belts, initially completely unknown. No self-loops and no multi-edges.
+The system defines a set of workstation nodes V = {{A1, A2, A3, B1, B2, B3}}, with raw material intake s = A1 and packaging station t = B3.
+There exists an unknown but fixed undirected automated conveyor belt network E*. All my feedback will be based on the same E*.
 
-I have selected two key stations: Raw Material Zone S = {s}, and Assembly Zone T = {t}.
+Your goal is: to infer all distinct simple material flow routes (routes without repeating any workstation) from A1 to B3, and submit a complete manifest.
 
-Your goal is: verify whether S and T form a complete closed-loop flow (i.e., materials can flow from S to T, and empty carriers can return from T to S), and provide verifiable routing evidence.
+You can issue the following two types of queries:
 
-You can troubleshoot the layout through the following two types of commands (one command per turn):
+1. Link Probe Query: Ask whether a direct conveyor belt link exists between two workstations.
+   - Format: <query_edge>X-Y</query_edge>
+   - Example: <query_edge>A1-A2</query_edge>
+   - Response: "Yes" or "No"
+   - Quota limit: at most {edge_quota} times
 
-1. Out-neighbor Query: Scan for all direct downstream workstations of workstation X. I will return a complete list of all workstation IDs that X directly feeds into.
-2. Edge Existence Query: Detect whether there is a direct conveyor belt from workstation X to workstation Y. I will answer "Yes" or "No".
-
-When you have collected enough information, submit your final report. The answer must include:
-- Conclusion: reachable or unreachable
-- Evidence:
-  - If conclusion is "reachable": Provide the material route from S to T and the carrier return route from T to S (represented as workstation sequences, e.g., 1->3->5).
-  - If conclusion is "unreachable": Provide a retention closure set R explaining why the flow is interrupted in at least one direction. Specific requirements:
-    - R must contain the starting station but not the target station
-    - All downstream stations of every workstation in R must have been scanned and all are in R
-    - This proves materials or carriers cannot leave R to reach the target area
-
-## Query and Answer Format
-
-Each turn must contain only one query tag. Use the following XML format:
-
-- Out-neighbor Query (e.g., scanning workstation 3):
-<query_out>3</query_out>
-
-- Edge Existence Query (e.g., detecting belt from 2 to 5):
-<query_edge>2,5</query_edge>
-
-When submitting the final answer, use the following format:
-
-- If mutually reachable (provide two routes):
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- If unreachable (provide closure set):
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. Flow Routing Verification Query: Verify whether a complete material flow route from A1 to B3 is valid.
+   - Format: <query_path>X1-X2-...-Xk</query_path>
+   - Requirements: X1 must be A1, Xk must be B3, and all workstations in the route must be distinct
+   - Example: <query_path>A1-A2-B2-B3</query_path>
+   - Response:
+     * If valid: "Valid: This is a simple path from A1 to B3."
+     * If invalid: "Invalid: Violation at step t (Xt to Xt+1) (reason: no such edge or repeated vertex)"
+   - Quota limit: at most {path_quota} times
 
 Note:
-- Every conveyor belt in the routes must have been confirmed by prior scans.
-- The downstream stations of every workstation in the closure must have been fully scanned.
-- Invalid report format or insufficient evidence will result in troubleshooting failure.
+- Only one query per turn
+- Queries with illegal format or not belonging to the above two types will be marked as "invalid query", and 3 cumulative invalid queries will result in system downtime (task failure)
+- Invalid queries do not consume the above operational quotas
+
+When you believe you have mapped all valid material routes, please submit your final manifest in this format:
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+Each route must:
+- Start with A1 and end with B3
+- Have all distinct workstations (simple path to avoid processing loops)
+- Have actual conveyor links between adjacent workstations in the route
+
+After submission, the system will judge:
+- If all routes are valid and complete (found all routes): task success
+- If all routes are valid but incomplete (some missing): will inform the number of missing routes
+- If there are invalid or duplicate routes: will point out the problems for each
+
+Task failure conditions:
+- Failed to submit a complete manifest after quotas exhausted
+- Final manifest contains invalid routes
+- Cumulative invalid queries reach 3
+
+Please start your link probing and reasoning.
 """
 
-    # --- 场景 5：法律 ---
     contextualized_rule_zh_5 = """\
-启动"反洗钱资金流向追踪"行动。规则如下：
+我们现在来进行一项“涉案资金关联链条追踪”的推演任务，规则如下：
 
-金融网络中监控着一个固定但未知的资金通道拓扑 G = (V, E)，其中：
-- V 是可疑账户集合，包含编号 1 到 {n} 的账户，已知。
-- E 是单向资金转移记录集合，初始时完全未知。无自环、无重边。
+系统设定了一个涉案实体集合 V = {{A1, A2, A3, B1, B2, B3}}，源头实体 s = A1，核心目标 t = B3。
+在这些实体间存在一个未知但固定的双向资金往来网络 E*，所有我的反馈均基于同一个 E* 给出。
 
-我已锁定两个关键账户：源头账户 S = {s}，离岸账户 T = {t}。
+你的目标是：推断出从 A1 到 B3 的全部不同简单资金流转链条（链条中不重复经过任何实体），并提交完整清单。
 
-你的任务是：判定 S 与 T 之间是否存在资金的回环洗白网络（即资金能从 S 转移至 T，且 T 的资金最终能回流至 S），并提供可验证的流向证据。
+你可以向我提出以下两类指令：
 
-你可以调用以下两类协查手段（每次只能发送一个请求）：
+1. 关联渠道探测：询问两个涉案实体之间是否存在直接的资金往来记录。
+   - 格式：<query_edge>X-Y</query_edge>
+   - 示例：<query_edge>A1-A2</query_edge>
+   - 回答："有" 或 "无"
+   - 配额限制：最多 {edge_quota} 次
 
-1. 出邻接查询：调取账户 X 的所有直接收款账户。我会返回 X 直接汇款过去的所有账户编号的完整列表。
-2. 边存在性查询：查证账户 X 是否向账户 Y 有过直接汇款记录。我会回答"是"或"否"。
-
-当你收集到足够信息后，请提交最终研判。答案必须包含：
-- 结论：互相可达 或 不可达
-- 证据：
-  - 若结论为"互相可达"：提供从 S 到 T 的资金转出路径和从 T 到 S 的资金回流路径（用账户编号序列表示，如 1->3->5）。
-  - 若结论为"不可达"：提供一个资金沉淀闭包集合 R，说明为何洗钱链条无法闭环。具体要求：
-    - R 必须包含起始账户但不包含目标账户
-    - R 中每个账户的所有收款方都已被调取过，且都在 R 中
-    - 这证明资金无法流出 R 抵达目标账户
-
-## 查询与提交格式
-
-每次只能包含一个查询标签。请使用以下 XML 格式：
-
-- 出邻接查询（例如调取账户 3）：
-<query_out>3</query_out>
-
-- 边存在性查询（例如查证账户 2 到 5 的汇款）：
-<query_edge>2,5</query_edge>
-
-提交最终答案时，格式如下：
-
-- 若互相可达（需提供两条路径）：
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- 若不可达（需提供闭包集合）：
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. 证据链条检验：检验一条从 A1 到 B3 的完整资金流转关联链条是否合规。
+   - 格式：<query_path>X1-X2-...-Xk</query_path>
+   - 要求：X1 必须是 A1，Xk 必须是 B3，且链条中所有涉案实体两两不同
+   - 示例：<query_path>A1-A2-B2-B3</query_path>
+   - 回答：
+     * 若合法："成立：这是从A1到B3的简单通路。"
+     * 若不合法："不成立：在第t步（Xt到Xt+1）处非法（原因：无此边 或 重复顶点）"
+   - 配额限制：最多 {path_quota} 次
 
 注意：
-- 路径中的每次转账记录必须已被协查确认。
-- 闭包中的每个账户的收款方必须已被完整调取。
-- 研判格式错误或证据不足将导致追踪行动失败。
+- 每次交互只能提出一个查询
+- 非法格式或不属于上述两类的查询将被记为"无效提问"，累计 3 次无效提问将导致系统锁定（任务失败）
+- 无效提问不占用上述可用配额
+
+当你认为已经掌握所有合规资金链条时，请提交最终证据清单。格式如下：
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+每条流转链条必须：
+- 以 A1 开始，以 B3 结束
+- 涉案实体两两不同（避免循环流转的简单路径）
+- 链条中相邻实体之间必须存在真实的资金往来记录
+
+提交后我将进行评判：
+- 若所有链条都合法且完备（找齐了全部链条）：任务成功
+- 若所有链条都合法但不完备（存在遗漏）：会告知缺少的链条数量
+- 若存在不合法或重复的链条：会逐条指出问题所在
+
+任务失败条件：
+- 配额耗尽后未提交完备的证据清单
+- 最终清单包含不合法的链条
+- 无效提问累计达到 3 次
+
+请开始你的渠道探测和推理。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Activating "Anti-Money Laundering Fund Flow Tracking" operation. Here are the rules:
+[Legal Scenario]
+Let's execute a "Illicit Funds Transfer Chain Tracking" inference task. Here are the rules:
 
-The financial network monitors a fixed but unknown fund channel topology G = (V, E), where:
-- V is the set of monitored accounts numbered 1 to {n}, which is known.
-- E is the set of one-way fund transfer records, initially completely unknown. No self-loops and no multi-edges.
+The system defines a set of involved entity nodes V = {{A1, A2, A3, B1, B2, B3}}, with origin entity s = A1 and core target t = B3.
+There exists an unknown but fixed undirected financial transaction network E*. All my feedback will be based on the same E*.
 
-I have locked onto two key accounts: Source Account S = {s}, and Offshore Account T = {t}.
+Your goal is: to infer all distinct simple fund transfer chains (chains without repeating any entity) from A1 to B3, and submit a complete manifest.
 
-Your task is: determine whether there is a fund round-tripping network between S and T (i.e., funds can transfer from S to T, and eventually loop back to S), and provide verifiable flow evidence.
+You can issue the following two types of queries:
 
-You can invoke the following two investigative actions (one request per turn):
+1. Tie Probe Query: Ask whether a direct financial transaction tie exists between two involved entities.
+   - Format: <query_edge>X-Y</query_edge>
+   - Example: <query_edge>A1-A2</query_edge>
+   - Response: "Yes" or "No"
+   - Quota limit: at most {edge_quota} times
 
-1. Out-neighbor Query: Retrieve all direct payee accounts of account X. I will return a complete list of all account IDs that X has directly remitted funds to.
-2. Edge Existence Query: Verify whether account X has a direct remittance record to account Y. I will answer "Yes" or "No".
-
-When you have collected enough information, submit your final judgment. The answer must include:
-- Conclusion: reachable or unreachable
-- Evidence:
-  - If conclusion is "reachable": Provide the outward fund path from S to T and the return path from T to S (represented as account sequences, e.g., 1->3->5).
-  - If conclusion is "unreachable": Provide a fund retention closure set R explaining why the laundering chain cannot form a loop. Specific requirements:
-    - R must contain the starting account but not the target account
-    - All payee accounts of every account in R must have been retrieved and all are in R
-    - This proves funds cannot flow out of R to reach the target account
-
-## Query and Answer Format
-
-Each turn must contain only one query tag. Use the following XML format:
-
-- Out-neighbor Query (e.g., retrieving account 3):
-<query_out>3</query_out>
-
-- Edge Existence Query (e.g., verifying remittance from 2 to 5):
-<query_edge>2,5</query_edge>
-
-When submitting the final answer, use the following format:
-
-- If mutually reachable (provide two paths):
-<answer>conclusion=reachable, path_s_to_t=1->2->3, path_t_to_s=3->4->1</answer>
-
-- If unreachable (provide closure set):
-<answer>conclusion=unreachable, closure=1,2,4</answer>
+2. Evidence Chain Verification Query: Verify whether a complete fund transfer chain from A1 to B3 is valid.
+   - Format: <query_path>X1-X2-...-Xk</query_path>
+   - Requirements: X1 must be A1, Xk must be B3, and all entities in the chain must be distinct
+   - Example: <query_path>A1-A2-B2-B3</query_path>
+   - Response:
+     * If valid: "Valid: This is a simple path from A1 to B3."
+     * If invalid: "Invalid: Violation at step t (Xt to Xt+1) (reason: no such edge or repeated vertex)"
+   - Quota limit: at most {path_quota} times
 
 Note:
-- Every transfer record in the paths must have been confirmed by prior investigations.
-- The payees of every account in the closure must have been fully retrieved.
-- Invalid judgment format or insufficient evidence will result in operation failure.
+- Only one query per turn
+- Queries with illegal format or not belonging to the above two types will be marked as "invalid query", and 3 cumulative invalid queries will result in system lockout (task failure)
+- Invalid queries do not consume the above operational quotas
+
+When you believe you have mapped all valid evidence chains, please submit your final manifest in this format:
+
+<answer>
+1) A1-...-B3
+2) A1-...-B3
+...
+</answer>
+
+Each chain must:
+- Start with A1 and end with B3
+- Have all distinct entities (simple path to avoid transfer loops)
+- Have actual financial ties between adjacent entities in the chain
+
+After submission, the system will judge:
+- If all chains are valid and complete (found all chains): task success
+- If all chains are valid but incomplete (some missing): will inform the number of missing chains
+- If there are invalid or duplicate chains: will point out the problems for each
+
+Task failure conditions:
+- Failed to submit a complete manifest after quotas exhausted
+- Final manifest contains invalid chains
+- Cumulative invalid queries reach 3
+
+Please start your tie probing and reasoning.
 """
 
-    tags = ["answer", "query_out", "query_edge"]
+    tags = ["answer", "query_edge", "query_path"]
     
-    reasoning_type = "演绎推理"
+    reasoning_type = "归纳推理"
     data_structure = "图"
 
-    # 难度配置
-    # 1 (简单)     - 小图，互相可达，路径明显
-    # 2 (中等偏下) - 中图，互相可达，路径稍复杂
-    # 3 (中等偏上) - 中图，单向可达
-    # 4 (较难)     - 较大图，不可达，需要闭包证明
-    # 5 (难)       - 大图，互相可达，需多次查询
-
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 5,
-                "s": 1,
-                "t": 3,
-                "edges": [(1, 2), (2, 3), (3, 1)],
-                # S=1, T=3; 1->2->3 和 3->1 互相可达
-            },
-            2: {
-                "n": 7,
-                "s": 1,
-                "t": 5,
-                "edges": [(1, 2), (2, 3), (3, 5), (5, 6), (6, 7), (7, 1)],
-                # 1->2->3->5 和 5->6->7->1 互相可达
-            },
-            3: {
-                "n": 8,
-                "s": 1,
-                "t": 6,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8)],
-                # 1 可以到达 6，但 6 不能回到 1（单向）
-            },
-            4: {
-                "n": 10,
-                "s": 1,
-                "t": 9,
-                "edges": [(1, 2), (2, 3), (3, 2), (4, 5), (5, 6), (6, 4), (9, 10), (10, 9)],
-                # 1 在组件 {1,2,3}，9 在组件 {9,10}，完全不可达
-            },
-            5: {
-                "n": 12,
-                "s": 2,
-                "t": 10,
-                "edges": [
-                    (2, 3), (3, 4), (4, 5), (5, 6), (6, 10),
-                    (10, 11), (11, 12), (12, 8), (8, 7), (7, 2),
-                    (3, 7), (5, 11)
-                ],
-                # 复杂环路，互相可达但路径较长
-            },
+        1: {
+            "edge_quota": 10,
+            "path_quota": 7,
         },
-        "en": {
-            1: {
-                "n": 5,
-                "s": 1,
-                "t": 3,
-                "edges": [(1, 2), (2, 3), (3, 1)],
-            },
-            2: {
-                "n": 7,
-                "s": 1,
-                "t": 5,
-                "edges": [(1, 2), (2, 3), (3, 5), (5, 6), (6, 7), (7, 1)],
-            },
-            3: {
-                "n": 8,
-                "s": 1,
-                "t": 6,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8)],
-            },
-            4: {
-                "n": 10,
-                "s": 1,
-                "t": 9,
-                "edges": [(1, 2), (2, 3), (3, 2), (4, 5), (5, 6), (6, 4), (9, 10), (10, 9)],
-            },
-            5: {
-                "n": 12,
-                "s": 2,
-                "t": 10,
-                "edges": [
-                    (2, 3), (3, 4), (4, 5), (5, 6), (6, 10),
-                    (10, 11), (11, 12), (12, 8), (8, 7), (7, 2),
-                    (3, 7), (5, 11)
-                ],
-            },
+        2: {
+            "edge_quota": 8,
+            "path_quota": 6,
+        },
+        3: {
+            "edge_quota": 7,
+            "path_quota": 5,
+        },
+        4: {
+            "edge_quota": 6,
+            "path_quota": 4,
+        },
+        5: {
+            "edge_quota": 5,
+            "path_quota": 3,
         },
     }
 
     def __init__(self, config):
+        self.edge_query_count = 0
+        self.path_query_count = 0
+        self.invalid_query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        lang = self.config.language
         diff = self.config.difficulty
-
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["s"] = cfg["s"]
-        self._game_info["t"] = cfg["t"]
-
-        # 构建邻接表
-        self.n = cfg["n"]
-        self.s = cfg["s"]
-        self.t = cfg["t"]
-        self.adj_list = {i: set() for i in range(1, self.n + 1)}
-        for u, v in cfg["edges"]:
-            self.adj_list[u].add(v)
-
-        # 记录已查询的内容
-        self.queried_out = {}  # vertex -> set of out-neighbors
-        self.queried_edges = {}  # (u, v) -> bool
-
-        # 预计算真实的互相可达性（用于内部验证）
-        self._ground_truth_reachable = self._check_mutual_reachability(self.s, self.t)
-
-    def _check_mutual_reachability(self, s, t):
-        """内部方法：检查 s 和 t 是否互相可达"""
-        def bfs_reach(start, end):
-            from collections import deque
-            visited = set()
-            queue = deque([start])
-            visited.add(start)
-            while queue:
-                u = queue.popleft()
-                if u == end:
-                    return True
-                for v in self.adj_list[u]:
-                    if v not in visited:
-                        visited.add(v)
-                        queue.append(v)
-            return False
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        self._game_info["edge_quota"] = cfg["edge_quota"]
+        self._game_info["path_quota"] = cfg["path_quota"]
         
-        return bfs_reach(s, t) and bfs_reach(t, s)
+        self.edge_quota = cfg["edge_quota"]
+        self.path_quota = cfg["path_quota"]
+
+        self.vertices = {"A1", "A2", "A3", "B1", "B2", "B3"}
+        
+        self.true_edges = {
+            frozenset({"A1", "A2"}),
+            frozenset({"A2", "A3"}),
+            frozenset({"B1", "B2"}),
+            frozenset({"B2", "B3"}),
+            frozenset({"A1", "B1"}),
+            frozenset({"A2", "B2"}),
+            frozenset({"A3", "B3"}),
+        }
+        
+        self.all_valid_paths = self._compute_all_paths()
+
+    def _compute_all_paths(self):
+        all_paths = []
+        
+        def dfs(current, target, path, visited):
+            if current == target:
+                all_paths.append(path[:])
+                return
+            
+            for neighbor in self.vertices:
+                if neighbor not in visited:
+                    edge = frozenset({current, neighbor})
+                    if edge in self.true_edges:
+                        visited.add(neighbor)
+                        path.append(neighbor)
+                        dfs(neighbor, target, path, visited)
+                        path.pop()
+                        visited.remove(neighbor)
+        
+        dfs("A1", "B3", ["A1"], {"A1"})
+        return all_paths
+
+    def _check_edge_exists(self, u, v):
+        return frozenset({u, v}) in self.true_edges
+
+    def _verify_path(self, path_vertices):
+        if path_vertices[0] != "A1":
+            return False, "路径必须从A1开始" if self.config.language == "zh" else "Path must start with A1"
+        if path_vertices[-1] != "B3":
+            return False, "路径必须在B3结束" if self.config.language == "zh" else "Path must end with B3"
+        
+        if len(path_vertices) != len(set(path_vertices)):
+            seen = set()
+            for i, v in enumerate(path_vertices):
+                if v in seen:
+                    if self.config.language == "zh":
+                        return False, f"不成立：在第{i}步（{path_vertices[i-1]}到{v}）处非法（原因：重复顶点）"
+                    else:
+                        return False, f"Invalid: Violation at step {i} ({path_vertices[i-1]} to {v}) (reason: repeated vertex)"
+                seen.add(v)
+        
+        for v in path_vertices:
+            if v not in self.vertices:
+                if self.config.language == "zh":
+                    return False, f"顶点{v}不在顶点集合中"
+                else:
+                    return False, f"Vertex {v} is not in the vertex set"
+        
+        for i in range(len(path_vertices) - 1):
+            u, v = path_vertices[i], path_vertices[i + 1]
+            if not self._check_edge_exists(u, v):
+                if self.config.language == "zh":
+                    return False, f"不成立：在第{i+1}步（{u}到{v}）处非法（原因：无此边）"
+                else:
+                    return False, f"Invalid: Violation at step {i+1} ({u} to {v}) (reason: no such edge)"
+        
+        if self.config.language == "zh":
+            return True, "成立：这是从A1到B3的简单通路。"
+        else:
+            return True, "Valid: This is a simple path from A1 to B3."
 
     def evaluate(self, parsed_info):
-        """评估模型提交的最终答案"""
-        raw_ans = parsed_info["answer"]
+        raw_ans = parsed_info["answer"].strip()
         
-        # 使用更智能的解析方式，只在 key=value 的边界处分割
-        # 已知的 key: conclusion, path_s_to_t, path_t_to_s, closure
-        import re
-        ans_dict = {}
-        # 匹配 key=value 对，其中 value 延续到下一个 key= 或字符串末尾
-        pattern = r'(conclusion|path_s_to_t|path_t_to_s|closure)\s*=\s*'
-        keys_positions = [(m.group(1), m.end()) for m in re.finditer(pattern, raw_ans)]
+        submitted_paths = []
+        lines = raw_ans.split("\n")
         
-        for i, (key, val_start) in enumerate(keys_positions):
-            if i + 1 < len(keys_positions):
-                # 值延伸到下一个 key 前面，去掉分隔符
-                val_end = raw_ans.rfind(',', val_start, keys_positions[i + 1][1])
-                if val_end == -1:
-                    val_end = keys_positions[i + 1][1]
-                val = raw_ans[val_start:val_end].strip().rstrip(',').strip()
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            match = re.match(r'^\d+\)\s*(.+)$', line)
+            if match:
+                path_str = match.group(1).strip()
             else:
-                val = raw_ans[val_start:].strip().rstrip(',').strip()
-            ans_dict[key] = val
-
-        if "conclusion" not in ans_dict:
-            return False
-
-        conclusion = ans_dict["conclusion"].lower()
-
-        # 情况1：模型声称互相可达
-        if conclusion == "reachable":
-            if not self._ground_truth_reachable:
-                return False  # 真实答案是不可达，模型错误
+                path_str = line
             
-            # 需要验证两条路径
-            if "path_s_to_t" not in ans_dict or "path_t_to_s" not in ans_dict:
-                return False
-            
-            path_s_to_t = ans_dict["path_s_to_t"]
-            path_t_to_s = ans_dict["path_t_to_s"]
-            
-            # 验证路径1: S -> T
-            if not self._verify_path(path_s_to_t, self.s, self.t):
-                return False
-            
-            # 验证路径2: T -> S
-            if not self._verify_path(path_t_to_s, self.t, self.s):
-                return False
-            
-            return True
-
-        # 情况2：模型声称不可达
-        elif conclusion == "unreachable":
-            if self._ground_truth_reachable:
-                return False  # 真实答案是可达，模型错误
-            
-            # 需要验证闭包
-            if "closure" not in ans_dict:
-                return False
-            
-            closure_str = ans_dict["closure"]
-            return self._verify_closure(closure_str)
-
-        else:
-            return False
-
-    def _verify_path(self, path_str, start, end):
-        """验证路径是否有效"""
-        try:
-            # 解析路径：1->2->3 或 1-2-3
-            path_str = path_str.replace("->", ",").replace("-", ",").replace(" ", "")
-            nodes = [int(x.strip()) for x in path_str.split(",") if x.strip()]
-            
-            if len(nodes) < 2:
-                return False
-            
-            # 检查起点和终点
-            if nodes[0] != start or nodes[-1] != end:
-                return False
-            
-            # 检查每条边是否已被查询确认
-            for i in range(len(nodes) - 1):
-                u, v = nodes[i], nodes[i + 1]
-                if not self._is_edge_confirmed(u, v):
-                    return False
-            
-            return True
-        except:
-            return False
-
-    def _is_edge_confirmed(self, u, v):
-        """检查边 (u, v) 是否已被查询确认存在"""
-        # 如果没有任何查询记录（如 redundancy 评估场景），直接用图数据验证
-        if not self.queried_out and not self.queried_edges:
-            return v in self.adj_list.get(u, set())
+            vertices = [v.strip() for v in path_str.split("-")]
+            submitted_paths.append(vertices)
         
-        # 通过 query_edge 直接确认
-        if (u, v) in self.queried_edges:
-            return self.queried_edges[(u, v)]
+        invalid_paths = []
+        duplicate_indices = []
+        seen_paths = []
         
-        # 通过 query_out 间接确认
-        if u in self.queried_out:
-            return v in self.queried_out[u]
+        for i, path in enumerate(submitted_paths):
+            is_valid, msg = self._verify_path(path)
+            if not is_valid:
+                invalid_paths.append((i + 1, msg))
+                continue
+            
+            if path in seen_paths:
+                duplicate_indices.append(i + 1)
+            else:
+                seen_paths.append(path)
         
-        return False
-
-    def _verify_closure(self, closure_str):
-        """验证闭包证明是否有效"""
-        try:
-            closure = set(int(x.strip()) for x in closure_str.split(",") if x.strip())
-            
-            has_s = self.s in closure
-            has_t = self.t in closure
-            
-            if not has_s and not has_t:
-                return False
-            
-            if has_s and has_t:
-                return False
-            
-            no_query_records = not self.queried_out and not self.queried_edges
-            
-            for v in closure:
-                if no_query_records:
-                    # redundancy 场景：直接用图数据
-                    out_neighbors = self.adj_list.get(v, set())
+        if invalid_paths or duplicate_indices:
+            error_msgs = []
+            for idx, msg in invalid_paths:
+                if self.config.language == "zh":
+                    error_msgs.append(f"第{idx}条路径不合法：{msg}")
                 else:
-                    if v not in self.queried_out:
-                        return False
-                    out_neighbors = self.queried_out[v]
-                
-                if not out_neighbors.issubset(closure):
-                    return False
+                    error_msgs.append(f"Path {idx} is invalid: {msg}")
+            for idx in duplicate_indices:
+                if self.config.language == "zh":
+                    error_msgs.append(f"第{idx}条路径与之前的路径重复")
+                else:
+                    error_msgs.append(f"Path {idx} is a duplicate")
             
-            return True
-        except:
+            self.state.state_reason = "\n".join(error_msgs)
             return False
+        
+        submitted_path_set = set()
+        for path in seen_paths:
+            submitted_path_set.add(tuple(path))
+        
+        true_path_set = set()
+        for path in self.all_valid_paths:
+            true_path_set.add(tuple(path))
+        
+        if submitted_path_set == true_path_set:
+            if self.config.language == "zh":
+                self.state.state_reason = "正确且完备。"
+            else:
+                self.state.state_reason = "Correct and complete."
+            return True
+        else:
+            missing_count = len(true_path_set - submitted_path_set)
+            if self.config.language == "zh":
+                self.state.state_reason = f"正确但不完备：仍缺{missing_count}条路径。"
+            else:
+                self.state.state_reason = f"Correct but incomplete: still missing {missing_count} path(s)."
+            return False
+
+    def produce_response(self, parsed_info):
+        if self.enable_counterfactual:
+            self._cf_round_counter += 1
+
+            if self._cf_round_counter == 2:
+                correct = self._cf_core_produce(parsed_info)
+                self._cf_correct_resp = correct
+                self._cf_wrong_resp = self._cf_make_wrong(correct)
+                return self._cf_wrong_resp
+
+            elif self._cf_round_counter == 3:
+                return self._cf_correction_message()
+
+        return self._cf_core_produce(parsed_info)
 
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑"""
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_invalid = "错误：顶点编号无效。"
-            error_format = "错误：查询格式无效。"
+            yes_res, no_res = "有", "无"
         else:
             yes_res, no_res = "Yes", "No"
-            error_invalid = "Error: Invalid vertex ID."
-            error_format = "Error: Invalid query format."
 
-        # 优先级：query_out > query_edge
-        if "query_out" in parsed_info:
-            try:
-                vertex = int(parsed_info["query_out"].strip())
-                if vertex < 1 or vertex > self.n:
-                    return error_invalid
-                
-                # 记录查询并返回出邻接
-                out_neighbors = self.adj_list[vertex]
-                self.queried_out[vertex] = out_neighbors.copy()
-                
-                if not out_neighbors:
-                    return "[]" if self.config.language == "en" else "[]"
-                
-                neighbor_list = sorted(list(out_neighbors))
-                return str(neighbor_list)
-            except:
-                return error_format
+        if "query_edge" in parsed_info:
+            self.edge_query_count += 1
+            if self.edge_query_count > self.edge_quota:
+                if self.config.language == "zh":
+                    return f"边探测查询次数已达上限（{self.edge_quota}次）"
+                else:
+                    return f"Edge probe query quota exhausted ({self.edge_quota} times)"
+            
+            edge_str = parsed_info["query_edge"].strip()
+            parts = edge_str.split("-")
+            if len(parts) != 2:
+                self.invalid_query_count += 1
+                if self.config.language == "zh":
+                    return f"错误：边探测格式无效。无效提问次数：{self.invalid_query_count}/3"
+                else:
+                    return f"Error: Invalid edge probe format. Invalid queries: {self.invalid_query_count}/3"
+            
+            u, v = parts[0].strip(), parts[1].strip()
+            if u not in self.vertices or v not in self.vertices or u == v:
+                self.invalid_query_count += 1
+                if self.config.language == "zh":
+                    return f"错误：顶点无效或相同。无效提问次数：{self.invalid_query_count}/3"
+                else:
+                    return f"Error: Invalid or identical vertices. Invalid queries: {self.invalid_query_count}/3"
+            
+            exists = self._check_edge_exists(u, v)
+            return yes_res if exists else no_res
 
-        elif "query_edge" in parsed_info:
-            try:
-                raw = parsed_info["query_edge"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_format
-                
-                u, v = int(parts[0]), int(parts[1])
-                if u < 1 or u > self.n or v < 1 or v > self.n:
-                    return error_invalid
-                
-                # 检查边是否存在
-                exists = v in self.adj_list[u]
-                self.queried_edges[(u, v)] = exists
-                
-                return yes_res if exists else no_res
-            except:
-                return error_format
+        elif "query_path" in parsed_info:
+            self.path_query_count += 1
+            if self.path_query_count > self.path_quota:
+                if self.config.language == "zh":
+                    return f"路径检验查询次数已达上限（{self.path_quota}次）"
+                else:
+                    return f"Path verification query quota exhausted ({self.path_quota} times)"
+            
+            path_str = parsed_info["query_path"].strip()
+            vertices = [v.strip() for v in path_str.split("-")]
+            
+            is_valid, msg = self._verify_path(vertices)
+            return msg
 
         else:
-            raise ValueError("No valid query tag found.")
-    
-    
-    def get_all_possible_queries(self) -> list:
-        queries = []
-        is_zh   = self.config.language == "zh"
-        yes_res = "是" if is_zh else "Yes"
-        no_res  = "否" if is_zh else "No"
-        # 1. 出邻接查询
-        for u in range(1, self.n + 1):
-            out_neighbors = sorted(self.adj_list[u])
-            ans = str(out_neighbors)  # e.g. "[2, 3]" 或 "[]"
-            queries.append({
-                "query":  f"<query_out>{u}</query_out>",
-                "answer": ans,
-            })
-            self.queried_out[u] = set(self.adj_list[u])
-        # 2. 边存在性查询（排除自环）
-        for u in range(1, self.n + 1):
-            for v in range(1, self.n + 1):
-                if u == v:
-                    continue
-                exists = v in self.adj_list[u]
-                ans = yes_res if exists else no_res
-                queries.append({
-                    "query":  f"<query_edge>{u},{v}</query_edge>",
-                    "answer": ans,
-                })
-                self.queried_edges[(u, v)] = exists
-        return queries
+            self.invalid_query_count += 1
+            if self.config.language == "zh":
+                return f"错误：未识别的查询类型。无效提问次数：{self.invalid_query_count}/3"
+            else:
+                return f"Error: Unrecognized query type. Invalid queries: {self.invalid_query_count}/3"
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成错误答案"""
-        import random
-        # 中文是非替换
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-
-        # 英文 Yes/No 替换
-        correct_lower = correct.lower()
-        if correct_lower == "yes":
-            if correct.isupper(): return "NO"
-            if correct.istitle(): return "No"
-            return "no"
-        if correct_lower == "no":
-            if correct.isupper(): return "YES"
-            if correct.istitle(): return "Yes"
-            return "yes"
-
-        # 列表形式的返回值（出邻接查询结果），如 "[2, 3]" 或 "[]"
-        if correct.startswith("[") and correct.endswith("]"):
-            try:
-                import ast
-                neighbors = ast.literal_eval(correct)
-                if isinstance(neighbors, list):
-                    if len(neighbors) == 0:
-                        # 空列表 -> 随机加一个不存在的邻居
-                        fake = random.randint(1, self.n)
-                        return str([fake])
-                    else:
-                        # 非空列表 -> 去掉一个或加一个来制造错误
-                        modified = list(neighbors)
-                        if len(modified) > 1:
-                            modified.pop(0)
-                        else:
-                            # 只有一个元素，加一个假邻居
-                            candidates = [i for i in range(1, self.n + 1) if i not in neighbors]
-                            if candidates:
-                                modified.append(random.choice(candidates))
-                            else:
-                                modified = []
-                        return str(sorted(modified))
-            except:
-                pass
-
-        # 纯数字
         if correct.isdigit():
             return str(int(correct) + 1)
+        
+        if self.config.language == "zh":
+            if "是" in correct:
+                return correct.replace("是", "否")
+            elif "否" in correct:
+                return correct.replace("否", "是")
+        else:
+            lower_correct = correct.lower()
+            if "yes" in lower_correct:
+                if "Yes" in correct: return correct.replace("Yes", "No")
+                if "yes" in correct: return correct.replace("yes", "no")
+                return correct.replace("YES", "NO")
+            elif "no" in lower_correct:
+                if "No" in correct: return correct.replace("No", "Yes")
+                if "no" in correct: return correct.replace("no", "yes")
+                return correct.replace("NO", "YES")
 
-        return correct + "_WRONG"
+        return f"{correct}_WRONG"
+
+    def _cf_correction_message(self) -> str:
+        wrong = self._cf_wrong_resp
+        correct = self._cf_correct_resp
+        
+        if self.config.language == "zh":
+            return (f"【纠正】上一轮的回复有误。错误答案为：\"{wrong}\"，正确答案应为：\"{correct}\"。\n"
+                    f"请基于正确信息重新开始提问。")
+        else:
+            return (f"[Correction] The previous response was incorrect. Wrong answer: \"{wrong}\"; Correct answer: \"{correct}\".\n"
+                    f"Please restart your questioning based on the correct information.")
+
+    def step(self, response: str) -> "GameState":
+        if self.invalid_query_count >= 3:
+            if self.config.language == "zh":
+                self.state.set_state("failed", "无效提问累计达到3次")
+            else:
+                self.state.set_state("failed", "Cumulative invalid queries reached 3")
+            return self.state
+        
+        return super().step(response)
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        
+        sorted_vertices = sorted(list(self.vertices))
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "有", "无"
+        else:
+            yes_res, no_res = "Yes", "No"
+
+        for u, v in itertools.combinations(sorted_vertices, 2):
+            query_str = f"{u}-{v}"
+            
+            exists = self._check_edge_exists(u, v)
+            ans = yes_res if exists else no_res
+            
+            results.append({
+                "query": f"<query_edge>{query_str}</query_edge>",
+                "answer": ans
+            })
+
+        intermediate_nodes = [v for v in sorted_vertices if v not in ("A1", "B3")]
+        
+        for r in range(len(intermediate_nodes) + 1):
+            for mid_path in itertools.permutations(intermediate_nodes, r):
+                full_path_list = ["A1"] + list(mid_path) + ["B3"]
+                path_str = "-".join(full_path_list)
+                
+                _, msg = self._verify_path(full_path_list)
+                
+                results.append({
+                    "query": f"<query_path>{path_str}</query_path>",
+                    "answer": msg
+                })
+                
+        return results

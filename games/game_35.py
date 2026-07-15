@@ -1,482 +1,850 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   插入影响：在某位置插入某元素后，特定位置的元素变为什么
-# ============================================================
-
 from .base import Game
 import re
-import random
 
-class HiddenInsertionGame(Game):
-    tags = ["query_1", "query_2", "answer"]
+class GraphReachabilityGame(Game):
+
     reasoning_type = "演绎推理"
-    data_structure = "序列"
-
-    game_rule_zh = """\
-我们现在来玩一个"隐藏插入推理"游戏，规则如下：
-
-游戏设定了一个初始序列，长度为 {n}，包含编号为 B1, B2, ..., B{n} 的元素，初始顺序为 [B1, B2, ..., B{n}]。
-
-接下来，我秘密地执行了 {m} 次插入操作。每次插入会在当前序列的某个位置插入一个新元素（命名为 N1, N2, ..., N{m}），使得该位置及其右侧的所有元素索引整体加 1。所有插入操作的位置和顺序已固定，但对你不可见。
-
-定义"时间步 r"为已完成前 r 次插入后的序列状态：
-- r=0 表示初始状态，序列长度为 {n}
-- r={m} 表示最终状态，序列长度为 {total}
-
-你的目标是：推断出在最终状态（r={m}）下，第 {target} 位上的元素是什么。
-
-## 查询接口
-
-你可以反复提出以下两类查询（每次仅限一项）：
-1. <query_1>r, p</query_1>：查询在时间步 r 下，位置 p 上的元素是什么。
-2. <query_2>r, E</query_2>：查询在时间步 r 下，元素 E 所在的位置。
-
-注意：
-- r 的范围是 0 到 {m}。
-- p 的范围是 1 到 {n} + r。
-- E 可以是 B1~B{n} 或 N1~N{m}。
-
-当你得出结论后，请用 <answer>E</answer> 来提交你的最终答案，其中 E 是最终状态下第 {target} 位上的元素。
-"""
-
-    game_rule_en = """\
-Let's play a "Hidden Insertion Reasoning" game. The rules are as follows:
-
-The game sets an initial sequence of length {n}, containing elements labeled B1, B2, ..., B{n}, with the initial order being [B1, B2, ..., B{n}].
-
-Next, I secretly performed {m} insertion operations. Each insertion places a new element (named N1, N2, ..., N{m}) at a certain position in the current sequence, shifting all elements at that position and to its right by 1 to the right. The positions and order of all insertion operations are fixed but invisible to you.
-
-Define "time step r" as the sequence state after completing the first r insertions:
-- r=0 represents the initial state, sequence length is {n}
-- r={m} represents the final state, sequence length is {total}
-
-Your goal is: deduce what element is at position {target} in the final state (r={m}).
-
-## Query Interface
-
-You can repeatedly make the following two types of queries (only one per turn):
-1. <query_1>r, p</query_1>: Query what element is at position p at time step r.
-2. <query_2>r, E</query_2>: Query the position of element E at time step r.
-
-Note:
-- r ranges from 0 to {m}.
-- p ranges from 1 to {n} + r.
-- E can be B1~B{n} or N1~N{m}.
-
-Once you have reached a conclusion, please submit your final answer using <answer>E</answer>, where E is the element at position {target} in the final state.
-"""
+    data_structure = "图"
 
     contextualized_rule_zh_1 = """\
-【交通场景】
-我们现在来进行一项“交通枢纽列车调度”推理测试。
+欢迎使用“物流运输可达性分析”系统。
 
-系统设有一条主干铁路，初始长度对应 {n} 个区段，停放着列车 B1, B2, ..., B{n}，初始排列为 [B1, B2, ..., B{n}]。
+系统内记录了一个单向物流运输网络，物流站点集合为 {vertices}，具体的直达运输路线未知。网络中可能存在循环路线，但不包含自我发货。
+我已经为你指定了初始发货站点 {start}，你的目标是推理出从该站点出发，货物最终能够送达的所有站点集合。
 
-在后续的调度周期中，系统自动执行了 {m} 次加塞调度。每次加塞会将一列新列车（命名为 N1, N2, ..., N{m}）插入到当前主干铁路的某个区段，使得该区段及后方的所有列车顺延退后一个区段。所有加塞调度已执行完毕且在后台固定，但对你不可见。
+初始状态下，你已经确认发货站点 {start} 是可达的。
 
-定义“调度阶段 r”为完成前 r 次加塞后的铁路区段状态：
-- r=0 表示初始状态，占用区段数为 {n}
-- r={m} 表示最终状态，占用区段数为 {total}
+你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的运输网络结构如实回答：
 
-你的目标是：推断出在最终状态（r={m}）下，第 {target} 个区段上的列车编号是什么。
+1. 邻接枚举查询：询问某个已确认可达站点的所有直接下游站点。
+   - 限制：只能查询已确认可达的站点。
+   - 回答：列出该站点的所有直接下游站点。
 
-## 查询接口
+2. 边存在性查询：询问从某个已确认可达站点到另一站点是否存在直达路线。
+   - 限制：起点必须是已确认可达的站点。
+   - 回答："是"或"否"。
 
-你可以反复提出以下两类查询（每次仅限一项）：
-1. <query_1>r, p</query_1>：查询在调度阶段 r 下，第 p 个区段的列车编号。
-2. <query_2>r, E</query_2>：查询在调度阶段 r 下，列车 E 所在的区段。
+3. 路径验证查询：询问给定的站点序列是否构成从发货站点出发的实际运输路径。
+   - 限制：序列必须以发货站点 {start} 开头，长度至少为 2，站点可以重复。
+   - 回答："是"；或"否，在第 i 段失败"（i 为最小失败段的下标）。
 
-注意：
-- r 的范围是 0 到 {m}。
-- p 的范围是 1 到 {n} + r。
-- E 可以是 B1~B{n} 或 N1~N{m}。
+4. 可达集合报告查询：询问当前已确认可达的站点集合。
+   - 回答：列出当前所有已确认可达的站点。
 
-当你确认目标后，请用 <answer>E</answer> 来提交答案，其中 E 是最终状态下第 {target} 个区段上的列车编号。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，排查任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 邻接枚举查询（例如查询站点 A）：
+<query_neighbors>A</query_neighbors>
+
+- 边存在性查询（例如查询从 A 到 B 是否有直达路线）：
+<query_edge>A,B</query_edge>
+
+- 路径验证查询（例如验证路线 A->B->C）：
+<query_path>A,B,C</query_path>
+
+- 可达集合报告查询：
+<query_reachable></query_reachable>
+
+提交最终答案时，请列出所有可达站点（用逗号隔开，顺序不限），格式如下：
+
+<answer>A,B,C</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-We are now conducting a "Traffic Hub Train Scheduling" reasoning test.
+[Transportation Scenario]
+Welcome to the "Logistics Network Reachability" system.
 
-The system features a main railway initially spanning {n} segments, occupied by trains B1, B2, ..., B{n} in the initial order [B1, B2, ..., B{n}].
+The system records a one-way logistics transport network with the station set {vertices}. The exact direct transport routes are unknown. The network may contain circular routes but no self-shipping.
+I have designated an initial dispatch station {start} for you. Your goal is to infer the set of all stations reachable from this starting station.
 
-During subsequent dispatch cycles, the system automatically executed {m} insertion dispatchments. Each dispatch inserts a new train (named N1, N2, ..., N{m}) into a specific segment of the current main railway, causing all trains at and behind that segment to shift back by one segment. All dispatchments have been executed and fixed in the backend, but are invisible to you.
+Initially, you have confirmed that the starting station {start} is reachable.
 
-Define "dispatch phase r" as the railway segment state after completing the first r insertions:
-- r=0 represents the initial state, occupied segments count is {n}
-- r={m} represents the final state, occupied segments count is {total}
+You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the actual transport network:
 
-Your goal is: deduce the train ID at the {target}-th segment in the final state (r={m}).
+1. Neighbor Enumeration Query: Ask for all direct downstream stations of a confirmed reachable station.
+   - Restriction: Can only query stations that are confirmed reachable.
+   - Answer: List all direct downstream stations.
 
-## Query Interface
+2. Edge Existence Query: Ask whether there is a direct route from a confirmed reachable station to another.
+   - Restriction: The source station must be confirmed reachable.
+   - Answer: "Yes" or "No".
 
-You can repeatedly make the following two types of queries (only one per turn):
-1. <query_1>r, p</query_1>: Query the train ID at segment p during dispatch phase r.
-2. <query_2>r, E</query_2>: Query the segment occupied by train E during dispatch phase r.
+3. Path Verification Query: Ask whether a given station sequence forms a valid transport route from the dispatch station.
+   - Restriction: The sequence must start with {start}, have length at least 2, and stations can repeat.
+   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing segment).
 
-Note:
-- r ranges from 0 to {m}.
-- p ranges from 1 to {n} + r.
-- E can be B1~B{n} or N1~N{m}.
+4. Reachable Set Report Query: Ask for the currently confirmed reachable station set.
+   - Answer: List all currently confirmed reachable stations.
 
-Once you confirm your target, please submit your answer using <answer>E</answer>, where E is the train ID at the {target}-th segment in the final state.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
+
+Each query must contain only one tag. Use the following XML format:
+
+- Neighbor Enumeration Query (e.g., querying station A):
+<query_neighbors>A</query_neighbors>
+
+- Edge Existence Query (e.g., checking if there is a direct route from A to B):
+<query_edge>A,B</query_edge>
+
+- Path Verification Query (e.g., verifying route A->B->C):
+<query_path>A,B,C</query_path>
+
+- Reachable Set Report Query:
+<query_reachable></query_reachable>
+
+When submitting the final answer, list all reachable stations (comma-separated, order does not matter), using this format:
+
+<answer>A,B,C</answer>
 """
 
     contextualized_rule_zh_2 = """\
-【医疗场景】
-我们现在来进行一项“基因片段拼接”推理分析。
+欢迎使用“传染病接触溯源”系统。
 
-患者样本中提取出了一段初始基因序列，长度为 {n}，包含碱基片段 B1, B2, ..., B{n}，初始序列结构为 [B1, B2, ..., B{n}]。
+系统追踪了一个局部的传染接触网络，涉及人员集合为 {vertices}，具体的直接接触史未知。网络中可能存在交叉接触，但不包含自我传染。
+我已经为你指定了确认感染的零号病人 {start}，你的目标是推理出从该病人出发，可能被直接或间接传染的所有人员集合。
 
-随后，在病毒感染模拟中，系统发生 {m} 次靶向重组插入。每次插入会将一个新的突变片段（命名为 N1, N2, ..., N{m}）嵌入到当前序列的特定位点，导致该位点及其下游的所有片段位置向后平移 1 位。所有的插入重组已发生且位置恒定，但对分析员隐蔽。
+初始状态下，你已经确认零号病人 {start} 在感染名单中。
 
-定义“重组代次 r”为发生前 r 次插入后的序列状态：
-- r=0 表示野生型初始状态，片段长度为 {n}
-- r={m} 表示最终感染状态，片段长度为 {total}
+你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的流行病学调查数据如实回答：
 
-你的目标是：推断出在最终状态（r={m}）下，第 {target} 号位点上的片段编号是什么。
+1. 邻接枚举查询：询问某个已确认感染人员的所有直接接触者。
+   - 限制：只能查询已确认在感染名单中的人员。
+   - 回答：列出该人员的所有直接接触者。
 
-## 查询接口
+2. 边存在性查询：询问从某个已确认感染人员到另一人员是否存在直接接触史。
+   - 限制：起点必须是已确认在感染名单中的人员。
+   - 回答："是"或"否"。
 
-你可以反复提出以下两类查询（每次仅限一项）：
-1. <query_1>r, p</query_1>：查询在重组代次 r 下，第 p 号位点的片段编号。
-2. <query_2>r, E</query_2>：查询在重组代次 r 下，片段 E 所在的位点。
+3. 路径验证查询：询问给定的人员序列是否构成从零号病人出发的有效传播链。
+   - 限制：序列必须以零号病人 {start} 开头，长度至少为 2，人员可以重复（如重复暴露）。
+   - 回答："是"；或"否，在第 i 段失败"（i 为最小失败段的下标）。
 
-注意：
-- r 的范围是 0 到 {m}。
-- p 的范围是 1 到 {n} + r。
-- E 可以是 B1~B{n} 或 N1~N{m}。
+4. 可达集合报告查询：询问当前已确认在感染名单中的人员集合。
+   - 回答：列出当前所有已确认感染的人员。
 
-当你得出结论后，请用 <answer>E</answer> 来提交诊断结果，其中 E 是最终状态下第 {target} 号位点上的片段编号。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，溯源任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 邻接枚举查询（例如查询人员 A）：
+<query_neighbors>A</query_neighbors>
+
+- 边存在性查询（例如查询 A 是否直接接触了 B）：
+<query_edge>A,B</query_edge>
+
+- 路径验证查询（例如验证传播链 A->B->C）：
+<query_path>A,B,C</query_path>
+
+- 可达集合报告查询：
+<query_reachable></query_reachable>
+
+提交最终答案时，请列出所有可能被传染的人员（用逗号隔开，顺序不限），格式如下：
+
+<answer>A,B,C</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-We are now conducting a "Gene Fragment Splicing" reasoning analysis.
+[Healthcare Scenario]
+Welcome to the "Infectious Disease Contact Tracing" system.
 
-An initial gene sequence has been extracted from the patient sample, with a length of {n}, containing base fragments B1, B2, ..., B{n}, and an initial sequence structure of [B1, B2, ..., B{n}].
+The system tracks a localized transmission network involving the person set {vertices}. The exact direct contact history is unknown. Cross-contacts may exist, but self-infection is not included.
+I have designated the confirmed Patient Zero {start} for you. Your goal is to infer the set of all persons who might have been directly or indirectly infected originating from this patient.
 
-Subsequently, during the viral infection simulation, the system underwent {m} targeted recombination insertions. Each insertion embeds a new mutant fragment (named N1, N2, ..., N{m}) at a specific locus in the current sequence, causing all fragments at that locus and downstream to shift backwards by 1 position. All insertions have occurred and are positionally constant, but are hidden from the analyst.
+Initially, you have confirmed that Patient Zero {start} is in the infected list.
 
-Define "recombination generation r" as the sequence state after the first r insertions:
-- r=0 represents the wild-type initial state, fragment length is {n}
-- r={m} represents the final infected state, fragment length is {total}
+You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on actual epidemiological investigation data:
 
-Your goal is: deduce the fragment ID at the {target}-th locus in the final state (r={m}).
+1. Neighbor Enumeration Query: Ask for all direct contacts of a confirmed infected person.
+   - Restriction: Can only query persons confirmed to be in the infected list.
+   - Answer: List all direct contacts.
 
-## Query Interface
+2. Edge Existence Query: Ask whether there is a direct contact history from a confirmed infected person to another.
+   - Restriction: The source person must be confirmed infected.
+   - Answer: "Yes" or "No".
 
-You can repeatedly make the following two types of queries (only one per turn):
-1. <query_1>r, p</query_1>: Query the fragment ID at locus p at recombination generation r.
-2. <query_2>r, E</query_2>: Query the locus of fragment E at recombination generation r.
+3. Path Verification Query: Ask whether a given person sequence forms a valid transmission chain from Patient Zero.
+   - Restriction: The sequence must start with {start}, have length at least 2, and persons can repeat (e.g., repeated exposure).
+   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing segment).
 
-Note:
-- r ranges from 0 to {m}.
-- p ranges from 1 to {n} + r.
-- E can be B1~B{n} or N1~N{m}.
+4. Reachable Set Report Query: Ask for the currently confirmed infected person set.
+   - Answer: List all currently confirmed infected persons.
 
-Once you have concluded, please submit your diagnostic result using <answer>E</answer>, where E is the fragment ID at the {target}-th locus in the final state.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracing task fails.
+
+Each query must contain only one tag. Use the following XML format:
+
+- Neighbor Enumeration Query (e.g., querying person A):
+<query_neighbors>A</query_neighbors>
+
+- Edge Existence Query (e.g., checking direct contact from A to B):
+<query_edge>A,B</query_edge>
+
+- Path Verification Query (e.g., verifying chain A->B->C):
+<query_path>A,B,C</query_path>
+
+- Reachable Set Report Query:
+<query_reachable></query_reachable>
+
+When submitting the final answer, list all potentially infected persons (comma-separated, order does not matter), using this format:
+
+<answer>A,B,C</answer>
 """
 
     contextualized_rule_zh_3 = """\
-【教育场景】
-我们现在来进行一项“课程大纲动态排期”逻辑推演。
+欢迎使用“课程先修图谱解锁”系统。
 
-本学期初拟定了一份基础教学大纲，包含 {n} 个连续的课时，授课模块为 B1, B2, ..., B{n}，初始排课顺序为 [B1, B2, ..., B{n}]。
+系统设定了一个完整的学科知识图谱，课程模块集合为 {vertices}，具体的先修依赖关系未知。模块间可能存在循环依赖（如进阶互修），但不存在自我依赖。
+我已经为你分配了初始必修课 {start}，你的目标是推理出只要完成该必修课，后续能够直接或间接解锁的所有课程模块集合。
 
-在学期进行中，教务处秘密下达了 {m} 次知识点扩充。每次扩充会在当前排课表的某一周次插入一个新授课模块（命名为 N1, N2, ..., N{m}），使得该周次及之后的全部模块授课进度整体顺延 1 个周次。所有扩充操作的落点已在系统内锁定，但对授课教师不可见。
+初始状态下，你已经确认必修课 {start} 是已解锁的。
 
-定义“排课迭代 r”为下达前 r 次扩充后的教学大纲状态：
-- r=0 表示初始排课状态，总周次为 {n}
-- r={m} 表示最终排课状态，总周次为 {total}
+你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的教学大纲依赖结构如实回答：
 
-你的目标是：推断出在最终状态（r={m}）下，第 {target} 个周次的授课模块是什么。
+1. 邻接枚举查询：询问某个已解锁课程的所有直接后续课程（即以此为唯一先决条件的课程）。
+   - 限制：只能查询已确认解锁的课程。
+   - 回答：列出该课程的所有直接后续课程。
 
-## 查询接口
+2. 边存在性查询：询问从某个已解锁课程到另一课程是否存在直接先修依赖。
+   - 限制：起点必须是已确认解锁的课程。
+   - 回答："是"或"否"。
 
-你可以反复提出以下两类查询（每次仅限一项）：
-1. <query_1>r, p</query_1>：查询在排课迭代 r 下，第 p 个周次的授课模块。
-2. <query_2>r, E</query_2>：查询在排课迭代 r 下，模块 E 所在的周次。
+3. 路径验证查询：询问给定的课程序列是否构成从初始必修课出发的有效学习进阶路线。
+   - 限制：序列必须以初始必修课 {start} 开头，长度至少为 2，课程可以重复（如复习重修）。
+   - 回答："是"；或"否，在第 i 段失败"（i 为最小进阶失败段的下标）。
 
-注意：
-- r 的范围是 0 到 {m}。
-- p 的范围是 1 到 {n} + r。
-- E 可以是 B1~B{n} 或 N1~N{m}。
+4. 可达集合报告查询：询问当前已确认解锁的课程模块集合。
+   - 回答：列出当前所有已确认解锁的课程。
 
-当你推演出结果后，请用 <answer>E</answer> 提交最终大纲，其中 E 是最终状态下第 {target} 个周次对应的授课模块。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，规划任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 邻接枚举查询（例如查询课程 A）：
+<query_neighbors>A</query_neighbors>
+
+- 边存在性查询（例如查询 A 是否是 B 的直接先修课）：
+<query_edge>A,B</query_edge>
+
+- 路径验证查询（例如验证路线 A->B->C）：
+<query_path>A,B,C</query_path>
+
+- 可达集合报告查询：
+<query_reachable></query_reachable>
+
+提交最终答案时，请列出所有可解锁的课程模块（用逗号隔开，顺序不限），格式如下：
+
+<answer>A,B,C</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-We are now conducting a "Dynamic Curriculum Scheduling" logical deduction.
+Welcome to the "Course Prerequisite Graph" system.
 
-A basic teaching syllabus was formulated at the beginning of the semester, consisting of {n} consecutive lecture periods, with teaching modules B1, B2, ..., B{n}, and an initial scheduling order of [B1, B2, ..., B{n}].
+The system features a complete academic knowledge graph with the course module set {vertices}. The exact prerequisite dependencies are unknown. Circular dependencies may exist (e.g., advanced co-requisites), but self-dependencies do not.
+I have assigned an initial required course {start} for you. Your goal is to infer the set of all course modules that can be directly or indirectly unlocked after completing this initial course.
 
-As the semester progressed, the Academic Affairs Office secretly issued {m} knowledge point expansions. Each expansion inserts a new teaching module (named N1, N2, ..., N{m}) into a certain week of the current schedule, causing all modules scheduled for that week and onwards to be postponed by 1 week. All expansion placement points are locked in the system but invisible to the instructors.
+Initially, you have confirmed that the required course {start} is unlocked.
 
-Define "scheduling iteration r" as the syllabus state after issuing the first r expansions:
-- r=0 represents the initial scheduling state, total weeks is {n}
-- r={m} represents the final scheduling state, total weeks is {total}
+You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the actual syllabus dependency structure:
 
-Your goal is: deduce the teaching module at the {target}-th week in the final state (r={m}).
+1. Neighbor Enumeration Query: Ask for all direct subsequent courses of a confirmed unlocked course (i.e., courses that have it as their sole prerequisite).
+   - Restriction: Can only query courses that are confirmed unlocked.
+   - Answer: List all direct subsequent courses.
 
-## Query Interface
+2. Edge Existence Query: Ask whether there is a direct prerequisite dependency from a confirmed unlocked course to another.
+   - Restriction: The source course must be confirmed unlocked.
+   - Answer: "Yes" or "No".
 
-You can repeatedly make the following two types of queries (only one per turn):
-1. <query_1>r, p</query_1>: Query the module at week p under scheduling iteration r.
-2. <query_2>r, E</query_2>: Query the week containing module E under scheduling iteration r.
+3. Path Verification Query: Ask whether a given course sequence forms a valid learning progression route from the initial required course.
+   - Restriction: The sequence must start with {start}, have length at least 2, and courses can repeat (e.g., retaking for review).
+   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing progression segment).
 
-Note:
-- r ranges from 0 to {m}.
-- p ranges from 1 to {n} + r.
-- E can be B1~B{n} or N1~N{m}.
+4. Reachable Set Report Query: Ask for the currently confirmed unlocked course set.
+   - Answer: List all currently confirmed unlocked courses.
 
-Once deduced, please submit the final syllabus using <answer>E</answer>, where E is the teaching module corresponding to the {target}-th week in the final state.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the planning task fails.
+
+Each query must contain only one tag. Use the following XML format:
+
+- Neighbor Enumeration Query (e.g., querying course A):
+<query_neighbors>A</query_neighbors>
+
+- Edge Existence Query (e.g., checking if A is a direct prerequisite for B):
+<query_edge>A,B</query_edge>
+
+- Path Verification Query (e.g., verifying route A->B->C):
+<query_path>A,B,C</query_path>
+
+- Reachable Set Report Query:
+<query_reachable></query_reachable>
+
+When submitting the final answer, list all unlockable course modules (comma-separated, order does not matter), using this format:
+
+<answer>A,B,C</answer>
 """
 
     contextualized_rule_zh_4 = """\
-【制造业/工业场景】
-我们现在来进行一项“流水线工序插入”检测任务。
+欢迎使用“工业流水线物料追踪”系统。
 
-工厂生产线上规划了一条初始装配流水线，包含 {n} 个工位，装配工序依次为 B1, B2, ..., B{n}，初始流水线布局为 [B1, B2, ..., B{n}]。
+系统映射了一个复杂的工厂物料流转网络，加工单元集合为 {vertices}，具体的传送带连接状况未知。流转网络中可能存在物料回流，但不包含原地静止加工。
+我已经为你指定了物料的初始投料口 {start}，你的目标是推理出从该投料口投入物料后，能够流经的所有加工单元集合。
 
-在后续工艺升级中，控制中枢自动插入了 {m} 次补充工序。每次插入会在当前的流水线某处增加一个新工序节点（命名为 N1, N2, ..., N{m}），导致该位置及后续所有的工序节点向产线后端平移 1 个工位。所有插入指令已写入 PLC 程序，但测试人员无法直接读取。
+初始状态下，你已经确认初始投料口 {start} 接收了物料。
 
-定义“工艺版本 r”为执行前 r 次插入后的流水线状态：
-- r=0 表示初始产线，工位总数为 {n}
-- r={m} 表示最终升级产线，工位总数为 {total}
+你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的厂区管网结构如实回答：
 
-你的目标是：推断出在最终状态（r={m}）下，第 {target} 个工位上执行的工序名称是什么。
+1. 邻接枚举查询：询问某个已确认接收物料单元的所有直接下游单元。
+   - 限制：只能查询已确认接收物料的单元。
+   - 回答：列出该单元的所有直接下游加工单元。
 
-## 查询接口
+2. 边存在性查询：询问从某个已确认接收物料的单元到另一单元是否存在直接流转链路。
+   - 限制：起点必须是已确认接收物料的单元。
+   - 回答："是"或"否"。
 
-你可以反复提出以下两类查询（每次仅限一项）：
-1. <query_1>r, p</query_1>：查询在工艺版本 r 下，第 p 个工位的工序。
-2. <query_2>r, E</query_2>：查询在工艺版本 r 下，工序 E 所处的工位。
+3. 路径验证查询：询问给定的加工单元序列是否构成从投料口出发的实际物料流转路径。
+   - 限制：序列必须以投料口 {start} 开头，长度至少为 2，单元可以重复（如回炉重造）。
+   - 回答："是"；或"否，在第 i 段失败"（i 为最小流转中断段的下标）。
 
-注意：
-- r 的范围是 0 到 {m}。
-- p 的范围是 1 到 {n} + r。
-- E 可以是 B1~B{n} 或 N1~N{m}。
+4. 可达集合报告查询：询问当前已确认接收到物料的加工单元集合。
+   - 回答：列出当前所有已确认接收物料的单元。
 
-当你验证无误后，请用 <answer>E</answer> 提交你的结论，其中 E 是最终产线上第 {target} 个工位的工序。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，追踪任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 邻接枚举查询（例如查询加工单元 A）：
+<query_neighbors>A</query_neighbors>
+
+- 边存在性查询（例如查询从单元 A 到 B 是否有传送带直接连接）：
+<query_edge>A,B</query_edge>
+
+- 路径验证查询（例如验证流转路径 A->B->C）：
+<query_path>A,B,C</query_path>
+
+- 可达集合报告查询：
+<query_reachable></query_reachable>
+
+提交最终答案时，请列出所有物料可达的加工单元（用逗号隔开，顺序不限），格式如下：
+
+<answer>A,B,C</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-We are now performing an "Assembly Line Process Insertion" testing task.
+[Manufacturing Scenario]
+Welcome to the "Industrial Assembly Line Tracking" system.
 
-An initial assembly line is planned on the factory production floor, containing {n} workstations, with assembly processes B1, B2, ..., B{n}, and an initial line layout of [B1, B2, ..., B{n}].
+The system maps a complex factory material flow network with the processing unit set {vertices}. The exact conveyor belt connections are unknown. Material backflow may exist in the network, but strictly stationary processing is not included.
+I have designated the initial feed port {start} for you. Your goal is to infer the set of all processing units that the material can flow through starting from this feed port.
 
-During subsequent process upgrades, the control center automatically inserted {m} supplementary processes. Each insertion adds a new process node (named N1, N2, ..., N{m}) somewhere on the current line, shifting that node and all subsequent process nodes one workstation towards the end of the line. All insertion commands have been written into the PLC program but cannot be directly read by testers.
+Initially, you have confirmed that the feed port {start} has received material.
 
-Define "process version r" as the assembly line state after executing the first r insertions:
-- r=0 represents the initial line, total workstations is {n}
-- r={m} represents the final upgraded line, total workstations is {total}
+You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the actual plant piping and routing structure:
 
-Your goal is: deduce the process name at the {target}-th workstation in the final state (r={m}).
+1. Neighbor Enumeration Query: Ask for all direct downstream units of a confirmed material-receiving unit.
+   - Restriction: Can only query units that are confirmed to have received material.
+   - Answer: List all direct downstream processing units.
 
-## Query Interface
+2. Edge Existence Query: Ask whether there is a direct transfer link from a confirmed material-receiving unit to another.
+   - Restriction: The source unit must be confirmed to have received material.
+   - Answer: "Yes" or "No".
 
-You can repeatedly make the following two types of queries (only one per turn):
-1. <query_1>r, p</query_1>: Query the process at workstation p under process version r.
-2. <query_2>r, E</query_2>: Query the workstation of process E under process version r.
+3. Path Verification Query: Ask whether a given sequence of processing units forms a valid material flow path from the feed port.
+   - Restriction: The sequence must start with {start}, have length at least 2, and units can repeat (e.g., sent back for reprocessing).
+   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing transfer segment).
 
-Note:
-- r ranges from 0 to {m}.
-- p ranges from 1 to {n} + r.
-- E can be B1~B{n} or N1~N{m}.
+4. Reachable Set Report Query: Ask for the currently confirmed material-receiving processing unit set.
+   - Answer: List all units currently confirmed to have received material.
 
-Once verified, please submit your conclusion using <answer>E</answer>, where E is the process at the {target}-th workstation on the final production line.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracking task fails.
+
+Each query must contain only one tag. Use the following XML format:
+
+- Neighbor Enumeration Query (e.g., querying processing unit A):
+<query_neighbors>A</query_neighbors>
+
+- Edge Existence Query (e.g., checking for a direct conveyor link from A to B):
+<query_edge>A,B</query_edge>
+
+- Path Verification Query (e.g., verifying flow path A->B->C):
+<query_path>A,B,C</query_path>
+
+- Reachable Set Report Query:
+<query_reachable></query_reachable>
+
+When submitting the final answer, list all reachable processing units (comma-separated, order does not matter), using this format:
+
+<answer>A,B,C</answer>
 """
 
     contextualized_rule_zh_5 = """\
-【法律场景】
-我们现在来进行一项“法案修正案增补”逻辑审查。
+欢迎使用“涉案资金流向追踪”系统。
 
-立法委员会草拟了一份初始法案文本，由 {n} 条核心条款组成，编号为 B1, B2, ..., B{n}，初始条文顺序为 [B1, B2, ..., B{n}]。
+系统锁定了一个地下洗钱资金网络，涉案账户集合为 {vertices}，具体的转账流水明细未知。资金流转可能存在闭环洗钱特征，但不包含账户内自我转账。
+我已经为你标记了资金源头的核心嫌疑账户 {start}，你的目标是推理出从该核心账户流出的资金，最终能够流入的所有涉案账户集合。
 
-在后续三读期间，委员会有序提出了 {m} 次修正案增补。每次增补会在当前的法案文本某处插入一条新修正案（命名为 N1, N2, ..., N{m}），导致该位置及之后的全部法案条款编号向后顺延 1 条。所有修正案的增补位置在会议记录中已确定，但对外部审查员保密。
+初始状态下，你已经确认核心嫌疑账户 {start} 持有涉案资金。
 
-定义“法案草案 r”为完成前 r 次增补后的法案状态：
-- r=0 表示初始一读草案，条款总数为 {n}
-- r={m} 表示最终通过法案，条款总数为 {total}
+你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的银行侦查流水数据如实回答：
 
-你的目标是：推断出在最终通过状态（r={m}）下，第 {target} 条法案的编号内容是什么。
+1. 邻接枚举查询：询问某个已确认持有涉案资金账户的所有直接收款账户。
+   - 限制：只能查询已确认持有涉案资金的账户。
+   - 回答：列出该账户的所有直接收款账户。
 
-## 查询接口
+2. 边存在性查询：询问从某个已确认持有涉案资金的账户到另一账户是否存在直接转账记录。
+   - 限制：起点必须是已确认持有涉案资金的账户。
+   - 回答："是"或"否"。
 
-你可以反复提出以下两类查询（每次仅限一项）：
-1. <query_1>r, p</query_1>：查询在法案草案 r 下，第 p 条的内容编号。
-2. <query_2>r, E</query_2>：查询在法案草案 r 下，编号为 E 的法案内容是第几条。
+3. 路径验证查询：询问给定的账户序列是否构成从核心账户出发的真实资金链路。
+   - 限制：序列必须以核心账户 {start} 开头，长度至少为 2，账户可以重复（如多次过账循环）。
+   - 回答："是"；或"否，在第 i 段失败"（i 为最小链路中断段的下标）。
 
-注意：
-- r 的范围是 0 到 {m}。
-- p 的范围是 1 到 {n} + r。
-- E 可以是 B1~B{n} 或 N1~N{m}。
+4. 可达集合报告查询：询问当前已确认持有涉案资金的账户集合。
+   - 回答：列出当前所有已确认持有涉案资金的账户。
 
-当你审查完毕后，请用 <answer>E</answer> 提交你的审核结论，其中 E 是最终通过法案中第 {target} 条的内容编号。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，追踪任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 邻接枚举查询（例如查询涉案账户 A）：
+<query_neighbors>A</query_neighbors>
+
+- 边存在性查询（例如查询账户 A 是否直接转账给账户 B）：
+<query_edge>A,B</query_edge>
+
+- 路径验证查询（例如验证资金链路 A->B->C）：
+<query_path>A,B,C</query_path>
+
+- 可达集合报告查询：
+<query_reachable></query_reachable>
+
+提交最终答案时，请列出所有涉案资金流经的账户（用逗号隔开，顺序不限），格式如下：
+
+<answer>A,B,C</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-We are now conducting a "Bill Amendment Addition" logical review.
+[Law Scenario]
+Welcome to the "Illicit Fund Flow Tracking" system.
 
-The Legislative Committee drafted an initial bill text consisting of {n} core clauses, numbered B1, B2, ..., B{n}, with an initial sequence of [B1, B2, ..., B{n}].
+The system has locked onto an underground money laundering network with the suspect account set {vertices}. The exact transaction records are unknown. The fund flow may exhibit closed-loop laundering characteristics, but self-transfers within an account are not included.
+I have flagged the core suspect account (fund source) {start} for you. Your goal is to infer the set of all suspect accounts that eventually received funds flowing from this core account.
 
-During subsequent readings, the committee systematically proposed {m} amendment additions. Each addition inserts a new amendment (named N1, N2, ..., N{m}) into the current bill text, causing the numbering of all clauses at and after that position to be postponed by 1 clause. The addition positions of all amendments are finalized in the meeting minutes but remain confidential to external reviewers.
+Initially, you have confirmed that the core suspect account {start} holds the illicit funds.
 
-Define "bill draft r" as the bill state after completing the first r additions:
-- r=0 represents the initial first reading draft, total clauses is {n}
-- r={m} represents the final passed bill, total clauses is {total}
+You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on actual bank reconnaissance transaction data:
 
-Your goal is: deduce the content identifier of the {target}-th clause in the final passed state (r={m}).
+1. Neighbor Enumeration Query: Ask for all direct payee accounts of an account confirmed to hold illicit funds.
+   - Restriction: Can only query accounts confirmed to hold illicit funds.
+   - Answer: List all direct payee accounts.
 
-## Query Interface
+2. Edge Existence Query: Ask whether there is a direct transfer record from an account confirmed to hold illicit funds to another.
+   - Restriction: The source account must be confirmed to hold illicit funds.
+   - Answer: "Yes" or "No".
 
-You can repeatedly make the following two types of queries (only one per turn):
-1. <query_1>r, p</query_1>: Query the content identifier of the p-th clause under bill draft r.
-2. <query_2>r, E</query_2>: Query which clause number corresponds to content identifier E under bill draft r.
+3. Path Verification Query: Ask whether a given account sequence forms an actual fund trail starting from the core account.
+   - Restriction: The sequence must start with {start}, have length at least 2, and accounts can repeat (e.g., multiple transfer loops).
+   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first broken link segment).
 
-Note:
-- r ranges from 0 to {m}.
-- p ranges from 1 to {n} + r.
-- E can be B1~B{n} or N1~N{m}.
+4. Reachable Set Report Query: Ask for the currently confirmed account set holding illicit funds.
+   - Answer: List all accounts currently confirmed to hold illicit funds.
 
-Once your review is complete, please submit your audit conclusion using <answer>E</answer>, where E is the content identifier of the {target}-th clause in the final passed bill.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracking task fails.
+
+Each query must contain only one tag. Use the following XML format:
+
+- Neighbor Enumeration Query (e.g., querying suspect account A):
+<query_neighbors>A</query_neighbors>
+
+- Edge Existence Query (e.g., checking if account A directly transferred funds to account B):
+<query_edge>A,B</query_edge>
+
+- Path Verification Query (e.g., verifying fund trail A->B->C):
+<query_path>A,B,C</query_path>
+
+- Reachable Set Report Query:
+<query_reachable></query_reachable>
+
+When submitting the final answer, list all accounts that the illicit funds flowed through (comma-separated, order does not matter), using this format:
+
+<answer>A,B,C</answer>
 """
 
+    game_rule_zh = """\
+我们现在来玩一个"图可达性推理"游戏，规则如下：
+
+游戏设定了一个有限有向图，图的顶点集合为 {vertices}，边集合未知。图中可能存在回路，但不包含自环。
+我已经为你指定了一个起点 {start}，你的目标是推理出从该起点出发能够到达的所有顶点集合。
+
+初始状态下，你已经确认起点 {start} 是可达的。
+
+你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的图结构如实回答：
+
+1. 邻接枚举查询：询问某个已确认可达顶点的所有直接后继。
+   - 限制：只能查询已确认可达的顶点。
+   - 回答：列出该顶点的所有直接后继顶点。
+
+2. 边存在性查询：询问从某个已确认可达顶点到另一个顶点是否存在直接边。
+   - 限制：起点必须是已确认可达的顶点。
+   - 回答："是"或"否"。
+
+3. 路径验证查询：询问给定的顶点序列是否构成从起点出发的可行路径。
+   - 限制：序列必须以起点 {start} 开头，长度至少为 2，顶点可以重复。
+   - 回答："是"；或"否，在第 i 段失败"（i 为最小失败段的下标）。
+
+4. 可达集合报告查询：询问当前已确认可达的顶点集合。
+   - 回答：列出当前所有已确认可达的顶点。
+
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 邻接枚举查询（例如查询顶点 A）：
+<query_neighbors>A</query_neighbors>
+
+- 边存在性查询（例如查询从 A 到 B 是否有边）：
+<query_edge>A,B</query_edge>
+
+- 路径验证查询（例如验证路径 A->B->C）：
+<query_path>A,B,C</query_path>
+
+- 可达集合报告查询：
+<query_reachable></query_reachable>
+
+提交最终答案时，请列出所有可达顶点（用逗号隔开，顺序不限），格式如下：
+
+<answer>A,B,C</answer>
+"""
+
+    game_rule_en = """\
+Let's play a "Graph Reachability Inference" game. Here are the rules:
+
+The game has a finite directed graph with vertex set {vertices}. The edge set is unknown. The graph may contain cycles but no self-loops.
+I have designated a starting vertex {start} for you. Your goal is to infer the set of all vertices reachable from this starting vertex.
+
+Initially, you have confirmed that the starting vertex {start} is reachable.
+
+You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the real graph structure:
+
+1. Neighbor Enumeration Query: Ask for all direct successors of a confirmed reachable vertex.
+   - Restriction: Can only query vertices that are confirmed reachable.
+   - Answer: List all direct successor vertices.
+
+2. Edge Existence Query: Ask whether there is a direct edge from a confirmed reachable vertex to another vertex.
+   - Restriction: The source vertex must be confirmed reachable.
+   - Answer: "Yes" or "No".
+
+3. Path Verification Query: Ask whether a given vertex sequence forms a valid path from the starting vertex.
+   - Restriction: The sequence must start with {start}, have length at least 2, and vertices can repeat.
+   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing segment).
+
+4. Reachable Set Report Query: Ask for the currently confirmed reachable vertex set.
+   - Answer: List all currently confirmed reachable vertices.
+
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+
+Each query must contain only one tag. Use the following XML format:
+
+- Neighbor Enumeration Query (e.g., querying vertex A):
+<query_neighbors>A</query_neighbors>
+
+- Edge Existence Query (e.g., checking if there is an edge from A to B):
+<query_edge>A,B</query_edge>
+
+- Path Verification Query (e.g., verifying path A->B->C):
+<query_path>A,B,C</query_path>
+
+- Reachable Set Report Query:
+<query_reachable></query_reachable>
+
+When submitting the final answer, list all reachable vertices (comma-separated, order does not matter), using this format:
+
+<answer>A,B,C</answer>
+"""
+
+    tags = ["answer", "query_neighbors", "query_edge", "query_path", "query_reachable"]
+
+    DIFFICULTY_CONFIG = {
+        "zh": {
+            1: {
+                "vertices": "A,B,C",
+                "start": "A",
+                "edges": "A->B,B->C",
+            },
+            2: {
+                "vertices": "A,B,C,D,E",
+                "start": "A",
+                "edges": "A->B,A->C,B->D,C->D",
+            },
+            3: {
+                "vertices": "A,B,C,D,E,F",
+                "start": "A",
+                "edges": "A->B,A->C,B->D,C->D,D->E",
+            },
+            4: {
+                "vertices": "A,B,C,D,E,F,G",
+                "start": "A",
+                "edges": "A->B,B->C,C->B,B->D,D->E,A->F",
+            },
+            5: {
+                "vertices": "A,B,C,D,E,F,G,H",
+                "start": "A",
+                "edges": "A->B,B->C,C->D,D->B,B->E,E->F,F->E,A->G",
+            },
+        },
+        "en": {
+            1: {
+                "vertices": "A,B,C",
+                "start": "A",
+                "edges": "A->B,B->C",
+            },
+            2: {
+                "vertices": "A,B,C,D,E",
+                "start": "A",
+                "edges": "A->B,A->C,B->D,C->D",
+            },
+            3: {
+                "vertices": "A,B,C,D,E,F",
+                "start": "A",
+                "edges": "A->B,A->C,B->D,C->D,D->E",
+            },
+            4: {
+                "vertices": "A,B,C,D,E,F,G",
+                "start": "A",
+                "edges": "A->B,B->C,C->B,B->D,D->E,A->F",
+            },
+            5: {
+                "vertices": "A,B,C,D,E,F,G,H",
+                "start": "A",
+                "edges": "A->B,B->C,C->D,D->B,B->E,E->F,F->E,A->G",
+            },
+        },
+    }
+
+    def __init__(self, config):
+        super().__init__(config)
+
     def _initialize_game(self):
-        difficulty = getattr(self.config, 'difficulty', 1)
-        seed = getattr(self.config, 'seed', id(self))
-        self.rng = random.Random(seed)
-        
-        difficulty_map = {
-            1: (4, 3),
-            2: (6, 5),
-            3: (8, 7),
-            4: (10, 9),
-            5: (12, 11),
-        }
-        self.n, self.m = difficulty_map.get(int(difficulty), (4, 3))
-        self.total = self.n + self.m
-        
-        self.initial_sequence = [f"B{i}" for i in range(1, self.n + 1)]
-        self.insertions = []
-        
-        self.history = [self.initial_sequence.copy()]
-        
-        current_seq = self.initial_sequence.copy()
-        for i in range(1, self.m + 1):
-            insert_pos = self.rng.randint(0, len(current_seq))
-            new_element = f"N{i}"
-            self.insertions.append((insert_pos, new_element))
-            current_seq.insert(insert_pos, new_element)
-            self.history.append(current_seq.copy())
-            
-        self.target_position = self.rng.randint(1, self.total)
-        self.correct_answer = current_seq[self.target_position - 1]
-        
-        self._game_info = {
-            "n": self.n,
-            "m": self.m,
-            "total": self.total,
-            "target": self.target_position
-        }
+        lang = self.config.language
+        diff = int(self.config.difficulty)
 
-    def evaluate(self, parsed_info):
-        answer = parsed_info.get("answer", "")
-        if answer == self.correct_answer:
-            return True
-        return False
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
+            raise KeyError(f"Unsupported difficulty: {diff}")
 
-    def _cf_core_produce(self, parsed_info):
-        if "query_1" in parsed_info:
-            query = parsed_info["query_1"]
-            try:
-                r_str, p_str = [x.strip() for x in query.split(",")]
-                r = int(r_str)
-                p = int(p_str)
-                if 0 <= r <= self.m and 1 <= p <= self.n + r:
-                    element = self.history[r][p - 1]
-                    if self.config.language == "zh":
-                        return f"在时间步 {r}，位置 {p} 的元素是 {element}。"
-                    else:
-                        return f"At time step {r}, the element at position {p} is {element}."
-                else:
-                    if self.config.language == "zh":
-                        return "查询参数超出有效范围。"
-                    else:
-                        return "Query parameters out of valid range."
-            except Exception:
-                if self.config.language == "zh":
-                    return "查询格式错误，请使用 r, p 格式。"
-                else:
-                    return "Query format error. Please use r, p format."
-                    
-        elif "query_2" in parsed_info:
-            query = parsed_info["query_2"]
-            try:
-                r_str, e_str = [x.strip() for x in query.split(",")]
-                r = int(r_str)
-                e = e_str
-                if 0 <= r <= self.m:
-                    if e in self.history[r]:
-                        pos = self.history[r].index(e) + 1
-                        if self.config.language == "zh":
-                            return f"在时间步 {r}，元素 {e} 的位置是 {pos}。"
-                        else:
-                            return f"At time step {r}, the position of element {e} is {pos}."
-                    else:
-                        if self.config.language == "zh":
-                            return f"元素 {e} 不存在于时间步 {r} 的序列中。"
-                        else:
-                            return f"Element {e} does not exist in the sequence at time step {r}."
-                else:
-                    if self.config.language == "zh":
-                        return "时间步超出有效范围。"
-                    else:
-                        return "Time step out of valid range."
-            except Exception:
-                if self.config.language == "zh":
-                    return "查询格式错误，请使用 r, E 格式。"
-                else:
-                    return "Query format error. Please use r, E format."
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        return "无法识别的查询。" if self.config.language == "zh" else "Unrecognized query."
+        self.vertices = set(v.strip() for v in cfg["vertices"].split(","))
+        self._game_info["vertices"] = cfg["vertices"]
+        
+        self.start = cfg["start"].strip()
+        self._game_info["start"] = self.start
+        
+        self.adjacency = {v: [] for v in self.vertices}
+        for edge in cfg["edges"].split(","):
+            if "->" in edge:
+                src, dst = edge.split("->")
+                src, dst = src.strip(), dst.strip()
+                if src in self.vertices and dst in self.vertices:
+                    self.adjacency[src].append(dst)
+        
+        self.true_reachable = self._compute_reachable()
+        
+        self.confirmed_reachable = {self.start}
 
-    def get_all_possible_queries(self):
+    def _compute_reachable(self):
+        reachable = set()
+        queue = [self.start]
+        visited = {self.start}
+        
+        while queue:
+            current = queue.pop(0)
+            reachable.add(current)
+            for neighbor in self.adjacency[current]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        
+        return reachable
+
+    def get_all_possible_queries(self) -> list[dict]:
         queries = []
-        for r in range(self.m + 1):
-            # query_1: 按位置查元素
-            for p in range(1, self.n + r + 1):
-                q_str  = f"<query_1>{r}, {p}</query_1>"
-                answer = self._cf_core_produce({"query_1": f"{r}, {p}"})
-                queries.append({"query": q_str, "answer": answer})
-            # query_2: 按元素查位置
-            for e in self.history[r]:
-                q_str  = f"<query_2>{r}, {e}</query_2>"
-                answer = self._cf_core_produce({"query_2": f"{r}, {e}"})
-                queries.append({"query": q_str, "answer": answer})
+        
+        saved_confirmed = self.confirmed_reachable.copy()
+        
+        self.confirmed_reachable = self.true_reachable.copy()
+        
+        try:
+            tag = "query_reachable"
+            parsed = {tag: ""}
+            ans = self._cf_core_produce(parsed)
+            queries.append({
+                "query": f"<{tag}></{tag}>",
+                "answer": ans
+            })
+            
+            sorted_reachable = sorted(list(self.true_reachable))
+            sorted_all_vertices = sorted(list(self.vertices))
+            
+            for v in sorted_reachable:
+                tag = "query_neighbors"
+                parsed = {tag: v}
+                ans = self._cf_core_produce(parsed)
+                queries.append({
+                    "query": f"<{tag}>{v}</{tag}>",
+                    "answer": ans
+                })
+
+            for src in sorted_reachable:
+                for dst in sorted_all_vertices:
+                    if src == dst:
+                        continue
+                    tag = "query_edge"
+                    val = f"{src},{dst}"
+                    parsed = {tag: val}
+                    ans = self._cf_core_produce(parsed)
+                    queries.append({
+                        "query": f"<{tag}>{val}</{tag}>",
+                        "answer": ans
+                    })
+
+        finally:
+            self.confirmed_reachable = saved_confirmed
+            
         return queries
 
+    def evaluate(self, parsed_info):
+        raw_ans = parsed_info["answer"].strip()
+        try:
+            submitted = set(v.strip() for v in raw_ans.split(",") if v.strip())
+            return submitted == self.true_reachable
+        except:
+            return False
+
+    def _cf_core_produce(self, parsed_info):
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_not_reachable = "错误：该顶点尚未确认可达，无法查询。"
+            error_invalid_vertex = "错误：顶点不存在。"
+            error_invalid_format = "错误：格式无效。"
+            error_path_start = "错误：路径必须以起点开头。"
+            error_path_length = "错误：路径长度必须至少为2。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_not_reachable = "Error: Vertex not confirmed reachable, cannot query."
+            error_invalid_vertex = "Error: Vertex does not exist."
+            error_invalid_format = "Error: Invalid format."
+            error_path_start = "Error: Path must start with the starting vertex."
+            error_path_length = "Error: Path length must be at least 2."
+
+        if "query_neighbors" in parsed_info:
+            vertex = parsed_info["query_neighbors"].strip()
+            
+            if vertex not in self.vertices:
+                return error_invalid_vertex
+            
+            if vertex not in self.confirmed_reachable:
+                return error_not_reachable
+            
+            neighbors = self.adjacency[vertex]
+            self.confirmed_reachable.update(neighbors)
+            
+            if not neighbors:
+                return "[]" if self.config.language == "en" else "[]"
+            return "[" + ",".join(neighbors) + "]"
+
+        elif "query_edge" in parsed_info:
+            try:
+                raw = parsed_info["query_edge"].strip()
+                src, dst = [v.strip() for v in raw.split(",")]
+                
+                if src not in self.vertices or dst not in self.vertices:
+                    return error_invalid_vertex
+                
+                if src not in self.confirmed_reachable:
+                    return error_not_reachable
+                
+                edge_exists = dst in self.adjacency[src]
+                
+                if edge_exists:
+                    self.confirmed_reachable.add(dst)
+                    return yes_res
+                else:
+                    return no_res
+            except:
+                return error_invalid_format
+
+        elif "query_path" in parsed_info:
+            try:
+                raw = parsed_info["query_path"].strip()
+                path = [v.strip() for v in raw.split(",")]
+                
+                if len(path) < 2:
+                    return error_path_length
+                
+                if path[0] != self.start:
+                    return error_path_start
+                
+                for v in path:
+                    if v not in self.vertices:
+                        return error_invalid_vertex
+                
+                for i in range(len(path) - 1):
+                    src, dst = path[i], path[i + 1]
+                    if dst not in self.adjacency[src]:
+                        if self.config.language == "zh":
+                            return f"否，在第 {i} 段失败"
+                        else:
+                            return f"No, failed at segment {i}"
+                
+                self.confirmed_reachable.update(path)
+                return yes_res
+            except:
+                return error_invalid_format
+
+        elif "query_reachable" in parsed_info:
+            reachable_list = sorted(list(self.confirmed_reachable))
+            return "[" + ",".join(reachable_list) + "]"
+
+        else:
+            raise ValueError("No valid query tag found.")
+
     def _cf_make_wrong(self, correct):
-        elem_match = re.search(r'(B\d+|N\d+)', correct)
-        if elem_match:
-            original_elem = elem_match.group(1)
-            all_elements = [f"B{i}" for i in range(1, self.n + 1)] + [f"N{i}" for i in range(1, self.m + 1)]
-            candidates = [e for e in all_elements if e != original_elem]
-            if candidates:
-                wrong_elem = self.rng.choice(candidates)
-                return correct.replace(original_elem, wrong_elem, 1)
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        pos_match = re.findall(r'(\d+)', correct)
-        if pos_match:
-            last_num = pos_match[-1]
-            wrong_num = str(int(last_num) + 1)
-            idx = correct.rfind(last_num)
-            return correct[:idx] + wrong_num + correct[idx + len(last_num):]
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
+            
+        correct_lower = correct.lower()
+        if correct_lower == "yes":
+            if correct.istitle(): return "No"
+            if correct.isupper(): return "NO"
+            return "no"
+        if correct_lower == "no":
+            if correct.istitle(): return "Yes"
+            if correct.isupper(): return "YES"
+            return "yes"
         
-        return correct + " (modified)"
+        if correct.startswith("[") and correct.endswith("]"):
+            inner = correct[1:-1].strip()
+            if not inner:
+                return "[X_FAKE]"
+            items = [x.strip() for x in inner.split(",")]
+            if len(items) > 1:
+                return "[" + ",".join(items[1:]) + "]"
+            else:
+                return "[" + items[0] + ",X_FAKE]"
+        
+        import re
+        seg_match = re.search(r'(\d+)', correct)
+        if seg_match:
+            old_num = int(seg_match.group(1))
+            new_num = old_num + 1
+            return correct.replace(str(old_num), str(new_num), 1)
+        
+        return f"{correct}_WRONG"

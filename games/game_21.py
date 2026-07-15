@@ -1,516 +1,520 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   定位查询：序列中第k个位置的元素是什么
-# ============================================================
-
+import random
 from .base import Game
-import math
 
+class ThresholdBinarySearchGame(Game):
 
-class BinarySearchVerificationGame(Game):
+    reasoning_type = "演绎推理"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们现在来玩一个"二分查询验证"的推理游戏，规则如下：
+我们现在来玩一个"阈值推理"游戏，规则如下：
 
-游戏设定了一个长度为 {n} 的有序序列，每个位置的值只能是 0 或 1。在这个序列中，恰好有一个位置的值为 1，其他所有位置的值都为 0。你的目标是判断：位置 {k} 的值是 0 还是 1。
+游戏设定了四个参数：
+- N：序列长度
+- k：后缀长度
+- B：序列元素的上界
+- Q：最大操作次数
 
-你可以通过"二分查询"来获取信息。游戏开始时，可疑区间为 [1, {n}]，表示值为 1 的位置可能在这个区间内的任何地方。
+我已秘密生成了一个长度为 N 的有序序列 S，其中每个元素都是 0 到 B 之间的整数。你的目标是推断出一个特定的目标值 H，它等于序列 S 的最后 k 个元素之和。显然，H 的取值范围在 0 到 k·B 之间。
 
-## 二分查询规则
+你可以进行以下两种操作：
 
-每次查询时，你必须指定当前可疑区间的左右端点 L 和 R。系统会自动计算中点 M（向下取整），将区间分为左半部分 [L, M] 和右半部分 [M+1, R]，然后告诉你值为 1 的位置在哪一半：
+1. 阈值比较查询：选择一个整数 T，我会告诉你目标值 H 是否大于等于 T。
+2. 最终断言：当你认为已经收集到足够信息时，提交一个整数 V 作为你对 H 的最终判断。
 
-- 如果回答"左"，表示值为 1 的位置在 [L, M] 区间内，可疑区间会自动更新为 [L, M]。
-- 如果回答"右"，表示值为 1 的位置在 [M+1, R] 区间内，可疑区间会自动更新为 [M+1, R]。
+注意：
+- 每次查询和最终断言都会计入操作次数，总操作次数不能超过 Q 次。
+- 一旦提交最终断言，游戏立即结束。
+- 如果最终断言正确（V 等于 H），你获胜；否则失败。
+- 如果超过 Q 次操作仍未提交最终断言，游戏失败。
 
-**重要约束**：
-- 你只能对当前的可疑区间进行查询，不能查询其他区间。
-- 你不能自行选择分割点，系统会自动使用中点分割。
-- 你不能直接询问某个具体位置的值。
+当前游戏参数：
+- N = {N}
+- k = {k}
+- B = {B}
+- Q = {Q}
 
-## 提交最终判断
+每次只能进行一种操作。请使用以下 XML 格式：
 
-当你收集到足够信息后，可以提交最终判断，说明位置 {k} 的值是 0 还是 1。如果判断错误或格式不符，游戏失败。
+- 阈值比较查询（例如询问 H 是否大于等于 10）：
+<query_threshold>10</query_threshold>
 
-## 查询与提交格式（必须严格遵守）
+- 提交最终断言（例如断言 H 等于 15）：
+<answer>15</answer>
 
-- 二分查询（例如查询区间 [1, 10]）：
-<query>1,10</query>
-
-- 提交最终判断（例如判断位置 {k} 的值为 1）：
-<answer>1</answer>
-
-或
-
-<answer>0</answer>
-
-请尽可能少地使用查询次数来完成判断。
+请尽可能用少的操作次数找出正确答案。
 """
 
     game_rule_en = """\
-Let's play a "Binary Search Verification" deduction game. Here are the rules:
+Let's play a "Threshold Inference" game. Here are the rules:
 
-There is an ordered sequence of length {n}, where each position can only be 0 or 1. In this sequence, exactly one position has the value 1, and all other positions have the value 0. Your goal is to determine: whether the value at position {k} is 0 or 1.
+The game has four parameters:
+- N: Sequence length
+- k: Suffix length
+- B: Upper bound for sequence elements
+- Q: Maximum number of operations
 
-You can obtain information through "binary search queries". At the start of the game, the suspicious interval is [1, {n}], indicating that the position with value 1 could be anywhere within this interval.
+I have secretly generated an ordered sequence S of length N, where each element is an integer between 0 and B. Your goal is to infer a specific target value H, which equals the sum of the last k elements of sequence S. Clearly, H ranges from 0 to k·B.
 
-## Binary Search Query Rules
+You can perform the following two types of operations:
 
-For each query, you must specify the left and right endpoints L and R of the current suspicious interval. The system will automatically calculate the midpoint M (rounded down), divide the interval into a left half [L, M] and a right half [M+1, R], and then tell you which half contains the position with value 1:
+1. Threshold Comparison Query: Choose an integer T, and I will tell you whether the target value H is greater than or equal to T.
+2. Final Assertion: When you believe you have gathered enough information, submit an integer V as your final judgment of H.
 
-- If the answer is "Left", it means the position with value 1 is in the interval [L, M], and the suspicious interval will automatically update to [L, M].
-- If the answer is "Right", it means the position with value 1 is in the interval [M+1, R], and the suspicious interval will automatically update to [M+1, R].
+Notes:
+- Each query and final assertion counts toward the operation limit, and the total cannot exceed Q operations.
+- Once you submit a final assertion, the game ends immediately.
+- If the final assertion is correct (V equals H), you win; otherwise, you fail.
+- If you exceed Q operations without submitting a final assertion, the game fails.
 
-**Important Constraints**:
-- You can only query the current suspicious interval, not other intervals.
-- You cannot choose your own split point; the system will automatically use the midpoint.
-- You cannot directly ask for the value at a specific position.
+Current game parameters:
+- N = {N}
+- k = {k}
+- B = {B}
+- Q = {Q}
 
-## Submit Final Judgment
+You can only perform one operation at a time. Use the following XML format:
 
-When you have gathered enough information, you can submit your final judgment, stating whether the value at position {k} is 0 or 1. If the judgment is incorrect or the format is invalid, the game fails.
+- Threshold Comparison Query (e.g., asking if H is greater than or equal to 10):
+<query_threshold>10</query_threshold>
 
-## Query and Answer Format (strictly required)
+- Submit Final Assertion (e.g., asserting H equals 15):
+<answer>15</answer>
 
-- Binary Search Query (e.g., querying interval [1, 10]):
-<query>1,10</query>
-
-- Submit Final Judgment (e.g., judging that position {k} has value 1):
-<answer>1</answer>
-
-or
-
-<answer>0</answer>
-
-Please use as few queries as possible to complete the judgment.
+Try to find the correct answer with as few operations as possible.
 """
 
     contextualized_rule_zh_1 = """\
-交通指挥中心正在进行一起交通事故的排查工作。
+智能交通控制中心正在运行路网拥堵评估协议。
 
-目前有一条长达 {n} 个路段的高速公路，每个路段的状态只能是畅通（0）或发生事故（1）。在这条公路中，恰好有一个路段发生了严重的交通事故（值为 1），其他所有路段均畅通（值为 0）。你的目标是判断：路段 {k} 的状态是畅通（0）还是发生事故（1）。
+系统已接入一条主干道的连续 {N} 个路口的流量历史数据，并重点监控末端最核心的 {k} 个路口。每个路口的拥堵指数最高为 {B}。
+你的任务是推算出这 {k} 个核心路口的累计拥堵总指数 H。该指数关系到是否启动全市分流预案，显然 H 的取值范围在 0 到 {k}·{B} 之间。
 
-你可以通过"无人机二分侦查"来获取信息。排查开始时，可疑区间为 [1, {n}]，表示事故可能发生在这个区间内的任何路段。
+为节约算力，你最多拥有 {Q} 次系统调用权限，可执行以下操作：
 
-## 无人机侦查规则
+1. 负荷预警查询：输入一个预警阈值 T，系统会反馈累计指数 H 是否大于等于 T。
+2. 最终定级报告：当你确认了 H 的精确值时，提交整数 V 作为最终的评估结果。
 
-每次下达侦查指令时，你必须指定当前可疑区间的左右端点 L 和 R。无人机调度系统会自动计算中点 M（向下取整），将区间分为左半部分 [L, M] 和右半部分 [M+1, R]，然后告诉你事故路段在哪一半：
+注意：
+- 每次查询和报告提交都会消耗调用次数，上限为 {Q} 次。
+- 提交报告后评估立即终止。
+- 若报告的 V 等于真实指数 H，路网调度成功；否则将引发大面积拥堵，评估失败。
+- 耗尽 {Q} 次权限未出结果也会导致系统超时失败。
 
-- 如果回答"左"，表示事故路段在 [L, M] 区间内，可疑区间会自动更新为 [L, M]。
-- 如果回答"右"，表示事故路段在 [M+1, R] 区间内，可疑区间会自动更新为 [M+1, R]。
+当前评估参数：
+- 监测路口总数 N = {N}
+- 核心路口数 k = {k}
+- 单路口指数上限 B = {B}
+- 可调用次数 Q = {Q}
 
-**重要约束**：
-- 你只能对当前的可疑区间进行侦查，不能侦查其他区间。
-- 你不能自行选择分割点，系统会自动使用中点分割。
-- 你不能直接询问某个具体路段的状态。
+每次仅限执行一次指令。请使用以下 XML 格式：
 
-## 提交最终判断
+- 负荷预警查询（例如查明 H 是否大于等于 10）：
+<query_threshold>10</query_threshold>
 
-当你收集到足够信息后，可以提交最终判断，说明路段 {k} 的状态是 0 还是 1。如果判断错误或格式不符，排查任务失败。
+- 提交最终定级报告（例如断定 H 等于 15）：
+<answer>15</answer>
 
-## 指令与提交格式（必须严格遵守）
-
-- 无人机二分侦查（例如侦查区间 [1, 10]）：
-<query>1,10</query>
-
-- 提交最终判断（例如判断路段 {k} 发生了事故）：
-<answer>1</answer>
-
-或
-
-<answer>0</answer>
-
-请尽可能少地使用侦查次数来完成判断。
+请以最优的策略尽快完成调度评估。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-The Traffic Command Center is currently conducting an investigation into a traffic accident.
+The Intelligent Traffic Control Center is running a network congestion assessment protocol.
 
-There is a highway consisting of {n} segments, where the status of each segment can only be clear (0) or accident-involved (1). On this highway, exactly one segment has a severe traffic accident (value 1), and all other segments are clear (value 0). Your goal is to determine: whether the status of segment {k} is clear (0) or accident-involved (1).
+The system has integrated historical traffic data from a sequence of {N} intersections along a main arterial road, focusing heavily on the {k} core intersections at the terminal end. The congestion index for each intersection is capped at {B}.
+Your task is to deduce the cumulative congestion index H for these {k} core intersections. This index determines whether to activate the city-wide diversion contingency plan. Clearly, H ranges from 0 to {k}·{B}.
 
-You can obtain information through "drone binary reconnaissance". At the start of the investigation, the suspicious interval is [1, {n}], indicating that the accident could be anywhere within this interval.
+To conserve computational resources, you have a maximum of {Q} system API calls to perform the following operations:
 
-## Drone Reconnaissance Rules
+1. Load Warning Query: Submit a warning threshold T, and the system will report whether the cumulative index H is greater than or equal to T.
+2. Final Grading Report: Once you determine the exact value of H, submit an integer V as the final assessment.
 
-For each reconnaissance directive, you must specify the left and right endpoints L and R of the current suspicious interval. The drone dispatch system will automatically calculate the midpoint M (rounded down), divide the interval into a left half [L, M] and a right half [M+1, R], and then tell you which half contains the accident segment:
+Notes:
+- Each query and final report submission counts towards the call limit, which cannot exceed {Q} operations.
+- Once the final report is submitted, the assessment terminates immediately.
+- If the submitted V equals the actual H, traffic routing succeeds; otherwise, it triggers massive gridlock, and the assessment fails.
+- Exceeding {Q} calls without a result leads to a system timeout failure.
 
-- If the answer is "Left", it means the accident segment is in the interval [L, M], and the suspicious interval will automatically update to [L, M].
-- If the answer is "Right", it means the accident segment is in the interval [M+1, R], and the suspicious interval will automatically update to [M+1, R].
+Current assessment parameters:
+- Total monitored intersections N = {N}
+- Core intersections k = {k}
+- Single intersection index cap B = {B}
+- Maximum API calls Q = {Q}
 
-**Important Constraints**:
-- You can only scout the current suspicious interval, not other intervals.
-- You cannot choose your own split point; the system will automatically use the midpoint.
-- You cannot directly ask for the status of a specific segment.
+You may only execute one command at a time. Use the following XML format:
 
-## Submit Final Judgment
+- Load Warning Query (e.g., asking if H is greater than or equal to 10):
+<query_threshold>10</query_threshold>
 
-When you have gathered enough information, you can submit your final judgment, stating whether the status of segment {k} is 0 or 1. If the judgment is incorrect or the format is invalid, the investigation fails.
+- Submit Final Grading Report (e.g., asserting H equals 15):
+<answer>15</answer>
 
-## Query and Answer Format (strictly required)
-
-- Drone Binary Reconnaissance (e.g., scouting interval [1, 10]):
-<query>1,10</query>
-
-- Submit Final Judgment (e.g., judging that segment {k} has an accident):
-<answer>1</answer>
-
-or
-
-<answer>0</answer>
-
-Please use as few reconnaissance directives as possible to complete the judgment.
+Please complete the routing assessment efficiently.
 """
 
     contextualized_rule_zh_2 = """\
-医学实验室正在进行一项罕见基因突变的靶向筛查。
+重症监护室(ICU)患者生命体征监测系统已启动风险排查程序。
 
-目前有一段长度为 {n} 的基因序列，每个基因位点的状态只能是正常（0）或突变（1）。在这段序列中，恰好有一个位点发生了罕见突变（值为 1），其他所有位点均正常（值为 0）。你的目标是判断：靶向位点 {k} 的状态是正常（0）还是突变（1）。
+系统连续记录了患者的 {N} 个时间节点的生理特征数据，并聚焦于近期最危险的 {k} 个观察期。每个节点的单次异常血液指标峰值上限为 {B}。
+你的任务是推断这 {k} 个近期观察期内的累计异常指标总值 H，以此决定是否需要介入紧急手术。显然，H 的取值范围在 0 到 {k}·{B} 之间。
 
-你可以通过"二分生化测定"来获取信息。筛查开始时，可疑区间为 [1, {n}]，表示突变位点可能在这个区间内的任何位置。
+为了抢救时间，你最多只能进行 {Q} 次系统交互操作：
 
-## 二分测定规则
+1. 风险阈值排查：输入一个风险阈值 T，系统会反馈累计异常总值 H 是否大于等于 T。
+2. 最终病理诊断：当你确认了 H 的精确值时，提交整数 V 作为最终的风险诊断结论。
 
-每次提交测定请求时，你必须指定当前可疑区间的左右端点 L 和 R。自动化测定仪器会自动计算中点 M（向下取整），将区间分为左半部分 [L, M] 和右半部分 [M+1, R]，然后告诉你突变位点在哪一半：
+注意：
+- 每次排查和诊断提交均计入操作次数，总操作不可超过 {Q} 次。
+- 提交最终病理诊断后，排查程序立即结束。
+- 若诊断正确（V 等于 H），患者得到有效救治；否则延误病情，排查失败。
+- 若操作超过 {Q} 次仍未得出结论，患者将错过最佳干预窗口。
 
-- 如果回答"左"，表示突变位点在 [L, M] 区间内，可疑区间会自动更新为 [L, M]。
-- 如果回答"右"，表示突变位点在 [M+1, R] 区间内，可疑区间会自动更新为 [M+1, R]。
+当前系统参数：
+- 监测节点总数 N = {N}
+- 关键观察期数 k = {k}
+- 指标峰值上限 B = {B}
+- 最大操作次数 Q = {Q}
 
-**重要约束**：
-- 你只能对当前的可疑区间进行测定，不能测定其他区间。
-- 你不能自行选择分割点，仪器会自动使用中点分割。
-- 你不能直接询问某个具体位点的状态。
+每次仅能执行一项操作。请使用以下 XML 格式：
 
-## 提交最终判断
+- 风险阈值排查（例如查明 H 是否大于等于 10）：
+<query_threshold>10</query_threshold>
 
-当你收集到足够信息后，可以提交最终判断，说明靶向位点 {k} 的状态是 0 还是 1。如果判断错误或格式不符，筛查任务失败。
+- 提交最终病理诊断（例如断言 H 等于 15）：
+<answer>15</answer>
 
-## 请求与提交格式（必须严格遵守）
-
-- 二分测定请求（例如测定区间 [1, 10]）：
-<query>1,10</query>
-
-- 提交最终判断（例如判断位点 {k} 发生了突变）：
-<answer>1</answer>
-
-或
-
-<answer>0</answer>
-
-请尽可能少地使用测定次数来完成判断。
+请尽快完成排查，锁定正确的异常总值。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-A medical laboratory is conducting a targeted screening for a rare genetic mutation.
+The Intensive Care Unit (ICU) patient vital signs monitoring system has initiated a risk screening procedure.
 
-There is a genetic sequence of length {n}, where the status of each locus can only be normal (0) or mutated (1). In this sequence, exactly one locus has a rare mutation (value 1), and all other loci are normal (value 0). Your goal is to determine: whether the targeted locus {k} is normal (0) or mutated (1).
+The system has continuously recorded physiological data across {N} sequential time nodes, zooming in on the {k} most critical recent observation periods. The maximum abnormal blood indicator peak for a single node is {B}.
+Your objective is to infer the cumulative abnormal indicator total H during these {k} observation periods, which dictates whether emergency surgical intervention is required. Naturally, H ranges from 0 to {k}·{B}.
 
-You can obtain information through "binary biochemical assays". At the start of the screening, the suspicious interval is [1, {n}], indicating that the mutated locus could be anywhere within this interval.
+To save precious time, you are permitted a maximum of {Q} system interactions:
 
-## Binary Assay Rules
+1. Risk Threshold Screening: Input a risk threshold T, and the system will verify if the cumulative total H is greater than or equal to T.
+2. Final Pathological Diagnosis: When you are certain of the exact value of H, submit an integer V as the ultimate diagnostic conclusion.
 
-For each assay request, you must specify the left and right endpoints L and R of the current suspicious interval. The automated assay instrument will automatically calculate the midpoint M (rounded down), divide the interval into a left half [L, M] and a right half [M+1, R], and then tell you which half contains the mutated locus:
+Notes:
+- Every screening query and diagnostic submission counts toward your limit of {Q} operations.
+- Submitting the final diagnosis immediately ends the screening procedure.
+- If the diagnosis is correct (V equals H), the patient receives proper care; otherwise, treatment is delayed, and the screening fails.
+- Exceeding {Q} operations without a diagnosis means the optimal intervention window is lost.
 
-- If the answer is "Left", it means the mutated locus is in the interval [L, M], and the suspicious interval will automatically update to [L, M].
-- If the answer is "Right", it means the mutated locus is in the interval [M+1, R], and the suspicious interval will automatically update to [M+1, R].
+Current system parameters:
+- Total monitored nodes N = {N}
+- Critical observation periods k = {k}
+- Indicator peak upper bound B = {B}
+- Maximum operations Q = {Q}
 
-**Important Constraints**:
-- You can only assay the current suspicious interval, not other intervals.
-- You cannot choose your own split point; the instrument will automatically use the midpoint.
-- You cannot directly ask for the status of a specific locus.
+Execute only one operation at a time. Use the following XML format:
 
-## Submit Final Judgment
+- Risk Threshold Screening (e.g., asking if H is greater than or equal to 10):
+<query_threshold>10</query_threshold>
 
-When you have gathered enough information, you can submit your final diagnosis, stating whether locus {k} is 0 or 1. If the diagnosis is incorrect or the format is invalid, the screening fails.
+- Submit Final Pathological Diagnosis (e.g., asserting H equals 15):
+<answer>15</answer>
 
-## Request and Answer Format (strictly required)
-
-- Binary Assay Request (e.g., assaying interval [1, 10]):
-<query>1,10</query>
-
-- Submit Final Diagnosis (e.g., diagnosing that locus {k} is mutated):
-<answer>1</answer>
-
-or
-
-<answer>0</answer>
-
-Please use as few assays as possible to complete the diagnosis.
+Please complete the screening promptly and pinpoint the exact indicator total.
 """
 
     contextualized_rule_zh_3 = """\
-教务处正在利用自动化系统核查一批考生的成绩数据，排查录入错误。
+自适应学习平台正在进行学情追踪与知识点漏洞分析。
 
-目前有一个包含 {n} 条考生成绩记录的数据库，每条记录的状态只能是无误（0）或存在异常（1）。在这批记录中，恰好有一条记录存在严重的录入异常（值为 1），其他所有记录均无误（值为 0）。你的目标是判断：第 {k} 条考生成绩记录是无误（0）还是存在异常（1）。
+系统收录了学生本学期的 {N} 次标准化测试成绩，并聚焦于期末冲刺阶段的最后 {k} 次测试。单次测试中，知识点遗漏最高数量为 {B}。
+你需要计算出冲刺阶段的累计知识点遗漏总数 H，以便生成个性化的复习方案。显然，H 的取值范围在 0 到 {k}·{B} 之间。
 
-你可以通过"二分数据审计"来获取信息。核查开始时，可疑区间为 [1, {n}]，表示异常记录可能在这个区间内的任何位置。
+为避免过度占用诊断资源，你最多允许进行 {Q} 次交互：
 
-## 二分审计规则
+1. 短板阈值评估：输入一个评估阈值 T，平台会反馈累计遗漏总数 H 是否大于等于 T。
+2. 学情定位报告：当你准确定位了 H 的数值时，提交整数 V 作为最终的知识漏洞报告。
 
-每次发起审计请求时，你必须指定当前可疑区间的左右端点 L 和 R。审计系统会自动计算中点 M（向下取整），将区间分为左半部分 [L, M] 和右半部分 [M+1, R]，然后告诉你异常记录在哪一半：
+注意：
+- 每次评估查询和报告提交均计入限额，总操作不得超过 {Q} 次。
+- 提交学情定位报告后，诊断会立即结束。
+- 如果报告的数据准确（V 等于 H），复习方案生成成功；否则分析偏离，诊断失败。
+- 若达到 {Q} 次操作仍未定位问题，分析进程将强制中止。
 
-- 如果回答"左"，表示异常记录在 [L, M] 区间内，可疑区间会自动更新为 [L, M]。
-- 如果回答"右"，表示异常记录在 [M+1, R] 区间内，可疑区间会自动更新为 [M+1, R]。
+当前学情参数：
+- 标准测试总次数 N = {N}
+- 冲刺阶段测试数 k = {k}
+- 单次测试遗漏上限 B = {B}
+- 允许交互次数 Q = {Q}
 
-**重要约束**：
-- 你只能对当前的可疑区间进行审计，不能审计其他区间。
-- 你不能自行选择分割点，系统会自动使用中点分割。
-- 你不能直接询问某条具体记录的状态。
+每次仅可进行一种交互。请使用以下 XML 格式：
 
-## 提交最终判断
+- 短板阈值评估（例如查明 H 是否大于等于 10）：
+<query_threshold>10</query_threshold>
 
-当你收集到足够信息后，可以提交最终判断，说明记录 {k} 的状态是 0 还是 1。如果判断错误或格式不符，核查任务失败。
+- 提交学情定位报告（例如断定 H 等于 15）：
+<answer>15</answer>
 
-## 请求与提交格式（必须严格遵守）
-
-- 二分审计请求（例如审计区间 [1, 10]）：
-<query>1,10</query>
-
-- 提交最终判断（例如判断记录 {k} 存在异常）：
-<answer>1</answer>
-
-或
-
-<answer>0</answer>
-
-请尽可能少地使用审计次数来完成判断。
+请运用严谨的逻辑推导，找出最精确的遗漏总数。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-The Academic Affairs Office is using an automated system to verify a batch of student exam records and detect data entry errors.
+The Adaptive Learning Platform is tracking academic progress and analyzing knowledge gaps.
 
-There is a database containing {n} student exam records, where the status of each record can only be correct (0) or anomalous (1). In this batch, exactly one record has a severe entry anomaly (value 1), and all other records are correct (value 0). Your goal is to determine: whether the status of the {k}-th exam record is correct (0) or anomalous (1).
+The system has logged scores from {N} standardized tests taken this semester, placing particular emphasis on the final {k} tests during the sprint period. The maximum number of missing knowledge points in a single test is {B}.
+You must calculate the cumulative number of missing knowledge points H during this sprint phase to generate a personalized review plan. Clearly, H ranges from 0 to {k}·{B}.
 
-You can obtain information through "binary data auditing". At the start of the verification, the suspicious interval is [1, {n}], indicating that the anomalous record could be anywhere within this interval.
+To prevent overloading the diagnostic server, you are limited to {Q} interactions:
 
-## Binary Auditing Rules
+1. Weakness Threshold Assessment: Input an evaluation threshold T, and the platform will state whether the cumulative missing points H is greater than or equal to T.
+2. Academic Gap Report: Once you have pinpointed the exact value of H, submit an integer V as your final knowledge gap report.
 
-For each audit request, you must specify the left and right endpoints L and R of the current suspicious interval. The auditing system will automatically calculate the midpoint M (rounded down), divide the interval into a left half [L, M] and a right half [M+1, R], and then tell you which half contains the anomalous record:
+Notes:
+- Both threshold assessments and report submissions consume your interaction quota of {Q} operations.
+- The diagnostic process terminates immediately after submitting the gap report.
+- If the report is perfectly accurate (V equals H), the review plan is successfully generated; otherwise, the analysis derails, and the diagnosis fails.
+- Failing to resolve the gap within {Q} operations forces an abort of the analysis.
 
-- If the answer is "Left", it means the anomalous record is in the interval [L, M], and the suspicious interval will automatically update to [L, M].
-- If the answer is "Right", it means the anomalous record is in the interval [M+1, R], and the suspicious interval will automatically update to [M+1, R].
+Current academic parameters:
+- Total standardized tests N = {N}
+- Sprint phase tests k = {k}
+- Missing points cap per test B = {B}
+- Allowed interactions Q = {Q}
 
-**Important Constraints**:
-- You can only audit the current suspicious interval, not other intervals.
-- You cannot choose your own split point; the system will automatically use the midpoint.
-- You cannot directly ask for the status of a specific record.
+You may perform only one interaction at a time. Use the following XML format:
 
-## Submit Final Judgment
+- Weakness Threshold Assessment (e.g., asking if H is greater than or equal to 10):
+<query_threshold>10</query_threshold>
 
-When you have gathered enough information, you can submit your final verification, stating whether record {k} is 0 or 1. If the verification is incorrect or the format is invalid, the task fails.
+- Submit Academic Gap Report (e.g., asserting H equals 15):
+<answer>15</answer>
 
-## Request and Answer Format (strictly required)
-
-- Binary Audit Request (e.g., auditing interval [1, 10]):
-<query>1,10</query>
-
-- Submit Final Verification (e.g., determining that record {k} is anomalous):
-<answer>1</answer>
-
-or
-
-<answer>0</answer>
-
-Please use as few audit requests as possible to complete the verification.
+Please employ strict deductive logic to uncover the exact total of missing points.
 """
 
     contextualized_rule_zh_4 = """\
-智能制造工厂的质量控制中心正在进行产品批次的无损探伤检测。
+自动化精密零件生产线的质量控制模块正在进行例行排查。
 
-目前生产流水线上有 {n} 批次的核心组件，每个批次的状态只能是合格（0）或存在致命缺陷（1）。在这批组件中，恰好有一个批次存在致命缺陷（值为 1），其他所有批次均合格（值为 0）。你的目标是判断：第 {k} 批次组件的状态是合格（0）还是存在致命缺陷（1）。
+质检系统抽检了流水线上的 {N} 个生产批次，当前需要重点评估最新下线的 {k} 个关键批次。单批次允许的最大微小瑕疵数为 {B}。
+你的任务是推算出这 {k} 个核心批次的累计瑕疵总数 H，以此决定是否需要触发停机维护程序。显然，H 的范围在 0 到 {k}·{B} 之间。
 
-你可以通过"二分无损扫描"来获取信息。检测开始时，可疑区间为 [1, {n}]，表示缺陷批次可能在这个区间内的任何位置。
+为保证生产节奏，你最多只能进行 {Q} 次检测指令下达：
 
-## 二分扫描规则
+1. 公差阈值检测：输入一个公差阈值 T，控制模块会反馈累计瑕疵总数 H 是否大于等于 T。
+2. 批次检验结论：当你确认了 H 的精确总数时，提交整数 V 作为最终的质量检验结果。
 
-每次启动扫描仪时，你必须指定当前可疑区间的左右端点 L 和 R。探伤扫描仪会自动计算中点 M（向下取整），将区间分为左半部分 [L, M] 和右半部分 [M+1, R]，然后告诉你缺陷批次在哪一半：
+注意：
+- 每次阈值检测和结论提交都会计入指令消耗，总指令不得超过 {Q} 次。
+- 提交结论后，质检流程立即终止。
+- 如果检验结果吻合（V 等于 H），质检任务圆满完成；否则将引发严重良品率危机，质检失败。
+- 如果超过 {Q} 次指令仍未输出结论，系统默认判定批次失效。
 
-- 如果回答"左"，表示缺陷批次在 [L, M] 区间内，可疑区间会自动更新为 [L, M]。
-- 如果回答"右"，表示缺陷批次在 [M+1, R] 区间内，可疑区间会自动更新为 [M+1, R]。
+当前质检参数：
+- 抽检批次总数 N = {N}
+- 关键评估批次 k = {k}
+- 单批次瑕疵上限 B = {B}
+- 最大检测指令数 Q = {Q}
 
-**重要约束**：
-- 你只能对当前的可疑区间进行扫描，不能扫描其他区间。
-- 你不能自行选择分割点，扫描仪会自动使用中点分割。
-- 你不能直接询问某个具体批次的状态。
+每次仅可下达一项指令。请使用以下 XML 格式：
 
-## 提交最终判断
+- 公差阈值检测（例如查明 H 是否大于等于 10）：
+<query_threshold>10</query_threshold>
 
-当你收集到足够信息后，可以提交最终判断，说明第 {k} 批次的状态是 0 还是 1。如果判断错误或格式不符，检测任务失败。
+- 提交批次检验结论（例如断定 H 等于 15）：
+<answer>15</answer>
 
-## 扫描与提交格式（必须严格遵守）
-
-- 二分扫描指令（例如扫描区间 [1, 10]）：
-<query>1,10</query>
-
-- 提交最终判断（例如判断第 {k} 批次存在致命缺陷）：
-<answer>1</answer>
-
-或
-
-<answer>0</answer>
-
-请尽可能少地使用扫描次数来完成判断。
+请用最少的操作找出真实的瑕疵数据。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-The Quality Control Center of a smart manufacturing plant is conducting non-destructive testing on product batches.
+[Manufacturing/Industry Scenario]
+The Quality Control Module of the automated precision parts production line is conducting a routine audit.
 
-There are {n} batches of core components on the production line, where the status of each batch can only be qualified (0) or critically defective (1). In these batches, exactly one batch has a critical defect (value 1), and all other batches are qualified (value 0). Your goal is to determine: whether the {k}-th batch is qualified (0) or critically defective (1).
+The inspection system has sampled {N} production batches from the assembly line and now needs to evaluate the {k} most critical batches that recently rolled off. The maximum number of minor defects allowed per batch is {B}.
+Your task is to deduce the cumulative total of defects H across these {k} core batches, which determines whether to trigger a halt for maintenance. Naturally, H ranges from 0 to {k}·{B}.
 
-You can obtain information through "binary non-destructive scanning". At the start of the inspection, the suspicious interval is [1, {n}], indicating that the defective batch could be anywhere within this interval.
+To maintain the production cadence, you are permitted a maximum of {Q} diagnostic commands:
 
-## Binary Scanning Rules
+1. Tolerance Threshold Check: Enter a tolerance threshold T, and the module will indicate whether the cumulative defect total H is greater than or equal to T.
+2. Batch Inspection Conclusion: Upon confirming the exact value of H, submit an integer V as the final quality inspection result.
 
-For each scan initialization, you must specify the left and right endpoints L and R of the current suspicious interval. The testing scanner will automatically calculate the midpoint M (rounded down), divide the interval into a left half [L, M] and a right half [M+1, R], and then tell you which half contains the defective batch:
+Notes:
+- Both threshold checks and the conclusion submission consume your command quota of {Q} operations.
+- The inspection workflow stops the moment you submit your conclusion.
+- If the result matches reality (V equals H), the quality audit is a success; otherwise, it sparks a severe yield rate crisis, resulting in failure.
+- Failing to output a conclusion within {Q} commands causes the system to automatically flag the batches as invalid.
 
-- If the answer is "Left", it means the defective batch is in the interval [L, M], and the suspicious interval will automatically update to [L, M].
-- If the answer is "Right", it means the defective batch is in the interval [M+1, R], and the suspicious interval will automatically update to [M+1, R].
+Current inspection parameters:
+- Total sampled batches N = {N}
+- Critical evaluation batches k = {k}
+- Single batch defect cap B = {B}
+- Maximum diagnostic commands Q = {Q}
 
-**Important Constraints**:
-- You can only scan the current suspicious interval, not other intervals.
-- You cannot choose your own split point; the scanner will automatically use the midpoint.
-- You cannot directly ask for the status of a specific batch.
+Issue only one command per turn. Use the following XML format:
 
-## Submit Final Judgment
+- Tolerance Threshold Check (e.g., asking if H is greater than or equal to 10):
+<query_threshold>10</query_threshold>
 
-When you have gathered enough information, you can submit your final determination, stating whether the {k}-th batch is 0 or 1. If the determination is incorrect or the format is invalid, the inspection fails.
+- Submit Batch Inspection Conclusion (e.g., asserting H equals 15):
+<answer>15</answer>
 
-## Scan and Answer Format (strictly required)
-
-- Binary Scan Directive (e.g., scanning interval [1, 10]):
-<query>1,10</query>
-
-- Submit Final Determination (e.g., determining that the {k}-th batch is defective):
-<answer>1</answer>
-
-or
-
-<answer>0</answer>
-
-Please use as few scans as possible to complete the determination.
+Use as few operations as possible to pinpoint the true defect count.
 """
 
     contextualized_rule_zh_5 = """\
-司法鉴定中心正在对一批连卷宗的物证材料进行伪造文书的排查。
+知识产权商业维权系统正在清算一起侵权案件的损害赔偿金。
 
-目前档案库中有一组包含 {n} 卷的连号证据卷宗，每卷卷宗的状态只能是真实（0）或被伪造（1）。在这组卷宗中，恰好有一卷包含了关键的伪造文书（值为 1），其他所有卷宗均真实有效（值为 0）。你的目标是判断：第 {k} 卷卷宗的状态是真实（0）还是被伪造（1）。
+系统追踪到侵权方的 {N} 个非法活动周期，并锁定了近期最恶劣的 {k} 个核心侵权周期。单周期内查实的非法获利指数上限为 {B}。
+你的任务是推演这 {k} 个核心周期内的累计非法获利总指数 H，以此作为判定惩罚性赔偿金的法理基数。显然，H 的取值在 0 到 {k}·{B} 之间。
 
-你可以通过"二分笔迹鉴定"来获取信息。排查开始时，可疑区间为 [1, {n}]，表示伪造卷宗可能在这个区间内的任何位置。
+为了符合法定取证程序的时限要求，你最多只有 {Q} 次质证操作权限：
 
-## 二分鉴定规则
+1. 立案标准质证：提出一个指数阈值 T，维权系统将核对累计侵权指数 H 是否大于等于 T。
+2. 损害赔偿核算定论：当你掌握了 H 的确切数值时，提交整数 V 作为最终的法定索赔定论。
 
-每次提交鉴定申请时，你必须指定当前可疑区间的左右端点 L 和 R。鉴定科会自动计算中点 M（向下取整），将区间分为左半部分 [L, M] 和右半部分 [M+1, R]，然后告诉你伪造卷宗在哪一半：
+注意：
+- 每次质证和最终定论提交都计入取证次数，总次数不得逾越 {Q} 次。
+- 一旦提交定论，法庭取证环节即告结案。
+- 若核算完全一致（V 等于 H），原告胜诉并获得足额赔偿；否则证据链断裂，维权败诉。
+- 取证达到 {Q} 次却无法给出定论，法庭将驳回诉讼请求。
 
-- 如果回答"左"，表示伪造卷宗在 [L, M] 区间内，可疑区间会自动更新为 [L, M]。
-- 如果回答"右"，表示伪造卷宗在 [M+1, R] 区间内，可疑区间会自动更新为 [M+1, R]。
+当前案件参数：
+- 追踪周期总数 N = {N}
+- 核心侵权周期 k = {k}
+- 单周期获利指数上限 B = {B}
+- 法定质证权限 Q = {Q}
 
-**重要约束**：
-- 你只能对当前的可疑区间进行鉴定，不能鉴定其他区间。
-- 你不能自行选择分割点，鉴定科会自动使用中点分割。
-- 你不能直接询问某卷具体卷宗的状态。
+每次质证环节仅限进行一种操作。请使用以下 XML 格式：
 
-## 提交最终判断
+- 立案标准质证（例如查实 H 是否大于等于 10）：
+<query_threshold>10</query_threshold>
 
-当你收集到足够信息后，可以提交最终判断，说明第 {k} 卷卷宗的状态是 0 还是 1。如果判断错误或格式不符，排查任务失败。
+- 提交损害赔偿核算定论（例如断言 H 等于 15）：
+<answer>15</answer>
 
-## 申请与提交格式（必须严格遵守）
-
-- 二分鉴定申请（例如申请鉴定区间 [1, 10]）：
-<query>1,10</query>
-
-- 提交最终判断（例如判断第 {k} 卷卷宗被伪造）：
-<answer>1</answer>
-
-或
-
-<answer>0</answer>
-
-请尽可能少地使用鉴定次数来完成判断。
+请步步为营，以最小的司法资源消耗完成索赔核算。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-The Forensic Authentication Center is screening a sequential batch of case files to locate a forged document.
+[Law Scenario]
+The Intellectual Property Commercial Protection System is liquidating damages for an infringement case.
 
-There is a sequential batch of {n} evidence volumes, where the status of each volume can only be authentic (0) or forged (1). In this group, exactly one volume contains the key forged document (value 1), and all other volumes are authentic and valid (value 0). Your goal is to determine: whether the status of the {k}-th volume is authentic (0) or forged (1).
+The system has tracked the infringing party's illicit activities over {N} periods, zeroing in on the {k} most egregious recent core infringement cycles. The verified illegal profit index ceiling for a single cycle is {B}.
+Your task is to deduce the cumulative illegal profit index H for these {k} core cycles, which will serve as the legal baseline for punitive damages. Obviously, H falls between 0 and {k}·{B}.
 
-You can obtain information through "binary handwriting authentication". At the start of the screening, the suspicious interval is [1, {n}], indicating that the forged volume could be anywhere within this interval.
+To comply with the statutory time limits for evidence collection, you have a maximum of {Q} cross-examination privileges:
 
-## Binary Authentication Rules
+1. Filing Standard Cross-Examination: Propose an index threshold T, and the protection system will verify if the cumulative infringement index H is greater than or equal to T.
+2. Final Damages Assessment: Once you possess the exact figure for H, submit an integer V as the definitive legal claim conclusion.
 
-For each authentication request, you must specify the left and right endpoints L and R of the current suspicious interval. The forensic department will automatically calculate the midpoint M (rounded down), divide the interval into a left half [L, M] and a right half [M+1, R], and then tell you which half contains the forged volume:
+Notes:
+- Every cross-examination query and the final assessment submission draws from your quota of {Q} total operations.
+- The evidentiary phase closes immediately upon submitting the final assessment.
+- If the calculation is perfectly accurate (V equals H), the plaintiff wins full compensation; otherwise, the chain of evidence breaks, and the lawsuit is lost.
+- Exhausting all {Q} privileges without a definitive conclusion results in the court dismissing the claim.
 
-- If the answer is "Left", it means the forged volume is in the interval [L, M], and the suspicious interval will automatically update to [L, M].
-- If the answer is "Right", it means the forged volume is in the interval [M+1, R], and the suspicious interval will automatically update to [M+1, R].
+Current case parameters:
+- Total tracked periods N = {N}
+- Core infringement cycles k = {k}
+- Single-cycle profit index cap B = {B}
+- Legal cross-examination privileges Q = {Q}
 
-**Important Constraints**:
-- You can only request authentication for the current suspicious interval, not other intervals.
-- You cannot choose your own split point; the department will automatically use the midpoint.
-- You cannot directly ask for the status of a specific volume.
+Perform only one action per evidentiary round. Use the following XML format:
 
-## Submit Final Judgment
+- Filing Standard Cross-Examination (e.g., verifying if H is greater than or equal to 10):
+<query_threshold>10</query_threshold>
 
-When you have gathered enough information, you can submit your final verdict, stating whether the {k}-th volume is 0 or 1. If the verdict is incorrect or the format is invalid, the screening fails.
+- Submit Final Damages Assessment (e.g., asserting H equals 15):
+<answer>15</answer>
 
-## Request and Answer Format (strictly required)
-
-- Binary Authentication Request (e.g., requesting authentication for interval [1, 10]):
-<query>1,10</query>
-
-- Submit Final Verdict (e.g., verifying that the {k}-th volume is forged):
-<answer>1</answer>
-
-or
-
-<answer>0</answer>
-
-Please use as few authentication requests as possible to complete the verdict.
+Tread carefully and complete the damages calculation with minimal expenditure of judicial resources.
 """
 
-    tags = ["answer", "query"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
-
-    # 难度配置说明：
-    # 1 (简单)       - N=8,  k在明显位置，需要约3次查询
-    # 2 (中等偏下)   - N=16, k位置适中，需要约4次查询
-    # 3 (中等偏上)   - N=32, k位置需要更多推理，需要约5次查询
-    # 4 (较难)       - N=64, k位置较复杂，需要约6次查询
-    # 5 (难)         - N=128, k位置需要完整二分，需要约7次查询
+    tags = ["answer", "query_threshold"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {"n": 8, "g": 5, "k": 5},      # g=k, 直接命中
-            2: {"n": 16, "g": 12, "k": 8},    # g≠k, 需要确定g后判断
-            3: {"n": 32, "g": 20, "k": 20},   # g=k, 但需要更多查询
-            4: {"n": 64, "g": 45, "k": 30},   # g≠k, 需要完整搜索
-            5: {"n": 128, "g": 100, "k": 100}, # g=k, 需要最多查询
+            1: {
+                "N": 5,
+                "k": 2,
+                "B": 3,
+                "Q": 5,
+                "sequence": [1, 2, 0, 3, 2],
+            },
+            2: {
+                "N": 8,
+                "k": 3,
+                "B": 5,
+                "Q": 7,
+                "sequence": [2, 4, 1, 3, 0, 5, 4, 2],
+            },
+            3: {
+                "N": 10,
+                "k": 4,
+                "B": 7,
+                "Q": 8,
+                "sequence": [3, 1, 6, 2, 5, 4, 7, 3, 6, 5],
+            },
+            4: {
+                "N": 12,
+                "k": 5,
+                "B": 10,
+                "Q": 9,
+                "sequence": [5, 8, 2, 9, 1, 6, 3, 10, 7, 4, 9, 8],
+            },
+            5: {
+                "N": 15,
+                "k": 6,
+                "B": 15,
+                "Q": 10,
+                "sequence": [7, 12, 3, 8, 14, 5, 11, 2, 9, 13, 6, 15, 10, 8, 12],
+            },
         },
         "en": {
-            1: {"n": 8, "g": 5, "k": 5},
-            2: {"n": 16, "g": 12, "k": 8},
-            3: {"n": 32, "g": 20, "k": 20},
-            4: {"n": 64, "g": 45, "k": 30},
-            5: {"n": 128, "g": 100, "k": 100},
+            1: {
+                "N": 5,
+                "k": 2,
+                "B": 3,
+                "Q": 5,
+                "sequence": [1, 2, 0, 3, 2],
+            },
+            2: {
+                "N": 8,
+                "k": 3,
+                "B": 5,
+                "Q": 7,
+                "sequence": [2, 4, 1, 3, 0, 5, 4, 2],
+            },
+            3: {
+                "N": 10,
+                "k": 4,
+                "B": 7,
+                "Q": 8,
+                "sequence": [3, 1, 6, 2, 5, 4, 7, 3, 6, 5],
+            },
+            4: {
+                "N": 12,
+                "k": 5,
+                "B": 10,
+                "Q": 9,
+                "sequence": [5, 8, 2, 9, 1, 6, 3, 10, 7, 4, 9, 8],
+            },
+            5: {
+                "N": 15,
+                "k": 6,
+                "B": 15,
+                "Q": 10,
+                "sequence": [7, 12, 3, 8, 14, 5, 11, 2, 9, 13, 6, 15, 10, 8, 12],
+            },
         },
     }
 
     def __init__(self, config):
+        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = self.config.difficulty
-
-        # 确保 difficulty 为整数（防御性编程）
-        if isinstance(diff, str):
-            diff = int(diff)
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -518,155 +522,94 @@ Please use as few authentication requests as possible to complete the verdict.
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["k"] = cfg["k"]
         
-        # 游戏内部状态
-        self.n = cfg["n"]          # 序列长度
-        self.g = cfg["g"]          # 值为1的真实位置（秘密）
-        self.k = cfg["k"]          # 目标判断位置
-        self.current_l = 1         # 当前可疑区间左端点
-        self.current_r = self.n    # 当前可疑区间右端点
+        self._game_info["N"] = cfg["N"]
+        self._game_info["k"] = cfg["k"]
+        self._game_info["B"] = cfg["B"]
+        self._game_info["Q"] = cfg["Q"]
+        
+        self.sequence = cfg["sequence"]
+        
+        self.target_H = sum(self.sequence[-cfg["k"]:])
+        
+        self.N = cfg["N"]
+        self.k = cfg["k"]
+        self.B = cfg["B"]
+        self.Q = cfg["Q"]
 
     def evaluate(self, parsed_info):
-        """
-        评估最终答案是否正确
-        答案应该是 "0" 或 "1"
-        """
+        self.query_count += 1
+
+        if self.query_count > self.Q:
+            return False
+
         try:
-            answer = int(parsed_info["answer"].strip())
-            if answer not in [0, 1]:
-                return False
+            answer_str = parsed_info["answer"].strip()
+            submitted_value = int(answer_str)
             
-            # 判断：x[k]=1 当且仅当 g==k
-            correct_answer = 1 if self.g == self.k else 0
-            return answer == correct_answer
+            return submitted_value == self.target_H
         except:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """
-        原始的业务逻辑处理
-        """
-        if "query" not in parsed_info:
-            if self.config.language == "zh":
-                return "错误：未找到有效的查询标签。"
-            else:
-                return "Error: No valid query tag found."
+        self.query_count += 1
         
-        try:
-            # 解析查询的区间 [L, R]
-            raw = parsed_info["query"].strip()
-            parts = [x.strip() for x in raw.split(",")]
-            if len(parts) != 2:
-                raise ValueError("Invalid query format")
-            
-            query_l = int(parts[0])
-            query_r = int(parts[1])
-            
-            # 检查查询的区间是否是当前可疑区间
-            if query_l != self.current_l or query_r != self.current_r:
-                if self.config.language == "zh":
-                    return f"错误：你只能查询当前的可疑区间 [{self.current_l}, {self.current_r}]，而不是 [{query_l}, {query_r}]。"
-                else:
-                    return f"Error: You can only query the current suspicious interval [{self.current_l}, {self.current_r}], not [{query_l}, {query_r}]."
-            
-            # 检查区间合法性
-            if query_l < 1 or query_r > self.n or query_l > query_r:
-                if self.config.language == "zh":
-                    return "错误：查询区间不合法。"
-                else:
-                    return "Error: Invalid query interval."
-            
-            # 如果区间已收缩为单点，提示用户提交答案
-            if query_l == query_r:
-                if self.config.language == "zh":
-                    return f"可疑区间已缩小至单个位置 [{query_l}, {query_r}]，无法继续二分。请根据已有信息提交你的最终判断。"
-                else:
-                    return f"The suspicious interval has narrowed down to a single position [{query_l}, {query_r}] and cannot be further divided. Please submit your final judgment based on the information gathered."
-            
-            # 计算中点（向下取整）
-            mid = (query_l + query_r) // 2
-            
-            # 判断 g 在哪一半
-            if self.g <= mid:
-                # g 在左半部分 [L, M]
-                self.current_l = query_l
-                self.current_r = mid
-                response = "左" if self.config.language == "zh" else "Left"
-            else:
-                # g 在右半部分 [M+1, R]
-                self.current_l = mid + 1
-                self.current_r = query_r
-                response = "右" if self.config.language == "zh" else "Right"
-            
-            return response
-            
-        except ValueError as e:
+        if self.query_count > self.Q:
             if self.config.language == "zh":
-                return "错误：查询格式无效，应为 <query>L,R</query>。"
+                msg = "操作次数超限，游戏失败。"
             else:
-                return "Error: Invalid query format, should be <query>L,R</query>."
-        except Exception as e:
-            if self.config.language == "zh":
-                return f"错误：{str(e)}"
-            else:
-                return f"Error: {str(e)}"
+                msg = "Exceeded maximum operations, game failed."
+            self.state.set_state("failed", "exceeded maximum operations")
+            return msg
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_msg = "错误：无效的阈值格式。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_msg = "Error: Invalid threshold format."
 
-    def _cf_make_wrong(self, correct):
-        """
-        根据正确答案生成错误答案
-        """
+        if "query_threshold" in parsed_info:
+            try:
+                threshold = int(parsed_info["query_threshold"].strip())
+                return yes_res if self.target_H >= threshold else no_res
+            except:
+                return error_msg
+        else:
+            raise ValueError("No valid query tag found.")
+
+    def _cf_make_wrong(self, correct: str) -> str:
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        # 针对本游戏特有的 Left/Right 逻辑
-        swaps = {
-            "左": "右", "右": "左",
-            "Left": "Right", "Right": "Left",
-            "是": "否", "否": "是"
-        }
-        if correct in swaps:
-            return swaps[correct]
-            
-        # 通用 Yes/No 逻辑
-        lower_correct = correct.lower()
-        if lower_correct == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if lower_correct == "no":
-            return "Yes" if correct[0].isupper() else "yes"
-            
+        if self.config.language == "zh":
+            if correct == "是":
+                return "否"
+            elif correct == "否":
+                return "是"
+        else:
+            lower_correct = correct.lower()
+            if lower_correct == "yes":
+                return "No" if correct[0].isupper() else "no"
+            elif lower_correct == "no":
+                return "Yes" if correct[0].isupper() else "yes"
+
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        模拟完整的二分搜索过程，枚举所有查询及其正确答案。
-        不修改游戏自身状态。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # XML 标签格式，如 "<query>1,128</query>"
-                "answer": str,   # 对应的正确回复，如 "Left"
-            }
-        """
         results = []
-        lo, hi = 1, self.n
-
-        while lo < hi:
-            query_content = f"{lo},{hi}"
-            mid = (lo + hi) // 2
-
-            if self.g <= mid:
-                ans = "左" if self.config.language == "zh" else "Left"
-                hi = mid
-            else:
-                ans = "右" if self.config.language == "zh" else "Right"
-                lo = mid + 1
-
+        max_possible_sum = self.k * self.B
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+            
+        for t in range(0, max_possible_sum + 2):
+            ans = yes_res if self.target_H >= t else no_res
             results.append({
-                "query": f"<query>{query_content}</query>",
-                "answer": ans,
+                "query": f"<query_threshold>{t}</query_threshold>",
+                "answer": ans
             })
-
+            
         return results

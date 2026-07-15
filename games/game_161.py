@@ -1,654 +1,335 @@
 from .base import Game
-import random
-import itertools
 
-class InteractiveLCSGame(Game):
+class ModuloDeductionGame(Game):
+
+    reasoning_type = "演绎推理"
+    data_structure = "集合"
 
     game_rule_zh = """\
-我们现在来玩一个"最长公共子序列长度推断"游戏，规则如下：
+我们来玩一个"取模推理"游戏，规则如下：
 
-游戏设定了一个有限字母表 Σ = {alphabet_display}，以及两个隐藏的序列 S 和 T。S 的长度为 {n1}，T 的长度为 {n2}，它们都由字母表 Σ 中的字符组成。
+游戏设定了一个固定的未知正整数 N，范围在 1 到 200 之间。你的目标是通过取模查询来推断出这个数字。
 
-你的目标是通过查询推断出这两个隐藏序列的最长公共子序列（LCS）的长度。
+你可以进行以下两种操作：
 
-## 基本概念
+1. 取模查询：选择一个模数 k（k 必须是 3、4、5、6 或 7 中的一个），我会告诉你 N 除以 k 的余数 r。
+2. 宣布答案：当你认为已经确定 N 的值时，提交你的答案。
 
-- 子序列：由原序列删除若干个（可以为零）字符，且保持剩余字符的相对顺序得到的序列。
-- LCS(X, Y)：序列 X 与 Y 的所有公共子序列中，长度最大的那个子序列的长度。
+游戏约束：
+- 你最多只能进行 3 次取模查询。
+- 如果查询的模数 k 不在 3、4、5、6、7 中，该查询无效但仍然计入查询次数。
+- 如果宣布的答案不在 1 到 200 范围内，游戏失败。
+- 你需要在尽可能少的查询次数内确定 N 并宣布答案。
 
-## 查询方式
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-你可以反复向我提出以下两类查询（每次仅限一个查询）：
+- 取模查询（例如查询模数 5）：
+<query_mod>5</query_mod>
 
-1. **LCS查询**：提交任意序列 P（由字母表 Σ 中的字符组成），我会返回两个整数 (a, b)，其中：
-   - a = LCS(P, S)：P 与隐藏序列 S 的最长公共子序列长度
-   - b = LCS(P, T)：P 与隐藏序列 T 的最长公共子序列长度
+- 宣布答案（例如答案是 42）：
+<answer>42</answer>
 
-2. **子序列验证查询**：提交任意序列 P，询问它是否同时是 S 和 T 的公共子序列。我会回答"是"或"否"。
-   - 当且仅当 LCS(P, S) 等于 P 的长度，且 LCS(P, T) 也等于 P 的长度时，答案为"是"。
-
-请尽可能用少的查询次数完成推断。当你收集到足够信息后，请提交最终答案。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- LCS查询（例如查询序列 "ABC"）：
-<query_lcs>ABC</query_lcs>
-
-- 子序列验证查询（例如验证序列 "AB"）：
-<query_subseq>AB</query_subseq>
-
-提交最终答案时，必须给出一个整数 K，表示你推断的 LCS(S, T) 的值。你也可以选择性地给出一个长度为 K 的证据序列 W（可选）。格式如下：
-
-- 仅提交长度（例如答案为 5）：
-<answer>5</answer>
-
-- 提交长度和证据序列（例如答案为 3，证据为 "ACB"）：
-<answer>K=3, W=ACB</answer>
+注意：在宣布答案之前，请确保你已经通过取模查询收集了足够的信息。
 """
 
     game_rule_en = """\
-Let's play an "Interactive LCS Length Inference" game. Here are the rules:
+Let's play a "Modulo Deduction" game. Here are the rules:
 
-The game has defined a finite alphabet Σ = {alphabet_display} and two hidden sequences S and T. S has length {n1}, and T has length {n2}. Both are composed of characters from the alphabet Σ.
+The game has set a fixed unknown positive integer N in the range from 1 to 200. Your goal is to infer this number through modulo queries.
 
-Your goal is to infer the length of the Longest Common Subsequence (LCS) of these two hidden sequences through queries.
+You can perform the following two operations:
 
-## Basic Concepts
+1. Modulo Query: Choose a modulus k (k must be one of 3, 4, 5, 6, or 7), and I will tell you the remainder r when N is divided by k.
+2. Announce Answer: When you believe you have determined the value of N, submit your answer.
 
-- Subsequence: A sequence obtained by deleting zero or more characters from the original sequence while maintaining the relative order of the remaining characters.
-- LCS(X, Y): The length of the longest subsequence that is common to both sequences X and Y.
+Game Constraints:
+- You can perform at most 3 modulo queries.
+- If the queried modulus k is not in the set {3, 4, 5, 6, 7}, the query is invalid but still counts toward the query limit.
+- If the announced answer is not in the range 1 to 200, the game fails.
+- You need to determine N and announce the answer with as few queries as possible.
 
-## Query Types
+Each operation must contain only one tag. Use the following XML format:
 
-You can repeatedly ask me the following two types of queries (one query per turn):
+- Modulo Query (e.g., querying modulus 5):
+<query_mod>5</query_mod>
 
-1. **LCS Query**: Submit any sequence P (composed of characters from alphabet Σ), and I will return two integers (a, b), where:
-   - a = LCS(P, S): The LCS length between P and hidden sequence S
-   - b = LCS(P, T): The LCS length between P and hidden sequence T
+- Announce Answer (e.g., answer is 42):
+<answer>42</answer>
 
-2. **Subsequence Verification Query**: Submit any sequence P and ask whether it is a common subsequence of both S and T. I will answer "Yes" or "No".
-   - The answer is "Yes" if and only if LCS(P, S) equals the length of P and LCS(P, T) also equals the length of P.
-
-Please try to complete the inference with as few queries as possible. When you have gathered enough information, submit your final answer.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- LCS Query (e.g., querying sequence "ABC"):
-<query_lcs>ABC</query_lcs>
-
-- Subsequence Verification Query (e.g., verifying sequence "AB"):
-<query_subseq>AB</query_subseq>
-
-When submitting the final answer, you must provide an integer K representing your inferred value of LCS(S, T). You may optionally provide a witness sequence W of length K. Format:
-
-- Submit only the length (e.g., answer is 5):
-<answer>5</answer>
-
-- Submit length with witness sequence (e.g., answer is 3 with witness "ACB"):
-<answer>K=3, W=ACB</answer>
+Note: Before announcing the answer, make sure you have collected enough information through modulo queries.
 """
 
-    # ==========================================
-    # 场景 1：交通 (Traffic)
-    # ==========================================
     contextualized_rule_zh_1 = """\
-欢迎使用“城市路网共用路线评估系统”。本系统旨在规划两条主干道路的最长重叠共用路径，以优化公交线路布局。
+智慧交通指挥中心正在追踪一条主干道上的违章车辆总数 N（范围在 1 到 200 之间）。你的目标是通过调度抓拍探头组来推断出确切的违章车辆数。
 
-系统设定了一个有限的路口节点代号表 Σ = {alphabet_display}，并在数据库中隐藏了两条主干道的路口序列 S 和 T。S 的路口数为 {n1}，T 的路口数为 {n2}，它们都由代号表 Σ 中的代号组成。
+你可以进行以下两种操作：
 
-你的目标是通过探测查询，推断出这两条主干道的最长重叠共用路径（即最长公共子序列 LCS）的长度。
+1. 探头分组查询（即取模查询）：选择一组探头数量 k（k 必须是 3、4、5、6 或 7 中的一个），系统会对车辆进行均分扫描，并告诉你无法被均分的剩余违章车辆数 r（即 N 除以 k 的余数）。
+2. 提交调查报告（即宣布答案）：当你认为已经确定违章总数 N 的值时，提交你的最终报告。
 
-## 基本概念
+游戏约束：
+- 你最多只能进行 3 次探头分组查询。
+- 如果查询的探头数量 k 不在 3、4、5、6、7 中，该查询无效但仍然计入查询次数。
+- 如果提交的违章总数不在 1 到 200 范围内，任务失败。
+- 你需要在尽可能少的查询次数内确定 N 并提交报告。
 
-- 共用路径（子序列）：由原道路路线中跳过若干个（可以为零）路口，且保持剩余路口相对行车顺序不变所得到的路线。
-- LCS(X, Y)：路线 X 与 Y 的所有共用路径中，包含路口数量最多的那条路径的长度。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 查询方式
+- 探头分组查询（例如调度 5 个探头）：
+<query_mod>5</query_mod>
 
-你可以反复向我提出以下两类查询（每次仅限一个查询）：
+- 提交调查报告（例如总数是 42）：
+<answer>42</answer>
 
-1. **路网重叠查询（LCS查询）**：提交任意试探路线 P（由代号表 Σ 中的节点组成），我会返回两个整数 (a, b)，其中：
-   - a = LCS(P, S)：路线 P 与主干道 S 的最长重叠共用路径长度
-   - b = LCS(P, T)：路线 P 与主干道 T 的最长重叠共用路径长度
-
-2. **路线可行性验证（子序列验证查询）**：提交任意路线 P，询问它是否同时是主干道 S 和 T 的可行共用子路线。我会回答"是"或"否"。
-   - 当且仅当 LCS(P, S) 等于 P 的长度，且 LCS(P, T) 也等于 P 的长度时，答案为"是"。
-
-请尽可能用少的查询次数完成推断。当你收集到足够信息后，请提交最终答案。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 路网重叠查询（例如查询路线 "ABC"）：
-<query_lcs>ABC</query_lcs>
-
-- 路线可行性验证（例如验证路线 "AB"）：
-<query_subseq>AB</query_subseq>
-
-提交最终答案时，必须给出一个整数 K，表示你推断的最长共用路径长度 LCS(S, T) 的值。你也可以选择性地给出一个长度为 K 的路线证据 W（可选）。格式如下：
-
-- 仅提交长度（例如答案为 5）：
-<answer>5</answer>
-
-- 提交长度和证据路线（例如答案为 3，证据为 "ACB"）：
-<answer>K=3, W=ACB</answer>
+注意：在提交调查报告之前，请确保你已经通过探头分组查询收集了足够的信息。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Urban Road Network Shared Route Evaluation System". This system aims to plan the longest shared routes between two main roads to optimize bus line layouts.
+The smart traffic command center is tracking the total number of traffic violations N (ranging from 1 to 200) on a major arterial road. Your goal is to infer the exact number of violating vehicles by dispatching traffic camera groups.
 
-The system has defined a finite intersection node alphabet Σ = {alphabet_display} and two hidden main road node sequences S and T. S contains {n1} nodes, and T contains {n2} nodes. Both are composed of node codes from the alphabet Σ.
+You can perform the following two operations:
 
-Your goal is to infer the length of the Longest Shared Route (i.e., Longest Common Subsequence LCS) of these two main roads through exploratory queries.
+1. Camera Grouping Query (Modulo Query): Choose a camera group size k (k must be one of 3, 4, 5, 6, or 7). The system will scan and evenly divide the vehicles, returning the remaining number of violating vehicles r that cannot be evenly divided (i.e., the remainder when N is divided by k).
+2. Submit Investigation Report (Announce Answer): When you believe you have determined the exact value of the total violations N, submit your final report.
 
-## Basic Concepts
+Game Constraints:
+- You can perform at most 3 camera grouping queries.
+- If the queried camera size k is not in the set {3, 4, 5, 6, 7}, the query is invalid but still counts toward the query limit.
+- If the submitted total violations are not in the range 1 to 200, the task fails.
+- You need to determine N and submit the report with as few queries as possible.
 
-- Shared Route (Subsequence): A route obtained by skipping zero or more intersections from the original route while maintaining the relative driving order of the remaining intersections.
-- LCS(X, Y): The length of the path with the maximum number of intersections among all shared routes between route X and Y.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query Types
+- Camera Grouping Query (e.g., dispatching 5 cameras):
+<query_mod>5</query_mod>
 
-You can repeatedly ask me the following two types of queries (one query per turn):
+- Submit Investigation Report (e.g., total violations are 42):
+<answer>42</answer>
 
-1. **Network Overlap Query (LCS Query)**: Submit any trial route P (composed of nodes from alphabet Σ), and I will return two integers (a, b), where:
-   - a = LCS(P, S): The longest shared route length between P and main road S
-   - b = LCS(P, T): The longest shared route length between P and main road T
-
-2. **Route Feasibility Verification (Subsequence Verification Query)**: Submit any route P and ask whether it is a feasible common sub-route for both main roads S and T. I will answer "Yes" or "No".
-   - The answer is "Yes" if and only if LCS(P, S) equals the length of P and LCS(P, T) also equals the length of P.
-
-Please try to complete the inference with as few queries as possible. When you have gathered enough information, submit your final answer.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Network Overlap Query (e.g., querying route "ABC"):
-<query_lcs>ABC</query_lcs>
-
-- Route Feasibility Verification (e.g., verifying route "AB"):
-<query_subseq>AB</query_subseq>
-
-When submitting the final answer, you must provide an integer K representing your inferred value of the longest shared route length LCS(S, T). You may optionally provide a witness route W of length K. Format:
-
-- Submit only the length (e.g., answer is 5):
-<answer>5</answer>
-
-- Submit length with witness route (e.g., answer is 3 with witness "ACB"):
-<answer>K=3, W=ACB</answer>
+Note: Before submitting the investigation report, make sure you have collected enough information through camera grouping queries.
 """
 
-    # ==========================================
-    # 场景 2：医疗 (Medical)
-    # ==========================================
     contextualized_rule_zh_2 = """\
-欢迎使用“基因同源序列分析系统”。本系统旨在对比病毒变异株的基因序列，协助研究人员提取广谱疫苗的核心标靶。
+医学实验室中有一批未知的特定变异细胞样本，细胞总数 N 范围在 1 到 200 之间。你的目标是通过细胞阵列分配测试推断出细胞的确切数量。
 
-系统设定了一个有限的核苷酸序列字母表 Σ = {alphabet_display}，以及两个隐藏的变异株基因片段 S 和 T。S 的序列长度为 {n1}，T 的序列长度为 {n2}，它们都由字母表 Σ 中的字符组成。
+你可以进行以下两种操作：
 
-你的目标是通过探测查询，推断出这两个变异株的最长保守基因序列（即最长公共子序列 LCS）的长度。
+1. 阵列分配测试（即取模查询）：选择培养皿阵列的孔数 k（k 必须是 3、4、5、6 或 7 中的一个），系统会将细胞均分到各孔中，并告诉你最后剩下的游离细胞数量 r（即 N 除以 k 的余数）。
+2. 录入细胞总数（即宣布答案）：当你认为已经确定细胞总数 N 的值时，提交你的检测结果。
 
-## 基本概念
+游戏约束：
+- 你最多只能进行 3 次阵列分配测试。
+- 如果选择的孔数 k 不在 3、4、5、6、7 中，该测试无效但仍然计入测试次数。
+- 如果录入的细胞总数不在 1 到 200 范围内，检测失败。
+- 你需要在尽可能少的测试次数内确定 N 并录入总数。
 
-- 保守片段（子序列）：由原基因序列剔除若干个（可以为零）变异位点，且保持剩余核苷酸相对排列顺序不变所得到的片段。
-- LCS(X, Y)：序列 X 与 Y 的所有同源片段中，保留核苷酸数量最多的那个片段的长度。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 查询方式
+- 阵列分配测试（例如选择 5 孔阵列）：
+<query_mod>5</query_mod>
 
-你可以反复向我提出以下两类查询（每次仅限一个查询）：
+- 录入细胞总数（例如总数是 42）：
+<answer>42</answer>
 
-1. **同源匹配查询（LCS查询）**：提交任意探测序列 P（由字母表 Σ 中的字符组成），我会返回两个整数 (a, b)，其中：
-   - a = LCS(P, S)：探测序列 P 与变异株 S 的最长同源片段长度
-   - b = LCS(P, T)：探测序列 P 与变异株 T 的最长同源片段长度
-
-2. **保守片段验证（子序列验证查询）**：提交任意序列 P，询问它是否同时是变异株 S 和 T 的共有保守基因片段。我会回答"是"或"否"。
-   - 当且仅当 LCS(P, S) 等于 P 的长度，且 LCS(P, T) 也等于 P 的长度时，答案为"是"。
-
-请尽可能用少的查询次数完成推断。当你收集到足够信息后，请提交最终答案。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 同源匹配查询（例如查询序列 "ABC"）：
-<query_lcs>ABC</query_lcs>
-
-- 保守片段验证（例如验证序列 "AB"）：
-<query_subseq>AB</query_subseq>
-
-提交最终答案时，必须给出一个整数 K，表示你推断的最长保守基因序列长度 LCS(S, T) 的值。你也可以选择性地给出一个长度为 K 的序列证据 W（可选）。格式如下：
-
-- 仅提交长度（例如答案为 5）：
-<answer>5</answer>
-
-- 提交长度和证据序列（例如答案为 3，证据为 "ACB"）：
-<answer>K=3, W=ACB</answer>
+注意：在录入细胞总数之前，请确保你已经通过阵列分配测试收集了足够的信息。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Gene Homology Sequence Analysis System". This system aims to compare the genetic sequences of virus variants to assist researchers in extracting core targets for broad-spectrum vaccines.
+A medical laboratory holds an unknown batch of specific mutated cell samples. The total number of cells N is in the range from 1 to 200. Your goal is to infer the exact number of cells through cell array allocation tests.
 
-The system has defined a finite nucleotide alphabet Σ = {alphabet_display} and two hidden mutant strain gene fragments S and T. S has a sequence length of {n1}, and T has a sequence length of {n2}. Both are composed of characters from the alphabet Σ.
+You can perform the following two operations:
 
-Your goal is to infer the length of the Longest Conserved Gene Sequence (i.e., Longest Common Subsequence LCS) of these two mutant strains through exploratory queries.
+1. Array Allocation Test (Modulo Query): Choose the number of wells k for the culture dish array (k must be one of 3, 4, 5, 6, or 7). The system will evenly distribute the cells into the wells and tell you the number of remaining free cells r (i.e., the remainder when N is divided by k).
+2. Log Total Cell Count (Announce Answer): When you believe you have determined the exact value of the total cell count N, submit your test result.
 
-## Basic Concepts
+Game Constraints:
+- You can perform at most 3 array allocation tests.
+- If the chosen number of wells k is not in the set {3, 4, 5, 6, 7}, the test is invalid but still counts toward the test limit.
+- If the logged total cell count is not in the range 1 to 200, the test fails.
+- You need to determine N and log the total count with as few tests as possible.
 
-- Conserved Fragment (Subsequence): A fragment obtained by removing zero or more mutation sites from the original gene sequence while maintaining the relative order of the remaining nucleotides.
-- LCS(X, Y): The length of the homologous fragment that retains the maximum number of nucleotides among all conserved fragments between sequence X and Y.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query Types
+- Array Allocation Test (e.g., choosing a 5-well array):
+<query_mod>5</query_mod>
 
-You can repeatedly ask me the following two types of queries (one query per turn):
+- Log Total Cell Count (e.g., total count is 42):
+<answer>42</answer>
 
-1. **Homology Matching Query (LCS Query)**: Submit any probe sequence P (composed of characters from alphabet Σ), and I will return two integers (a, b), where:
-   - a = LCS(P, S): The longest homologous fragment length between probe P and mutant strain S
-   - b = LCS(P, T): The longest homologous fragment length between probe P and mutant strain T
-
-2. **Conserved Fragment Verification (Subsequence Verification Query)**: Submit any sequence P and ask whether it is a shared conserved gene fragment of both strains S and T. I will answer "Yes" or "No".
-   - The answer is "Yes" if and only if LCS(P, S) equals the length of P and LCS(P, T) also equals the length of P.
-
-Please try to complete the inference with as few queries as possible. When you have gathered enough information, submit your final answer.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Homology Matching Query (e.g., querying sequence "ABC"):
-<query_lcs>ABC</query_lcs>
-
-- Conserved Fragment Verification (e.g., verifying sequence "AB"):
-<query_subseq>AB</query_subseq>
-
-When submitting the final answer, you must provide an integer K representing your inferred value of the longest conserved gene sequence length LCS(S, T). You may optionally provide a witness sequence W of length K. Format:
-
-- Submit only the length (e.g., answer is 5):
-<answer>5</answer>
-
-- Submit length with witness sequence (e.g., answer is 3 with witness "ACB"):
-<answer>K=3, W=ACB</answer>
+Note: Before logging the total cell count, make sure you have collected enough information through array allocation tests.
 """
 
-    # ==========================================
-    # 场景 3：教育 (Education)
-    # ==========================================
     contextualized_rule_zh_3 = """\
-欢迎使用“学生思维路径比对系统”。本系统用于追踪并分析不同学生的答题逻辑链条，以评估群体认知共性或筛查异常雷同卷。
+教务系统正在统计某个神秘学术社团的报名总人数 N（范围在 1 到 200 之间）。你的目标是通过学习小组划分测试来确定确切的报名人数。
 
-系统设定了一个有限的知识节点代号表 Σ = {alphabet_display}，以及两名隐藏学生的答题逻辑链 S 和 T。S 的知识节点数为 {n1}，T 的知识节点数为 {n2}，它们都由代号表 Σ 中的节点代号组成。
+你可以进行以下两种操作：
 
-你的目标是通过测试查询，推断出这两名学生的最长共同逻辑链（即最长公共子序列 LCS）的长度。
+1. 分组划分查询（即取模查询）：设定每个学习小组的人数 k（k 必须是 3、4、5、6 或 7 中的一个），系统会尝试将报名学生均分，并告诉你不足一组的剩余学生人数 r（即 N 除以 k 的余数）。
+2. 确认报名人数（即宣布答案）：当你认为已经确定报名总人数 N 的值时，提交你的最终统计。
 
-## 基本概念
+游戏约束：
+- 你最多只能进行 3 次分组划分查询。
+- 如果设定的小组人数 k 不在 3、4、5、6、7 中，该查询无效但仍然计入查询次数。
+- 如果确认的报名人数不在 1 到 200 范围内，统计失败。
+- 你需要在尽可能少的查询次数内确定 N 并确认报名人数。
 
-- 思维子路径（子序列）：由原解答逻辑中跳跃忽略若干个（可以为零）中间步骤，且保持剩余推理步骤先后顺序不变所得到的路径。
-- LCS(X, Y)：逻辑链 X 与 Y 的所有共同思维子路径中，涵盖知识节点最多的那条路径的长度。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 查询方式
+- 分组划分查询（例如每组 5 人）：
+<query_mod>5</query_mod>
 
-你可以反复向我提出以下两类查询（每次仅限一个查询）：
+- 确认报名人数（例如人数是 42）：
+<answer>42</answer>
 
-1. **逻辑链匹配查询（LCS查询）**：提交任意测试思维链 P（由代号表 Σ 中的节点组成），我会返回两个整数 (a, b)，其中：
-   - a = LCS(P, S)：测试链 P 与学生 S 答题逻辑的最大匹配知识节点数
-   - b = LCS(P, T)：测试链 P 与学生 T 答题逻辑的最大匹配知识节点数
-
-2. **思维路径验证（子序列验证查询）**：提交任意测试链 P，询问它是否同时完整存在于两名学生的思维路径中（顺序一致）。我会回答"是"或"否"。
-   - 当且仅当 LCS(P, S) 等于 P 的长度，且 LCS(P, T) 也等于 P 的长度时，答案为"是"。
-
-请尽可能用少的查询次数完成推断。当你收集到足够信息后，请提交最终答案。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 逻辑链匹配查询（例如查询测试链 "ABC"）：
-<query_lcs>ABC</query_lcs>
-
-- 思维路径验证（例如验证测试链 "AB"）：
-<query_subseq>AB</query_subseq>
-
-提交最终答案时，必须给出一个整数 K，表示你推断的最长共同逻辑链长度 LCS(S, T) 的值。你也可以选择性地给出一个长度为 K 的路径证据 W（可选）。格式如下：
-
-- 仅提交长度（例如答案为 5）：
-<answer>5</answer>
-
-- 提交长度和证据路径（例如答案为 3，证据为 "ACB"）：
-<answer>K=3, W=ACB</answer>
+注意：在确认报名人数之前，请确保你已经通过分组划分查询收集了足够的信息。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Student Cognitive Path Comparison System". This system is used to track and analyze the answering logic chains of different students to evaluate group cognitive commonalities or screen for abnormally similar papers.
+The educational administration system is calculating the total number of registrations N (ranging from 1 to 200) for a mysterious academic club. Your goal is to determine the exact number of registered students through study group partitioning tests.
 
-The system has defined a finite knowledge node alphabet Σ = {alphabet_display} and two hidden student cognitive logic chains S and T. S contains {n1} nodes, and T contains {n2} nodes. Both are composed of node codes from the alphabet Σ.
+You can perform the following two operations:
 
-Your goal is to infer the length of the Longest Common Logic Chain (ie., Longest Common Subsequence LCS) between these two students through testing queries.
+1. Group Partitioning Query (Modulo Query): Set the number of students per study group k (k must be one of 3, 4, 5, 6, or 7). The system will attempt to evenly group the registered students and tell you the number of remaining ungrouped students r (i.e., the remainder when N is divided by k).
+2. Confirm Registration Count (Announce Answer): When you believe you have determined the exact value of the total registrations N, submit your final count.
 
-## Basic Concepts
+Game Constraints:
+- You can perform at most 3 group partitioning queries.
+- If the set group size k is not in the set {3, 4, 5, 6, 7}, the query is invalid but still counts toward the query limit.
+- If the confirmed registration count is not in the range 1 to 200, the calculation fails.
+- You need to determine N and confirm the registration count with as few queries as possible.
 
-- Cognitive Sub-path (Subsequence): A path obtained by skipping zero or more intermediate steps from the original reasoning logic while maintaining the chronological order of the remaining reasoning steps.
-- LCS(X, Y): The length of the cognitive path covering the most knowledge nodes among all common cognitive sub-paths of logic chain X and Y.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query Types
+- Group Partitioning Query (e.g., 5 students per group):
+<query_mod>5</query_mod>
 
-You can repeatedly ask me the following two types of queries (one query per turn):
+- Confirm Registration Count (e.g., count is 42):
+<answer>42</answer>
 
-1. **Logic Chain Matching Query (LCS Query)**: Submit any test logic chain P (composed of nodes from alphabet Σ), and I will return two integers (a, b), where:
-   - a = LCS(P, S): The maximum matched knowledge nodes between test chain P and student S's logic
-   - b = LCS(P, T): The maximum matched knowledge nodes between test chain P and student T's logic
-
-2. **Cognitive Path Verification (Subsequence Verification Query)**: Submit any test chain P and ask whether it is completely present in both students' cognitive paths (with consistent order). I will answer "Yes" or "No".
-   - The answer is "Yes" if and only if LCS(P, S) equals the length of P and LCS(P, T) also equals the length of P.
-
-Please try to complete the inference with as few queries as possible. When you have gathered enough information, submit your final answer.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Logic Chain Matching Query (e.g., querying test chain "ABC"):
-<query_lcs>ABC</query_lcs>
-
-- Cognitive Path Verification (e.g., verifying test chain "AB"):
-<query_subseq>AB</query_subseq>
-
-When submitting the final answer, you must provide an integer K representing your inferred value of the longest common logic chain length LCS(S, T). You may optionally provide a witness path W of length K. Format:
-
-- Submit only the length (e.g., answer is 5):
-<answer>5</answer>
-
-- Submit length with witness path (e.g., answer is 3 with witness "ACB"):
-<answer>K=3, W=ACB</answer>
+Note: Before confirming the registration count, make sure you have collected enough information through group partitioning queries.
 """
 
-    # ==========================================
-    # 场景 4：制造业/工业 (Manufacturing)
-    # ==========================================
     contextualized_rule_zh_4 = """\
-欢迎使用“自动化装配流水线工艺对齐系统”。本系统负责对齐不同批次产品的生产环节，以最大化生产线模块的复用率。
+自动化生产线上正有一批关键零部件等待清点，零部件总数 N 范围在 1 到 200 之间。你的任务是通过启动分拣机器人组来核实确切的零部件总数。
 
-系统设定了一个有限的标准工序代号表 Σ = {alphabet_display}，以及两条隐藏的装配流水线工序链 S 和 T。S 包含 {n1} 道工序，T 包含 {n2} 道工序，它们都由代号表 Σ 中的代号组成。
+你可以进行以下两种操作：
 
-你的目标是通过探测查询，推断出这两条流水线的最长公共标准工序链（即最长公共子序列 LCS）的长度。
+1. 分拣装载测试（即取模查询）：设定每组分拣机器人的装载容量 k（k 必须是 3、4、5、6 或 7 中的一个），机器满载分拣后，流水线系统会反馈未能装满的剩余散件数量 r（即 N 除以 k 的余数）。
+2. 提交批次清点结果（即宣布答案）：当你认为已经确定零部件总数 N 的值时，提交你的清点数据。
 
-## 基本概念
+游戏约束：
+- 因流水线节拍限制，你最多只能进行 3 次分拣装载测试。
+- 如果设定的装载容量 k 不在 3、4、5、6、7 中，该测试无效但仍然计入测试次数。
+- 如果提交的清点结果不在 1 到 200 范围内，清点失败。
+- 你需要在尽可能少的测试次数内确定 N 并提交清点结果。
 
-- 工序子集（子序列）：由原装配流水线剥离若干个（可以为零）非核心组装步骤，且保持剩余基础步骤先后工艺顺序不变所得到的工序链。
-- LCS(X, Y)：工序链 X 与 Y 的所有通用基础工序子集中，包含工序数量最多的那条标准链的长度。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 查询方式
+- 分拣装载测试（例如设定容量为 5）：
+<query_mod>5</query_mod>
 
-你可以反复向我提出以下两类查询（每次仅限一个查询）：
+- 提交批次清点结果（例如总数是 42）：
+<answer>42</answer>
 
-1. **工序兼容查询（LCS查询）**：提交任意试探工序组合 P（由代号表 Σ 中的代号组成），我会返回两个整数 (a, b)，其中：
-   - a = LCS(P, S)：工序组合 P 与流水线 S 能够兼容的最长工序数量
-   - b = LCS(P, T)：工序组合 P 与流水线 T 能够兼容的最长工序数量
-
-2. **工序子集验证（子序列验证查询）**：提交任意工序组合 P，询问它是否同时为两条流水线的通用基础工序子集（工艺顺序一致）。我会回答"是"或"否"。
-   - 当且仅当 LCS(P, S) 等于 P 的长度，且 LCS(P, T) 也等于 P 的长度时，答案为"是"。
-
-请尽可能用少的查询次数完成推断。当你收集到足够信息后，请提交最终答案。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 工序兼容查询（例如查询工序组合 "ABC"）：
-<query_lcs>ABC</query_lcs>
-
-- 工序子集验证（例如验证工序组合 "AB"）：
-<query_subseq>AB</query_subseq>
-
-提交最终答案时，必须给出一个整数 K，表示你推断的最长公共标准工序链长度 LCS(S, T) 的值。你也可以选择性地给出一个长度为 K 的工艺链证据 W（可选）。格式如下：
-
-- 仅提交长度（例如答案为 5）：
-<answer>5</answer>
-
-- 提交长度和证据工艺链（例如答案为 3，证据为 "ACB"）：
-<answer>K=3, W=ACB</answer>
+注意：在提交批次清点结果之前，请确保你已经通过分拣装载测试收集了足够的信息。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Automated Assembly Line Process Alignment System". This system is responsible for aligning the production stages of different batch products to maximize the reuse rate of production line modules.
+[Industry Scenario]
+An automated production line is waiting to inventory a batch of critical components. The total number of components N is in the range from 1 to 200. Your task is to verify the exact total by activating automated sorting robot groups.
 
-The system has defined a finite standard process alphabet Σ = {alphabet_display} and two hidden assembly line process chains S and T. S contains {n1} processes, and T contains {n2} processes. Both are composed of process codes from the alphabet Σ.
+You can perform the following two operations:
 
-Your goal is to infer the length of the Longest Common Standard Process Chain (i.e., Longest Common Subsequence LCS) of these two assembly lines through trial queries.
+1. Sorting Load Test (Modulo Query): Set the load capacity k for each group of sorting robots (k must be one of 3, 4, 5, 6, or 7). After fully loading and sorting, the pipeline system will report the number of remaining loose components r that couldn't fill a robot (i.e., the remainder when N is divided by k).
+2. Submit Batch Inventory Result (Announce Answer): When you believe you have determined the exact value of the total components N, submit your inventory data.
 
-## Basic Concepts
+Game Constraints:
+- Due to assembly line rhythm limits, you can perform at most 3 sorting load tests.
+- If the set load capacity k is not in the set {3, 4, 5, 6, 7}, the test is invalid but still counts toward the test limit.
+- If the submitted inventory result is not in the range 1 to 200, the inventory fails.
+- You need to determine N and submit the inventory result with as few tests as possible.
 
-- Process Subset (Subsequence): A process chain obtained by stripping zero or more non-core assembly steps from the original assembly line while maintaining the chronological craftsmanship order of the remaining basic steps.
-- LCS(X, Y): The length of the standard chain containing the most processes among all general basic process subsets of process chain X and Y.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query Types
+- Sorting Load Test (e.g., setting capacity to 5):
+<query_mod>5</query_mod>
 
-You can repeatedly ask me the following two types of queries (one query per turn):
+- Submit Batch Inventory Result (e.g., total count is 42):
+<answer>42</answer>
 
-1. **Process Compatibility Query (LCS Query)**: Submit any trial process combination P (composed of codes from alphabet Σ), and I will return two integers (a, b), where:
-   - a = LCS(P, S): The maximum compatible process count between combination P and assembly line S
-   - b = LCS(P, T): The maximum compatible process count between combination P and assembly line T
-
-2. **Process Subset Verification (Subsequence Verification Query)**: Submit any process combination P and ask whether it serves as a general basic process subset for both assembly lines simultaneously (with consistent craftsmanship order). I will answer "Yes" or "No".
-   - The answer is "Yes" if and only if LCS(P, S) equals the length of P and LCS(P, T) also equals the length of P.
-
-Please try to complete the inference with as few queries as possible. When you have gathered enough information, submit your final answer.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Process Compatibility Query (e.g., querying process combination "ABC"):
-<query_lcs>ABC</query_lcs>
-
-- Process Subset Verification (e.g., verifying process combination "AB"):
-<query_subseq>AB</query_subseq>
-
-When submitting the final answer, you must provide an integer K representing your inferred value of the longest common standard process chain length LCS(S, T). You may optionally provide a witness process chain W of length K. Format:
-
-- Submit only the length (e.g., answer is 5):
-<answer>5</answer>
-
-- Submit length with witness process chain (e.g., answer is 3 with witness "ACB"):
-<answer>K=3, W=ACB</answer>
+Note: Before submitting the batch inventory result, make sure you have collected enough information through sorting load tests.
 """
 
-    # ==========================================
-    # 场景 5：法律 (Legal)
-    # ==========================================
     contextualized_rule_zh_5 = """\
-欢迎使用“庭审证据链审查与比对系统”。本系统旨在提取存在争议的商业合同或双方口供事件中，无可争议的核心共识部分。
+法院专案组正在审查一宗复杂经济案件的涉案凭证文件，文件总数 N 范围在 1 到 200 之间。你的目标是通过指派审查配额来确切查明这些凭证的总量。
 
-系统设定了一个有限的核心事实节点代号表 Σ = {alphabet_display}，以及两份隐藏的争议合同条款序列（或口供事件链） S 和 T。S 的条款节点数为 {n1}，T 的条款节点数为 {n2}，它们都由代号表 Σ 中的节点组成。
+你可以进行以下两种操作：
 
-你的目标是通过查询推断，审查出这两份材料的最长一致性事实链（即最长公共子序列 LCS）的长度。
+1. 审查配额分配（即取模查询）：指定每个审查小组处理的文件配额 k（k 必须是 3、4、5、6 或 7 中的一个），系统会将文件均分发配，并向你报告留在待定区未能均分的剩余文件数 r（即 N 除以 k 的余数）。
+2. 宣判文件总数（即宣布答案）：当你认为已经确凿掌握文件总数 N 的值时，正式提交你的审查结论。
 
-## 基本概念
+游戏约束：
+- 出于司法保密和效率规定，你最多只能进行 3 次审查配额分配。
+- 如果指定的配额 k 不在 3、4、5、6、7 中，该分配无效但仍然计入操作次数。
+- 如果宣判的文件总数不在 1 到 200 范围内，审查即告失败。
+- 你需要在尽可能少的分配次数内确定 N 并宣判文件总数。
 
-- 事实子链（子序列）：由原合同条款序列中搁置若干项（可以为零）存疑条款，且保持剩余条款或事件相对先后发生顺序不变所形成的事实逻辑链。
-- LCS(X, Y)：材料 X 与 Y 的所有共识子链中，能够互相印证的事实节点数量最多的那条事实链的长度。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 查询方式
+- 审查配额分配（例如指定配额 5）：
+<query_mod>5</query_mod>
 
-你可以反复向我提出以下两类查询（每次仅限一个查询）：
+- 宣判文件总数（例如总数是 42）：
+<answer>42</answer>
 
-1. **事实印证查询（LCS查询）**：提出任意事实假设链 P（由代号表 Σ 中的节点组成），我会返回两个整数 (a, b)，其中：
-   - a = LCS(P, S)：事实假设链 P 在材料 S 中能被最大程度印证的连贯事实节点数
-   - b = LCS(P, T)：事实假设链 P 在材料 T 中能被最大程度印证的连贯事实节点数
-
-2. **共识条款验证（子序列验证查询）**：提出任意事实假设链 P，询问它是否同时是两份材料中完全一致且未被破坏先后顺序的共识事实。我会回答"是"或"否"。
-   - 当且仅当 LCS(P, S) 等于 P 的长度，且 LCS(P, T) 也等于 P 的长度时，答案为"是"。
-
-请尽可能用少的查询次数完成推断。当你收集到足够信息后，请提交最终审查答案。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 事实印证查询（例如提出假设链 "ABC"）：
-<query_lcs>ABC</query_lcs>
-
-- 共识条款验证（例如验证假设链 "AB"）：
-<query_subseq>AB</query_subseq>
-
-提交最终答案时，必须给出一个整数 K，表示你推断的最长一致性事实链长度 LCS(S, T) 的值。你也可以选择性地给出一个长度为 K 的事实证据链 W（可选）。格式如下：
-
-- 仅提交长度（例如答案为 5）：
-<answer>5</answer>
-
-- 提交长度和事实证据链（例如答案为 3，证据为 "ACB"）：
-<answer>K=3, W=ACB</answer>
+注意：在宣判文件总数之前，请确保你已经通过审查配额分配收集了足够确凿的信息。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Court Evidence Chain Review and Comparison System". This system aims to extract the indisputable core consensus parts from disputed commercial contracts or testimony event chains provided by both parties.
+A special court task force is reviewing case evidentiary documents for a complex economic case. The total number of documents N ranges from 1 to 200. Your goal is to exactly ascertain the total volume of these evidences by assigning review quotas.
 
-The system has defined a finite core factual node alphabet Σ = {alphabet_display} and two hidden disputed contract clause sequences (or testimony chains) S and T. S contains {n1} clause nodes, and T contains {n2} clause nodes. Both are composed of nodes from the alphabet Σ.
+You can perform the following two operations:
 
-Your goal is to infer the length of the Longest Consistent Factual Chain (i.e., Longest Common Subsequence LCS) between these two materials through query inference.
+1. Review Quota Allocation (Modulo Query): Specify the document handling quota k for each review panel (k must be one of 3, 4, 5, 6, or 7). The system will distribute the documents evenly and report back the number of remaining documents r left in the pending area that could not be evenly divided (i.e., the remainder when N is divided by k).
+2. Declare Total Document Count (Announce Answer): When you believe you have conclusively determined the exact value of the total documents N, formally submit your review conclusion.
 
-## Basic Concepts
+Game Constraints:
+- For judicial confidentiality and efficiency, you can perform at most 3 review quota allocations.
+- If the specified quota k is not in the set {3, 4, 5, 6, 7}, the allocation is invalid but still counts toward your operation limit.
+- If the declared total document count is not in the range 1 to 200, the review fails.
+- You need to determine N and declare the total document count with as few allocations as possible.
 
-- Factual Sub-chain (Subsequence): A factual logic chain formed by shelving zero or more doubtful clauses from the original contract sequence while maintaining the relative chronological order of the remaining clauses or events.
-- LCS(X, Y): The length of the factual chain capable of corroborating the maximum number of factual nodes among all consensus sub-chains of material X and Y.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query Types
+- Review Quota Allocation (e.g., specifying a quota of 5):
+<query_mod>5</query_mod>
 
-You can repeatedly ask me the following two types of queries (one query per turn):
+- Declare Total Document Count (e.g., total count is 42):
+<answer>42</answer>
 
-1. **Factual Corroboration Query (LCS Query)**: Submit any factual hypothesis chain P (composed of nodes from alphabet Σ), and I will return two integers (a, b), where:
-   - a = LCS(P, S): The maximum corroborated coherent factual node count for hypothesis chain P within material S
-   - b = LCS(P, T): The maximum corroborated coherent factual node count for hypothesis chain P within material T
-
-2. **Consensus Clause Verification (Subsequence Verification Query)**: Submit any factual hypothesis chain P and ask whether it serves as a completely consistent consensus fact with an unbroken chronological order in both materials simultaneously. I will answer "Yes" or "No".
-   - The answer is "Yes" if and only if LCS(P, S) equals the length of P and LCS(P, T) also equals the length of P.
-
-Please try to complete the inference with as few queries as possible. When you have gathered enough information, submit your final review answer.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Factual Corroboration Query (e.g., submitting hypothesis chain "ABC"):
-<query_lcs>ABC</query_lcs>
-
-- Consensus Clause Verification (e.g., verifying hypothesis chain "AB"):
-<query_subseq>AB</query_subseq>
-
-When submitting the final answer, you must provide an integer K representing your inferred value of the longest consistent factual chain length LCS(S, T). You may optionally provide a witness factual chain W of length K. Format:
-
-- Submit only the length (e.g., answer is 5):
-<answer>5</answer>
-
-- Submit length with witness factual chain (e.g., answer is 3 with witness "ACB"):
-<answer>K=3, W=ACB</answer>
+Note: Before declaring the total document count, make sure you have collected conclusively enough information through review quota allocations.
 """
 
-    tags = ["answer", "query_lcs", "query_subseq"]
-    
-    # 推理类型和数据结构
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
-
-    # 难度配置：
-    # 1 (简单)       - 短序列，字母表小，LCS明显
-    # 2 (中等偏下)   - 中等长度，字母表适中，有一定重叠
-    # 3 (中等偏上)   - 较长序列，字母表较大，需要策略性查询
-    # 4 (较难)       - 长序列，复杂结构，LCS不易直接看出
-    # 5 (难)         - 很长序列，大字母表，需要精确推断
+    tags = ["answer", "query_mod"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "alphabet": "ABC",
-                "n1": 4,
-                "n2": 4,
-                "s": "ABAC",
-                "t": "ABBC",
-                "lcs_length": 3,
-            },
-            2: {
-                "alphabet": "ABCD",
-                "n1": 6,
-                "n2": 6,
-                "s": "ABCDAB",
-                "t": "ACBDAC",
-                "lcs_length": 4,
-            },
-            3: {
-                "alphabet": "ABCDE",
-                "n1": 8,
-                "n2": 8,
-                "s": "ABCDEABC",
-                "t": "ACEABCDE",
-                "lcs_length": 6,
-            },
-            4: {
-                "alphabet": "ABCDEF",
-                "n1": 10,
-                "n2": 10,
-                "s": "ABCDEFABCD",
-                "t": "ACEFBDACEF",
-                "lcs_length": 6,
-            },
-            5: {
-                "alphabet": "ABCDEFGH",
-                "n1": 12,
-                "n2": 12,
-                "s": "ABCDEFGHABCD",
-                "t": "ACEGBDFHACEG",
-                "lcs_length": 7,
-            },
+            1: {"n": 23},
+            2: {"n": 87},
+            3: {"n": 142},
+            4: {"n": 177},
+            5: {"n": 197},
         },
         "en": {
-            1: {
-                "alphabet": "ABC",
-                "n1": 4,
-                "n2": 4,
-                "s": "ABAC",
-                "t": "ABBC",
-                "lcs_length": 3,
-            },
-            2: {
-                "alphabet": "ABCD",
-                "n1": 6,
-                "n2": 6,
-                "s": "ABCDAB",
-                "t": "ACBDAC",
-                "lcs_length": 4,
-            },
-            3: {
-                "alphabet": "ABCDE",
-                "n1": 8,
-                "n2": 8,
-                "s": "ABCDEABC",
-                "t": "ACEABCDE",
-                "lcs_length": 6,
-            },
-            4: {
-                "alphabet": "ABCDEF",
-                "n1": 10,
-                "n2": 10,
-                "s": "ABCDEFABCD",
-                "t": "ACEFBDACEF",
-                "lcs_length": 6,
-            },
-            5: {
-                "alphabet": "ABCDEFGH",
-                "n1": 12,
-                "n2": 12,
-                "s": "ABCDEFGHABCD",
-                "t": "ACEGBDFHACEG",
-                "lcs_length": 7,
-            },
+            1: {"n": 23},
+            2: {"n": 87},
+            3: {"n": 142},
+            4: {"n": 177},
+            5: {"n": 197},
         },
     }
 
@@ -656,9 +337,8 @@ When submitting the final answer, you must provide an integer K representing you
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据难度和语言设置隐藏序列"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保 difficulty 为整数
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -666,217 +346,100 @@ When submitting the final answer, you must provide an integer K representing you
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.target_n = cfg["n"]
+        self.query_count = 0
+        self.max_queries = 3
+        self.valid_moduli = {3, 4, 5, 6, 7}
         
-        # 构造字母表的显示字符串，如 "{A, B, C}"
-        alphabet_display = "{" + ", ".join(cfg["alphabet"]) + "}"
-        
-        # 存储游戏信息
-        self._game_info["alphabet"] = cfg["alphabet"]
-        self._game_info["alphabet_display"] = alphabet_display
-        self._game_info["n1"] = cfg["n1"]
-        self._game_info["n2"] = cfg["n2"]
-        
-        # 隐藏的两个序列
-        self.sequence_s = cfg["s"]
-        self.sequence_t = cfg["t"]
-        
-        # 正确答案：两个序列的LCS长度
-        self.true_lcs_length = cfg["lcs_length"]
-        
-        # 验证配置的正确性
-        assert len(self.sequence_s) == cfg["n1"], "S length mismatch"
-        assert len(self.sequence_t) == cfg["n2"], "T length mismatch"
-        
-        # 验证 lcs_length 配置的正确性
-        computed_lcs = self._compute_lcs_length(self.sequence_s, self.sequence_t)
-        assert computed_lcs == self.true_lcs_length, (
-            f"LCS length mismatch for difficulty {diff}: "
-            f"configured {self.true_lcs_length}, computed {computed_lcs}"
-        )
-
-    def _compute_lcs_length(self, x, y):
-        """动态规划计算两个序列的LCS长度"""
-        m, n = len(x), len(y)
-        # dp[i][j] 表示 x[:i] 和 y[:j] 的LCS长度
-        dp = [[0] * (n + 1) for _ in range(m + 1)]
-        
-        for i in range(1, m + 1):
-            for j in range(1, n + 1):
-                if x[i - 1] == y[j - 1]:
-                    dp[i][j] = dp[i - 1][j - 1] + 1
-                else:
-                    dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
-        
-        return dp[m][n]
-
-    def _is_subsequence(self, subseq, seq):
-        """判断 subseq 是否是 seq 的子序列"""
-        it = iter(seq)
-        return all(char in it for char in subseq)
+        self._game_info["n"] = "?"
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
-        
-        # 尝试解析两种格式：
-        # 格式1: 纯数字 "5"
-        # 格式2: "K=3, W=ACB"
-        
-        if "K=" in raw_ans or "k=" in raw_ans:
-            # 格式2：包含K和可选的W
-            parts = [x.strip() for x in raw_ans.split(",")]
-            ans_dict = {}
-            for part in parts:
-                if "=" in part:
-                    k, v = part.split("=", 1)
-                    ans_dict[k.strip().upper()] = v.strip()
+        try:
+            answer = int(parsed_info["answer"].strip())
             
-            if "K" not in ans_dict:
+            if answer < 1 or answer > 200:
                 return False
             
-            try:
-                k_value = int(ans_dict["K"])
-            except ValueError:
-                return False
-            
-            # 判断K是否正确
-            if k_value != self.true_lcs_length:
-                return False
-            
-            # 如果提供了W，验证W是否为公共子序列且长度为K
-            if "W" in ans_dict:
-                w_seq = ans_dict["W"]
-                if len(w_seq) != k_value:
-                    return False
-                if not (self._is_subsequence(w_seq, self.sequence_s) and 
-                        self._is_subsequence(w_seq, self.sequence_t)):
-                    return False
-            
-            return True
-        else:
-            # 格式1：纯数字
-            try:
-                k_value = int(raw_ans)
-                return k_value == self.true_lcs_length
-            except ValueError:
-                return False
+            return answer == self.target_n
+        except (ValueError, KeyError):
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑：根据查询类型产生响应"""
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_format = "错误：查询格式无效。"
+        if "query_mod" in parsed_info:
+            if self.query_count >= self.max_queries:
+                if self.config.language == "zh":
+                    return f"查询次数已用尽（最多{self.max_queries}次）。请直接提交你的答案。"
+                else:
+                    return f"Query limit reached ({self.max_queries} queries used). Please submit your answer directly."
+            
+            try:
+                k = int(parsed_info["query_mod"].strip())
+            except ValueError:
+                self.query_count += 1
+                if self.config.language == "zh":
+                    return f"错误：模数必须是整数。剩余查询次数：{self.max_queries - self.query_count}"
+                else:
+                    return f"Error: Modulus must be an integer. Remaining queries: {self.max_queries - self.query_count}"
+            
+            self.query_count += 1
+            
+            if k not in self.valid_moduli:
+                if self.config.language == "zh":
+                    return f"错误：模数必须是 3、4、5、6 或 7 中的一个。该查询无效但已计入次数。剩余查询次数：{self.max_queries - self.query_count}"
+                else:
+                    return f"Error: Modulus must be one of 3, 4, 5, 6, or 7. This invalid query still counts. Remaining queries: {self.max_queries - self.query_count}"
+            
+            remainder = self.target_n % k
+            if self.config.language == "zh":
+                return f"N 除以 {k} 的余数是 {remainder}。剩余查询次数：{self.max_queries - self.query_count}"
+            else:
+                return f"N mod {k} = {remainder}. Remaining queries: {self.max_queries - self.query_count}"
+        
         else:
-            yes_res, no_res = "Yes", "No"
-            error_format = "Error: Invalid query format."
+            if self.config.language == "zh":
+                raise ValueError("无效的查询格式。")
+            else:
+                raise ValueError("Invalid query format.")
 
-        # 优先处理 query_lcs
-        if "query_lcs" in parsed_info:
-            p_seq = parsed_info["query_lcs"].strip()
-            
-            # 验证序列是否只包含字母表中的字符
-            if not all(c in self._game_info["alphabet"] for c in p_seq):
-                return error_format
-            
-            # 计算 LCS(P, S) 和 LCS(P, T)
-            a = self._compute_lcs_length(p_seq, self.sequence_s)
-            b = self._compute_lcs_length(p_seq, self.sequence_t)
-            
-            return f"({a}, {b})"
-
-        # 处理 query_subseq
-        elif "query_subseq" in parsed_info:
-            p_seq = parsed_info["query_subseq"].strip()
-            
-            # 验证序列是否只包含字母表中的字符
-            if not all(c in self._game_info["alphabet"] for c in p_seq):
-                return error_format
-            
-            # 判断P是否同时为S和T的子序列
-            is_subseq_s = self._is_subsequence(p_seq, self.sequence_s)
-            is_subseq_t = self._is_subsequence(p_seq, self.sequence_t)
-            
-            return yes_res if (is_subseq_s and is_subseq_t) else no_res
-
-        else:
-            raise ValueError("No valid query tag found.")
-
-    def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        import re as _re
+    def _cf_make_wrong(self, correct: str) -> str:
+        import re
         
-        # 处理元组格式 "(a, b)"
-        tuple_match = _re.match(r'^\((\d+),\s*(\d+)\)$', correct.strip())
-        if tuple_match:
-            a, b = int(tuple_match.group(1)), int(tuple_match.group(2))
-            # 修改其中一个值（+1）
-            return f"({a + 1}, {b})"
+        zh_match = re.search(r'除以\s*(\d+)\s*的余数是\s*(\d+)', correct)
+        if zh_match:
+            k = int(zh_match.group(1))
+            old_r = int(zh_match.group(2))
+            new_r = (old_r + 1) % k
+            if new_r == old_r:
+                new_r = (old_r + 2) % k
+            return correct.replace(f"余数是 {old_r}", f"余数是 {new_r}")
         
-        # 若 correct 是纯整数字符串
-        if correct.strip().lstrip('-').isdigit():
-            return str(int(correct) + 1)
+        en_match = re.search(r'mod\s+(\d+)\s*=\s*(\d+)', correct)
+        if en_match:
+            k = int(en_match.group(1))
+            old_r = int(en_match.group(2))
+            new_r = (old_r + 1) % k
+            if new_r == old_r:
+                new_r = (old_r + 2) % k
+            return correct.replace(f"= {old_r}", f"= {new_r}", 1)
         
-        # 替换关键词（中文）
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            if "否" in correct:
-                return correct.replace("否", "是")
-        
-        # 替换关键词（英文）
-        if self.config.language == "en":
-            if correct == "Yes": return "No"
-            if correct == "No": return "Yes"
-            if correct == "YES": return "NO"
-            if correct == "NO": return "YES"
-            if correct == "yes": return "no"
-            if correct == "no": return "yes"
-            
-        # 若都不匹配，追加 _WRONG
-        return correct + "_WRONG"
+        return correct + " [WRONG]"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        由于可能的序列是无限的，这里仅枚举长度为 1 和 2 的所有可能序列组合作为代表性查询。
-        """
-        queries = []
-        alphabet = self._game_info["alphabet"]
-        
-        # 确定回答的本地化字符串
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
+        results = []
 
-        # 生成长度为 1 和 2 的所有序列组合
-        max_query_length = 2
-        candidates = []
-        for length in range(1, max_query_length + 1):
-            for p in itertools.product(alphabet, repeat=length):
-                candidates.append("".join(p))
-        
-        for p_seq in candidates:
-            # 1. 构造 LCS 查询
-            # 复用内部逻辑 _compute_lcs_length
-            a = self._compute_lcs_length(p_seq, self.sequence_s)
-            b = self._compute_lcs_length(p_seq, self.sequence_t)
-            lcs_ans = f"({a}, {b})"
+        for k in sorted(list(self.valid_moduli)):
+            remainder = self.target_n % k
             
-            queries.append({
-                "query": f"<query_lcs>{p_seq}</query_lcs>",
-                "answer": lcs_ans
+            query_str = f"<query_mod>{k}</query_mod>"
+            
+            if self.config.language == "zh":
+                ans = f"N 除以 {k} 的余数是 {remainder}。"
+            else:
+                ans = f"N mod {k} = {remainder}."
+            
+            results.append({
+                "query": query_str,
+                "answer": ans
             })
             
-            # 2. 构造 子序列验证 查询
-            # 复用内部逻辑 _is_subsequence
-            is_subseq_s = self._is_subsequence(p_seq, self.sequence_s)
-            is_subseq_t = self._is_subsequence(p_seq, self.sequence_t)
-            subseq_ans = yes_res if (is_subseq_s and is_subseq_t) else no_res
-            
-            queries.append({
-                "query": f"<query_subseq>{p_seq}</query_subseq>",
-                "answer": subseq_ans
-            })
-            
-        return queries
+        return results

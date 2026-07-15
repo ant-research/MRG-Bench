@@ -1,631 +1,512 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   度数查询：某给定节点的度数（无向）或入度/出度（有向）是多少
-# ============================================================
-
-import random
-import itertools
 from .base import Game
+import random
+import hashlib
 
-
-class DegreeInferenceGame(Game):
+class GAME176(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"图节点度数推断"的游戏，规则如下：
+我们来玩一个"黑箱探测"的推理游戏，规则如下：
 
-游戏设定了一个有向简单图，图中有 {n} 个节点，节点名称为：{node_names}。
-图中无自环、无多重边。我已经秘密确定了所有的边连接关系，但不会告诉你。
+游戏设定了一个未知的正整数 H（H 在 1 到 {max_h} 之间）。系统提供一个确定性"黑箱"函数，你可以向它查询：给定一个正整数 k，黑箱会返回一个文本串 S(k)。
 
-你的目标是推断出目标节点 {target} 的出度和入度。
+黑箱函数的特性：
+1. 结构性质：S(k) = g(min(k, H))，其中 g 是一个未知但固定的编码函数
+2. 单射性质：g 在集合 {{1, 2, ..., H}} 上是单射的，即对于所有 1 小于等于 i 小于 j 小于等于 H，都有 g(i) 不等于 g(j)
+3. 确定性：对同一个 k 重复查询，返回值完全一致
+4. 可观测性：你只能通过比较不同 k 的返回值是否完全相等来获取信息
 
-- 出度：从目标节点指向其他节点的边数。
-- 入度：从其他节点指向目标节点的边数。
+由上述性质可以推导出：
+- 当 k 小于 H 时，S(k) 不等于 S(k+1)
+- 当 k 大于等于 H 时，S(k) 等于 S(k+1)（之后对更大的 k 也保持相同）
 
-你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实设定如实回答：
+你的目标是：通过尽可能少的查询次数，确定未知参数 H 的值。
 
-1. 出度分组计数：给定一个节点子集 S（不包含目标节点，且集合大小不超过 {max_group_size}），询问 S 中有多少个节点满足"目标节点指向它"。回答一个整数。
-2. 入度分组计数：给定一个节点子集 S（不包含目标节点，且集合大小不超过 {max_group_size}），询问 S 中有多少个节点满足"它指向目标节点"。回答一个整数。
-3. 出边存在性查询：询问目标节点是否有边指向某个特定节点 v。回答"是"或"否"。
-4. 入边存在性查询：询问某个特定节点 v 是否有边指向目标节点。回答"是"或"否"。
+你可以进行以下操作：
 
-注意：
-- 每次查询的集合 S 大小不能超过 {max_group_size}，否则会返回"非法提问"。
-- 集合 S 中不能包含目标节点 {target}。
-- 节点名称必须在给定的节点列表中。
+1. 试探查询：提交一个正整数 k（1 到 {max_query} 之间），系统返回文本串 S(k)
+2. 复查查询：请求重复上一轮的返回值，用于一致性验证（可选）
+3. 提交答案：当你收集足够信息后，提交一个正整数作为对 H 的猜测
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+注意：返回的文本串是不透明的（不可直接映射为数值），唯一可用的信息是判断不同返回值之间是否相等。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 试探查询（例如查询 k=5）：
+<query_probe>5</query_probe>
 
-- 出度分组计数（例如询问节点 A、B、C）：
-<count_out>A,B,C</count_out>
+- 复查查询（重复上一次返回）：
+<query_repeat></query_repeat>
 
-- 入度分组计数（例如询问节点 D、E）：
-<count_in>D,E</count_in>
-
-- 出边存在性查询（例如询问是否有边指向节点 F）：
-<exists_out>F</exists_out>
-
-- 入边存在性查询（例如询问节点 G 是否有边指向目标）：
-<exists_in>G</exists_in>
-
-提交最终答案时，必须说明目标节点的出度和入度，格式如下：
-
-<answer>out_degree=3, in_degree=2</answer>
+- 提交最终答案（例如猜测 H=7）：
+<answer>7</answer>
 """
 
     game_rule_en = """\
-Let's play a "Graph Node Degree Inference" game. Here are the rules:
+Let's play a "Black Box Probing" deduction game. Here are the rules:
 
-The game has a directed simple graph with {n} nodes, named: {node_names}.
-There are no self-loops or multiple edges. I have secretly determined all edge connections, but will not tell you.
+The game has set an unknown positive integer H (H is between 1 and {max_h}). The system provides a deterministic "black box" function that you can query: given a positive integer k, the black box returns a text string S(k).
 
-Your goal is to infer the out-degree and in-degree of the target node {target}.
+Properties of the black box function:
+1. Structural property: S(k) = g(min(k, H)), where g is an unknown but fixed encoding function
+2. Injectivity property: g is injective on the set {{1, 2, ..., H}}, meaning for all 1 less than or equal to i less than j less than or equal to H, g(i) is not equal to g(j)
+3. Determinism: Repeated queries with the same k return exactly the same value
+4. Observability: You can only obtain information by comparing whether return values for different k are completely equal
 
-- Out-degree: The number of edges from the target node to other nodes.
-- In-degree: The number of edges from other nodes to the target node.
+From the above properties, we can deduce:
+- When k is less than H, S(k) is not equal to S(k+1)
+- When k is greater than or equal to H, S(k) equals S(k+1) (and remains the same for larger k)
 
-You can repeatedly ask me the following queries (one per turn), and I will answer truthfully:
+Your goal is: determine the value of the unknown parameter H with as few queries as possible.
 
-1. Out-degree Group Count: Given a node subset S (excluding the target node, with size no more than {max_group_size}), ask how many nodes in S satisfy "the target node points to it". Answer an integer.
-2. In-degree Group Count: Given a node subset S (excluding the target node, with size no more than {max_group_size}), ask how many nodes in S satisfy "it points to the target node". Answer an integer.
-3. Out-edge Existence Query: Ask if the target node has an edge pointing to a specific node v. Answer "Yes" or "No".
-4. In-edge Existence Query: Ask if a specific node v has an edge pointing to the target node. Answer "Yes" or "No".
+You can perform the following operations:
 
-Note:
-- Each query set S cannot exceed size {max_group_size}, or it will return "Invalid query".
-- Set S cannot contain the target node {target}.
-- Node names must be in the given node list.
+1. Probe query: Submit a positive integer k (between 1 and {max_query}), the system returns text string S(k)
+2. Repeat query: Request the return value from the last round for consistency verification (optional)
+3. Submit answer: When you have gathered enough information, submit a positive integer as your guess for H
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+Note: The returned text strings are opaque (cannot be directly mapped to numerical values); the only usable information is determining whether different return values are equal.
 
-## Query and Answer Format (strictly required)
+Each operation must contain only one tag. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Probe query (e.g., query k=5):
+<query_probe>5</query_probe>
 
-- Out-degree Group Count (e.g., querying nodes A, B, C):
-<count_out>A,B,C</count_out>
+- Repeat query (repeat last return):
+<query_repeat></query_repeat>
 
-- In-degree Group Count (e.g., querying nodes D, E):
-<count_in>D,E</count_in>
-
-- Out-edge Existence Query (e.g., asking if there is an edge to node F):
-<exists_out>F</exists_out>
-
-- In-edge Existence Query (e.g., asking if node G has an edge to target):
-<exists_in>G</exists_in>
-
-When submitting the final answer, specify the out-degree and in-degree of the target node using this format:
-
-<answer>out_degree=3, in_degree=2</answer>
+- Submit final answer (e.g., guess H=7):
+<answer>7</answer>
 """
 
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-【交通物流场景】我们现在来进行一场“物流枢纽连通性推断”的演练，规则如下：
+【交通场景】智能路网拥堵阈值探测
+我们来进行一项城市路网承载力测试，规则如下：
 
-辖区内设定了一个单向物流路网，包含 {n} 个枢纽节点，节点名称为：{node_names}。
-图中无自身循环路线、无重复多重路线。我已经秘密确定了所有的路线连接关系，但不会告诉你。
+系统设定了一个未知的道路饱和阈值 H（H 在 1 到 {max_h} 之间，单位：百辆/小时）。你拥有一个智能交通流量监测黑箱，你可以输入指定的测试车流量 k，监测器会返回该路段状态的加密特征签名 S(k)。
 
-你的目标是推断出目标枢纽 {target} 的驶出路线数（出度）和驶入路线数（入度）。
+交通监测黑箱的特性：
+1. 结构性质：S(k) = g(min(k, H))，其中 g 是未知的固定特征编码算法。
+2. 单射性质：在未达到饱和前（即流量在 {{1, 2, ..., H}} 范围内），每个不同的流量都会产生唯一的交通状态签名。
+3. 确定性：对相同的车流量 k 重复测试，返回的特征签名完全一致。
+4. 可观测性：签名是经过加密的，你只能通过比对不同 k 值的签名是否完全一致来获取路网状态信息。
 
-- 驶出路线（出度）：从目标枢纽单向发往其他节点的路线数。
-- 驶入路线（入度）：从其他节点单向发往目标枢纽的路线数。
+由此可以推导出交通流特性：
+- 当车流量 k 小于饱和阈值 H 时，路况仍在动态变化，S(k) 不等于 S(k+1)。
+- 当车流量 k 大于等于阈值 H 时，道路进入全面拥堵饱和状态，特征签名不再改变，即 S(k) 等于 S(k+1)。
 
-你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实路网设定如实回答：
+你的目标是：通过尽可能少的测试次数，探测出该路网的精准饱和阈值 H。
 
-1. 驶出路线分组计数：给定一个节点子集 S（不包含目标枢纽，且集合大小不超过 {max_group_size}），询问 S 中有多少个节点满足"目标枢纽单向发往它"。回答一个整数。
-2. 驶入路线分组计数：给定一个节点子集 S（不包含目标枢纽，且集合大小不超过 {max_group_size}），询问 S 中有多少个节点满足"它单向发往目标枢纽"。回答一个整数。
-3. 驶出路线存在性查询：询问目标枢纽是否有路线单向发往某个特定节点 v。回答"是"或"否"。
-4. 驶入路线存在性查询：询问某个特定节点 v 是否有路线单向发往目标枢纽。回答"是"或"否"。
+你可以进行以下操作：
+1. 试探查询：提交一个测试车流量 k（1 到 {max_query} 之间的正整数），获取特征签名 S(k)。
+2. 复查查询：请求重复上一轮的签名数据，用于系统一致性校验（可选）。
+3. 提交答案：当你确认了道路的饱和阈值后，提交该正整数作为对 H 的最终判定。
 
-注意：
-- 每次查询的集合 S 大小不能超过 {max_group_size}，否则会返回"非法提问"。
-- 集合 S 中不能包含目标枢纽 {target}。
-- 节点名称必须在给定的节点列表中。
+注意：返回的签名是不透明的字符串，唯一可用的信息是判断不同车流量下的签名是否相同。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，演练失败。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 询问与提交答案的格式（必须严格遵守）
+- 试探查询（例如输入车流量 k=5）：
+<query_probe>5</query_probe>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 复查查询（重复上一次返回）：
+<query_repeat></query_repeat>
 
-- 驶出路线分组计数（例如询问节点 A、B、C）：
-<count_out>A,B,C</count_out>
-
-- 驶入路线分组计数（例如询问节点 D、E）：
-<count_in>D,E</count_in>
-
-- 驶出路线存在性查询（例如询问是否有路线发往节点 F）：
-<exists_out>F</exists_out>
-
-- 驶入路线存在性查询（例如询问节点 G 是否有路线发往目标）：
-<exists_in>G</exists_in>
-
-提交最终答案时，必须说明目标枢纽的出度和入度，格式如下：
-
-<answer>out_degree=3, in_degree=2</answer>
+- 提交最终答案（例如判定阈值 H=7）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Let's conduct a "Logistics Hub Connectivity Inference" drill. Here are the rules:
+[Transportation Scenario] Smart Road Network Congestion Threshold Detection
+Let's conduct an urban road network capacity test. The rules are as follows:
 
-The regional logistics network consists of {n} hub nodes, named: {node_names}.
-There are one-way transport routes between nodes, with no self-loops or multiple routes between the same nodes. I have secretly determined all route connections, but will not tell you.
+The system has an unknown road saturation threshold H (H is between 1 and {max_h}, unit: hundreds of vehicles/hour). You have access to a smart traffic flow monitoring black box. You can input a test traffic volume k, and the monitor will return an encrypted status signature S(k).
 
-Your goal is to infer the outward routes (out-degree) and inward routes (in-degree) of the target hub {target}.
+Properties of the traffic monitor:
+1. Structural property: S(k) = g(min(k, H)), where g is an unknown but fixed signature encoding algorithm.
+2. Injectivity: Before reaching saturation (i.e., on the set {{1, 2, ..., H}}), each different traffic volume produces a unique traffic state signature.
+3. Determinism: Repeated tests with the same volume k will return exactly the same signature.
+4. Observability: The signatures are encrypted. You can only deduce the network state by comparing whether signatures from different k values are identical.
 
-- Outward routes (Out-degree): The number of routes dispatching from the target hub to other nodes.
-- Inward routes (In-degree): The number of routes dispatching from other nodes to the target hub.
+From the above, we can deduce the traffic flow characteristics:
+- When traffic volume k is less than the saturation threshold H, the road condition is still dynamic, so S(k) is not equal to S(k+1).
+- When traffic volume k is greater than or equal to H, the road enters a fully congested, saturated state, and the signature stops changing, meaning S(k) equals S(k+1).
 
-You can repeatedly ask me the following queries (one per turn), and I will answer truthfully based on the actual network:
+Your goal is: detect the precise saturation threshold H of the road network with as few tests as possible.
 
-1. Outward Routes Group Count: Given a node subset S (excluding the target hub, size no more than {max_group_size}), ask how many nodes in S receive one-way shipments from the target hub. Answer an integer.
-2. Inward Routes Group Count: Given a node subset S (excluding the target hub, size no more than {max_group_size}), ask how many nodes in S dispatch one-way shipments to the target hub. Answer an integer.
-3. Outward Route Existence Query: Ask if the target hub dispatches a route to a specific node v. Answer "Yes" or "No".
-4. Inward Route Existence Query: Ask if a specific node v dispatches a route to the target hub. Answer "Yes" or "No".
+You can perform the following operations:
+1. Probe query: Submit a test traffic volume k (a positive integer between 1 and {max_query}) to get the signature S(k).
+2. Repeat query: Request the signature data from the last round for consistency verification (optional).
+3. Submit answer: When you have confirmed the saturation threshold, submit a positive integer as your final determination for H.
 
-Note:
-- Each query set S cannot exceed size {max_group_size}, or it will return "Invalid query".
-- Set S cannot contain the target hub {target}.
-- Node names must be in the given node list.
+Note: The returned signatures are opaque strings. The only usable information is determining whether signatures under different traffic volumes are equal.
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the drill fails.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query and Answer Format (strictly required)
+- Probe query (e.g., test volume k=5):
+<query_probe>5</query_probe>
 
-Each query must contain only one tag. Use the following XML format:
+- Repeat query (repeat last return):
+<query_repeat></query_repeat>
 
-- Outward Routes Group Count (e.g., querying nodes A, B, C):
-<count_out>A,B,C</count_out>
-
-- Inward Routes Group Count (e.g., querying nodes D, E):
-<count_in>D,E</count_in>
-
-- Outward Route Existence Query (e.g., asking if there is a route to node F):
-<exists_out>F</exists_out>
-
-- Inward Route Existence Query (e.g., asking if node G has a route to target):
-<exists_in>G</exists_in>
-
-When submitting the final answer, specify the out-degree and in-degree of the target hub using this format:
-
-<answer>out_degree=3, in_degree=2</answer>
+- Submit final answer (e.g., determine threshold H=7):
+<answer>7</answer>
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-【医疗健康场景】我们现在来进行一场“科室单向转诊网络推断”演练，规则如下：
+【医疗场景】靶向药物受体饱和剂量测定
+我们来进行一项临床药物剂量反应测试，规则如下：
 
-医疗系统中包含 {n} 个专科科室，科室名称为：{node_names}。
-科室间存在单向的患者转诊通道，无自环和多重通道。我已经秘密确定了所有的转诊连接关系，但不会告诉你。
+人体对某款靶向药物存在一个未知的受体饱和剂量 H（H 在 1 到 {max_h} 之间，单位：毫克）。你拥有一个精密的生物标志物分析仪，你可以输入给药剂量 k，仪器会返回患者体内标志物图谱的哈希值 S(k)。
 
-你的目标是推断出核心科室 {target} 的转出通道数（出度）和转入通道数（入度）。
+分析仪的特性：
+1. 结构性质：S(k) = g(min(k, H))，其中 g 是未知的固定代谢映射函数。
+2. 单射性质：在受体饱和前（即剂量在 {{1, 2, ..., H}} 范围内），不同的给药剂量会引发唯一的标志物图谱响应。
+3. 确定性：对相同的剂量 k 重复给药分析，返回的图谱哈希值完全一致。
+4. 可观测性：为了保护患者隐私，图谱被加密为哈希串，你只能通过比对不同 k 值的哈希是否完全一致来评估药效。
 
-- 转出通道（出度）：从核心科室单向转诊到其他科室的通道数。
-- 转入通道（入度）：从其他科室单向转诊到核心科室的通道数。
+由此可以推导出药代动力学特性：
+- 当给药剂量 k 小于饱和剂量 H 时，药物反应仍在递增，S(k) 不等于 S(k+1)。
+- 当给药剂量 k 大于等于 H 时，受体达到完全饱和，增加剂量不再改变生物标志物图谱，即 S(k) 等于 S(k+1)。
 
-你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实转诊设定如实回答：
+你的目标是：通过尽可能少的测试次数，测定出该药物的确切饱和剂量 H。
 
-1. 转出通道分组计数：给定一个科室子集 S（不包含核心科室，且集合大小不超过 {max_group_size}），询问 S 中有多少个科室满足"核心科室向其转诊患者"。回答一个整数。
-2. 转入通道分组计数：给定一个科室子集 S（不包含核心科室，且集合大小不超过 {max_group_size}），询问 S 中有多少个科室满足"其向核心科室转诊患者"。回答一个整数。
-3. 转出通道存在性查询：询问核心科室是否有通道向某个特定科室 v 转诊。回答"是"或"否"。
-4. 转入通道存在性查询：询问某个特定科室 v 是否有通道向核心科室转诊。回答"是"或"否"。
+你可以进行以下操作：
+1. 试探查询：提交一个给药剂量 k（1 到 {max_query} 之间的正整数），获取图谱哈希 S(k)。
+2. 复查查询：请求重复上一轮的哈希数据，用于仪器校准验证（可选）。
+3. 提交答案：当你确认了受体饱和剂量后，提交该正整数作为对 H 的最终测定结果。
 
-注意：
-- 每次查询的集合 S 大小不能超过 {max_group_size}，否则会返回"非法提问"。
-- 集合 S 中不能包含核心科室 {target}。
-- 科室名称必须在给定的科室列表中。
+注意：返回的哈希串是不透明的，唯一可用的信息是判断不同给药剂量下的哈希值是否相同。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，演练失败。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 询问与提交答案的格式（必须严格遵守）
+- 试探查询（例如输入剂量 k=5）：
+<query_probe>5</query_probe>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 复查查询（重复上一次返回）：
+<query_repeat></query_repeat>
 
-- 转出通道分组计数（例如询问科室 A、B、C）：
-<count_out>A,B,C</count_out>
-
-- 转入通道分组计数（例如询问科室 D、E）：
-<count_in>D,E</count_in>
-
-- 转出通道存在性查询（例如询问是否有通道转诊至科室 F）：
-<exists_out>F</exists_out>
-
-- 转入通道存在性查询（例如询问科室 G 是否有通道转诊至核心）：
-<exists_in>G</exists_in>
-
-提交最终答案时，必须说明核心科室的出度和入度，格式如下：
-
-<answer>out_degree=3, in_degree=2</answer>
+- 提交最终答案（例如测定剂量 H=7）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Let's conduct a "Medical Referral Network Inference" drill. Here are the rules:
+[Healthcare Scenario] Targeted Drug Receptor Saturation Dose Determination
+Let's conduct a clinical drug dose-response test. The rules are as follows:
 
-The medical system consists of {n} specialized departments, named: {node_names}.
-There are one-way patient referral pathways between departments, with no self-referrals or multiple pathways between the same departments. I have secretly determined all referral connections, but will not tell you.
+The human body has an unknown receptor saturation dose H for a targeted drug (H is between 1 and {max_h}, unit: mg). You operate a precise biomarker analyzer. You can input an administered dose k, and the instrument will return a hash string S(k) representing the patient's biomarker profile.
 
-Your goal is to infer the outward referral pathways (out-degree) and incoming referral pathways (in-degree) of the target department {target}.
+Properties of the analyzer:
+1. Structural property: S(k) = g(min(k, H)), where g is an unknown but fixed metabolic mapping function.
+2. Injectivity: Before receptors are saturated (i.e., on the set {{1, 2, ..., H}}), each different dose triggers a unique biomarker profile response.
+3. Determinism: Repeated analysis with the same dose k will return exactly the same profile hash.
+4. Observability: To protect patient privacy, profiles are encrypted into hashes. You can only evaluate efficacy by comparing whether hashes from different k values are identical.
 
-- Outward referrals (Out-degree): The number of pathways directing patients from the target department to other departments.
-- Incoming referrals (In-degree): The number of pathways directing patients from other departments to the target department.
+From the above, we can deduce the pharmacokinetic characteristics:
+- When dose k is less than the saturation dose H, the drug response is still increasing, so S(k) is not equal to S(k+1).
+- When dose k is greater than or equal to H, receptors reach full saturation, and increasing the dose no longer changes the biomarker profile, meaning S(k) equals S(k+1).
 
-You can repeatedly ask me the following queries (one per turn), and I will answer truthfully based on the actual network:
+Your goal is: determine the exact saturation dose H with as few tests as possible.
 
-1. Outward Referrals Group Count: Given a department subset S (excluding the target department, size no more than {max_group_size}), ask how many departments in S receive referrals from the target department. Answer an integer.
-2. Incoming Referrals Group Count: Given a department subset S (excluding the target department, size no more than {max_group_size}), ask how many departments in S refer patients to the target department. Answer an integer.
-3. Outward Referral Existence Query: Ask if the target department has a referral pathway to a specific department v. Answer "Yes" or "No".
-4. Incoming Referral Existence Query: Ask if a specific department v has a referral pathway to the target department. Answer "Yes" or "No".
+You can perform the following operations:
+1. Probe query: Submit an administered dose k (a positive integer between 1 and {max_query}) to get the profile hash S(k).
+2. Repeat query: Request the hash data from the last round for instrument calibration verification (optional).
+3. Submit answer: When you have confirmed the receptor saturation dose, submit a positive integer as your final determination for H.
 
-Note:
-- Each query set S cannot exceed size {max_group_size}, or it will return "Invalid query".
-- Set S cannot contain the target department {target}.
-- Department names must be in the given list.
+Note: The returned hashes are opaque strings. The only usable information is determining whether hashes under different doses are equal.
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the drill fails.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query and Answer Format (strictly required)
+- Probe query (e.g., input dose k=5):
+<query_probe>5</query_probe>
 
-Each query must contain only one tag. Use the following XML format:
+- Repeat query (repeat last return):
+<query_repeat></query_repeat>
 
-- Outward Referrals Group Count (e.g., querying departments A, B, C):
-<count_out>A,B,C</count_out>
-
-- Incoming Referrals Group Count (e.g., querying departments D, E):
-<count_in>D,E</count_in>
-
-- Outward Referral Existence Query (e.g., asking if there is a referral to department F):
-<exists_out>F</exists_out>
-
-- Incoming Referral Existence Query (e.g., asking if department G refers to target):
-<exists_in>G</exists_in>
-
-When submitting the final answer, specify the out-degree and in-degree of the target department using this format:
-
-<answer>out_degree=3, in_degree=2</answer>
+- Submit final answer (e.g., determine dose H=7):
+<answer>7</answer>
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-【教育学习场景】我们现在来进行一场“课程先修依赖推断”演练，规则如下：
+【教育场景】学习者认知负荷极点评估
+我们来进行一项智能教学系统的认知能力评估，规则如下：
 
-教学大纲中包含 {n} 个课程模块，模块名称为：{node_names}。
-模块间存在单向的先修解锁依赖关系，无自环和多重依赖。我已经秘密确定了所有的教学依赖蓝图，但不会告诉你。
+系统正在为学生建立档案，该学生在当前模块存在一个未知的认知负荷极限 H（H 在 1 到 {max_h} 之间，单位：知识点数量）。你拥有一个自适应教学干预黑箱，你可以输入单次教授的知识点数量 k，系统会返回该学生认知状态的潜变量编码 S(k)。
 
-你的目标是推断出核心模块 {target} 解锁的后续模块数（出度）和其依赖的先修模块数（入度）。
+教学评估黑箱的特性：
+1. 结构性质：S(k) = g(min(k, H))，其中 g 是未知的学习状态映射模型。
+2. 单射性质：在达到认知负荷极限前（即教授数量在 {{1, 2, ..., H}} 范围内），每个不同的知识点输入量都会反映为不同的认知吸收状态。
+3. 确定性：对相同的知识点数量 k 重复测试，返回的认知状态编码完全一致。
+4. 可观测性：潜变量编码是不透明的脱敏数据，你只能通过比对不同 k 值的状态编码是否完全一致来判断学生的学习状态。
 
-- 解锁后续模块（出度）：以核心模块为先修条件，单向解锁的其他模块数量。
-- 依赖先修模块（入度）：作为核心模块的先修条件，单向解锁核心模块的其他模块数量。
+由此可以推导出学习者的认知特性：
+- 当教授数量 k 小于认知极限 H 时，学生仍在有效吸收新知识，认知状态不断变化，S(k) 不等于 S(k+1)。
+- 当教授数量 k 大于等于极限 H 时，学生出现认知超载，无法再处理额外的信息，认知状态停止更新，即 S(k) 等于 S(k+1)。
 
-你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实大纲设定如实回答：
+你的目标是：通过尽可能少的教学测试，评估出该学生的精准认知负荷极限 H。
 
-1. 后续模块分组计数：给定一个模块子集 S（不包含核心模块，且集合大小不超过 {max_group_size}），询问 S 中有多少个模块满足"核心模块是它的先修条件"。回答一个整数。
-2. 先修模块分组计数：给定一个模块子集 S（不包含核心模块，且集合大小不超过 {max_group_size}），询问 S 中有多少个模块满足"它是核心模块的先修条件"。回答一个整数。
-3. 后续依赖存在性查询：询问核心模块是否为某个特定模块 v 的先修条件。回答"是"或"否"。
-4. 后续依赖存在性查询：询问某个特定模块 v 是否为核心模块的先修条件。回答"是"或"否"。
+你可以进行以下操作：
+1. 试探查询：提交教授的知识点数量 k（1 到 {max_query} 之间的正整数），获取认知状态编码 S(k)。
+2. 复查查询：请求重复上一轮的编码数据，用于系统状态确认（可选）。
+3. 提交答案：当你确认了学生的认知负荷极限后，提交该正整数作为对 H 的最终评估。
 
-注意：
-- 每次查询的集合 S 大小不能超过 {max_group_size}，否则会返回"非法提问"。
-- 集合 S 中不能包含核心模块 {target}。
-- 模块名称必须在给定的模块列表中。
+注意：返回的状态编码是脱敏字符串，唯一可用的信息是判断不同教授数量下的状态是否相同。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，演练失败。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 询问与提交答案的格式（必须严格遵守）
+- 试探查询（例如教授知识点 k=5）：
+<query_probe>5</query_probe>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 复查查询（重复上一次返回）：
+<query_repeat></query_repeat>
 
-- 后续模块分组计数（例如询问模块 A、B、C）：
-<count_out>A,B,C</count_out>
-
-- 先修模块分组计数（例如询问模块 D、E）：
-<count_in>D,E</count_in>
-
-- 后续依赖存在性查询（例如询问是否为模块 F 的先修条件）：
-<exists_out>F</exists_out>
-
-- 先修依赖存在性查询（例如询问模块 G 是否为核心模块的先修条件）：
-<exists_in>G</exists_in>
-
-提交最终答案时，必须说明核心模块的出度和入度，格式如下：
-
-<answer>out_degree=3, in_degree=2</answer>
+- 提交最终答案（例如评估极限 H=7）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_3 = """\
-[Education Scenario]
-Let's conduct a "Course Prerequisite Dependency Inference" drill. Here are the rules:
+[Education Scenario] Learner Cognitive Load Limit Assessment
+Let's conduct a cognitive ability assessment using an intelligent tutoring system. The rules are as follows:
 
-The curriculum syllabus consists of {n} course modules, named: {node_names}.
-There are one-way prerequisite dependencies between modules, with no self-loops or multiple dependencies between the same modules. I have secretly determined the entire dependency blueprint, but will not tell you.
+The system is profiling a student who has an unknown cognitive load limit H for the current module (H is between 1 and {max_h}, unit: number of knowledge concepts). You operate an adaptive teaching intervention black box. You can input the number of concepts taught k, and the system will return a latent variable encoding S(k) representing the student's cognitive state.
 
-Your goal is to infer the downstream modules (out-degree) and prerequisite modules (in-degree) associated with the target module {target}.
+Properties of the teaching assessment black box:
+1. Structural property: S(k) = g(min(k, H)), where g is an unknown learning state mapping model.
+2. Injectivity: Before reaching the cognitive load limit (i.e., on the set {{1, 2, ..., H}}), each different amount of input concepts reflects a distinct state of cognitive absorption.
+3. Determinism: Repeated tests with the same number of concepts k will return exactly the same cognitive state encoding.
+4. Observability: The latent variable encodings are opaque desensitized data. You can only judge the learning state by comparing whether encodings from different k values are identical.
 
-- Downstream modules (Out-degree): The number of other modules that require the target module as a prerequisite.
-- Prerequisite modules (In-degree): The number of other modules that are prerequisites for the target module.
+From the above, we can deduce the learner's cognitive characteristics:
+- When the number of taught concepts k is less than the cognitive limit H, the student is still effectively absorbing new knowledge, so the cognitive state keeps changing, meaning S(k) is not equal to S(k+1).
+- When the number of concepts k is greater than or equal to H, the student experiences cognitive overload and cannot process extra information. The cognitive state stops updating, meaning S(k) equals S(k+1).
 
-You can repeatedly ask me the following queries (one per turn), and I will answer truthfully based on the actual syllabus:
+Your goal is: assess the precise cognitive load limit H of the student with as few teaching tests as possible.
 
-1. Downstream Modules Group Count: Given a module subset S (excluding the target module, size no more than {max_group_size}), ask how many modules in S require the target module as a prerequisite. Answer an integer.
-2. Prerequisite Modules Group Count: Given a module subset S (excluding the target module, size no more than {max_group_size}), ask how many modules in S act as prerequisites for the target module. Answer an integer.
-3. Downstream Dependency Existence Query: Ask if the target module is a prerequisite for a specific module v. Answer "Yes" or "No".
-4. Prerequisite Dependency Existence Query: Ask if a specific module v is a prerequisite for the target module. Answer "Yes" or "No".
+You can perform the following operations:
+1. Probe query: Submit the number of concepts taught k (a positive integer between 1 and {max_query}) to get the cognitive state encoding S(k).
+2. Repeat query: Request the encoding data from the last round for system state confirmation (optional).
+3. Submit answer: When you have confirmed the cognitive load limit, submit a positive integer as your final assessment for H.
 
-Note:
-- Each query set S cannot exceed size {max_group_size}, or it will return "Invalid query".
-- Set S cannot contain the target module {target}.
-- Module names must be in the given list.
+Note: The returned state encodings are desensitized strings. The only usable information is determining whether states under different teaching amounts are equal.
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the drill fails.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query and Answer Format (strictly required)
+- Probe query (e.g., teach concepts k=5):
+<query_probe>5</query_probe>
 
-Each query must contain only one tag. Use the following XML format:
+- Repeat query (repeat last return):
+<query_repeat></query_repeat>
 
-- Downstream Modules Group Count (e.g., querying modules A, B, C):
-<count_out>A,B,C</count_out>
-
-- Prerequisite Modules Group Count (e.g., querying modules D, E):
-<count_in>D,E</count_in>
-
-- Downstream Dependency Existence Query (e.g., asking if it's a prerequisite for module F):
-<exists_out>F</exists_out>
-
-- Prerequisite Dependency Existence Query (e.g., asking if module G is a prerequisite for target):
-<exists_in>G</exists_in>
-
-When submitting the final answer, specify the out-degree and in-degree of the target module using this format:
-
-<answer>out_degree=3, in_degree=2</answer>
+- Submit final answer (e.g., assess limit H=7):
+<answer>7</answer>
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-【工业制造场景】我们现在来进行一场“流水线物料流向推断”演练，规则如下：
+【工业制造场景】新型材料屈服强度无损检测
+我们来进行一项针对新型合金材料的无损应力测试，规则如下：
 
-生产车间内包含 {n} 个生产工站，工站名称为：{node_names}。
-工站间存在单向的物料传输履带，无自环和多重履带。我已经秘密确定了所有的供料连接关系，但不会告诉你。
+该批次材料存在一个未知的屈服强度临界值 H（H 在 1 到 {max_h} 之间，单位：兆帕）。你操作一台搭载声发射传感器的伺服压力机，你可以施加指定的测试应力 k，传感器会返回材料内部结构的声发射特征码 S(k)。
 
-你的目标是推断出核心工站 {target} 的下游供料线数（出度）和上游收料线数（入度）。
+材料检测系统的特性：
+1. 结构性质：S(k) = g(min(k, H))，其中 g 是固定的声学特征转换算法。
+2. 单射性质：在弹性形变阶段（即应力在 {{1, 2, ..., H}} 范围内），材料内部晶格随应力变化，每个应力水平都会发出独一无二的声发射特征。
+3. 确定性：对相同的应力 k 重复施压，返回的声学特征码完全一致。
+4. 可观测性：特征码是高度复杂的原始信号哈希，你只能通过比对不同 k 值的特征码是否完全一致来推断材料状态。
 
-- 下游供料线（出度）：从核心工站单向传输物料给其他工站的履带数量。
-- 上游收料线（入度）：从其他工站单向传输物料给核心工站的履带数量。
+由此可以推导出材料的力学特性：
+- 当施加的应力 k 小于屈服强度 H 时，材料处于弹性形变期，结构响应随应力改变，S(k) 不等于 S(k+1)。
+- 当施加的应力 k 大于等于 H 时，材料进入塑性屈服阶段，声发射特征达到饱和极限不再改变，即 S(k) 等于 S(k+1)。
 
-你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实产线设定如实回答：
+你的目标是：通过尽可能少的施压测试，精准定位该材料的屈服强度临界值 H。
 
-1. 下游供料分组计数：给定一个工站子集 S（不包含核心工站，且集合大小不超过 {max_group_size}），询问 S 中有多少个工站满足"核心工站为其单向供料"。回答一个整数。
-2. 上游收料分组计数：给定一个工站子集 S（不包含核心工站，且集合大小不超过 {max_group_size}），询问 S 中有多少个工站满足"其为核心工站单向供料"。回答一个整数。
-3. 下游供料存在性查询：询问核心工站是否有履带单向供料给某个特定工站 v。回答"是"或"否"。
-4. 上游收料存在性查询：询问某个特定工站 v 是否有履带单向供料给核心工站。回答"是"或"否"。
+你可以进行以下操作：
+1. 试探查询：施加测试应力 k（1 到 {max_query} 之间的正整数），获取声发射特征码 S(k)。
+2. 复查查询：请求重复上一轮的特征信号，用于消除传感器抖动（可选）。
+3. 提交答案：当你确认了材料的屈服强度后，提交该正整数作为对 H 的最终测定。
 
-注意：
-- 每次查询的集合 S 大小不能超过 {max_group_size}，否则会返回"非法提问"。
-- 集合 S 中不能包含核心工站 {target}。
-- 工站名称必须在给定的工站列表中。
+注意：返回的特征码是不透明的，唯一可用的信息是判断不同应力下的特征是否相同。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，演练失败。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 询问与提交答案的格式（必须严格遵守）
+- 试探查询（例如施加应力 k=5）：
+<query_probe>5</query_probe>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 复查查询（重复上一次返回）：
+<query_repeat></query_repeat>
 
-- 下游供料分组计数（例如询问工站 A、B、C）：
-<count_out>A,B,C</count_out>
-
-- 上游收料分组计数（例如询问工站 D、E）：
-<count_in>D,E</count_in>
-
-- 下游供料存在性查询（例如询问是否供料给工站 F）：
-<exists_out>F</exists_out>
-
-- 上游收料存在性查询（例如询问工站 G 是否供料给核心）：
-<exists_in>G</exists_in>
-
-提交最终答案时，必须说明核心工站的出度和入度，格式如下：
-
-<answer>out_degree=3, in_degree=2</answer>
+- 提交最终答案（例如测定屈服强度 H=7）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Let's conduct an "Assembly Line Material Flow Inference" drill. Here are the rules:
+[Manufacturing Scenario] Nondestructive Testing of Yield Strength for New Materials
+Let's conduct a nondestructive stress test on a new batch of alloy materials. The rules are as follows:
 
-The production floor consists of {n} workstations, named: {node_names}.
-There are one-way material transfer conveyors between workstations, with no self-loops or multiple conveyors between the same stations. I have secretly determined all material flow connections, but will not tell you.
+The material batch has an unknown yield strength critical value H (H is between 1 and {max_h}, unit: MPa). You operate a servo press equipped with an acoustic emission sensor. You can apply a specified test stress k, and the sensor will return an acoustic emission feature code S(k) of the material's internal structure.
 
-Your goal is to infer the downstream supply lines (out-degree) and upstream supply lines (in-degree) of the target workstation {target}.
+Properties of the material testing system:
+1. Structural property: S(k) = g(min(k, H)), where g is a fixed acoustic feature conversion algorithm.
+2. Injectivity: During the elastic deformation phase (i.e., stress on the set {{1, 2, ..., H}}), the internal lattice changes with stress, producing a unique acoustic emission feature for each stress level.
+3. Determinism: Repeated pressing with the same stress k will return exactly the same acoustic feature code.
+4. Observability: The feature codes are hashes of highly complex raw signals. You can only deduce the material state by comparing whether feature codes from different k values are identical.
 
-- Downstream supply lines (Out-degree): The number of conveyors transferring materials from the target workstation to other stations.
-- Upstream supply lines (In-degree): The number of conveyors transferring materials from other stations to the target workstation.
+From the above, we can deduce the material's mechanical properties:
+- When applied stress k is less than the yield strength H, the material is in the elastic deformation phase, its structural response changes with stress, so S(k) is not equal to S(k+1).
+- When applied stress k is greater than or equal to H, the material enters the plastic yield phase, and the acoustic emission feature reaches its saturation limit and stops changing, meaning S(k) equals S(k+1).
 
-You can repeatedly ask me the following queries (one per turn), and I will answer truthfully based on the actual assembly line:
+Your goal is: accurately pinpoint the material's yield strength critical value H with as few press tests as possible.
 
-1. Downstream Supply Group Count: Given a workstation subset S (excluding the target station, size no more than {max_group_size}), ask how many stations in S receive materials from the target station. Answer an integer.
-2. Upstream Supply Group Count: Given a workstation subset S (excluding the target station, size no more than {max_group_size}), ask how many stations in S supply materials to the target station. Answer an integer.
-3. Downstream Supply Existence Query: Ask if the target workstation supplies materials to a specific station v. Answer "Yes" or "No".
-4. Upstream Supply Existence Query: Ask if a specific workstation v supplies materials to the target station. Answer "Yes" or "No".
+You can perform the following operations:
+1. Probe query: Apply a test stress k (a positive integer between 1 and {max_query}) to get the acoustic emission feature code S(k).
+2. Repeat query: Request the feature signal from the last round to eliminate sensor jitter (optional).
+3. Submit answer: When you have confirmed the material's yield strength, submit a positive integer as your final determination for H.
 
-Note:
-- Each query set S cannot exceed size {max_group_size}, or it will return "Invalid query".
-- Set S cannot contain the target workstation {target}.
-- Workstation names must be in the given list.
+Note: The returned feature codes are opaque. The only usable information is determining whether features under different stresses are equal.
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the drill fails.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query and Answer Format (strictly required)
+- Probe query (e.g., apply stress k=5):
+<query_probe>5</query_probe>
 
-Each query must contain only one tag. Use the following XML format:
+- Repeat query (repeat last return):
+<query_repeat></query_repeat>
 
-- Downstream Supply Group Count (e.g., querying stations A, B, C):
-<count_out>A,B,C</count_out>
-
-- Upstream Supply Group Count (e.g., querying stations D, E):
-<count_in>D,E</count_in>
-
-- Downstream Supply Existence Query (e.g., asking if it supplies station F):
-<exists_out>F</exists_out>
-
-- Upstream Supply Existence Query (e.g., asking if station G supplies target):
-<exists_in>G</exists_in>
-
-When submitting the final answer, specify the out-degree and in-degree of the target workstation using this format:
-
-<answer>out_degree=3, in_degree=2</answer>
+- Submit final answer (e.g., determine yield strength H=7):
+<answer>7</answer>
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-【法律法务场景】我们现在来进行一场“法律判例引用关系推断”演练，规则如下：
+【法律场景】合规监管处罚封顶阈值探明
+我们来进行一项针对自动化合规裁决系统的黑盒审计，规则如下：
 
-司法数据库中包含 {n} 个历史判例，判例代号为：{node_names}。
-判例间存在单向的法理引用关系，无自我引用和多重引用。我已经秘密确定了所有的引用连接脉络，但不会告诉你。
+某项企业违规行为在现行法规中存在一个未知的法定最高处罚封顶阈值 H（H 在 1 到 {max_h} 之间，单位：严重性指数）。你拥有审计自动化裁决系统的权限，你可以输入违规严重性指数 k，系统会返回该案件的量刑分类脱敏哈希 S(k)。
 
-你的目标是推断出核心判例 {target} 的对外引用数（出度）和被引用数（入度）。
+裁决审计系统的特性：
+1. 结构性质：S(k) = g(min(k, H))，其中 g 是未知的量刑分类映射算法。
+2. 单射性质：在未触及处罚封顶线之前（即指数在 {{1, 2, ..., H}} 范围内），不同的严重性指数会导致完全不同的量刑分类。
+3. 确定性：对相同的严重性指数 k 重复提交审计，系统返回的分类哈希完全一致。
+4. 可观测性：由于案件保密要求，量刑分类被脱敏为哈希串，你只能通过比对不同 k 值的哈希是否完全一致来推断系统的量刑逻辑。
 
-- 对外引用（出度）：核心判例在判决书中单向引用了其他判例的数量。
-- 被引用（入度）：其他判例在判决书中单向引用了核心判例的数量。
+由此可以推导出合规裁决特性：
+- 当违规指数 k 小于处罚封顶阈值 H 时，量刑标准仍在随严重性递增，S(k) 不等于 S(k+1)。
+- 当违规指数 k 大于等于阈值 H 时，触发法定最高处罚上限（顶格处罚），即使指数继续增加，量刑分类也不再改变，即 S(k) 等于 S(k+1)。
 
-你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实法理设定如实回答：
+你的目标是：通过尽可能少的审计查询，探明该法规中隐蔽的法定最高处罚封顶阈值 H。
 
-1. 对外引用分组计数：给定一个判例子集 S（不包含核心判例，且集合大小不超过 {max_group_size}），询问 S 中有多少个判例满足"核心判例引用了它"。回答一个整数。
-2. 被引用分组计数：给定一个判例子集 S（不包含核心判例，且集合大小不超过 {max_group_size}），询问 S 中有多少个判例满足"它引用了核心判例"。回答一个整数。
-3. 对外引用存在性查询：询问核心判例是否引用了某个特定判例 v。回答"是"或"否"。
-4. 被引用存在性查询：询问某个特定判例 v 是否引用了核心判例。回答"是"或"否"。
+你可以进行以下操作：
+1. 试探查询：提交违规严重性指数 k（1 到 {max_query} 之间的正整数），获取量刑分类脱敏哈希 S(k)。
+2. 复查查询：请求重复上一轮的哈希结果，用于审计日志核对（可选）。
+3. 提交答案：当你确认了法定处罚封顶阈值后，提交该正整数作为对 H 的最终取证。
 
-注意：
-- 每次查询的集合 S 大小不能超过 {max_group_size}，否则会返回"非法提问"。
-- 集合 S 中不能包含核心判例 {target}。
-- 判例代号必须在给定的判例列表中。
+注意：返回的分类哈希是不透明的，唯一可用的信息是判断不同严重性指数下的哈希是否相同。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，演练失败。
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-## 询问与提交答案的格式（必须严格遵守）
+- 试探查询（例如提交严重性指数 k=5）：
+<query_probe>5</query_probe>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 复查查询（重复上一次返回）：
+<query_repeat></query_repeat>
 
-- 对外引用分组计数（例如询问判例 A、B、C）：
-<count_out>A,B,C</count_out>
-
-- 被引用分组计数（例如询问判例 D、E）：
-<count_in>D,E</count_in>
-
-- 对外引用存在性查询（例如询问是否引用了判例 F）：
-<exists_out>F</exists_out>
-
-- 被引用存在性查询（例如询问判例 G 是否引用了核心判例）：
-<exists_in>G</exists_in>
-
-提交最终答案时，必须说明核心判例的出度和入度，格式如下：
-
-<answer>out_degree=3, in_degree=2</answer>
+- 提交最终答案（例如查明封顶阈值 H=7）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's conduct a "Legal Precedent Citation Inference" drill. Here are the rules:
+[Law Scenario] Compliance Regulation Penalty Cap Threshold Discovery
+Let's conduct a black-box audit on an automated compliance adjudication system. The rules are as follows:
 
-The judicial database consists of {n} legal precedents, coded as: {node_names}.
-There are one-way legal citation relationships between precedents, with no self-citations or multiple citations between the same precedents. I have secretly determined all citation connections, but will not tell you.
+A certain corporate violation has an unknown statutory maximum penalty cap threshold H in the current regulation (H is between 1 and {max_h}, unit: severity index). You have access to audit the automated adjudication system. You can input a violation severity index k, and the system will return a desensitized hash S(k) representing the sentencing categorization of the case.
 
-Your goal is to infer the outward citations (out-degree) and incoming citations (in-degree) of the target precedent {target}.
+Properties of the adjudication audit system:
+1. Structural property: S(k) = g(min(k, H)), where g is an unknown sentencing categorization mapping algorithm.
+2. Injectivity: Before hitting the penalty cap (i.e., index on the set {{1, 2, ..., H}}), different severity indices lead to completely different sentencing categorizations.
+3. Determinism: Repeated audit submissions with the same severity index k will return exactly the same categorization hash.
+4. Observability: Due to case confidentiality, sentencing categories are desensitized into hashes. You can only deduce the sentencing logic by comparing whether hashes from different k values are identical.
 
-- Outward citations (Out-degree): The number of other precedents cited by the target precedent.
-- Incoming citations (In-degree): The number of other precedents that cite the target precedent.
+From the above, we can deduce the compliance adjudication characteristics:
+- When the violation index k is less than the penalty cap threshold H, the sentencing standard still increases with severity, so S(k) is not equal to S(k+1).
+- When the violation index k is greater than or equal to H, it triggers the statutory maximum penalty limit (maximum penalty). Even if the index increases further, the sentencing categorization stops changing, meaning S(k) equals S(k+1).
 
-You can repeatedly ask me the following queries (one per turn), and I will answer truthfully based on the actual jurisprudential data:
+Your goal is: discover the hidden statutory maximum penalty cap threshold H in the regulation with as few audit queries as possible.
 
-1. Outward Citations Group Count: Given a precedent subset S (excluding the target precedent, size no more than {max_group_size}), ask how many precedents in S are cited by the target precedent. Answer an integer.
-2. Incoming Citations Group Count: Given a precedent subset S (excluding the target precedent, size no more than {max_group_size}), ask how many precedents in S cite the target precedent. Answer an integer.
-3. Outward Citation Existence Query: Ask if the target precedent cites a specific precedent v. Answer "Yes" or "No".
-4. Incoming Citation Existence Query: Ask if a specific precedent v cites the target precedent. Answer "Yes" or "No".
+You can perform the following operations:
+1. Probe query: Submit a violation severity index k (a positive integer between 1 and {max_query}) to get the sentencing categorization hash S(k).
+2. Repeat query: Request the hash result from the last round for audit log verification (optional).
+3. Submit answer: When you have confirmed the statutory penalty cap threshold, submit a positive integer as your final evidentiary finding for H.
 
-Note:
-- Each query set S cannot exceed size {max_group_size}, or it will return "Invalid query".
-- Set S cannot contain the target precedent {target}.
-- Precedent codes must be in the given list.
+Note: The returned categorization hashes are opaque. The only usable information is determining whether hashes under different severity indices are equal.
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the drill fails.
+Each operation must contain only one tag. Use the following XML format:
 
-## Query and Answer Format (strictly required)
+- Probe query (e.g., submit severity index k=5):
+<query_probe>5</query_probe>
 
-Each query must contain only one tag. Use the following XML format:
+- Repeat query (repeat last return):
+<query_repeat></query_repeat>
 
-- Outward Citations Group Count (e.g., querying precedents A, B, C):
-<count_out>A,B,C</count_out>
-
-- Incoming Citations Group Count (e.g., querying precedents D, E):
-<count_in>D,E</count_in>
-
-- Outward Citation Existence Query (e.g., asking if it cites precedent F):
-<exists_out>F</exists_out>
-
-- Incoming Citation Existence Query (e.g., asking if precedent G cites target):
-<exists_in>G</exists_in>
-
-When submitting the final answer, specify the out-degree and in-degree of the target precedent using this format:
-
-<answer>out_degree=3, in_degree=2</answer>
+- Submit final answer (e.g., discover cap threshold H=7):
+<answer>7</answer>
 """
 
-    tags = ["answer", "count_out", "count_in", "exists_out", "exists_in"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+    tags = ["answer", "query_probe", "query_repeat"]
 
-    # 五个难度配置
-    # 难度1（简单）：6个节点，目标节点出度2入度1，最大组大小4
-    # 难度2（中等偏下）：8个节点，目标节点出度3入度2，最大组大小3
-    # 难度3（中等偏上）：10个节点，目标节点出度4入度3，最大组大小4
-    # 难度4（较难）：12个节点，目标节点出度5入度4，最大组大小3
-    # 难度5（难）：15个节点，目标节点出度6入度5，最大组大小4
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "n": 6,
-            "nodes": ["A", "B", "C", "D", "E", "U"],
-            "target": "U",
-            "max_group_size": 4,
-            "out_edges": ["A", "C"],
-            "in_edges": ["B"],
+        "zh": {
+            1: {
+                "H": 5,
+                "max_h": 20,
+                "max_query": 20,
+            },
+            2: {
+                "H": 15,
+                "max_h": 50,
+                "max_query": 50,
+            },
+            3: {
+                "H": 30,
+                "max_h": 100,
+                "max_query": 100,
+            },
+            4: {
+                "H": 50,
+                "max_h": 150,
+                "max_query": 150,
+            },
+            5: {
+                "H": 100,
+                "max_h": 300,
+                "max_query": 300,
+            },
         },
-        2: {
-            "n": 8,
-            "nodes": ["A", "B", "C", "D", "E", "F", "G", "U"],
-            "target": "U",
-            "max_group_size": 3,
-            "out_edges": ["B", "D", "F"],
-            "in_edges": ["A", "G"],
-        },
-        3: {
-            "n": 10,
-            "nodes": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "U"],
-            "target": "U",
-            "max_group_size": 4,
-            "out_edges": ["A", "C", "E", "H"],
-            "in_edges": ["B", "F", "I"],
-        },
-        4: {
-            "n": 12,
-            "nodes": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "U"],
-            "target": "U",
-            "max_group_size": 3,
-            "out_edges": ["A", "D", "F", "H", "K"],
-            "in_edges": ["B", "C", "G", "J"],
-        },
-        5: {
-            "n": 15,
-            "nodes": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "U"],
-            "target": "U",
-            "max_group_size": 4,
-            "out_edges": ["B", "D", "F", "H", "K", "M"],
-            "in_edges": ["A", "C", "G", "J", "N"],
+        "en": {
+            1: {
+                "H": 5,
+                "max_h": 20,
+                "max_query": 20,
+            },
+            2: {
+                "H": 15,
+                "max_h": 50,
+                "max_query": 50,
+            },
+            3: {
+                "H": 30,
+                "max_h": 100,
+                "max_query": 100,
+            },
+            4: {
+                "H": 50,
+                "max_h": 150,
+                "max_query": 150,
+            },
+            5: {
+                "H": 100,
+                "max_h": 300,
+                "max_query": 300,
+            },
         },
     }
 
@@ -633,214 +514,125 @@ When submitting the final answer, specify the out-degree and in-degree of the ta
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据难度加载图配置"""
+        lang = self.config.language
         diff = int(self.config.difficulty)
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.H = cfg["H"]
+        self.max_query = cfg["max_query"]
+        self.max_h = cfg["max_h"]
         
-        # 保存游戏信息用于规则模板
-        self._game_info["n"] = cfg["n"]
-        self._game_info["node_names"] = ", ".join(cfg["nodes"])
-        self._game_info["target"] = cfg["target"]
-        self._game_info["max_group_size"] = cfg["max_group_size"]
+        self._game_info["max_h"] = self.max_h
+        self._game_info["max_query"] = self.max_query
         
-        # 保存游戏状态
-        self.nodes = cfg["nodes"]
-        self.target = cfg["target"]
-        self.max_group_size = cfg["max_group_size"]
+        self._salt = random.randint(0, 2**63)
+
+        self.encoding_map = {}
+        used_codes = set()
+        for i in range(1, self.H + 1):
+            code = self._generate_unique_code(i, used_codes)
+            self.encoding_map[i] = code
+            used_codes.add(code)
         
-        # 构建邻接关系：U 的出边和入边
-        self.out_neighbors = set(cfg["out_edges"])  # U 指向的节点集合
-        self.in_neighbors = set(cfg["in_edges"])    # 指向 U 的节点集合
+        self.encoding_map_for_large_k = self.encoding_map[self.H]
         
-        # 真实答案
-        self.true_out_degree = len(self.out_neighbors)
-        self.true_in_degree = len(self.in_neighbors)
+        self.last_response = None
+
+    def _generate_unique_code(self, i, used_codes):
+        base_str = f"code_{self._salt}_{self.H}_{i}"
+        code = hashlib.sha256(base_str.encode()).hexdigest()[:16]
+        
+        counter = 0
+        while code in used_codes:
+            counter += 1
+            base_str = f"code_{self._salt}_{self.H}_{i}_{counter}"
+            code = hashlib.sha256(base_str.encode()).hexdigest()[:16]
+        
+        return code
+
+    def _black_box_function(self, k):
+        effective_value = min(k, self.H)
+        return self.encoding_map[effective_value]
 
     def evaluate(self, parsed_info):
-        """评估答案是否正确"""
-        raw_ans = parsed_info["answer"]
-        
-        # 解析答案格式: out_degree=x, in_degree=y
         try:
-            kv_pairs = [x.strip() for x in raw_ans.split(",")]
-            ans_dict = {}
-            for kv in kv_pairs:
-                if "=" not in kv:
-                    continue
-                k, v = kv.split("=", 1)
-                ans_dict[k.strip()] = v.strip()
-            
-            if "out_degree" not in ans_dict or "in_degree" not in ans_dict:
-                return False
-            
-            model_out = int(ans_dict["out_degree"])
-            model_in = int(ans_dict["in_degree"])
-            
-            return model_out == self.true_out_degree and model_in == self.true_in_degree
-            
-        except:
+            answer = int(parsed_info["answer"].strip())
+            return answer == self.H
+        except (ValueError, KeyError):
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的核心响应逻辑"""
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            invalid_query = "非法提问"
-            error_format = "错误：格式无效或节点名称错误。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            invalid_query = "Invalid query"
-            error_format = "Error: Invalid format or node name."
-
-        # 优先级：count_out > count_in > exists_out > exists_in
-        if "count_out" in parsed_info:
-            # 出度分组计数查询
+        if "query_probe" in parsed_info:
             try:
-                raw = parsed_info["count_out"].strip()
-                if not raw:
-                    return invalid_query
+                k = int(parsed_info["query_probe"].strip())
                 
-                node_list = [x.strip() for x in raw.split(",") if x.strip()]
-                node_list = list(dict.fromkeys(node_list))  # 去重但保持顺序
+                if k < 1 or k > self.max_query:
+                    if self.config.language == "zh":
+                        return f"错误：k 必须在 1 到 {self.max_query} 之间。"
+                    else:
+                        return f"Error: k must be between 1 and {self.max_query}."
                 
-                # 检查合法性
-                if len(node_list) > self.max_group_size:
-                    return invalid_query
+                response = self._black_box_function(k)
+                self.last_response = response
+                return response
                 
-                for node in node_list:
-                    if node not in self.nodes or node == self.target:
-                        return invalid_query
-                
-                # 计算有多少个节点在 U 的出邻居中
-                count = sum(1 for node in node_list if node in self.out_neighbors)
-                return str(count)
-            except:
-                return error_format
-
-        elif "count_in" in parsed_info:
-            # 入度分组计数查询
-            try:
-                raw = parsed_info["count_in"].strip()
-                if not raw:
-                    return invalid_query
-                
-                node_list = [x.strip() for x in raw.split(",") if x.strip()]
-                node_list = list(dict.fromkeys(node_list))  # 去重但保持顺序
-                
-                # 检查合法性
-                if len(node_list) > self.max_group_size:
-                    return invalid_query
-                
-                for node in node_list:
-                    if node not in self.nodes or node == self.target:
-                        return invalid_query
-                
-                # 计算有多少个节点在 U 的入邻居中
-                count = sum(1 for node in node_list if node in self.in_neighbors)
-                return str(count)
-            except:
-                return error_format
-
-        elif "exists_out" in parsed_info:
-            # 出边存在性查询
-            try:
-                node = parsed_info["exists_out"].strip()
-                if node not in self.nodes or node == self.target:
-                    return invalid_query
-                
-                return yes_res if node in self.out_neighbors else no_res
-            except:
-                return error_format
-
-        elif "exists_in" in parsed_info:
-            # 入边存在性查询
-            try:
-                node = parsed_info["exists_in"].strip()
-                if node not in self.nodes or node == self.target:
-                    return invalid_query
-                
-                return yes_res if node in self.in_neighbors else no_res
-            except:
-                return error_format
-
+            except ValueError:
+                if self.config.language == "zh":
+                    return "错误：无效的查询格式，k 必须是正整数。"
+                else:
+                    return "Error: Invalid query format, k must be a positive integer."
+        
+        elif "query_repeat" in parsed_info:
+            if self.last_response is None:
+                if self.config.language == "zh":
+                    return "错误：没有可重复的查询记录。"
+                else:
+                    return "Error: No previous query to repeat."
+            return self.last_response
+        
         else:
             raise ValueError("No valid query tag found.")
 
+    def _cf_make_wrong(self, correct: str) -> str:
+        if all(c in '0123456789abcdef' for c in correct.lower()) and len(correct) >= 8:
+            wrong_hash = hashlib.sha256(f"wrong_{correct}".encode()).hexdigest()[:len(correct)]
+            if wrong_hash == correct:
+                wrong_hash = hashlib.sha256(f"wrong2_{correct}".encode()).hexdigest()[:len(correct)]
+            return wrong_hash
+
+        if correct.lstrip('-').isdigit():
+            return str(int(correct) + 1)
+        
+        if self.config.language == "zh":
+            if "是" in correct:
+                return correct.replace("是", "否")
+            elif "否" in correct:
+                return correct.replace("否", "是")
+        elif self.config.language == "en":
+            lower_correct = correct.lower()
+            if "yes" in lower_correct:
+                pattern = "Yes" if "Yes" in correct else "yes"
+                target = "No" if pattern == "Yes" else "no"
+                return correct.replace(pattern, target)
+            elif "no" in lower_correct:
+                pattern = "No" if "No" in correct else "no"
+                target = "Yes" if pattern == "No" else "yes"
+                return correct.replace(pattern, target)
+
+        return correct + "_WRONG"
+
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        为避免组合爆炸，仅返回单节点存在性查询和少量代表性分组计数查询。
-        """
-        queries = []
-        
-        # 候选节点：所有非目标节点的节点
-        candidates = [n for n in self.nodes if n != self.target]
-        
-        # 根据语言确定回答文本
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
-        
-        # 1. 存在性查询 (exists_out / exists_in) —— 这是最基本的查询
-        for node in candidates:
-            # out-edge query
-            ans_out = yes_res if node in self.out_neighbors else no_res
-            queries.append({
-                "query": f"<exists_out>{node}</exists_out>",
-                "answer": ans_out
+        results = []
+        upper = min(2 * self.H, self.max_query)
+        for k in range(1, upper + 1):
+            response = self._black_box_function(k)
+            results.append({
+                "query": f"<query_probe>{k}</query_probe>",
+                "answer": response
             })
-            
-            # in-edge query
-            ans_in = yes_res if node in self.in_neighbors else no_res
-            queries.append({
-                "query": f"<exists_in>{node}</exists_in>",
-                "answer": ans_in
-            })
-            
-        # 2. 少量分组计数查询：对全部候选节点做一次全组查询（如果不超过 max_group_size）
-        #    以及按 max_group_size 分块的查询
-        for direction, neighbor_set, tag in [
-            ("out", self.out_neighbors, "count_out"),
-            ("in", self.in_neighbors, "count_in"),
-        ]:
-            # 按 max_group_size 分块
-            for i in range(0, len(candidates), self.max_group_size):
-                chunk = candidates[i:i + self.max_group_size]
-                subset_str = ",".join(chunk)
-                count = sum(1 for n in chunk if n in neighbor_set)
-                queries.append({
-                    "query": f"<{tag}>{subset_str}</{tag}>",
-                    "answer": str(count)
-                })
-                
-        return queries
-
-    def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        # 尝试解析为整数
-        try:
-            val = int(correct.strip())
-            # 偏移 +1，但如果是 0 则偏移为 1，否则向反方向也可
-            return str(val + 1)
-        except ValueError:
-            pass
-
-        # 按语言规则替换关键词
-        if self.config.language == "zh":
-            if correct == "是":
-                return "否"
-            elif correct == "否":
-                return "是"
-        else:  # en
-            if correct.lower() == "yes":
-                return "No" if correct[0].isupper() else "no"
-            elif correct.lower() == "no":
-                return "Yes" if correct[0].isupper() else "yes"
-
-        # 兜底：对于非法提问等返回，直接翻转含义
-        return correct + " [WRONG]"
+        return results

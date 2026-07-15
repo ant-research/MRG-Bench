@@ -1,786 +1,493 @@
-# -*- coding: utf-8 -*-
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   子节点列表：某给定节点的所有直接子节点有哪些
-# ============================================================
-
-from .base import Game
 import random
+from .base import Game
 
+class TotalOrderNeighborGame(Game):
 
-class GAME169(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "树"
+    reasoning_type = "演绎推理"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们现在来玩一个"树结构探索与规律归纳"游戏，规则如下：
+我们来玩一个"全序邻居推理"游戏，规则如下：
 
-游戏设定了一个有限有向树结构，节点集合为 {{1, 2, …, {n}}}，根节点为 1。
+存在一个包含 9 个互不相同元素的集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些元素按某个固定但未知的线性全序排列，用位置函数 pos 表示该全序，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
 
-存在一个未知的固定基数 M（M 大于等于 2）。对任意节点 i，其直接子节点集合的计算方式为：{{M*i + s | s 属于 S(i)}}，并仅保留不超过 {n} 的编号。
+已知目标元素为 {target_element}。你的任务是确定该目标元素的紧邻前驱和紧邻后继：
+- 若目标元素位置大于 1，则前驱是位置恰好比它小 1 的元素；否则前驱为"无"。
+- 若目标元素位置小于 9，则后继是位置恰好比它大 1 的元素；否则后继为"无"。
 
-对所有节点 i，S(i) 是一个由非负整数构成的有限集合，且每个 s 满足 0 小于等于 s 小于 M。不同父节点的子集合不重叠。
+你可以通过以下三类是非问题进行查询（每次仅限一个问题）：
 
-隐藏规律：S(i) 由某个未知但简单且可归纳的规则决定，该规则对所有节点一致适用。
+1. **顺序查询 BEFORE(x, y)**：询问元素 x 的位置是否小于元素 y 的位置。
+   格式：<query_before>x,y</query_before>
 
-你的目标是通过询问推断出这个规律，从而能够预测任意节点的直接子节点集合。
+2. **介于查询 BETWEEN(z; x, y)**：询问元素 z 的位置是否严格介于元素 x 和 y 之间（即 pos(x) 小于 pos(z) 小于 pos(y)，或 pos(y) 小于 pos(z) 小于 pos(x)）。
+   格式：<query_between>z,x,y</query_between>
 
-## 可用的询问类型
+3. **相邻查询 ADJ(x, y)**：询问元素 x 和 y 的位置是否相邻（即位置差的绝对值等于 1）。
+   格式：<query_adj>x,y</query_adj>
 
-你可以反复提出以下询问（每次仅限一个询问）：
+**查询限制**：
+- 总查询次数不超过 12 次。
+- 相邻查询 ADJ 最多只能使用 3 次。
+- 超出限制的查询将被视为无效。
 
-1. 完整子列表查询（限 {k} 次）：询问节点 X 的全部直接子节点。返回按升序排列的列表，若无子则返回空列表。注意：此类查询次数有限，用完后无法再使用。
+每次查询后，我会回答"是"或"否"。
 
-2. 子数量查询（不限次数）：询问节点 X 的直接子节点数量。返回非负整数。
+当你收集到足够信息后，请提交最终答案。答案格式如下：
 
-3. 直接子关系判定（不限次数）：询问节点 Y 是否是节点 X 的直接子节点。返回"是"或"否"。
+<answer>predecessor=元素或无, successor=元素或无</answer>
 
-4. 子数量比较（不限次数）：询问节点 A 的直接子数量是否大于节点 B。返回"是"或"否"。
+例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
 
-5. 规律假设声明（不限次数）：你可以陈述当前对规律的假设。此操作不触发判定，仅作为记录。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 完整子列表查询（例如查询节点 5）：
-<query_full>5</query_full>
-
-- 子数量查询（例如查询节点 3）：
-<query_count>3</query_count>
-
-- 直接子关系判定（例如询问 7 是否是 2 的子节点）：
-<query_child>2,7</query_child>
-
-- 子数量比较（例如比较节点 3 和节点 5 的子数量）：
-<query_compare>3,5</query_compare>
-
-- 规律假设声明（描述你的假设）：
-<hypothesis>我认为规律是...</hypothesis>
-
-当你认为已归纳出规律后，可以提交最终答案进行评测。评测时，你需要预测以下节点的全部直接子节点：{test_nodes}（用逗号分隔，顺序不限）。
-
-提交答案格式如下：
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-其中每个节点用冒号分隔节点编号和其子节点列表，不同节点之间用分号分隔。若某节点无子节点，则冒号后为空。
+若答案错误、格式不符或超出查询限制，游戏失败。请尽可能少地使用查询次数来推断正确答案。
 """
 
     game_rule_en = """\
-Let's play a "Tree Exploration and Pattern Induction" game. Here are the rules:
+Let's play a "Total Order Neighbor Deduction" game. Here are the rules:
 
-The game features a finite directed tree structure with nodes {{1, 2, …, {n}}}, where node 1 is the root.
+There exists a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} containing 9 distinct elements. These elements are arranged in a fixed but unknown linear total order, represented by a position function pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
 
-There exists an unknown fixed base M (M is greater than or equal to 2). For any node i, its direct children are computed as {{M*i + s | s belongs to S(i)}}, keeping only IDs not exceeding {n}.
+The target element is {target_element}. Your task is to determine the immediate predecessor and immediate successor of the target element:
+- If the target's position is greater than 1, the predecessor is the element at position exactly 1 less; otherwise, the predecessor is "none".
+- If the target's position is less than 9, the successor is the element at position exactly 1 greater; otherwise, the successor is "none".
 
-For all nodes i, S(i) is a finite set of non-negative integers, where each s satisfies 0 is less than or equal to s and less than M. Child sets of different parent nodes do not overlap.
+You may ask three types of yes/no questions (one question per turn):
 
-Hidden Pattern: S(i) is determined by an unknown but simple and inferable rule that applies consistently to all nodes.
+1. **Order Query BEFORE(x, y)**: Ask if element x's position is less than element y's position.
+   Format: <query_before>x,y</query_before>
 
-Your goal is to infer this pattern through queries, enabling you to predict the direct children of any node.
+2. **Between Query BETWEEN(z; x, y)**: Ask if element z's position is strictly between elements x and y (i.e., pos(x) < pos(z) < pos(y) or pos(y) < pos(z) < pos(x)).
+   Format: <query_between>z,x,y</query_between>
 
-## Available Query Types
+3. **Adjacent Query ADJ(x, y)**: Ask if elements x and y are adjacent in position (i.e., the absolute difference of their positions equals 1).
+   Format: <query_adj>x,y</query_adj>
 
-You can repeatedly ask the following queries (one per turn):
+**Query Limits**:
+- Total number of queries cannot exceed 12.
+- Adjacent queries ADJ can be used at most 3 times.
+- Queries exceeding these limits will be considered invalid.
 
-1. Full Child List Query (limited to {k} times): Ask for all direct children of node X. Returns a list in ascending order, or empty list if none. Note: This query type has limited uses.
+After each query, I will answer "Yes" or "No".
 
-2. Child Count Query (unlimited): Ask for the count of direct children of node X. Returns a non-negative integer.
+When you have gathered sufficient information, submit your final answer in the following format:
 
-3. Direct Child Relation Query (unlimited): Ask whether node Y is a direct child of node X. Returns "Yes" or "No".
+<answer>predecessor=element_or_none, successor=element_or_none</answer>
 
-4. Child Count Comparison Query (unlimited): Ask whether node A has more direct children than node B. Returns "Yes" or "No".
+For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
 
-5. Hypothesis Statement (unlimited): You may state your current hypothesis about the pattern. This does not trigger evaluation, only records your thought.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Full Child List Query (e.g., querying node 5):
-<query_full>5</query_full>
-
-- Child Count Query (e.g., querying node 3):
-<query_count>3</query_count>
-
-- Direct Child Relation Query (e.g., asking if 7 is a child of 2):
-<query_child>2,7</query_child>
-
-- Child Count Comparison Query (e.g., comparing children count of node 3 and 5):
-<query_compare>3,5</query_compare>
-
-- Hypothesis Statement (describe your hypothesis):
-<hypothesis>I believe the pattern is...</hypothesis>
-
-When you believe you have inferred the pattern, submit your final answer for evaluation. You must predict all direct children of the following nodes: {test_nodes} (comma-separated, order doesn't matter).
-
-Submit answer format:
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-Each node is separated by colon from its children list, different nodes are separated by semicolons. If a node has no children, leave the part after colon empty.
+If the answer is incorrect, the format is invalid, or query limits are exceeded, the game fails. Try to infer the correct answer with as few queries as possible.
 """
 
     contextualized_rule_zh_1 = """\
-我们现在来玩一个“智能交通调度与路网规律探明”游戏，规则如下：
+我们来执行一次"轨道交通线网排查"任务，规则如下：
 
-系统设定了一个有限的单向交通分发管网，节点集合为 {{1, 2, …, {n}}}，起点总分发枢纽为节点 1。
+存在一条单向轨道交通线，包含 9 个互不相同的站点集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些站点按未知的固定线性顺序排列，用位置 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
 
-网络中存在一个未知的固定扩建基数 M（M 大于等于 2）。对任意枢纽节点 i，其直接下游相邻节点的集合计算方式为：{{M*i + s | s 属于 S(i)}}，并仅保留不超过 {n} 的有效编号。
+已知目标排查站点为 {target_element}。你的任务是确定该站点的上行紧邻站点（前驱）和下行紧邻站点（后继）：
+- 若目标站点位置大于 1，则前驱是位置恰好比它小 1 的站点；否则前驱为"无"。
+- 若目标站点位置小于 9，则后继是位置恰好比它大 1 的站点；否则后继为"无"。
 
-对所有节点 i，S(i) 是一个由非负整数构成的有限集合（代表开启的专用分流车道），且每个 s 满足 0 小于等于 s 小于 M。不同上游节点的下游直接节点集合互不重叠。
+你可以通过调度中心发起以下三类是非查询（每次仅限一个问题）：
 
-隐藏规律：分流车道的开启情况 S(i) 由交通指挥中心设定的一套未知但规范可循的调度规则决定，该规则对所有枢纽一致适用。
+1. **先后查询 BEFORE(x, y)**：询问站点 x 是否在站点 y 之前到达。
+   格式：<query_before>x,y</query_before>
 
-你的目标是通过向系统发送查询指令，推断出这套调度规律，从而能够预测任意路口节点的直接下游节点集合。
+2. **区间查询 BETWEEN(z; x, y)**：询问站点 z 是否严格位于站点 x 和 y 之间。
+   格式：<query_between>z,x,y</query_between>
 
-## 可用的查询指令
+3. **相邻查询 ADJ(x, y)**：询问站点 x 和 y 是否是直接相邻的站点。
+   格式：<query_adj>x,y</query_adj>
 
-你可以反复提出以下查询（每次仅限一个查询）：
+**查询限制**：
+- 总查询次数不超过 12 次。
+- 相邻查询 ADJ 最多只能使用 3 次。
+- 超出限制的查询将被系统拦截并视为无效。
 
-1. 完整下游列表查询（限 {k} 次）：查询节点 X 的全部直接下游节点。返回按升序排列的列表，若无下游则返回空列表。注意：此类高权限查询次数有限，用完后无法再使用。
+每次查询后，调度系统会回答"是"或"否"。
 
-2. 下游数量查询（不限次数）：查询节点 X 的直接下游节点数量。返回非负整数。
+当你收集到足够信息后，请提交最终排查报告。答案格式如下：
 
-3. 直接下游关系判定（不限次数）：查询节点 Y 是否是节点 X 的直接下游节点。返回“是”或“否”。
+<answer>predecessor=站点或无, successor=站点或无</answer>
 
-4. 下游数量比较（不限次数）：比较节点 A 的直接下游数量是否大于节点 B。返回“是”或“否”。
+例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
 
-5. 规律假设声明（不限次数）：你可以陈述当前对调度规律的假设。此操作不触发判定，仅作为记录备案。
-
-## 指令与提交报告的格式
-
-每次操作只能包含一个指令标签。请使用以下 XML 格式：
-
-- 完整下游列表查询（例如查询节点 5）：
-<query_full>5</query_full>
-
-- 下游数量查询（例如查询节点 3）：
-<query_count>3</query_count>
-
-- 直接下游关系判定（例如询问 7 是否是 2 的直接下游）：
-<query_child>2,7</query_child>
-
-- 下游数量比较（例如比较节点 3 和节点 5 的下游数量）：
-<query_compare>3,5</query_compare>
-
-- 规律假设声明（描述你的假设）：
-<hypothesis>我认为调度规律是...</hypothesis>
-
-当你认为已归纳出规律后，可以提交最终报告进行评测。评测时，你需要预测以下节点的全部直接下游节点：{test_nodes}（用逗号分隔，顺序不限）。
-
-提交报告格式如下：
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-其中每个节点用冒号分隔节点编号和其下游节点列表，不同节点之间用分号分隔。若某节点无下游节点，则冒号后为空。
+若报告错误、格式不符或超出查询限制，排查任务失败。请尽可能高效地使用查询次数来推断正确结果。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's play an "Intelligent Traffic Routing and Network Pattern Discovery" game. Here are the rules:
+Let's execute a "Rail Transit Network Inspection" task. Here are the rules:
 
-The system features a finite directed traffic distribution network with nodes {{1, 2, …, {n}}}, where node 1 is the main dispatch hub.
+There is a one-way rail transit line containing a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} of 9 distinct stations. These stations are arranged in a fixed but unknown linear sequence, represented by a position function pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
 
-There exists an unknown fixed expansion base M (M is greater than or equal to 2). For any hub node i, its direct downstream nodes are computed as {{M*i + s | s belongs to S(i)}}, keeping only IDs not exceeding {n}.
+The target station under inspection is {target_element}. Your task is to determine the immediate upstream station (predecessor) and immediate downstream station (successor) of this target:
+- If the target's position is greater than 1, the predecessor is the station at position exactly 1 less; otherwise, the predecessor is "none".
+- If the target's position is less than 9, the successor is the station at position exactly 1 greater; otherwise, the successor is "none".
 
-For all nodes i, S(i) is a finite set of non-negative integers (representing activated dedicated routing lanes), where each s satisfies 0 is less than or equal to s and less than M. Downstream sets of different upstream nodes do not overlap.
+You may query the dispatch center with three types of yes/no questions (one question per turn):
 
-Hidden Pattern: The lane activation S(i) is determined by an unknown but standardized and inferable routing rule set by the traffic control center, applying consistently to all hubs.
+1. **Precedence Query BEFORE(x, y)**: Ask if station x is reached before station y.
+   Format: <query_before>x,y</query_before>
 
-Your goal is to infer this routing pattern through queries, enabling you to predict the direct downstream nodes of any hub.
+2. **Interval Query BETWEEN(z; x, y)**: Ask if station z is strictly located between stations x and y.
+   Format: <query_between>z,x,y</query_between>
 
-## Available Query Types
+3. **Adjacency Query ADJ(x, y)**: Ask if stations x and y are directly adjacent on the line.
+   Format: <query_adj>x,y</query_adj>
 
-You can repeatedly ask the following queries (one per turn):
+**Query Limits**:
+- Total number of queries cannot exceed 12.
+- Adjacency queries ADJ can be used at most 3 times.
+- Queries exceeding these limits will be rejected as invalid.
 
-1. Full Downstream List Query (limited to {k} times): Ask for all direct downstream nodes of node X. Returns a list in ascending order, or empty list if none. Note: This high-privilege query has limited uses.
+After each query, the dispatch system will answer "Yes" or "No".
 
-2. Downstream Count Query (unlimited): Ask for the count of direct downstream nodes of node X. Returns a non-negative integer.
+When you have gathered sufficient information, submit your final inspection report in the following format:
 
-3. Direct Downstream Relation Query (unlimited): Ask whether node Y is a direct downstream node of node X. Returns "Yes" or "No".
+<answer>predecessor=station_or_none, successor=station_or_none</answer>
 
-4. Downstream Count Comparison Query (unlimited): Ask whether node A has more direct downstream nodes than node B. Returns "Yes" or "No".
+For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
 
-5. Hypothesis Statement (unlimited): You may state your current hypothesis about the routing pattern. This does not trigger evaluation, only records your thought.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Full Downstream List Query (e.g., querying node 5):
-<query_full>5</query_full>
-
-- Downstream Count Query (e.g., querying node 3):
-<query_count>3</query_count>
-
-- Direct Downstream Relation Query (e.g., asking if 7 is downstream of 2):
-<query_child>2,7</query_child>
-
-- Downstream Count Comparison Query (e.g., comparing downstream count of node 3 and 5):
-<query_compare>3,5</query_compare>
-
-- Hypothesis Statement (describe your hypothesis):
-<hypothesis>I believe the routing pattern is...</hypothesis>
-
-When you believe you have inferred the pattern, submit your final answer for evaluation. You must predict all direct downstream nodes of the following nodes: {test_nodes} (comma-separated, order doesn't matter).
-
-Submit answer format:
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-Each node is separated by colon from its downstream list, different nodes are separated by semicolons. If a node has no downstream nodes, leave the part after colon empty.
+If the report is incorrect, the format is invalid, or query limits are exceeded, the inspection task fails. Please utilize your queries as efficiently as possible.
 """
 
     contextualized_rule_zh_2 = """\
-我们现在来玩一个“病毒变异溯源与突变规律分析”游戏，规则如下：
+我们来进行一项"临床诊疗路径推断"任务，规则如下：
 
-系统设定了一个有限的病原体变异链条树，节点集合（代表病毒毒株）为 {{1, 2, …, {n}}}，初代始祖毒株为节点 1。
+存在一个包含 9 个互不相同的临床诊疗阶段的集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些阶段按严格的时间先后顺序排列，用阶段次序 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
 
-存在一个未知的固定突变扩增基数 M（M 大于等于 2）。对任意毒株 i，其直接变异衍生毒株的编号计算方式为：{{M*i + s | s 属于 S(i)}}，并仅保留不超过 {n} 的编号。
+已知当前关注的诊疗阶段为 {target_element}。你的任务是确定该阶段的紧邻前置阶段（前驱）和紧邻后续阶段（后继）：
+- 若目标阶段次序大于 1，则前驱是次序恰好比它小 1 的阶段；否则前驱为"无"。
+- 若目标阶段次序小于 9，则后继是次序恰好比它大 1 的阶段；否则后继为"无"。
 
-对所有毒株 i，S(i) 是一个由非负整数构成的有限集合（代表激活的基因突变位点），且每个 s 满足 0 小于等于 s 小于 M。不同上级毒株的直接衍生毒株集合互不重叠。
+你可以通过医疗信息系统进行以下三类是非查询（每次仅限一个问题）：
 
-隐藏规律：突变位点的激活情况 S(i) 由某种未知但稳定可循的基因学规律决定，该规律对所有毒株一致适用。
+1. **时序查询 BEFORE(x, y)**：询问阶段 x 是否在阶段 y 之前发生。
+   格式：<query_before>x,y</query_before>
 
-你的目标是通过向系统发送查询推断出这个突变规律，从而能够预测任意毒株的直接衍生变异毒株集合。
+2. **穿插查询 BETWEEN(z; x, y)**：询问阶段 z 是否严格发生在阶段 x 和 y 的执行期间。
+   格式：<query_between>z,x,y</query_between>
 
-## 可用的查询类型
+3. **衔接查询 ADJ(x, y)**：询问阶段 x 和 y 是否是紧密相连的两个诊疗阶段。
+   格式：<query_adj>x,y</query_adj>
 
-你可以反复提出以下查询（每次仅限一个查询）：
+**查询限制**：
+- 总查询次数不超过 12 次。
+- 衔接查询 ADJ 最多只能使用 3 次。
+- 超出限制的查询将被系统拒绝。
 
-1. 完整衍生毒株查询（限 {k} 次）：查询毒株 X 的全部直接衍生毒株。返回按升序排列的列表，若无衍生则返回空列表。注意：此类高精度测序查询次数有限，用完后无法再使用。
+每次查询后，系统会回答"是"或"否"。
 
-2. 衍生数量查询（不限次数）：查询毒株 X 的直接衍生毒株数量。返回非负整数。
+当你收集到足够信息后，请提交最终推断报告。答案格式如下：
 
-3. 直接变异关系判定（不限次数）：查询毒株 Y 是否是毒株 X 的直接衍生毒株。返回“是”或“否”。
+<answer>predecessor=阶段或无, successor=阶段或无</answer>
 
-4. 衍生数量比较（不限次数）：比较毒株 A 的直接衍生毒株数量是否大于毒株 B。返回“是”或“否”。
+例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
 
-5. 规律假设声明（不限次数）：你可以陈述当前对基因突变规律的假设。此操作不触发判定，仅作为实验记录。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 完整衍生毒株查询（例如查询毒株 5）：
-<query_full>5</query_full>
-
-- 衍生数量查询（例如查询毒株 3）：
-<query_count>3</query_count>
-
-- 直接变异关系判定（例如询问 7 是否是 2 的直接衍生毒株）：
-<query_child>2,7</query_child>
-
-- 衍生数量比较（例如比较毒株 3 和毒株 5 的衍生数量）：
-<query_compare>3,5</query_compare>
-
-- 规律假设声明（描述你的假设）：
-<hypothesis>我认为突变规律是...</hypothesis>
-
-当你认为已归纳出突变规律后，可以提交最终报告进行评测。评测时，你需要预测以下毒株节点的全部直接衍生毒株：{test_nodes}（用逗号分隔，顺序不限）。
-
-提交答案格式如下：
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-其中每个节点用冒号分隔节点编号和其衍生毒株列表，不同节点之间用分号分隔。若某毒株无衍生毒株，则冒号后为空。
+若报告错误、格式不符或超出查询限制，推断任务失败。请合理规划查询路径以完成推导。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's play a "Viral Mutation Tracing and Genetic Pattern Analysis" game. Here are the rules:
+Let's perform a "Clinical Pathway Deduction" task. Here are the rules:
 
-The system models a finite pathogen mutation chain tree with nodes (representing viral strains) {{1, 2, …, {n}}}, where the ancestral patient-zero strain is node 1.
+There exists a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} containing 9 distinct clinical diagnosis and treatment stages. These stages are arranged in a strict chronological order, represented by a sequence function pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
 
-There exists an unknown fixed mutation amplification base M (M is greater than or equal to 2). For any strain i, its direct mutant descendant strains are computed as {{M*i + s | s belongs to S(i)}}, keeping only IDs not exceeding {n}.
+The target stage of interest is {target_element}. Your task is to determine the immediate preceding stage (predecessor) and immediate succeeding stage (successor) of this target:
+- If the target's sequence is greater than 1, the predecessor is the stage at sequence exactly 1 less; otherwise, the predecessor is "none".
+- If the target's sequence is less than 9, the successor is the stage at sequence exactly 1 greater; otherwise, the successor is "none".
 
-For all strains i, S(i) is a finite set of non-negative integers (representing activated genetic mutation loci), where each s satisfies 0 is less than or equal to s and less than M. Mutant sets of different parent strains do not overlap.
+You can query the medical information system with three types of yes/no questions (one question per turn):
 
-Hidden Pattern: The activation of mutation loci S(i) is determined by an unknown but stable and inferable genetic rule, applying consistently to all strains.
+1. **Chronology Query BEFORE(x, y)**: Ask if stage x occurs before stage y.
+   Format: <query_before>x,y</query_before>
 
-Your goal is to infer this mutation pattern through queries, enabling you to predict the direct mutant descendants of any viral strain.
+2. **Intervention Query BETWEEN(z; x, y)**: Ask if stage z occurs strictly between stages x and y.
+   Format: <query_between>z,x,y</query_between>
 
-## Available Query Types
+3. **Connection Query ADJ(x, y)**: Ask if stages x and y are consecutive clinical stages.
+   Format: <query_adj>x,y</query_adj>
 
-You can repeatedly ask the following queries (one per turn):
+**Query Limits**:
+- Total number of queries cannot exceed 12.
+- Connection queries ADJ can be used at most 3 times.
+- Queries exceeding these limits will be rejected.
 
-1. Full Descendant List Query (limited to {k} times): Ask for all direct descendant strains of node X. Returns a list in ascending order, or empty list if none. Note: This high-precision sequencing query has limited uses.
+After each query, the system will answer "Yes" or "No".
 
-2. Descendant Count Query (unlimited): Ask for the count of direct descendant strains of node X. Returns a non-negative integer.
+When you have gathered sufficient information, submit your final deduction report in the following format:
 
-3. Direct Mutation Relation Query (unlimited): Ask whether strain Y is a direct descendant of strain X. Returns "Yes" or "No".
+<answer>predecessor=stage_or_none, successor=stage_or_none</answer>
 
-4. Descendant Count Comparison Query (unlimited): Ask whether strain A has more direct descendants than strain B. Returns "Yes" or "No".
+For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
 
-5. Hypothesis Statement (unlimited): You may state your current hypothesis about the genetic mutation pattern. This does not trigger evaluation, only records your lab notes.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Full Descendant List Query (e.g., querying strain 5):
-<query_full>5</query_full>
-
-- Descendant Count Query (e.g., querying strain 3):
-<query_count>3</query_count>
-
-- Direct Mutation Relation Query (e.g., asking if 7 is a descendant of 2):
-<query_child>2,7</query_child>
-
-- Descendant Count Comparison Query (e.g., comparing descendant count of strain 3 and 5):
-<query_compare>3,5</query_compare>
-
-- Hypothesis Statement (describe your hypothesis):
-<hypothesis>I believe the mutation pattern is...</hypothesis>
-
-When you believe you have inferred the pattern, submit your final answer for evaluation. You must predict all direct descendant strains of the following strains: {test_nodes} (comma-separated, order doesn't matter).
-
-Submit answer format:
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-Each node is separated by colon from its descendant list, different nodes are separated by semicolons. If a node has no descendants, leave the part after colon empty.
+If the report is incorrect, the format is invalid, or query limits are exceeded, the deduction task fails. Please plan your query path logically.
 """
 
     contextualized_rule_zh_3 = """\
-我们现在来玩一个“学科知识图谱与先修课程网络解析”游戏，规则如下：
+我们来制定一份"进阶课程先修链路规划"，规则如下：
 
-系统设定了一个有限的有向课程依赖网络，节点集合（代表课程模块）为 {{1, 2, …, {n}}}，基础导论核心课为节点 1。
+存在一个包含 9 个互不相同学习模块的集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些模块按难度等级构成了一条严格的单向选修链路，用等级 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
 
-体系中存在一个未知的固定课程拓扑基数 M（M 大于等于 2）。对任意课程模块 i，其直接进阶后置课程的编号计算方式为：{{M*i + s | s 属于 S(i)}}，并仅保留不超过 {n} 的编号。
+已知核心关注课程为 {target_element}。你的任务是确定该课程的直接先修课程（前驱）和直接后续课程（后继）：
+- 若目标课程等级大于 1，则前驱是等级恰好比它小 1 的课程；否则前驱为"无"。
+- 若目标课程等级小于 9，则后继是等级恰好比它大 1 的课程；否则后继为"无"。
 
-对所有课程 i，S(i) 是一个由非负整数构成的有限集合（代表开启的特定选修分支方向），且每个 s 满足 0 小于等于 s 小于 M。不同先修课程的直接后置课程集合互不重叠。
+你可以向教务系统发起以下三类是非查询（每次仅限一个问题）：
 
-隐藏规律：选修分支的开启情况 S(i) 由教务处制定的一套未知但严谨可循的教学大纲规则决定，该规则对所有课程一致适用。
+1. **难度查询 BEFORE(x, y)**：询问课程 x 的等级是否低于课程 y（需先于 y 学习）。
+   格式：<query_before>x,y</query_before>
 
-你的目标是通过向系统发送查询推断出这套大纲规律，从而能够预测任意课程的直接进阶后置课程集合。
+2. **介于查询 BETWEEN(z; x, y)**：询问课程 z 的等级是否严格介于课程 x 和 y 之间。
+   格式：<query_between>z,x,y</query_between>
 
-## 可用的查询类型
+3. **相邻查询 ADJ(x, y)**：询问课程 x 和 y 是否为难度相邻的两个模块。
+   格式：<query_adj>x,y</query_adj>
 
-你可以反复提出以下查询（每次仅限一个查询）：
+**查询限制**：
+- 总查询次数不超过 12 次。
+- 相邻查询 ADJ 最多只能使用 3 次。
+- 超出限制的查询将被记为无效操作。
 
-1. 完整后置课程查询（限 {k} 次）：查询课程 X 的全部直接进阶后置课程。返回按升序排列的列表，若无后置则返回空列表。注意：此类全面检索查询次数有限，用完后无法再使用。
+每次查询后，教务系统会返回"是"或"否"。
 
-2. 后置课程数量查询（不限次数）：查询课程 X 的直接进阶后置课程数量。返回非负整数。
+当你收集到足够信息后，请提交最终链路规划。答案格式如下：
 
-3. 直接先修关系判定（不限次数）：查询课程 Y 是否是课程 X 的直接进阶后置课程。返回“是”或“否”。
+<answer>predecessor=课程或无, successor=课程或无</answer>
 
-4. 后置课程数量比较（不限次数）：比较课程 A 的直接进阶后置课程数量是否大于课程 B。返回“是”或“否”。
+例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
 
-5. 规律假设声明（不限次数）：你可以陈述当前对教学大纲规律的假设。此操作不触发判定，仅作为分析记录。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 完整后置课程查询（例如查询课程 5）：
-<query_full>5</query_full>
-
-- 后置课程数量查询（例如查询课程 3）：
-<query_count>3</query_count>
-
-- 直接先修关系判定（例如询问 7 是否是 2 的直接进阶后置课程）：
-<query_child>2,7</query_child>
-
-- 后置课程数量比较（例如比较课程 3 和课程 5 的后置课程数量）：
-<query_compare>3,5</query_compare>
-
-- 规律假设声明（描述你的假设）：
-<hypothesis>我认为大纲规律是...</hypothesis>
-
-当你认为已归纳出规律后，可以提交最终教学报告进行评测。评测时，你需要预测以下课程节点的全部直接进阶后置课程：{test_nodes}（用逗号分隔，顺序不限）。
-
-提交答案格式如下：
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-其中每个节点用冒号分隔课程编号和其后置课程列表，不同节点之间用分号分隔。若某课程无后置课程，则冒号后为空。
+若规划错误、格式不符或超出查询限制，任务失败。请以最少的查询次数还原出正确的选修关系。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Subject Knowledge Graph and Prerequisite Course Network Analysis" game. Here are the rules:
+Let's formulate an "Advanced Course Prerequisite Pathway", following these rules:
 
-The system models a finite directed course dependency network with nodes (representing course modules) {{1, 2, …, {n}}}, where the foundational introductory core course is node 1.
+There is a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} containing 9 distinct learning modules. These modules form a strict one-way elective pathway based on difficulty level, represented by a level function pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
 
-There exists an unknown fixed curriculum topology base M (M is greater than or equal to 2). For any course module i, its direct advanced successor courses are computed as {{M*i + s | s belongs to S(i)}}, keeping only IDs not exceeding {n}.
+The core course in focus is {target_element}. Your task is to determine the immediate prerequisite course (predecessor) and immediate subsequent course (successor) of this module:
+- If the target's level is greater than 1, the predecessor is the course at level exactly 1 less; otherwise, the predecessor is "none".
+- If the target's level is less than 9, the successor is the course at level exactly 1 greater; otherwise, the successor is "none".
 
-For all courses i, S(i) is a finite set of non-negative integers (representing activated specific elective tracks), where each s satisfies 0 is less than or equal to s and less than M. Successor course sets of different prerequisite courses do not overlap.
+You can query the academic system with three types of yes/no questions (one question per turn):
 
-Hidden Pattern: The activation of elective tracks S(i) is determined by an unknown but rigorous and inferable syllabus rule formulated by the academic affairs office, applying consistently to all courses.
+1. **Difficulty Query BEFORE(x, y)**: Ask if course x's level is lower than course y (must be studied before y).
+   Format: <query_before>x,y</query_before>
 
-Your goal is to infer this syllabus pattern through queries, enabling you to predict the direct advanced successor courses of any course module.
+2. **Intermediate Query BETWEEN(z; x, y)**: Ask if course z's level is strictly between courses x and y.
+   Format: <query_between>z,x,y</query_between>
 
-## Available Query Types
+3. **Adjacency Query ADJ(x, y)**: Ask if courses x and y are two modules with adjacent difficulties.
+   Format: <query_adj>x,y</query_adj>
 
-You can repeatedly ask the following queries (one per turn):
+**Query Limits**:
+- Total number of queries cannot exceed 12.
+- Adjacency queries ADJ can be used at most 3 times.
+- Queries exceeding these limits will be recorded as invalid operations.
 
-1. Full Successor Course List Query (limited to {k} times): Ask for all direct advanced successor courses of node X. Returns a list in ascending order, or empty list if none. Note: This comprehensive search has limited uses.
+After each query, the academic system will return "Yes" or "No".
 
-2. Successor Course Count Query (unlimited): Ask for the count of direct advanced successor courses of node X. Returns a non-negative integer.
+When you have gathered sufficient information, submit your final pathway plan in the following format:
 
-3. Direct Prerequisite Relation Query (unlimited): Ask whether course Y is a direct successor of course X. Returns "Yes" or "No".
+<answer>predecessor=course_or_none, successor=course_or_none</answer>
 
-4. Successor Course Count Comparison Query (unlimited): Ask whether course A has more direct successor courses than course B. Returns "Yes" or "No".
+For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
 
-5. Hypothesis Statement (unlimited): You may state your current hypothesis about the syllabus pattern. This does not trigger evaluation, only records your analysis.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Full Successor Course List Query (e.g., querying course 5):
-<query_full>5</query_full>
-
-- Successor Course Count Query (e.g., querying course 3):
-<query_count>3</query_count>
-
-- Direct Prerequisite Relation Query (e.g., asking if 7 is a successor of 2):
-<query_child>2,7</query_child>
-
-- Successor Course Count Comparison Query (e.g., comparing successor count of course 3 and 5):
-<query_compare>3,5</query_compare>
-
-- Hypothesis Statement (describe your hypothesis):
-<hypothesis>I believe the syllabus pattern is...</hypothesis>
-
-When you believe you have inferred the pattern, submit your final academic report for evaluation. You must predict all direct advanced successor courses of the following course nodes: {test_nodes} (comma-separated, order doesn't matter).
-
-Submit answer format:
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-Each node is separated by colon from its successor course list, different nodes are separated by semicolons. If a node has no successor courses, leave the part after colon empty.
+If the plan is incorrect, the format is invalid, or query limits are exceeded, the task fails. Deduce the correct prerequisite relationships with minimal queries.
 """
 
     contextualized_rule_zh_4 = """\
-我们现在来玩一个“工业BOM（物料清单）架构与模块化装配规律分析”游戏，规则如下：
+我们来执行一项"工业流水线工序测绘"任务，规则如下：
 
-系统设定了一个有限的组件拆解树网络，节点集合（代表装配部件）为 {{1, 2, …, {n}}}，最终交付总成产品为节点 1。
+存在一条装配流水线，包含 9 道互不相同的加工工序集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些工序按未知的严格加工顺序排列，用工位次序 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
 
-架构中存在一个未知的固定模块化拆分基数 M（M 大于等于 2）。对任意部件 i，其直接下级子组件的编号计算方式为：{{M*i + s | s 属于 S(i)}}，并仅保留不超过 {n} 的编号。
+已知目标质检工序为 {target_element}。你的任务是查明该工序的上一道紧邻工序（前驱）和下一道紧邻工序（后继）：
+- 若目标工序次序大于 1，则前驱是次序恰好比它小 1 的工序；否则前驱为"无"。
+- 若目标工序次序小于 9，则后继是次序恰好比它大 1 的工序；否则后继为"无"。
 
-对所有部件 i，S(i) 是一个由非负整数构成的有限集合（代表启用的标准装配接口编号），且每个 s 满足 0 小于等于 s 小于 M。不同上级部件的直接子组件集合互不重叠。
+你可以向制造执行系统（MES）发起以下三类是非查询（每次仅限一个问题）：
 
-隐藏规律：装配接口的启用情况 S(i) 由工程部制定的一套未知但标准可循的模块化装配规范决定，该规范对所有部件一致适用。
+1. **排期查询 BEFORE(x, y)**：询问工序 x 是否在工序 y 之前执行。
+   格式：<query_before>x,y</query_before>
 
-你的目标是通过向系统发送查询推断出这套装配规范，从而能够预测任意部件的直接下级子组件集合。
+2. **夹插查询 BETWEEN(z; x, y)**：询问工序 z 的执行时间是否严格介于工序 x 和 y 之间。
+   格式：<query_between>z,x,y</query_between>
 
-## 可用的查询类型
+3. **上下游查询 ADJ(x, y)**：询问工序 x 和 y 是否是流水线上直接相连的两道工序。
+   格式：<query_adj>x,y</query_adj>
 
-你可以反复提出以下查询（每次仅限一个查询）：
+**查询限制**：
+- 总查询次数不超过 12 次。
+- 上下游查询 ADJ 最多只能使用 3 次。
+- 超出限制的查询指令将报错。
 
-1. 完整子组件查询（限 {k} 次）：查询部件 X 的全部直接下级子组件。返回按升序排列的列表，若无子组件则返回空列表。注意：此类深度BOM展开查询次数有限，用完后无法再使用。
+每次查询后，系统会反馈"是"或"否"。
 
-2. 子组件数量查询（不限次数）：查询部件 X 的直接下级子组件数量。返回非负整数。
+当你收集到足够信息后，请提交最终工序测绘结果。答案格式如下：
 
-3. 直接装配关系判定（不限次数）：查询部件 Y 是否是部件 X 的直接下级子组件。返回“是”或“否”。
+<answer>predecessor=工序或无, successor=工序或无</answer>
 
-4. 子组件数量比较（不限次数）：比较部件 A 的直接下级子组件数量是否大于部件 B。返回“是”或“否”。
+例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
 
-5. 规律假设声明（不限次数）：你可以陈述当前对装配规范的假设。此操作不触发判定，仅作为工程记录。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 完整子组件查询（例如查询部件 5）：
-<query_full>5</query_full>
-
-- 子组件数量查询（例如查询部件 3）：
-<query_count>3</query_count>
-
-- 直接装配关系判定（例如询问 7 是否是 2 的直接子组件）：
-<query_child>2,7</query_child>
-
-- 子组件数量比较（例如比较部件 3 和部件 5 的子组件数量）：
-<query_compare>3,5</query_compare>
-
-- 规律假设声明（描述你的假设）：
-<hypothesis>我认为装配规范是...</hypothesis>
-
-当你认为已归纳出规律后，可以提交最终工程方案进行评测。评测时，你需要预测以下部件节点的全部直接下级子组件：{test_nodes}（用逗号分隔，顺序不限）。
-
-提交答案格式如下：
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-其中每个节点用冒号分隔部件编号和其子组件列表，不同节点之间用分号分隔。若某部件无子组件，则冒号后为空。
+若测绘错误、格式不符或超出查询限制，任务失败。请最优化你的查询策略。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Let's play an "Industrial BOM (Bill of Materials) Architecture and Modular Assembly Pattern Analysis" game. Here are the rules:
+[Manufacturing/Industry Scenario]
+Let's perform an "Industrial Assembly Line Process Mapping" task. Here are the rules:
 
-The system models a finite component breakdown tree network with nodes (representing assembly parts) {{1, 2, …, {n}}}, where the final assembled product is node 1.
+There is an assembly line comprising a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} of 9 distinct manufacturing processes. These processes are arranged in a strict but unknown processing sequence, represented by a workstation index pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
 
-There exists an unknown fixed modular division base M (M is greater than or equal to 2). For any part i, its direct sub-components are computed as {{M*i + s | s belongs to S(i)}}, keeping only IDs not exceeding {n}.
+The target quality inspection process is {target_element}. Your task is to identify the immediate preceding process (predecessor) and immediate succeeding process (successor) of this target:
+- If the target's sequence is greater than 1, the predecessor is the process at index exactly 1 less; otherwise, the predecessor is "none".
+- If the target's sequence is less than 9, the successor is the process at index exactly 1 greater; otherwise, the successor is "none".
 
-For all parts i, S(i) is a finite set of non-negative integers (representing enabled standard assembly slot IDs), where each s satisfies 0 is less than or equal to s and less than M. Sub-component sets of different parent parts do not overlap.
+You can query the Manufacturing Execution System (MES) with three types of yes/no questions (one question per turn):
 
-Hidden Pattern: The enablement of assembly slots S(i) is determined by an unknown but standardized and inferable modular assembly specification formulated by the engineering department, applying consistently to all parts.
+1. **Schedule Query BEFORE(x, y)**: Ask if process x is executed before process y.
+   Format: <query_before>x,y</query_before>
 
-Your goal is to infer this assembly specification through queries, enabling you to predict the direct sub-components of any part.
+2. **Interleaved Query BETWEEN(z; x, y)**: Ask if process z's execution is strictly between processes x and y.
+   Format: <query_between>z,x,y</query_between>
 
-## Available Query Types
+3. **Upstream/Downstream Query ADJ(x, y)**: Ask if processes x and y are directly connected processes on the assembly line.
+   Format: <query_adj>x,y</query_adj>
 
-You can repeatedly ask the following queries (one per turn):
+**Query Limits**:
+- Total number of queries cannot exceed 12.
+- Upstream/Downstream queries ADJ can be used at most 3 times.
+- Queries exceeding these limits will trigger an error.
 
-1. Full Sub-component List Query (limited to {k} times): Ask for all direct sub-components of node X. Returns a list in ascending order, or empty list if none. Note: This deep BOM expansion query has limited uses.
+After each query, the system will return "Yes" or "No".
 
-2. Sub-component Count Query (unlimited): Ask for the count of direct sub-components of node X. Returns a non-negative integer.
+When you have gathered sufficient information, submit your final mapping result in the following format:
 
-3. Direct Assembly Relation Query (unlimited): Ask whether part Y is a direct sub-component of part X. Returns "Yes" or "No".
+<answer>predecessor=process_or_none, successor=process_or_none</answer>
 
-4. Sub-component Count Comparison Query (unlimited): Ask whether part A has more direct sub-components than part B. Returns "Yes" or "No".
+For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
 
-5. Hypothesis Statement (unlimited): You may state your current hypothesis about the assembly specification. This does not trigger evaluation, only records your engineering notes.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Full Sub-component List Query (e.g., querying part 5):
-<query_full>5</query_full>
-
-- Sub-component Count Query (e.g., querying part 3):
-<query_count>3</query_count>
-
-- Direct Assembly Relation Query (e.g., asking if 7 is a sub-component of 2):
-<query_child>2,7</query_child>
-
-- Sub-component Count Comparison Query (e.g., comparing sub-component count of part 3 and 5):
-<query_compare>3,5</query_compare>
-
-- Hypothesis Statement (describe your hypothesis):
-<hypothesis>I believe the assembly specification is...</hypothesis>
-
-When you believe you have inferred the pattern, submit your final engineering plan for evaluation. You must predict all direct sub-components of the following part nodes: {test_nodes} (comma-separated, order doesn't matter).
-
-Submit answer format:
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-Each node is separated by colon from its sub-component list, different nodes are separated by semicolons. If a node has no sub-components, leave the part after colon empty.
+If the mapping is incorrect, the format is invalid, or query limits are exceeded, the task fails. Please optimize your querying strategy.
 """
 
     contextualized_rule_zh_5 = """\
-我们现在来玩一个“法理衍生关系与条款引证规律推演”游戏，规则如下：
+我们来进行一项"司法诉讼法定程序梳理"任务，规则如下：
 
-系统设定了一个有限的有向法律渊源树，节点集合（代表法律条款）为 {{1, 2, …, {n}}}，国家基本法纲要为节点 1。
+存在一个包含 9 个互不相同的法定环节的集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些环节必须按法律规定的严格先后顺序进行，用程序次序 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
 
-体系中存在一个未知的固定立法衍生基数 M（M 大于等于 2）。对任意条款 i，其直接下位细则条款的编号计算方式为：{{M*i + s | s 属于 S(i)}}，并仅保留不超过 {n} 的编号。
+已知当前审查的法定环节为 {target_element}。你的任务是确定该环节的上一法定环节（前置程序）和下一法定环节（后置程序）：
+- 若目标环节次序大于 1，则前置程序是次序恰好比它小 1 的环节；否则前置程序为"无"。
+- 若目标环节次序小于 9，则后置程序是次序恰好比它大 1 的环节；否则后置程序为"无"。
 
-对所有条款 i，S(i) 是一个由非负整数构成的有限集合（代表适用的特定法域标识），且每个 s 满足 0 小于等于 s 小于 M。不同上位条款的直接下位条款集合互不重叠。
+你可以查阅法典并进行以下三类是非查询（每次仅限一个问题）：
 
-隐藏规律：法域标识的适用情况 S(i) 由立法机关制定的一套未知但严密可循的法理编纂规则决定，该规则对所有条款一致适用。
+1. **顺位查询 BEFORE(x, y)**：询问环节 x 是否在环节 y 之前启动。
+   格式：<query_before>x,y</query_before>
 
-你的目标是通过向系统发送查询推断出这套法理规则，从而能够预测任意条款的直接下位细则条款集合。
+2. **穿插查询 BETWEEN(z; x, y)**：询问环节 z 是否必须在环节 x 和 y 的执行期间启动。
+   格式：<query_between>z,x,y</query_between>
 
-## 可用的查询类型
+3. **衔接查询 ADJ(x, y)**：询问环节 x 和 y 是否是法定顺序上紧密衔接的两个程序。
+   格式：<query_adj>x,y</query_adj>
 
-你可以反复提出以下查询（每次仅限一个查询）：
+**查询限制**：
+- 总查询次数不超过 12 次。
+- 衔接查询 ADJ 最多只能使用 3 次。
+- 超出限制的查阅请求将被驳回。
 
-1. 完整下位条款查询（限 {k} 次）：查询条款 X 的全部直接下位细则条款。返回按升序排列的列表，若无下位条款则返回空列表。注意：此类全面法条检索查询次数有限，用完后无法再使用。
+每次查询后，法典检索引擎会回答"是"或"否"。
 
-2. 下位条款数量查询（不限次数）：查询条款 X 的直接下位细则条款数量。返回非负整数。
+当你收集到足够信息后，请提交最终梳理结论。答案格式如下：
 
-3. 直接法理从属判定（不限次数）：查询条款 Y 是否是条款 X 的直接下位细则条款。返回“是”或“否”。
+<answer>predecessor=环节或无, successor=环节或无</answer>
 
-4. 下位条款数量比较（不限次数）：比较条款 A 的直接下位细则条款数量是否大于条款 B。返回“是”或“否”。
+例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
 
-5. 规律假设声明（不限次数）：你可以陈述当前对法理编纂规则的假设。此操作不触发判定，仅作为法理分析记录。
-
-## 询问与提交答案的格式
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 完整下位条款查询（例如查询条款 5）：
-<query_full>5</query_full>
-
-- 下位条款数量查询（例如查询条款 3）：
-<query_count>3</query_count>
-
-- 直接法理从属判定（例如询问 7 是否是 2 的直接下位条款）：
-<query_child>2,7</query_child>
-
-- 下位条款数量比较（例如比较条款 3 和条款 5 的下位条款数量）：
-<query_compare>3,5</query_compare>
-
-- 规律假设声明（描述你的假设）：
-<hypothesis>我认为法理规则是...</hypothesis>
-
-当你认为已归纳出规律后，可以提交最终法理推演报告进行评测。评测时，你需要预测以下条款节点的全部直接下位细则条款：{test_nodes}（用逗号分隔，顺序不限）。
-
-提交答案格式如下：
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-其中每个节点用冒号分隔条款编号和其下位条款列表，不同节点之间用分号分隔。若某条款无下位条款，则冒号后为空。
+若结论错误、格式不符或超出查询限制，梳理任务失败。请严密论证并控制查询频次。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's play a "Legal Clause Derivation and Jurisprudential Citation Pattern Deduction" game. Here are the rules:
+Let's conduct a "Judicial Litigation Statutory Procedure Review" task. Here are the rules:
 
-The system models a finite directed legal source tree with nodes (representing legal articles) {{1, 2, …, {n}}}, where the fundamental constitutional framework is node 1.
+There exists a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} containing 9 distinct statutory procedures. These procedures must be executed in a strict chronological order mandated by law, represented by a procedural sequence pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
 
-There exists an unknown fixed legislative derivation base M (M is greater than or equal to 2). For any article i, its direct subordinate clauses are computed as {{M*i + s | s belongs to S(i)}}, keeping only IDs not exceeding {n}.
+The target statutory procedure under review is {target_element}. Your task is to determine the previous statutory procedure (predecessor) and the next statutory procedure (successor) for this target:
+- If the target's sequence is greater than 1, the predecessor is the procedure exactly 1 step prior; otherwise, the predecessor is "none".
+- If the target's sequence is less than 9, the successor is the procedure exactly 1 step after; otherwise, the successor is "none".
 
-For all articles i, S(i) is a finite set of non-negative integers (representing applicable specific jurisdictional identifiers), where each s satisfies 0 is less than or equal to s and less than M. Subordinate clause sets of different superior articles do not overlap.
+You can consult the legal code to make three types of yes/no queries (one query per turn):
 
-Hidden Pattern: The applicability of jurisdictional identifiers S(i) is determined by an unknown but rigorous and inferable jurisprudential codification rule formulated by the legislature, applying consistently to all articles.
+1. **Sequence Query BEFORE(x, y)**: Ask if procedure x is initiated before procedure y.
+   Format: <query_before>x,y</query_before>
 
-Your goal is to infer this jurisprudential rule through queries, enabling you to predict the direct subordinate clauses of any legal article.
+2. **Interim Query BETWEEN(z; x, y)**: Ask if procedure z is initiated strictly between procedures x and y.
+   Format: <query_between>z,x,y</query_between>
 
-## Available Query Types
+3. **Connection Query ADJ(x, y)**: Ask if procedures x and y are strictly consecutive procedures in the statutory order.
+   Format: <query_adj>x,y</query_adj>
 
-You can repeatedly ask the following queries (one per turn):
+**Query Limits**:
+- Total number of queries cannot exceed 12.
+- Connection queries ADJ can be used at most 3 times.
+- Queries exceeding these limits will be dismissed.
 
-1. Full Subordinate Clause List Query (limited to {k} times): Ask for all direct subordinate clauses of node X. Returns a list in ascending order, or empty list if none. Note: This comprehensive statutory search has limited uses.
+After each query, the legal retrieval engine will answer "Yes" or "No".
 
-2. Subordinate Clause Count Query (unlimited): Ask for the count of direct subordinate clauses of node X. Returns a non-negative integer.
+When you have gathered sufficient information, submit your final review conclusion in the following format:
 
-3. Direct Jurisprudential Subordination Query (unlimited): Ask whether article Y is a direct subordinate clause of article X. Returns "Yes" or "No".
+<answer>predecessor=procedure_or_none, successor=procedure_or_none</answer>
 
-4. Subordinate Clause Count Comparison Query (unlimited): Ask whether article A has more direct subordinate clauses than article B. Returns "Yes" or "No".
+For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
 
-5. Hypothesis Statement (unlimited): You may state your current hypothesis about the codification rule. This does not trigger evaluation, only records your jurisprudential analysis.
-
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Full Subordinate Clause List Query (e.g., querying article 5):
-<query_full>5</query_full>
-
-- Subordinate Clause Count Query (e.g., querying article 3):
-<query_count>3</query_count>
-
-- Direct Jurisprudential Subordination Query (e.g., asking if 7 is a subordinate clause of 2):
-<query_child>2,7</query_child>
-
-- Subordinate Clause Count Comparison Query (e.g., comparing subordinate clause count of article 3 and 5):
-<query_compare>3,5</query_compare>
-
-- Hypothesis Statement (describe your hypothesis):
-<hypothesis>I believe the jurisprudential rule is...</hypothesis>
-
-When you believe you have inferred the pattern, submit your final deduction report for evaluation. You must predict all direct subordinate clauses of the following article nodes: {test_nodes} (comma-separated, order doesn't matter).
-
-Submit answer format:
-<answer>node1:child1,child2;node2:child3,child4;node3:</answer>
-
-Each node is separated by colon from its subordinate list, different nodes are separated by semicolons. If an article has no subordinate clauses, leave the part after colon empty.
+If the conclusion is incorrect, the format is invalid, or query limits are exceeded, the review task fails. Construct your arguments rigorously to minimize queries.
 """
 
-    tags = ["answer", "query_full", "query_count", "query_child", "query_compare", "hypothesis"]
+    tags = ["answer", "query_before", "query_between", "query_adj"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 15,
-                "m": 2,
-                "k": 3,
-                "q": 2,
-                "threshold": 2,
-                "rule": lambda i: {0, 1} if i % 2 == 1 else {0},
+                "order": ["s5", "s2", "s8", "s1", "s6", "s4", "s9", "s3", "s7"],
+                "target": "s2",
             },
             2: {
-                "n": 20,
-                "m": 3,
-                "k": 4,
-                "q": 3,
-                "threshold": 2,
-                "rule": lambda i: {0, 1, 2} if i % 3 == 1 else ({0, 1} if i % 3 == 2 else {1}),
+                "order": ["s3", "s7", "s1", "s5", "s9", "s4", "s2", "s8", "s6"],
+                "target": "s5",
             },
             3: {
-                "n": 30,
-                "m": 3,
-                "k": 5,
-                "q": 3,
-                "threshold": 2,
-                "rule": lambda i: (
-                    {0, 2} if i % 4 == 1 else
-                    ({1, 2} if i % 4 == 2 else
-                     ({0, 1} if i % 4 == 3 else {2}))
-                ),
+                "order": ["s4", "s9", "s2", "s6", "s1", "s8", "s3", "s5", "s7"],
+                "target": "s3",
             },
             4: {
-                "n": 40,
-                "m": 4,
-                "k": 6,
-                "q": 4,
-                "threshold": 3,
-                "rule": lambda i: (
-                    {0, 1, 3} if i % 5 == 1 else
-                    ({1, 2} if i % 5 == 2 else
-                     ({0, 2, 3} if i % 5 == 3 else
-                      ({0, 1} if i % 5 == 4 else {2, 3})))
-                ),
+                "order": ["s7", "s3", "s5", "s9", "s2", "s1", "s4", "s8", "s6"],
+                "target": "s7",
             },
             5: {
-                "n": 50,
-                "m": 5,
-                "k": 7,
-                "q": 4,
-                "threshold": 3,
-                "rule": lambda i: (
-                    {0, 1, 2, 4} if i % 6 == 1 else
-                    ({1, 3} if i % 6 == 2 else
-                     ({0, 2, 3} if i % 6 == 3 else
-                      ({1, 2, 4} if i % 6 == 4 else
-                       ({0, 3, 4} if i % 6 == 5 else {0, 2}))))
-                ),
+                "order": ["s2", "s6", "s4", "s8", "s3", "s9", "s1", "s5", "s7"],
+                "target": "s7",
             },
         },
         "en": {
             1: {
-                "n": 15,
-                "m": 2,
-                "k": 3,
-                "q": 2,
-                "threshold": 2,
-                "rule": lambda i: {0, 1} if i % 2 == 1 else {0},
+                "order": ["s5", "s2", "s8", "s1", "s6", "s4", "s9", "s3", "s7"],
+                "target": "s2",
             },
             2: {
-                "n": 20,
-                "m": 3,
-                "k": 4,
-                "q": 3,
-                "threshold": 2,
-                "rule": lambda i: {0, 1, 2} if i % 3 == 1 else ({0, 1} if i % 3 == 2 else {1}),
+                "order": ["s3", "s7", "s1", "s5", "s9", "s4", "s2", "s8", "s6"],
+                "target": "s5",
             },
             3: {
-                "n": 30,
-                "m": 3,
-                "k": 5,
-                "q": 3,
-                "threshold": 2,
-                "rule": lambda i: (
-                    {0, 2} if i % 4 == 1 else
-                    ({1, 2} if i % 4 == 2 else
-                     ({0, 1} if i % 4 == 3 else {2}))
-                ),
+                "order": ["s4", "s9", "s2", "s6", "s1", "s8", "s3", "s5", "s7"],
+                "target": "s3",
             },
             4: {
-                "n": 40,
-                "m": 4,
-                "k": 6,
-                "q": 4,
-                "threshold": 3,
-                "rule": lambda i: (
-                    {0, 1, 3} if i % 5 == 1 else
-                    ({1, 2} if i % 5 == 2 else
-                     ({0, 2, 3} if i % 5 == 3 else
-                      ({0, 1} if i % 5 == 4 else {2, 3})))
-                ),
+                "order": ["s7", "s3", "s5", "s9", "s2", "s1", "s4", "s8", "s6"],
+                "target": "s7",
             },
             5: {
-                "n": 50,
-                "m": 5,
-                "k": 7,
-                "q": 4,
-                "threshold": 3,
-                "rule": lambda i: (
-                    {0, 1, 2, 4} if i % 6 == 1 else
-                    ({1, 3} if i % 6 == 2 else
-                     ({0, 2, 3} if i % 6 == 3 else
-                      ({1, 2, 4} if i % 6 == 4 else
-                       ({0, 3, 4} if i % 6 == 5 else {0, 2}))))
-                ),
+                "order": ["s2", "s6", "s4", "s8", "s3", "s9", "s1", "s5", "s7"],
+                "target": "s7",
             },
         },
     }
@@ -790,7 +497,7 @@ Each node is separated by colon from its subordinate list, different nodes are s
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保转为 int
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -799,248 +506,186 @@ Each node is separated by colon from its subordinate list, different nodes are s
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        self.n = cfg["n"]
-        self.m = cfg["m"]
-        self.k_limit = cfg["k"]
-        self.q_test = cfg["q"]
-        self.threshold = cfg["threshold"]  # 评测通过阈值
-        self.rule_func = cfg["rule"]
+        self.order = cfg["order"]
         
-        # 记录已使用的完整查询次数和查询过的节点
-        self.full_query_count = 0
-        self.queried_nodes = set()
+        self.target = cfg["target"]
+        self._game_info["target_element"] = self.target
         
-        # 预计算所有节点的子节点
-        self.children_map = {}
-        for i in range(1, self.n + 1):
-            s_set = self.rule_func(i)
-            children = []
-            for s in s_set:
-                child = self.m * i + s
-                if child <= self.n:
-                    children.append(child)
-            self.children_map[i] = sorted(children)
-
-        # 预先确定测试节点（使用固定种子），这样可以写入规则
-        rng = random.Random(42)
-        all_nodes = list(range(1, self.n + 1))
-        self.test_nodes = rng.sample(all_nodes, min(self.q_test, len(all_nodes)))
+        self.pos_map = {elem: idx + 1 for idx, elem in enumerate(self.order)}
         
-        # 游戏参数
-        self._game_info["n"] = cfg["n"]
-        self._game_info["k"] = cfg["k"]  # 完整查询次数限制
-        self._game_info["q"] = cfg["q"]  # 评测节点数量
-        self._game_info["test_nodes"] = ",".join(str(x) for x in sorted(self.test_nodes))
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        为避免查询数量过大（O(n²)），仅返回 query_full 和 query_count 查询，
-        以及部分采样的 query_child 和 query_compare 查询。
-        """
-        results = []
+        target_pos = self.pos_map[self.target]
         
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
+        if target_pos > 1:
+            self.correct_predecessor = self.order[target_pos - 2]
         else:
-            yes_res, no_res = "Yes", "No"
+            self.correct_predecessor = "none" if lang == "en" else "无"
             
-        def format_list(children):
-            if not children:
-                return "[]"
-            return "[" + ",".join(str(c) for c in children) + "]"
-            
-        nodes = range(1, self.n + 1)
+        if target_pos < 9:
+            self.correct_successor = self.order[target_pos]
+        else:
+            self.correct_successor = "none" if lang == "en" else "无"
         
-        for i in nodes:
-            # 1. query_full
-            # 不受k限制的理想答案
-            children_i = self.children_map[i]
-            results.append({
-                "query": f"<query_full>{i}</query_full>",
-                "answer": format_list(children_i)
-            })
-            
-            # 2. query_count
-            results.append({
-                "query": f"<query_count>{i}</query_count>",
-                "answer": str(len(children_i))
-            })
-            
-            # 为了避免 O(n^2)，对每个 i 只采样一个 j
-            j = (i % self.n) + 1
-            # 3. query_child (i是父, j是子)
-            is_child = j in children_i
-            results.append({
-                "query": f"<query_child>{i},{j}</query_child>",
-                "answer": yes_res if is_child else no_res
-            })
-            
-            # 4. query_compare (比较i和j的子数量)
-            children_j = self.children_map[j]
-            count_a = len(children_i)
-            count_b = len(children_j)
-            results.append({
-                "query": f"<query_compare>{i},{j}</query_compare>",
-                "answer": yes_res if count_a > count_b else no_res
-            })
-                
-        return results
+        self.total_queries = 0
+        self.adj_queries = 0
+        self.max_total_queries = 12
+        self.max_adj_queries = 3
+
+    def _is_valid_element(self, elem):
+        return elem in self.pos_map
 
     def evaluate(self, parsed_info):
-        """评测最终答案"""
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"].replace("，", ",")
         
-        test_nodes = self.test_nodes
+        kv_pairs = [x.strip() for x in raw_ans.split(",")]
+        ans_dict = {}
         
-        # 解析答案格式：node1:child1,child2;node2:child3,child4
-        try:
-            predictions = {}
-            if raw_ans:
-                node_parts = raw_ans.split(";")
-                for part in node_parts:
-                    if ":" not in part:
-                        continue
-                    node_str, children_str = part.split(":", 1)
-                    node = int(node_str.strip())
-                    if children_str.strip():
-                        children = set(int(c.strip()) for c in children_str.split(",") if c.strip())
-                    else:
-                        children = set()
-                    predictions[node] = children
-        except Exception:
+        for kv in kv_pairs:
+            if "=" not in kv:
+                continue
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
+        
+        if "predecessor" not in ans_dict or "successor" not in ans_dict:
             return False
         
-        # 不再要求精确匹配节点集合，只检查 test_nodes 中的节点
-        correct_count = 0
-        for node in test_nodes:
-            true_children = set(self.children_map[node])
-            pred_children = predictions.get(node, None)
-            if pred_children is not None and true_children == pred_children:
-                correct_count += 1
+        pred = ans_dict["predecessor"]
+        succ = ans_dict["successor"]
         
-        # 判断是否达到阈值
-        return correct_count >= self.threshold
+        none_values = {"none", "无", "None", "NONE"}
+        if pred in none_values:
+            pred = self.correct_predecessor if self.correct_predecessor in none_values else pred
+        if succ in none_values:
+            succ = self.correct_successor if self.correct_successor in none_values else succ
+        
+        pred_correct = (pred == self.correct_predecessor) or (
+            pred in none_values and self.correct_predecessor in none_values
+        )
+        succ_correct = (succ == self.correct_successor) or (
+            succ in none_values and self.correct_successor in none_values
+        )
+        
+        return pred_correct and succ_correct
 
     def _cf_core_produce(self, parsed_info):
-        """处理各类查询并返回响应"""
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_limit = "错误：完整子列表查询次数已用完。"
-            error_node = "错误：节点编号超出范围。"
-            error_format = "错误：格式无效或节点编号错误。"
+            error_limit = "错误：已达到查询次数上限，无法继续查询。请直接提交你的最终答案。"
+            error_adj_limit = "错误：相邻查询次数已达上限，该查询无效。请使用其他类型的查询或提交答案。"
+            error_format = "错误：查询格式无效或元素不存在。"
         else:
             yes_res, no_res = "Yes", "No"
-            error_limit = "Error: Full query limit exceeded."
-            error_node = "Error: Node ID out of range."
-            error_format = "Error: Invalid format or node ID."
-        
-        # 优先级：query_full > query_count > query_child > query_compare > hypothesis
-        if "query_full" in parsed_info:
-            # 完整子列表查询
-            if self.full_query_count >= self.k_limit:
-                return error_limit
+            error_limit = "Error: Query limit reached. No more queries allowed. Please submit your final answer."
+            error_adj_limit = "Error: Adjacent query limit reached. This query is invalid. Please use other query types or submit your answer."
+            error_format = "Error: Invalid query format or element does not exist."
+
+        if self.total_queries >= self.max_total_queries:
+            return error_limit
+
+        if "query_before" in parsed_info:
+            try:
+                raw = parsed_info["query_before"]
+                x, y = [elem.strip() for elem in raw.split(",")]
+                
+                if not self._is_valid_element(x) or not self._is_valid_element(y):
+                    return error_format
+                
+                self.total_queries += 1
+                result = self.pos_map[x] < self.pos_map[y]
+                return yes_res if result else no_res
+                
+            except Exception:
+                return error_format
+
+        elif "query_between" in parsed_info:
+            try:
+                raw = parsed_info["query_between"]
+                parts = [elem.strip() for elem in raw.split(",")]
+                
+                if len(parts) != 3:
+                    return error_format
+                
+                z, x, y = parts
+                
+                if not all(self._is_valid_element(e) for e in [z, x, y]):
+                    return error_format
+                
+                self.total_queries += 1
+                pos_z, pos_x, pos_y = self.pos_map[z], self.pos_map[x], self.pos_map[y]
+                
+                result = (pos_x < pos_z < pos_y) or (pos_y < pos_z < pos_x)
+                return yes_res if result else no_res
+                
+            except Exception:
+                return error_format
+
+        elif "query_adj" in parsed_info:
+            if self.adj_queries >= self.max_adj_queries:
+                return error_adj_limit
             
             try:
-                node = int(parsed_info["query_full"].strip())
-                if node < 1 or node > self.n:
-                    return error_node
+                raw = parsed_info["query_adj"]
+                x, y = [elem.strip() for elem in raw.split(",")]
                 
-                self.full_query_count += 1
-                self.queried_nodes.add(node)
-                children = self.children_map[node]
+                if not self._is_valid_element(x) or not self._is_valid_element(y):
+                    return error_format
                 
-                if not children:
-                    return "[]"
-                return "[" + ",".join(str(c) for c in children) + "]"
-            except:
+                self.total_queries += 1
+                self.adj_queries += 1
+                
+                result = abs(self.pos_map[x] - self.pos_map[y]) == 1
+                return yes_res if result else no_res
+                
+            except Exception:
                 return error_format
-        
-        elif "query_count" in parsed_info:
-            # 子数量查询
-            try:
-                node = int(parsed_info["query_count"].strip())
-                if node < 1 or node > self.n:
-                    return error_node
-                
-                count = len(self.children_map[node])
-                return str(count)
-            except:
-                return error_format
-        
-        elif "query_child" in parsed_info:
-            # 直接子关系判定
-            try:
-                parts = parsed_info["query_child"].split(",")
-                parent = int(parts[0].strip())
-                child = int(parts[1].strip())
-                
-                if parent < 1 or parent > self.n or child < 1 or child > self.n:
-                    return error_node
-                
-                is_child = child in self.children_map[parent]
-                return yes_res if is_child else no_res
-            except:
-                return error_format
-        
-        elif "query_compare" in parsed_info:
-            # 子数量比较
-            try:
-                parts = parsed_info["query_compare"].split(",")
-                node_a = int(parts[0].strip())
-                node_b = int(parts[1].strip())
-                
-                if node_a < 1 or node_a > self.n or node_b < 1 or node_b > self.n:
-                    return error_node
-                
-                count_a = len(self.children_map[node_a])
-                count_b = len(self.children_map[node_b])
-                
-                return yes_res if count_a > count_b else no_res
-            except:
-                return error_format
-        
-        elif "hypothesis" in parsed_info:
-            # 规律假设声明（仅记录，不做判定）
-            if self.config.language == "zh":
-                return "已记录你的假设。"
-            else:
-                return "Hypothesis recorded."
-        
+
         else:
-            raise ValueError("No valid query tag found.")
+            return error_format
+
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        elements = sorted(list(self.pos_map.keys()))
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+
+        for other in elements:
+            if other == self.target:
+                continue
+            query_str = f"<query_before>{self.target},{other}</query_before>"
+            result = self.pos_map[self.target] < self.pos_map[other]
+            queries.append({
+                "query": query_str,
+                "answer": yes_res if result else no_res
+            })
+
+        for other in elements:
+            if other == self.target:
+                continue
+            query_str = f"<query_adj>{self.target},{other}</query_adj>"
+            result = abs(self.pos_map[self.target] - self.pos_map[other]) == 1
+            queries.append({
+                "query": query_str,
+                "answer": yes_res if result else no_res
+            })
+
+        return queries
 
     def _cf_make_wrong(self, correct: str) -> str:
-        lang = self.config.language
-        yes_res, no_res = ("是", "否") if lang == "zh" else ("Yes", "No")
-
-        # 是/否 返回值（query_child / query_compare）
-        if correct == yes_res: return no_res
-        if correct == no_res:  return yes_res
-
-        # 纯整数（query_count）
-        if correct.strip().lstrip('-').isdigit():
-            val = int(correct.strip())
-            return str(val + 1) if val >= 0 else str(val - 1)
-
-        # 列表格式（query_full）：[] 或 [1,2,3]
-        if correct.startswith("[") and correct.endswith("]"):
-            inner = correct[1:-1].strip()
-            if not inner:
-                return "[999]"
-            try:
-                nums = [int(x.strip()) for x in inner.split(",")]
-                # 删除第一个元素而不是修改，确保制造的错误与原答案明显不同
-                if len(nums) > 1:
-                    return "[" + ",".join(str(x) for x in nums[1:]) + "]"
-                else:
-                    # 只有一个元素，改为空
-                    return "[]"
-            except Exception:
-                pass
-
-        # hypothesis 的回复（固定文本）
-        if correct in ("已记录你的假设。", "Hypothesis recorded."):
-            return correct  # hypothesis 不需要制造错误，返回原值即可
-
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if self.config.language == "zh":
+            if "是" in correct:
+                return correct.replace("是", "否")
+            elif "否" in correct:
+                return correct.replace("否", "是")
+        else:
+            correct_lower = correct.lower()
+            if "yes" in correct_lower:
+                return correct.replace("Yes", "No").replace("yes", "no").replace("YES", "NO")
+            elif "no" in correct_lower:
+                return correct.replace("No", "Yes").replace("no", "yes").replace("NO", "YES")
+        
         return correct + "_WRONG"

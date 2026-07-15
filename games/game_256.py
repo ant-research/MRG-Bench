@@ -1,711 +1,855 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   元素频次：某给定元素在序列中出现了多少次
-# ============================================================
-
 from .base import Game
-import random
+import re
+import itertools
 
-
-class SchemeInferenceGame(Game):
+class GraphRuleInferenceGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"方案推断"游戏，规则如下：
+我们来玩一个"图规则推理"游戏，规则如下：
 
-游戏设定了一个长度为 {n} 的有序二值序列（每个位置的值为 0 或 1）。我已经秘密选择了一个序列，同时也秘密选择了三种候选编码方案之一（方案 A、B 或 C）。在整个游戏过程中，序列和方案都不会改变。
+游戏设定了一个包含 12 个节点的集合 V，每个节点用一对公开属性 (A,B) 标识，其中 A 属于 {{1,2,3}}，B 属于 {{1,2,3,4}}。所有 12 种 (A,B) 组合各出现一次。
 
-三种编码方案的定义如下（其中 k 表示某个区间内 1 的个数）：
+存在一个固定但未知的无向简单图 G=(V,E)。边集 E 由一个隐藏的判定规则 R 决定，该规则对任意两个不同节点判断它们之间是否存在边。
 
-- **方案 A**（分桶规则）：
-  - 当 k = 0 时，返回符号 "α"
-  - 当 k = 1 时，返回符号 "β"
-  - 当 k 大于等于 2 时，返回符号 "γ"
+我已经指定了起点 s={start} 和终点 t={end}，保证存在至少一条从 s 到 t 的合法路径。
 
-- **方案 B**（模 3 规则）：
-  - 当 k 除以 3 余 0 时，返回符号 "α"
-  - 当 k 除以 3 余 1 时，返回符号 "β"
-  - 当 k 除以 3 余 2 时，返回符号 "γ"
+你的目标是：通过查询推断出规则 R，并在未被直接试探过的节点对上进行正确预测，同时给出一条新的从 s 到 t 的合法路径。
 
-- **方案 C**（奇偶规则）：
-  - 当 k = 0 时，返回符号 "α"
-  - 当 k 为奇数时，返回符号 "β"
-  - 当 k 为偶数且 k 大于等于 2 时，返回符号 "γ"
+你可以进行"路径合法性查询"：提交一个长度 k（k 大于等于 2）的节点序列。
 
-你的目标是通过尽可能少的区间查询，推断出：
-1. 我实际采用的编码方案（A、B 或 C）
-2. 整个序列中 1 的总个数
+- 查询格式：节点用 (A,B) 表示，多个节点用分号分隔
+- 反馈：
+  - 若序列中所有相邻节点对都存在边，回答"是"
+  - 否则回答"否"，并给出首个不合法相邻对的位置索引（从 1 开始）
 
-你可以反复进行以下操作：
+注意：在提交最终答案前，你需要完成至少 8 次不同的查询，其中至少 5 次为长度 2 的查询，至少 3 次为长度大于等于 3 的查询。
 
-**区间查询**：询问某个区间 [L, R] 的编码反馈（L 和 R 都是从 1 到 {n} 的整数，且 L 小于等于 R）。我会根据该区间内 1 的个数和我选择的方案，返回对应的符号（α、β 或 γ）。
+路径合法性查询：
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+当你收集足够信息后，需要一次性提交：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 规则描述：用自然语言描述你推断的边判定规则
+2. 从 s 到 t 的路径：所有相邻节点对必须是之前查询中未出现过的
+3. 额外预测：提交 4 个未在之前查询中出现过的节点对，其中 2 个标注为"连边"，2 个标注为"非连边"
 
-- 区间查询（例如查询区间 [2, 5]）：
-<query_range>2,5</query_range>
+提交格式：
+<answer>
+rule: [你推断的规则描述]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 
-- 提交最终答案（例如方案 A，总数 7）：
-<answer>scheme=A, total=7</answer>
+例如：
+<answer>
+rule: 当且仅当两个节点的 A 属性相同时存在边
+path: (1,1);(1,2);(1,3)
+predictions: (1,1)-(1,4):connected, (2,1)-(2,3):connected, (1,2)-(2,1):not_connected, (1,3)-(3,2):not_connected
+</answer>
 """
 
     game_rule_en = """\
-Let's play a "Scheme Inference" game. Here are the rules:
+Let's play a "Graph Rule Inference" game. Here are the rules:
 
-There is an ordered binary sequence of length {n} (each position is either 0 or 1). I have secretly chosen a sequence, and also secretly selected one of three candidate encoding schemes (Scheme A, B, or C). Throughout the game, both the sequence and the scheme remain unchanged.
+The game defines a set V of 12 nodes. Each node is identified by a pair of public attributes (A,B), where A is in {{1,2,3}} and B is in {{1,2,3,4}}. All 12 (A,B) combinations appear exactly once.
 
-The three encoding schemes are defined as follows (where k represents the count of 1s in a given interval):
+There exists a fixed but unknown undirected simple graph G=(V,E). The edge set E is determined by a hidden decision rule R, which judges whether an edge exists between any two distinct nodes.
 
-- **Scheme A** (Bucket Rule):
-  - When k = 0, return symbol "α"
-  - When k = 1, return symbol "β"
-  - When k is greater than or equal to 2, return symbol "γ"
+I have specified a start node s={start} and an end node t={end}, and guarantee that at least one valid path exists from s to t.
 
-- **Scheme B** (Modulo 3 Rule):
-  - When k modulo 3 equals 0, return symbol "α"
-  - When k modulo 3 equals 1, return symbol "β"
-  - When k modulo 3 equals 2, return symbol "γ"
+Your goal is: infer rule R through queries, make correct predictions on untested node pairs, and provide a new valid path from s to t.
 
-- **Scheme C** (Parity Rule):
-  - When k = 0, return symbol "α"
-  - When k is odd, return symbol "β"
-  - When k is even and k is greater than or equal to 2, return symbol "γ"
+You can make "path validity queries": submit a node sequence of length k (k is greater than or equal to 2).
 
-Your goal is to infer, using as few range queries as possible:
-1. The encoding scheme I actually used (A, B, or C)
-2. The total count of 1s in the entire sequence
+- Query format: nodes are represented as (A,B), multiple nodes separated by semicolons
+- Feedback:
+  - If all adjacent node pairs in the sequence have edges, answer "Yes"
+  - Otherwise answer "No" and provide the position index of the first invalid adjacent pair (starting from 1)
 
-You can repeatedly perform the following operation:
+Note: Before submitting the final answer, you need to complete at least 8 different queries, with at least 5 queries of length 2 and at least 3 queries of length greater than or equal to 3.
 
-**Range Query**: Ask for the encoding feedback of an interval [L, R] (L and R are integers from 1 to {n}, and L is less than or equal to R). I will return the corresponding symbol (α, β, or γ) based on the count of 1s in that interval and my chosen scheme.
+Path validity query:
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+When you have collected enough information, submit all at once:
 
-## Query and Answer Format (must strictly follow)
+1. Rule description: describe your inferred edge decision rule in natural language
+2. Path from s to t: all adjacent node pairs must not have appeared in previous queries
+3. Additional predictions: submit 4 node pairs not appearing in previous queries, with 2 labeled as "connected" and 2 as "not_connected"
 
-- Range Query (e.g., querying interval [2, 5]):
-<query_range>2,5</query_range>
+Submission format:
+<answer>
+rule: [your inferred rule description]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 
-- Submit Final Answer (e.g., Scheme A, total 7):
-<answer>scheme=A, total=7</answer>
+Example:
+<answer>
+rule: An edge exists if and only if two nodes have the same A attribute
+path: (1,1);(1,2);(1,3)
+predictions: (1,1)-(1,4):connected, (2,1)-(2,3):connected, (1,2)-(2,1):not_connected, (1,3)-(3,2):not_connected
+</answer>
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-这是一套用于城市道路的“交通信号波段推断”系统。系统监控着一条包含 {n} 个连续路段的主干道（每个路段的状态为 0 代表畅通，1 代表拥堵）。系统已经秘密记录了当前的拥堵序列，同时秘密选择了一种信号灯调度方案（方案 A、B 或 C）。在整个推断过程中，路况序列和调度方案都不会改变。
+欢迎使用“智能交通路网规划系统”。你需要推断出隐藏的航线开通规则。
 
-三种调度方案的定义如下（其中 k 表示某个路段区间内拥堵路段的个数）：
+系统设定了一个包含 12 个交通枢纽的集合 V，每个枢纽用一对公开属性 (A,B) 标识，其中 A 代表枢纽所在区域（属于 {{1,2,3}}），B 代表枢纽的吞吐量等级（属于 {{1,2,3,4}}）。所有 12 种 (A,B) 组合各出现一次。
 
-- **方案 A**（阈值规则）：
-  - 当 k = 0 时，返回信号 "α"
-  - 当 k = 1 时，返回信号 "β"
-  - 当 k 大于等于 2 时，返回信号 "γ"
+存在一个固定但未知的路网无向图 G=(V,E)。边集 E 由一个隐藏的判定规则 R 决定，该规则判断任意两个不同枢纽之间是否允许开通直达路线（即是否存在连边）。
 
-- **方案 B**（周期规则）：
-  - 当 k 除以 3 余 0 时，返回信号 "α"
-  - 当 k 除以 3 余 1 时，返回信号 "β"
-  - 当 k 除以 3 余 2 时，返回信号 "γ"
+我已经指定了起点枢纽 s={start} 和终点枢纽 t={end}，保证存在至少一条从 s 到 t 的合法路线。
 
-- **方案 C**（奇偶规则）：
-  - 当 k = 0 时，返回信号 "α"
-  - 当 k 为奇数时，返回信号 "β"
-  - 当 k 为偶数且 k 大于等于 2 时，返回信号 "γ"
+你的目标是：通过查询推断出规则 R，并在未被直接试探过的枢纽对上进行正确预测，同时给出一条新的从 s 到 t 的合法路线。
 
-你的目标是通过尽可能少的区间查询，推断出：
-1. 系统实际采用的调度方案（A、B 或 C）
-2. 整个干道中拥堵路段（1）的总个数
+你可以进行"路线合法性查询"：提交一个长度 k（k 大于等于 2）的枢纽序列。
 
-你可以反复进行以下操作：
+- 查询格式：枢纽用 (A,B) 表示，多个枢纽用分号分隔
+- 反馈：
+  - 若序列中所有相邻枢纽对都允许开通直达路线，回答"是"
+  - 否则回答"否"，并给出首个不合法相邻对的位置索引（从 1 开始）
 
-**区间查询**：询问某个区间 [L, R] 的信号反馈（L 和 R 都是从 1 到 {n} 的整数，且 L 小于等于 R）。系统会根据该区间内拥堵路段的个数和所选方案，返回对应的符号（α、β 或 γ）。
+注意：在提交最终答案前，你需要完成至少 8 次不同的查询，其中至少 5 次为长度 2 的查询，至少 3 次为长度大于等于 3 的查询。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，推断失败。
+路线合法性查询：
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集足够信息后，需要一次性提交：
 
-- 区间查询（例如查询区间 [2, 5]）：
-<query_range>2,5</query_range>
+1. 规则描述：用自然语言描述你推断的直达路线判定规则（请在描述中包含 A 属性和 B 属性等关键词）
+2. 从 s 到 t 的路线：所有相邻枢纽对必须是之前查询中未出现过的
+3. 额外预测：提交 4 个未在之前查询中出现过的枢纽对，其中 2 个标注为"connected"（可连通），2 个标注为"not_connected"（不可连通）
 
-- 提交最终答案（例如方案 A，总数 7）：
-<answer>scheme=A, total=7</answer>
+提交格式：
+<answer>
+rule: [你推断的规则描述]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
+
+例如：
+<answer>
+rule: 当且仅当两个枢纽的区域 A 属性相同时允许开通路线
+path: (1,1);(1,2);(1,3)
+predictions: (1,1)-(1,4):connected, (2,1)-(2,3):connected, (1,2)-(2,1):not_connected, (1,3)-(3,2):not_connected
+</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-This is a "Traffic Signal Band Inference" system for urban roads. The system monitors a main road consisting of {n} continuous segments (each segment's state is 0 for clear, or 1 for congested). A sequence has been secretly recorded, and one of three signal scheduling schemes (Scheme A, B, or C) has been secretly selected. Throughout the process, neither the traffic sequence nor the scheme will change.
+Welcome to the "Intelligent Traffic Network Planning System". You need to infer the hidden route opening rules.
 
-The three scheduling schemes are defined as follows (where k represents the count of congested segments, or 1s, in a given interval):
+The system defines a set V of 12 traffic hubs. Each hub is identified by a pair of public attributes (A,B), where A represents the zone (in {{1,2,3}}) and B represents the throughput level (in {{1,2,3,4}}). All 12 (A,B) combinations appear exactly once.
 
-- **Scheme A** (Threshold Rule):
-  - When k = 0, return symbol "α"
-  - When k = 1, return symbol "β"
-  - When k is greater than or equal to 2, return symbol "γ"
+There exists a fixed but unknown undirected network graph G=(V,E). The edge set E is determined by a hidden decision rule R, which judges whether a direct route is allowed between any two distinct hubs (i.e., whether an edge exists).
 
-- **Scheme B** (Cyclic Rule):
-  - When k modulo 3 equals 0, return symbol "α"
-  - When k modulo 3 equals 1, return symbol "β"
-  - When k modulo 3 equals 2, return symbol "γ"
+I have specified a start hub s={start} and an end hub t={end}, and guarantee that at least one valid transport route exists from s to t.
 
-- **Scheme C** (Parity Rule):
-  - When k = 0, return symbol "α"
-  - When k is odd, return symbol "β"
-  - When k is even and k is greater than or equal to 2, return symbol "γ"
+Your goal is: infer rule R through queries, make correct predictions on untested hub pairs, and provide a new valid route from s to t.
 
-Your goal is to infer, using as few range queries as possible:
-1. The scheduling scheme actually used (A, B, or C)
-2. The total count of congested segments (1s) in the entire road
+You can make "route validity queries": submit a hub sequence of length k (k is greater than or equal to 2).
 
-You can repeatedly perform the following operation:
+- Query format: hubs are represented as (A,B), multiple hubs separated by semicolons
+- Feedback:
+  - If all adjacent hub pairs in the sequence allow direct routes, answer "Yes"
+  - Otherwise answer "No" and provide the position index of the first invalid adjacent pair (starting from 1)
 
-**Range Query**: Ask for the signal feedback of an interval [L, R] (L and R are integers from 1 to {n}, and L is less than or equal to R). The system will return the corresponding symbol (α, β, or γ) based on the count of 1s in that interval and the chosen scheme.
+Note: Before submitting the final answer, you need to complete at least 8 different queries, with at least 5 queries of length 2 and at least 3 queries of length greater than or equal to 3.
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
+Route validity query:
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## Query and Answer Format (must strictly follow)
+When you have collected enough information, submit all at once:
 
-- Range Query (e.g., querying interval [2, 5]):
-<query_range>2,5</query_range>
+1. Rule description: describe your inferred direct route decision rule in natural language (please include keywords like A and B attributes)
+2. Route from s to t: all adjacent hub pairs must not have appeared in previous queries
+3. Additional predictions: submit 4 hub pairs not appearing in previous queries, with 2 labeled as "connected" and 2 as "not_connected"
 
-- Submit Final Answer (e.g., Scheme A, total 7):
-<answer>scheme=A, total=7</answer>
+Submission format:
+<answer>
+rule: [your inferred rule description]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
+
+Example:
+<answer>
+rule: A direct route is allowed if and only if two hubs have the same A attribute
+path: (1,1);(1,2);(1,3)
+predictions: (1,1)-(1,4):connected, (2,1)-(2,3):connected, (1,2)-(2,1):not_connected, (1,3)-(3,2):not_connected
+</answer>
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-这是一套“医疗基因筛查”辅助分析系统。系统针对包含 {n} 个连续靶点的DNA序列进行测序（每个靶点的值为 0 代表正常，1 代表突变）。系统已经秘密锁定了一组患者序列，同时秘密采用了一种临床评估方案（方案 A、B 或 C）。在整个分析过程中，序列和方案都不会改变。
+欢迎使用“医疗会诊协作系统”。你需要推断出隐藏的跨科室协作规则。
 
-三种评估方案的定义如下（其中 k 表示某个测序区间内突变靶点的个数）：
+系统设定了一个包含 12 位医疗专家的集合 V，每位专家用一对公开属性 (A,B) 标识，其中 A 代表专业大类（属于 {{1,2,3}}），B 代表专家职级（属于 {{1,2,3,4}}）。所有 12 种 (A,B) 组合各出现一次。
 
-- **方案 A**（阈值规则）：
-  - 当 k = 0 时，返回临床级 "α"
-  - 当 k = 1 时，返回临床级 "β"
-  - 当 k 大于等于 2 时，返回临床级 "γ"
+存在一个固定但未知的协作网络无向图 G=(V,E)。边集 E 由一个隐藏的判定规则 R 决定，该规则判断任意两位不同专家之间是否允许发起联合会诊（即是否存在连边）。
 
-- **方案 B**（周期规则）：
-  - 当 k 除以 3 余 0 时，返回临床级 "α"
-  - 当 k 除以 3 余 1 时，返回临床级 "β"
-  - 当 k 除以 3 余 2 时，返回临床级 "γ"
+我已经指定了起始专家 s={start} 和终点专家 t={end}，保证存在至少一条从 s 到 t 的合法联合会诊路径。
 
-- **方案 C**（奇偶规则）：
-  - 当 k = 0 时，返回临床级 "α"
-  - 当 k 为奇数时，返回临床级 "β"
-  - 当 k 为偶数且 k 大于等于 2 时，返回临床级 "γ"
+你的目标是：通过查询推断出规则 R，并在未被直接试探过的专家对上进行正确预测，同时给出一条新的从 s 到 t 的合法会诊流转路径。
 
-你的目标是通过尽可能少的区间查询，推断出：
-1. 实际采用的临床评估方案（A、B 或 C）
-2. 整个序列中突变靶点（1）的总个数
+你可以进行"会诊路径合法性查询"：提交一个长度 k（k 大于等于 2）的专家序列。
 
-你可以反复进行以下操作：
+- 查询格式：专家用 (A,B) 表示，多个专家用分号分隔
+- 反馈：
+  - 若序列中所有相邻专家对都允许联合会诊，回答"是"
+  - 否则回答"否"，并给出首个不合法相邻对的位置索引（从 1 开始）
 
-**区间查询**：询问某个区间 [L, R] 的分析反馈（L 和 R 都是从 1 到 {n} 的整数，且 L 小于等于 R）。系统会根据该区间内突变靶点的个数和所选方案，返回对应的符号（α、β 或 γ）。
+注意：在提交最终答案前，你需要完成至少 8 次不同的查询，其中至少 5 次为长度 2 的查询，至少 3 次为长度大于等于 3 的查询。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，分析失败。
+会诊路径合法性查询：
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集足够信息后，需要一次性提交：
 
-- 区间查询（例如查询区间 [2, 5]）：
-<query_range>2,5</query_range>
+1. 规则描述：用自然语言描述你推断的联合会诊判定规则（请在描述中包含 A 属性和 B 属性等关键词）
+2. 从 s 到 t 的路径：所有相邻专家对必须是之前查询中未出现过的
+3. 额外预测：提交 4 个未在之前查询中出现过的专家对，其中 2 个标注为"connected"（允许会诊），2 个标注为"not_connected"（不允许会诊）
 
-- 提交最终答案（例如方案 A，总数 7）：
-<answer>scheme=A, total=7</answer>
+提交格式：
+<answer>
+rule: [你推断的规则描述]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-This is a "Medical Genetic Screening" auxiliary analysis system. The system sequences a DNA strand with {n} continuous target loci (each locus is 0 for normal, or 1 for mutated). The system has secretly locked in a patient sequence and secretly adopted one of three clinical evaluation schemes (Scheme A, B, or C). Throughout the analysis, neither the sequence nor the scheme will change.
+Welcome to the "Medical Consultation Collaboration System". You need to infer the hidden cross-departmental collaboration rules.
 
-The three evaluation schemes are defined as follows (where k represents the count of mutated loci, or 1s, in a given interval):
+The system defines a set V of 12 medical experts. Each expert is identified by a pair of public attributes (A,B), where A represents the specialty category (in {{1,2,3}}) and B represents the rank (in {{1,2,3,4}}). All 12 (A,B) combinations appear exactly once.
 
-- **Scheme A** (Threshold Rule):
-  - When k = 0, return clinical grade "α"
-  - When k = 1, return clinical grade "β"
-  - When k is greater than or equal to 2, return clinical grade "γ"
+There exists a fixed but unknown undirected collaboration network graph G=(V,E). The edge set E is determined by a hidden decision rule R, which judges whether any two distinct experts are allowed to initiate a joint consultation (i.e., whether an edge exists).
 
-- **Scheme B** (Cyclic Rule):
-  - When k modulo 3 equals 0, return clinical grade "α"
-  - When k modulo 3 equals 1, return clinical grade "β"
-  - When k modulo 3 equals 2, return clinical grade "γ"
+I have specified a start expert s={start} and an end expert t={end}, and guarantee that at least one valid consultation path exists from s to t.
 
-- **Scheme C** (Parity Rule):
-  - When k = 0, return clinical grade "α"
-  - When k is odd, return clinical grade "β"
-  - When k is even and k is greater than or equal to 2, return clinical grade "γ"
+Your goal is: infer rule R through queries, make correct predictions on untested expert pairs, and provide a new valid path from s to t.
 
-Your goal is to infer, using as few range queries as possible:
-1. The evaluation scheme actually used (A, B, or C)
-2. The total count of mutated loci (1s) in the entire sequence
+You can make "consultation path validity queries": submit an expert sequence of length k (k is greater than or equal to 2).
 
-You can repeatedly perform the following operation:
+- Query format: experts are represented as (A,B), multiple experts separated by semicolons
+- Feedback:
+  - If all adjacent expert pairs in the sequence allow joint consultations, answer "Yes"
+  - Otherwise answer "No" and provide the position index of the first invalid adjacent pair (starting from 1)
 
-**Range Query**: Ask for the analytical feedback of an interval [L, R] (L and R are integers from 1 to {n}, and L is less than or equal to R). The system will return the corresponding symbol (α, β, or γ) based on the count of 1s in that interval and the chosen scheme.
+Note: Before submitting the final answer, you need to complete at least 8 different queries, with at least 5 queries of length 2 and at least 3 queries of length greater than or equal to 3.
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the analysis fails.
+Consultation path validity query:
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## Query and Answer Format (must strictly follow)
+When you have collected enough information, submit all at once:
 
-- Range Query (e.g., querying interval [2, 5]):
-<query_range>2,5</query_range>
+1. Rule description: describe your inferred consultation decision rule in natural language (please include keywords like A and B attributes)
+2. Path from s to t: all adjacent expert pairs must not have appeared in previous queries
+3. Additional predictions: submit 4 expert pairs not appearing in previous queries, with 2 labeled as "connected" and 2 as "not_connected"
 
-- Submit Final Answer (e.g., Scheme A, total 7):
-<answer>scheme=A, total=7</answer>
+Submission format:
+<answer>
+rule: [your inferred rule description]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-这是一套“教育知识点掌握度推断”系统。系统记录了学生对 {n} 个连续核心知识点的测试情况（每个知识点的值为 0 代表未掌握，1 代表已掌握）。系统秘密选取了一名学生的测试序列，并隐式套用了一种学情评估方案（方案 A、B 或 C）。在整个诊断过程中，掌握序列和评估方案都不会改变。
+欢迎使用“智能教育课程编排系统”。你需要推断出隐藏的课程关联规则。
 
-三种评估方案的定义如下（其中 k 表示某个知识点区间内已掌握知识点的个数）：
+系统设定了一个包含 12 门课程的集合 V，每门课程用一对公开属性 (A,B) 标识，其中 A 代表学科领域（属于 {{1,2,3}}），B 代表课程难度阶段（属于 {{1,2,3,4}}）。所有 12 种 (A,B) 组合各出现一次。
 
-- **方案 A**（阶梯规则）：
-  - 当 k = 0 时，返回评级 "α"
-  - 当 k = 1 时，返回评级 "β"
-  - 当 k 大于等于 2 时，返回评级 "γ"
+存在一个固定但未知的课程关联无向图 G=(V,E)。边集 E 由一个隐藏的判定规则 R 决定，该规则判断任意两门不同课程之间是否可以建立关联学习路径（即是否存在连边）。
 
-- **方案 B**（周期规则）：
-  - 当 k 除以 3 余 0 时，返回评级 "α"
-  - 当 k 除以 3 余 1 时，返回评级 "β"
-  - 当 k 除以 3 余 2 时，返回评级 "γ"
+我已经指定了起点课程 s={start} 和终点课程 t={end}，保证存在至少一条从 s 到 t 的合法连贯学习路径。
 
-- **方案 C**（奇偶规则）：
-  - 当 k = 0 时，返回评级 "α"
-  - 当 k 为奇数时，返回评级 "β"
-  - 当 k 为偶数且 k 大于等于 2 时，返回评级 "γ"
+你的目标是：通过查询推断出规则 R，并在未被直接试探过的课程对上进行正确预测，同时给出一条新的从 s 到 t 的合法学习路径。
 
-你的目标是通过尽可能少的区间查询，推断出：
-1. 系统实际套用的评估方案（A、B 或 C）
-2. 该生整体已掌握知识点（1）的总个数
+你可以进行"学习路径合法性查询"：提交一个长度 k（k 大于等于 2）的课程序列。
 
-你可以反复进行以下操作：
+- 查询格式：课程用 (A,B) 表示，多门课程用分号分隔
+- 反馈：
+  - 若序列中所有相邻课程对都允许建立关联学习路径，回答"是"
+  - 否则回答"否"，并给出首个不合法相邻对的位置索引（从 1 开始）
 
-**区间查询**：询问某个区间 [L, R] 的学情反馈（L 和 R 都是从 1 到 {n} 的整数，且 L 小于等于 R）。系统会根据该区间内已掌握知识点的个数和所选方案，返回对应的符号（α、β 或 γ）。
+注意：在提交最终答案前，你需要完成至少 8 次不同的查询，其中至少 5 次为长度 2 的查询，至少 3 次为长度大于等于 3 的查询。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，诊断失败。
+学习路径合法性查询：
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集足够信息后，需要一次性提交：
 
-- 区间查询（例如查询区间 [2, 5]）：
-<query_range>2,5</query_range>
+1. 规则描述：用自然语言描述你推断的课程关联判定规则（请在描述中包含 A 属性和 B 属性等关键词）
+2. 从 s 到 t 的路径：所有相邻课程对必须是之前查询中未出现过的
+3. 额外预测：提交 4 个未在之前查询中出现过的课程对，其中 2 个标注为"connected"（可关联），2 个标注为"not_connected"（不可关联）
 
-- 提交最终答案（例如方案 A，总数 7）：
-<answer>scheme=A, total=7</answer>
+提交格式：
+<answer>
+rule: [你推断的规则描述]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-This is an "Education Knowledge Mastery Inference" system. The system records a student's test results across {n} continuous core knowledge points (each point is 0 for unmastered, or 1 for mastered). The system has secretly selected a student's sequence and implicitly applied an academic evaluation scheme (Scheme A, B, or C). Throughout the diagnosis, neither the sequence nor the scheme will change.
+Welcome to the "Intelligent Education Course Scheduling System". You need to infer the hidden course association rules.
 
-The three evaluation schemes are defined as follows (where k represents the count of mastered knowledge points, or 1s, in a given interval):
+The system defines a set V of 12 courses. Each course is identified by a pair of public attributes (A,B), where A represents the subject area (in {{1,2,3}}) and B represents the difficulty phase (in {{1,2,3,4}}). All 12 (A,B) combinations appear exactly once.
 
-- **Scheme A** (Tier Rule):
-  - When k = 0, return grade "α"
-  - When k = 1, return grade "β"
-  - When k is greater than or equal to 2, return grade "γ"
+There exists a fixed but unknown undirected course association graph G=(V,E). The edge set E is determined by a hidden decision rule R, which judges whether an associated learning path can be established between any two distinct courses (i.e., whether an edge exists).
 
-- **Scheme B** (Cyclic Rule):
-  - When k modulo 3 equals 0, return grade "α"
-  - When k modulo 3 equals 1, return grade "β"
-  - When k modulo 3 equals 2, return grade "γ"
+I have specified a start course s={start} and an end course t={end}, and guarantee that at least one valid learning path exists from s to t.
 
-- **Scheme C** (Parity Rule):
-  - When k = 0, return grade "α"
-  - When k is odd, return grade "β"
-  - When k is even and k is greater than or equal to 2, return grade "γ"
+Your goal is: infer rule R through queries, make correct predictions on untested course pairs, and provide a new valid path from s to t.
 
-Your goal is to infer, using as few range queries as possible:
-1. The evaluation scheme actually applied (A, B, or C)
-2. The total count of mastered knowledge points (1s) overall
+You can make "learning path validity queries": submit a course sequence of length k (k is greater than or equal to 2).
 
-You can repeatedly perform the following operation:
+- Query format: courses are represented as (A,B), multiple courses separated by semicolons
+- Feedback:
+  - If all adjacent course pairs in the sequence allow associated learning paths, answer "Yes"
+  - Otherwise answer "No" and provide the position index of the first invalid adjacent pair (starting from 1)
 
-**Range Query**: Ask for the academic feedback of an interval [L, R] (L and R are integers from 1 to {n}, and L is less than or equal to R). The system will return the corresponding symbol (α, β, or γ) based on the count of 1s in that interval and the chosen scheme.
+Note: Before submitting the final answer, you need to complete at least 8 different queries, with at least 5 queries of length 2 and at least 3 queries of length greater than or equal to 3.
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the diagnosis fails.
+Learning path validity query:
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## Query and Answer Format (must strictly follow)
+When you have collected enough information, submit all at once:
 
-- Range Query (e.g., querying interval [2, 5]):
-<query_range>2,5</query_range>
+1. Rule description: describe your inferred course association decision rule in natural language (please include keywords like A and B attributes)
+2. Path from s to t: all adjacent course pairs must not have appeared in previous queries
+3. Additional predictions: submit 4 course pairs not appearing in previous queries, with 2 labeled as "connected" and 2 as "not_connected"
 
-- Submit Final Answer (e.g., Scheme A, total 7):
-<answer>scheme=A, total=7</answer>
+Submission format:
+<answer>
+rule: [your inferred rule description]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-这是一套“工业流水线良率分析”系统。系统追踪了同一批次下连续的 {n} 个检测工位（每个工位的值为 0 代表合格，1 代表存在缺陷）。质控中心秘密锁定了一个批次的质控序列，同时预设了一种缺陷分级方案（方案 A、B 或 C）。在整个排查过程中，缺陷序列和分级方案都不会改变。
+欢迎使用“工业柔性制造调度系统”。你需要推断出隐藏的工序流转规则。
 
-三种分级方案的定义如下（其中 k 表示某个工位区间内存在缺陷的工位个数）：
+系统设定了一个包含 12 个加工工序的集合 V，每个工序用一对公开属性 (A,B) 标识，其中 A 代表工艺类型（属于 {{1,2,3}}），B 代表洁净等级（属于 {{1,2,3,4}}）。所有 12 种 (A,B) 组合各出现一次。
 
-- **方案 A**（阈值规则）：
-  - 当 k = 0 时，返回指令 "α"
-  - 当 k = 1 时，返回指令 "β"
-  - 当 k 大于等于 2 时，返回指令 "γ"
+存在一个固定但未知的物料流转无向图 G=(V,E)。边集 E 由一个隐藏的判定规则 R 决定，该规则判断任意两个不同工序之间是否允许直接流转物料（即是否存在连边）。
 
-- **方案 B**（周期规则）：
-  - 当 k 除以 3 余 0 时，返回指令 "α"
-  - 当 k 除以 3 余 1 时，返回指令 "β"
-  - 当 k 除以 3 余 2 时，返回指令 "γ"
+我已经指定了起点工序 s={start} 和终点工序 t={end}，保证存在至少一条从 s 到 t 的合法流转路径。
 
-- **方案 C**（奇偶规则）：
-  - 当 k = 0 时，返回指令 "α"
-  - 当 k 为奇数时，返回指令 "β"
-  - 当 k 为偶数且 k 大于等于 2 时，返回指令 "γ"
+你的目标是：通过查询推断出规则 R，并在未被直接试探过的工序对上进行正确预测，同时给出一条新的从 s 到 t 的合法多道工序流转路径。
 
-你的目标是通过尽可能少的区间查询，推断出：
-1. 质控中心实际预设的分级方案（A、B 或 C）
-2. 整个流水线上存在缺陷的工位（1）总个数
+你可以进行"工序流转路径合法性查询"：提交一个长度 k（k 大于等于 2）的工序序列。
 
-你可以反复进行以下操作：
+- 查询格式：工序用 (A,B) 表示，多个工序用分号分隔
+- 反馈：
+  - 若序列中所有相邻工序对都允许物料直接流转，回答"是"
+  - 否则回答"否"，并给出首个不合法流转相邻对的位置索引（从 1 开始）
 
-**区间查询**：询问某个区间 [L, R] 的干预反馈（L 和 R 都是从 1 到 {n} 的整数，且 L 小于等于 R）。系统会根据该区间内缺陷工位的个数和所选方案，返回对应的符号（α、β 或 γ）。
+注意：在提交最终答案前，你需要完成至少 8 次不同的查询，其中至少 5 次为长度 2 的查询，至少 3 次为长度大于等于 3 的查询。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，排查失败。
+流转路径合法性查询：
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集足够信息后，需要一次性提交：
 
-- 区间查询（例如查询区间 [2, 5]）：
-<query_range>2,5</query_range>
+1. 规则描述：用自然语言描述你推断的物料流转判定规则（请在描述中包含 A 属性和 B 属性等关键词）
+2. 从 s 到 t 的流转路径：所有相邻工序对必须是之前查询中未出现过的
+3. 额外预测：提交 4 个未在之前查询中出现过的工序对，其中 2 个标注为"connected"（允许流转），2 个标注为"not_connected"（不允许流转）
 
-- 提交最终答案（例如方案 A，总数 7）：
-<answer>scheme=A, total=7</answer>
+提交格式：
+<answer>
+rule: [你推断的规则描述]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-This is an "Industrial Assembly Line Yield Analysis" system. The system tracks a batch across {n} continuous inspection stations (each station is 0 for pass, or 1 for defect). The quality control center has secretly locked in a batch's sequence and preset a defect grading scheme (Scheme A, B, or C). Throughout the inspection, neither the sequence nor the scheme will change.
+[Manufacturing Scenario]
+Welcome to the "Flexible Manufacturing Scheduling System". You need to infer the hidden process routing rules.
 
-The three grading schemes are defined as follows (where k represents the count of defective stations, or 1s, in a given interval):
+The system defines a set V of 12 manufacturing processes. Each process is identified by a pair of public attributes (A,B), where A represents the process type (in {{1,2,3}}) and B represents the cleanliness grade (in {{1,2,3,4}}). All 12 (A,B) combinations appear exactly once.
 
-- **Scheme A** (Threshold Rule):
-  - When k = 0, return directive "α"
-  - When k = 1, return directive "β"
-  - When k is greater than or equal to 2, return directive "γ"
+There exists a fixed but unknown undirected material flow graph G=(V,E). The edge set E is determined by a hidden decision rule R, which judges whether direct material flow is allowed between any two distinct processes (i.e., whether an edge exists).
 
-- **Scheme B** (Cyclic Rule):
-  - When k modulo 3 equals 0, return directive "α"
-  - When k modulo 3 equals 1, return directive "β"
-  - When k modulo 3 equals 2, return directive "γ"
+I have specified a start process s={start} and an end process t={end}, and guarantee that at least one valid routing path exists from s to t.
 
-- **Scheme C** (Parity Rule):
-  - When k = 0, return directive "α"
-  - When k is odd, return directive "β"
-  - When k is even and k is greater than or equal to 2, return directive "γ"
+Your goal is: infer rule R through queries, make correct predictions on untested process pairs, and provide a new valid routing path from s to t.
 
-Your goal is to infer, using as few range queries as possible:
-1. The defect grading scheme actually preset (A, B, or C)
-2. The total count of defective stations (1s) across the entire line
+You can make "process routing path validity queries": submit a process sequence of length k (k is greater than or equal to 2).
 
-You can repeatedly perform the following operation:
+- Query format: processes are represented as (A,B), multiple processes separated by semicolons
+- Feedback:
+  - If all adjacent process pairs in the sequence allow direct material flow, answer "Yes"
+  - Otherwise answer "No" and provide the position index of the first invalid adjacent pair (starting from 1)
 
-**Range Query**: Ask for the intervention feedback of an interval [L, R] (L and R are integers from 1 to {n}, and L is less than or equal to R). The system will return the corresponding symbol (α, β, or γ) based on the count of 1s in that interval and the chosen scheme.
+Note: Before submitting the final answer, you need to complete at least 8 different queries, with at least 5 queries of length 2 and at least 3 queries of length greater than or equal to 3.
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the inspection fails.
+Routing path validity query:
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## Query and Answer Format (must strictly follow)
+When you have collected enough information, submit all at once:
 
-- Range Query (e.g., querying interval [2, 5]):
-<query_range>2,5</query_range>
+1. Rule description: describe your inferred material flow decision rule in natural language (please include keywords like A and B attributes)
+2. Routing path from s to t: all adjacent process pairs must not have appeared in previous queries
+3. Additional predictions: submit 4 process pairs not appearing in previous queries, with 2 labeled as "connected" and 2 as "not_connected"
 
-- Submit Final Answer (e.g., Scheme A, total 7):
-<answer>scheme=A, total=7</answer>
+Submission format:
+<answer>
+rule: [your inferred rule description]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-这是一套“法律合规风险推断”系统。系统正在审查一份包含 {n} 个连续条款的商业合同（每个条款的值为 0 代表合规，1 代表存在违约风险）。法务模型秘密生成了一条风险序列，并隐式采用了一种风险评级方案（方案 A、B 或 C）。在整个审查过程中，风险序列和评级方案都不会改变。
+欢迎使用“法律合规审查推演系统”。你需要推断出隐藏的审批流转规则。
 
-三种评级方案的定义如下（其中 k 表示某个条款区间内存在风险的条款个数）：
+系统设定了一个包含 12 个审批节点的集合 V，每个节点用一对公开属性 (A,B) 标识，其中 A 代表法域（属于 {{1,2,3}}），B 代表效力层级（属于 {{1,2,3,4}}）。所有 12 种 (A,B) 组合各出现一次。
 
-- **方案 A**（红线规则）：
-  - 当 k = 0 时，返回标记 "α"
-  - 当 k = 1 时，返回标记 "β"
-  - 当 k 大于等于 2 时，返回标记 "γ"
+存在一个固定但未知的合规审查无向图 G=(V,E)。边集 E 由一个隐藏的判定规则 R 决定，该规则判断任意两个不同节点之间是否可以形成合规审查流转许可（即是否存在连边）。
 
-- **方案 B**（仲裁规则）：
-  - 当 k 除以 3 余 0 时，返回标记 "α"
-  - 当 k 除以 3 余 1 时，返回标记 "β"
-  - 当 k 除以 3 余 2 时，返回标记 "γ"
+我已经指定了首位审批节点 s={start} 和末位审批节点 t={end}，保证存在至少一条从 s 到 t 的合法连贯审查链。
 
-- **方案 C**（奇偶规则）：
-  - 当 k = 0 时，返回标记 "α"
-  - 当 k 为奇数时，返回标记 "β"
-  - 当 k 为偶数且 k 大于等于 2 时，返回标记 "γ"
+你的目标是：通过查询推断出规则 R，并在未被直接试探过的节点对上进行正确预测，同时给出一条新的从 s 到 t 的合法合规审批链条。
 
-你的目标是通过尽可能少的区间查询，推断出：
-1. 模型实际采用的风险评级方案（A、B 或 C）
-2. 整个合同中存在违约风险条款（1）的总个数
+你可以进行"合规审批链合法性查询"：提交一个长度 k（k 大于等于 2）的审批节点序列。
 
-你可以反复进行以下操作：
+- 查询格式：节点用 (A,B) 表示，多个节点用分号分隔
+- 反馈：
+  - 若序列中所有相邻节点对都允许合规流转许可，回答"是"
+  - 否则回答"否"，并给出首个不合法流转相邻对的位置索引（从 1 开始）
 
-**区间查询**：询问某个区间 [L, R] 的审核反馈（L 和 R 都是从 1 到 {n} 的整数，且 L 小于等于 R）。系统会根据该区间内风险条款的个数和所选方案，返回对应的符号（α、β 或 γ）。
+注意：在提交最终答案前，你需要完成至少 8 次不同的查询，其中至少 5 次为长度 2 的查询，至少 3 次为长度大于等于 3 的查询。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，审查失败。
+审批链合法性查询：
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## 询问与提交答案的格式（必须严格遵守）
+当你收集足够信息后，需要一次性提交：
 
-- 区间查询（例如查询区间 [2, 5]）：
-<query_range>2,5</query_range>
+1. 规则描述：用自然语言描述你推断的审查流转判定规则（请在描述中包含 A 属性和 B 属性等关键词）
+2. 从 s 到 t 的审查链：所有相邻节点对必须是之前查询中未出现过的
+3. 额外预测：提交 4 个未在之前查询中出现过的节点对，其中 2 个标注为"connected"（允许流转），2 个标注为"not_connected"（不允许流转）
 
-- 提交最终答案（例如方案 A，总数 7）：
-<answer>scheme=A, total=7</answer>
+提交格式：
+<answer>
+rule: [你推断的规则描述]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-This is a "Legal Compliance Risk Inference" system. The system is reviewing a commercial contract containing {n} continuous clauses (each clause is 0 for compliant, or 1 for breach risk). The legal model has secretly generated a risk sequence and implicitly adopted a risk rating scheme (Scheme A, B, or C). Throughout the review process, neither the risk sequence nor the rating scheme will change.
+Welcome to the "Legal Compliance Review System". You need to infer the hidden approval routing rules.
 
-The three rating schemes are defined as follows (where k represents the count of risky clauses, or 1s, in a given interval):
+The system defines a set V of 12 approval nodes. Each node is identified by a pair of public attributes (A,B), where A represents the legal domain (in {{1,2,3}}) and B represents the effectiveness level (in {{1,2,3,4}}). All 12 (A,B) combinations appear exactly once.
 
-- **Scheme A** (Redline Rule):
-  - When k = 0, return flag "α"
-  - When k = 1, return flag "β"
-  - When k is greater than or equal to 2, return flag "γ"
+There exists a fixed but unknown undirected compliance review graph G=(V,E). The edge set E is determined by a hidden decision rule R, which judges whether a compliance review chain can be formed between any two distinct nodes (i.e., whether an edge exists).
 
-- **Scheme B** (Arbitration Rule):
-  - When k modulo 3 equals 0, return flag "α"
-  - When k modulo 3 equals 1, return flag "β"
-  - When k modulo 3 equals 2, return flag "γ"
+I have specified an initial approval node s={start} and a final approval node t={end}, and guarantee that at least one valid compliance review chain exists from s to t.
 
-- **Scheme C** (Parity Rule):
-  - When k = 0, return flag "α"
-  - When k is odd, return flag "β"
-  - When k is even and k is greater than or equal to 2, return flag "γ"
+Your goal is: infer rule R through queries, make correct predictions on untested node pairs, and provide a new valid compliance review chain from s to t.
 
-Your goal is to infer, using as few range queries as possible:
-1. The risk rating scheme actually adopted (A, B, or C)
-2. The total count of clauses with breach risk (1s) in the entire contract
+You can make "compliance review chain validity queries": submit a node sequence of length k (k is greater than or equal to 2).
 
-You can repeatedly perform the following operation:
+- Query format: nodes are represented as (A,B), multiple nodes separated by semicolons
+- Feedback:
+  - If all adjacent node pairs in the sequence allow compliance routing, answer "Yes"
+  - Otherwise answer "No" and provide the position index of the first invalid adjacent pair (starting from 1)
 
-**Range Query**: Ask for the review feedback of an interval [L, R] (L and R are integers from 1 to {n}, and L is less than or equal to R). The system will return the corresponding symbol (α, β, or γ) based on the count of 1s in that interval and the chosen scheme.
+Note: Before submitting the final answer, you need to complete at least 8 different queries, with at least 5 queries of length 2 and at least 3 queries of length greater than or equal to 3.
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the review fails.
+Approval chain validity query:
+<query_path>(1,2);(1,3);(2,4)</query_path>
 
-## Query and Answer Format (must strictly follow)
+When you have collected enough information, submit all at once:
 
-- Range Query (e.g., querying interval [2, 5]):
-<query_range>2,5</query_range>
+1. Rule description: describe your inferred approval routing decision rule in natural language (please include keywords like A and B attributes)
+2. Review chain from s to t: all adjacent node pairs must not have appeared in previous queries
+3. Additional predictions: submit 4 node pairs not appearing in previous queries, with 2 labeled as "connected" and 2 as "not_connected"
 
-- Submit Final Answer (e.g., Scheme A, total 7):
-<answer>scheme=A, total=7</answer>
+Submission format:
+<answer>
+rule: [your inferred rule description]
+path: (A1,B1);(A2,B2);...;(An,Bn)
+predictions: (A1,B1)-(A2,B2):connected, (A3,B3)-(A4,B4):connected, (A5,B5)-(A6,B6):not_connected, (A7,B7)-(A8,B8):not_connected
+</answer>
 """
 
-    tags = ["answer", "query_range"]
-    reasoning_type = "溯因推理"
-    data_structure = "序列"
-
-    # 难度配置说明：
-    # 1 (简单)       - N=8,  总数较小，方案特征明显
-    # 2 (中等偏下)   - N=12, 总数中等，需要多次查询
-    # 3 (中等偏上)   - N=15, 总数较大，方案区分需要更多查询
-    # 4 (较难)       - N=18, 分布复杂，需要策略性查询
-    # 5 (难)         - N=20, 最大长度，需要高效查询策略
+    tags = ["answer", "query_path"]
+    reasoning_type = "归纳推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "n": 8,
-            "sequence": "10100110",
-            "scheme": "A",
+        "zh": {
+            1: {
+                "start": "(1,1)",
+                "end": "(1,4)",
+                "rule_type": "same_A",
+                "rule_desc": "当且仅当两个节点的 A 属性相同时存在边"
+            },
+            2: {
+                "start": "(2,1)",
+                "end": "(2,4)",
+                "rule_type": "B_diff_le_1",
+                "rule_desc": "当且仅当两个节点的 B 属性相差小于等于 1 时存在边"
+            },
+            3: {
+                "start": "(1,1)",
+                "end": "(3,4)",
+                "rule_type": "same_A_or_B",
+                "rule_desc": "当且仅当两个节点的 A 属性相同或 B 属性相同时存在边"
+            },
+            4: {
+                "start": "(1,1)",
+                "end": "(3,4)",
+                "rule_type": "sum_even",
+                "rule_desc": "当且仅当两个节点的 A+B 之和均为偶数或均为奇数时存在边"
+            },
+            5: {
+                "start": "(1,1)",
+                "end": "(3,4)",
+                "rule_type": "adjacent_grid",
+                "rule_desc": "当且仅当两个节点满足以下条件之一时存在边：(1) A 相同且 B 相差小于等于 1；(2) B 相同且 A 相差小于等于 1"
+            }
         },
-        2: {
-            "n": 12,
-            "sequence": "101001101010",
-            "scheme": "B",
-        },
-        3: {
-            "n": 15,
-            "sequence": "110100111010100",
-            "scheme": "C",
-        },
-        4: {
-            "n": 18,
-            "sequence": "101011010110100101",
-            "scheme": "B",
-        },
-        5: {
-            "n": 20,
-            "sequence": "11010011101010010110",
-            "scheme": "A",
-        },
+        "en": {
+            1: {
+                "start": "(1,1)",
+                "end": "(1,4)",
+                "rule_type": "same_A",
+                "rule_desc": "An edge exists if and only if two nodes have the same A attribute"
+            },
+            2: {
+                "start": "(2,1)",
+                "end": "(2,4)",
+                "rule_type": "B_diff_le_1",
+                "rule_desc": "An edge exists if and only if the difference of B attributes is at most 1"
+            },
+            3: {
+                "start": "(1,1)",
+                "end": "(3,4)",
+                "rule_type": "same_A_or_B",
+                "rule_desc": "An edge exists if and only if two nodes have the same A attribute or the same B attribute"
+            },
+            4: {
+                "start": "(1,1)",
+                "end": "(3,4)",
+                "rule_type": "sum_even",
+                "rule_desc": "An edge exists if and only if both nodes have A+B sums of the same parity"
+            },
+            5: {
+                "start": "(1,1)",
+                "end": "(3,4)",
+                "rule_type": "adjacent_grid",
+                "rule_desc": "An edge exists if and only if: (1) nodes have the same A and B differs by at most 1, or (2) nodes have the same B and A differs by at most 1"
+            }
+        }
     }
 
     def __init__(self, config):
+        self.queried_pairs = set()
+        self.query_count = 0
+        self.short_query_count = 0
+        self.long_query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
+        lang = self.config.language
         diff = self.config.difficulty
-        try:
-            diff = int(diff)
-        except (ValueError, TypeError):
+
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        if diff not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported difficulty: {diff}")
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["start"] = cfg["start"]
+        self._game_info["end"] = cfg["end"]
+        
+        self.start_node = self._parse_node(cfg["start"])
+        self.end_node = self._parse_node(cfg["end"])
+        self.rule_type = cfg["rule_type"]
+        self.rule_desc = cfg["rule_desc"]
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
-        self._game_info["n"] = cfg["n"]
-        
-        # 解析序列
-        self.sequence = cfg["sequence"]
-        if len(self.sequence) != cfg["n"]:
-            raise ValueError(f"Sequence length mismatch: expected {cfg['n']}, got {len(self.sequence)}")
-        
-        # 验证序列只含0和1
-        if not all(c in '01' for c in self.sequence):
-            raise ValueError("Sequence must only contain 0 and 1")
-        
-        # 设置编码方案
-        self.scheme = cfg["scheme"]
-        if self.scheme not in ["A", "B", "C"]:
-            raise ValueError(f"Invalid scheme: {self.scheme}")
-        
-        # 计算总数
-        self.total_count = self.sequence.count('1')
+    def _parse_node(self, node_str):
+        match = re.match(r'\((\d+),(\d+)\)', node_str.strip())
+        if not match:
+            return None
+        return (int(match.group(1)), int(match.group(2)))
 
-    def _apply_scheme(self, k):
-        """根据当前方案和计数k，返回对应的符号"""
-        if self.scheme == "A":
-            # 方案A：0→α, 1→β, ≥2→γ
-            if k == 0:
-                return "α"
-            elif k == 1:
-                return "β"
-            else:
-                return "γ"
-        elif self.scheme == "B":
-            # 方案B：k mod 3
-            mod = k % 3
-            if mod == 0:
-                return "α"
-            elif mod == 1:
-                return "β"
-            else:
-                return "γ"
-        elif self.scheme == "C":
-            # 方案C：0→α, 奇数→β, 偶数且≥2→γ
-            if k == 0:
-                return "α"
-            elif k % 2 == 1:
-                return "β"
-            else:
-                return "γ"
+    def _node_to_str(self, node):
+        return f"({node[0]},{node[1]})"
+
+    def _has_edge(self, node1, node2):
+        if node1 == node2:
+            return False
+        
+        a1, b1 = node1
+        a2, b2 = node2
+
+        if self.rule_type == "same_A":
+            return a1 == a2
+        elif self.rule_type == "B_diff_le_1":
+            return abs(b1 - b2) <= 1
+        elif self.rule_type == "same_A_or_B":
+            return a1 == a2 or b1 == b2
+        elif self.rule_type == "sum_even":
+            return (a1 + b1) % 2 == (a2 + b2) % 2
+        elif self.rule_type == "adjacent_grid":
+            return (a1 == a2 and abs(b1 - b2) <= 1) or (b1 == b2 and abs(a1 - a2) <= 1)
         else:
-            raise ValueError(f"Unknown scheme: {self.scheme}")
+            return False
+
+    def _normalize_pair(self, node1, node2):
+        return tuple(sorted([node1, node2]))
+
+    def _check_rule_equivalence(self, described_rule):
+        described_rule_lower = described_rule.lower()
+        
+        if self.rule_type == "same_A":
+            if self.config.language == "zh":
+                keywords = ["a 属性相同", "a属性相同", "a 相同", "a相同"]
+            else:
+                keywords = ["same a", "a attribute", "same a attribute"]
+            return any(kw in described_rule_lower for kw in keywords)
+        
+        elif self.rule_type == "B_diff_le_1":
+            if self.config.language == "zh":
+                keywords = ["b 属性", "b属性", "b 相差", "b相差"]
+                keywords2 = ["1", "小于等于"]
+            else:
+                keywords = ["b attribute", "b differ", "b diff", "difference of b"]
+                keywords2 = ["1", "at most"]
+            return any(kw in described_rule_lower for kw in keywords) and any(kw in described_rule_lower for kw in keywords2)
+        
+        elif self.rule_type == "same_A_or_B":
+            if self.config.language == "zh":
+                has_a = any(kw in described_rule_lower for kw in ["a 属性", "a属性"])
+                has_b = any(kw in described_rule_lower for kw in ["b 属性", "b属性"])
+                has_or = any(kw in described_rule_lower for kw in ["或", "任一"])
+            else:
+                has_a = any(kw in described_rule_lower for kw in ["same a", "a attribute"])
+                has_b = any(kw in described_rule_lower for kw in ["same b", "b attribute"])
+                has_or = "or" in described_rule_lower
+            return has_a and has_b and has_or
+        
+        elif self.rule_type == "sum_even":
+            if self.config.language == "zh":
+                keywords = ["和", "奇偶", "偶数", "奇数"]
+            else:
+                keywords = ["sum", "parity", "even", "odd"]
+            return sum(1 for kw in keywords if kw in described_rule_lower) >= 2
+        
+        elif self.rule_type == "adjacent_grid":
+            if self.config.language == "zh":
+                keywords = ["a 相同", "a相同", "b 相差", "b相差", "b 相同", "b相同", "a 相差", "a相差"]
+            else:
+                keywords = ["same a", "same b", "a differs", "b differs", "at most 1", "adjacent"]
+            return sum(1 for kw in keywords if kw in described_rule_lower) >= 2
+        
+        return False
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"]
-        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
-        ans_dict = {}
-        for kv in kv_pairs:
-            k, v = kv.split("=", 1)
-            ans_dict[k.strip().lower()] = v.strip()
-        
-        if "scheme" not in ans_dict or "total" not in ans_dict:
-            return False
-        
-        # 检查方案（大小写不敏感）
-        if ans_dict["scheme"].upper() != self.scheme.upper():
-            return False
-        
-        # 检查总数
         try:
-            model_total = int(ans_dict["total"])
-        except (ValueError, TypeError):
-            return False
+            answer_text = parsed_info["answer"].strip()
             
-        return model_total == self.total_count
+            rule_match = re.search(r'rule:\s*(.+?)(?=path:|$)', answer_text, re.IGNORECASE | re.DOTALL)
+            path_match = re.search(r'path:\s*(.+?)(?=predictions:|$)', answer_text, re.IGNORECASE | re.DOTALL)
+            pred_match = re.search(r'predictions:\s*(.+?)$', answer_text, re.IGNORECASE | re.DOTALL)
+            
+            if not (rule_match and path_match and pred_match):
+                return False
+            
+            rule_text = rule_match.group(1).strip()
+            path_text = path_match.group(1).strip()
+            pred_text = pred_match.group(1).strip()
+            
+            if not self._check_rule_equivalence(rule_text):
+                return False
+            
+            path_nodes = []
+            for node_str in path_text.split(';'):
+                node = self._parse_node(node_str.strip())
+                if node is None:
+                    return False
+                path_nodes.append(node)
+            
+            if len(path_nodes) < 2:
+                return False
+            
+            if path_nodes[0] != self.start_node or path_nodes[-1] != self.end_node:
+                return False
+            
+            for i in range(len(path_nodes) - 1):
+                pair = self._normalize_pair(path_nodes[i], path_nodes[i+1])
+                if pair in self.queried_pairs:
+                    return False
+                if not self._has_edge(path_nodes[i], path_nodes[i+1]):
+                    return False
+            
+            predictions = []
+            for pred in pred_text.split(','):
+                pred = pred.strip()
+                match = re.match(r'\((\d+),(\d+)\)-\((\d+),(\d+)\):(connected|not_connected)', pred)
+                if not match:
+                    return False
+                
+                node1 = (int(match.group(1)), int(match.group(2)))
+                node2 = (int(match.group(3)), int(match.group(4)))
+                label = match.group(5)
+                
+                pair = self._normalize_pair(node1, node2)
+                if pair in self.queried_pairs:
+                    return False
+                
+                predictions.append((node1, node2, label))
+            
+            if len(predictions) != 4:
+                return False
+            
+            connected_count = sum(1 for _, _, label in predictions if label == "connected")
+            if connected_count != 2:
+                return False
+            
+            for node1, node2, label in predictions:
+                actual_connected = self._has_edge(node1, node2)
+                predicted_connected = (label == "connected")
+                if actual_connected != predicted_connected:
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        if "query_range" not in parsed_info:
-            raise ValueError("No valid query tag found.")
-        
-        raw = parsed_info["query_range"]
-        parts = [x.strip() for x in raw.split(",")]
-        
-        if len(parts) != 2:
+        if "query_path" not in parsed_info:
             if self.config.language == "zh":
-                return "错误：查询格式无效。请使用格式：<query_range>L,R</query_range>"
+                return "错误：未找到有效的查询标签。"
             else:
-                return "Error: Invalid query format. Please use format: <query_range>L,R</query_range>"
+                return "Error: No valid query tag found."
         
-        try:
-            L, R = int(parts[0]), int(parts[1])
-        except (ValueError, TypeError):
-            if self.config.language == "zh":
-                return "错误：查询格式无效。请使用格式：<query_range>L,R</query_range>"
-            else:
-                return "Error: Invalid query format. Please use format: <query_range>L,R</query_range>"
+        path_text = parsed_info["query_path"].strip()
         
-        # 验证范围（注意题目中索引从1开始）
-        if L < 1 or R > self._game_info["n"] or L > R:
-            if self.config.language == "zh":
-                return "错误：区间范围无效。请确保 1 <= L <= R <= {n}。".format(n=self._game_info["n"])
-            else:
-                return "Error: Invalid range. Please ensure 1 <= L <= R <= {n}.".format(n=self._game_info["n"])
-        
-        # 计算区间内1的个数（转换为0-based索引）
-        count = self.sequence[L-1:R].count('1')
-        
-        # 应用编码方案
-        symbol = self._apply_scheme(count)
-        
-        return symbol
-
-    def _cf_make_wrong(self, correct):
-        symbols = ["α", "β", "γ"]
-        if correct in symbols:
-            wrong_candidates = [s for s in symbols if s != correct]
-            return wrong_candidates[0]
-
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        lower_correct = correct.lower()
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            if "否" in correct:
-                return correct.replace("否", "是")
-        
-        if lower_correct == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if lower_correct == "no":
-            return "Yes" if correct[0].isupper() else "yes"
+        nodes = []
+        for node_str in path_text.split(';'):
+            node = self._parse_node(node_str.strip())
+            if node is None:
+                if self.config.language == "zh":
+                    return f"错误：无效的节点格式 '{node_str.strip()}'。"
+                else:
+                    return f"Error: Invalid node format '{node_str.strip()}'."
             
+            a, b = node
+            if a not in [1, 2, 3] or b not in [1, 2, 3, 4]:
+                if self.config.language == "zh":
+                    return f"错误：节点 {self._node_to_str(node)} 超出范围。"
+                else:
+                    return f"Error: Node {self._node_to_str(node)} out of range."
+            
+            nodes.append(node)
+        
+        if len(nodes) < 2:
+            if self.config.language == "zh":
+                return "错误：路径长度必须大于等于 2。"
+            else:
+                return "Error: Path length must be at least 2."
+        
+        self.query_count += 1
+        if len(nodes) == 2:
+            self.short_query_count += 1
+        else:
+            self.long_query_count += 1
+        
+        for i in range(len(nodes) - 1):
+            pair = self._normalize_pair(nodes[i], nodes[i+1])
+            self.queried_pairs.add(pair)
+        
+        for i in range(len(nodes) - 1):
+            if not self._has_edge(nodes[i], nodes[i+1]):
+                if self.config.language == "zh":
+                    return f"否，断点位置：{i+1}"
+                else:
+                    return f"No, break at position: {i+1}"
+        
+        if self.config.language == "zh":
+            return "是"
+        else:
+            return "Yes"
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        if self.config.language == "zh":
+            if correct == "是":
+                return "否，断点位置：1"
+            if correct.startswith("否"):
+                return "是"
+        elif self.config.language == "en":
+            if correct == "Yes":
+                return "No, break at position: 1"
+            if correct.startswith("No"):
+                return "Yes"
+        
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        返回有代表性的查询子集，避免过多查询导致上下文溢出。
-        """
         queries = []
-        n = self._game_info["n"]
         
-        # 策略：单点查询 + 全区间查询 + 一些有代表性的区间
-        representative_intervals = []
-        # 所有单点查询
-        for i in range(1, n + 1):
-            representative_intervals.append((i, i))
-        # 全区间
-        representative_intervals.append((1, n))
-        # 前缀区间
-        for r in range(1, n + 1):
-            representative_intervals.append((1, r))
-        # 去重
-        representative_intervals = list(set(representative_intervals))
-        representative_intervals.sort()
+        nodes = []
+        for a in range(1, 4):
+            for b in range(1, 5):
+                nodes.append((a, b))
         
-        for L, R in representative_intervals:
-            query_content = f"<query_range>{L},{R}</query_range>"
-            count = self.sequence[L-1:R].count('1')
-            symbol = self._apply_scheme(count)
+        for u, v in itertools.combinations(nodes, 2):
+            u_str = self._node_to_str(u)
+            v_str = self._node_to_str(v)
+            query_content = f"{u_str};{v_str}"
+            
+            has_edge = self._has_edge(u, v)
+            
+            if self.config.language == "zh":
+                answer = "是" if has_edge else "否，断点位置：1"
+            else:
+                answer = "Yes" if has_edge else "No, break at position: 1"
+            
             queries.append({
-                "query": query_content,
-                "answer": symbol
+                "query": f"<query_path>{query_content}</query_path>",
+                "answer": answer
             })
             
         return queries
+
+    def step(self, response: str):
+        try:
+            parsed_info = self.parse(response)
+            if "answer" in parsed_info:
+                if self.query_count < 8 or self.short_query_count < 5 or self.long_query_count < 3:
+                    if self.config.language == "zh":
+                        res = f"错误：查询次数不足。需要至少 8 次查询（当前 {self.query_count} 次），其中至少 5 次长度为 2 的查询（当前 {self.short_query_count} 次），至少 3 次长度大于等于 3 的查询（当前 {self.long_query_count} 次）。"
+                    else:
+                        res = f"Error: Insufficient queries. Need at least 8 queries (current {self.query_count}), with at least 5 queries of length 2 (current {self.short_query_count}) and at least 3 queries of length >= 3 (current {self.long_query_count})."
+                    self.state.set_state("failed", "insufficient queries")
+                    self.state.add_message("user", res)
+                else:
+                    is_success = self.evaluate(parsed_info)
+                    if is_success:
+                        res = "答案完全正确！" if self.config.language == "zh" else "Answer is completely correct!"
+                        self.state.set_state("success", "success")
+                        self.state.add_message("user", res)
+                    else:
+                        res = "答案错误。" if self.config.language == "zh" else "Incorrect answer."
+                        self.state.set_state("failed", "incorrect answer")
+                        self.state.add_message("user", res)
+            else:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+                
+        except Exception as e:
+            self.state.set_state("failed", str(e))
+        
+        return self.state

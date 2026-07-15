@@ -1,641 +1,481 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   节点深度：某给定节点位于树的第几层
-# ============================================================
-
 from .base import Game
-import random
+import re
 
+class MultisetStatisticsGame(Game):
 
-class ModularDepthProbeGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "树"
+    reasoning_type = "演绎推理"
+    data_structure = "集合"
 
     game_rule_zh = """\
-我们现在来玩一个"模深度探测"的推理游戏，规则如下：
+我们来玩一个"多重集统计量推理"游戏，规则如下：
 
-游戏设定了一棵有根树，根节点的层数为 0。存在一个未知目标节点 T，其层数 d 满足 0 小于等于 d 小于等于 {Dmax}（{Dmax} 已知）。
+游戏设定了一个由四种类型物体构成的多重集。每种类型的数量分别记为 c1, c2, c3, c4，均为未知的非负整数。
 
-系统提供了一条参考路径 R0, R1, ..., R{L}，从根出发，且节点 Rk 的层数恰好为 k。同时系统提供了 {K} 个探测通道 C1, C2, ..., C{K}。
+定义一个统计量 H，它表示同类型物体的无序两两配对数之和。具体计算方式为：对每种类型 i，若该类型有 ci 个物体，则可组成 ci × (ci - 1) / 2 个配对；H 是四种类型配对数的总和。
 
-每个通道 Ci 都有两个隐藏参数：
-- 模数 m_i（取值范围为 2 到 9 之间的整数）
-- 相位偏移 s_i（取值范围为 0 到 m_i 减 1 之间的整数）
+你的目标是通过提问推断出这四个未知数 c1, c2, c3, c4 的准确值。
 
-这些参数在整个游戏过程中固定不变。当你使用通道 Ci 探测任意节点 X 时，系统会返回一个整数 r，计算方式为：
-    r = (节点X的层数 + s_i) 对 m_i 取模
+你可以进行以下四类提问（每次仅限一个问题）：
 
-系统保证：所有通道的模数乘积 大于等于 {Dmax} + 1，这确保了目标层数 d 可以被唯一确定。
+1. **查询当前统计量**：询问当前的 H 值。我会回答一个非负整数。
 
-你的目标是通过有限次采样查询，推断出目标节点 T 的准确层数 d。
+2. **查询临时添加后的统计量**：指定一个类型 i（1到4之间）和一个非负整数 q，询问"如果临时向类型 i 添加 q 个物体后，统计量 H 会变成多少"。我会回答临时添加后的新统计量值 H'。注意：这只是临时计算，不会真正改变原始构成。
 
-## 可用的查询操作
+3. **查询临时添加的变化量**：指定一个类型 i（1到4之间）和一个非负整数 q，询问"临时向类型 i 添加 q 个物体会使统计量 H 增加多少"。我会回答增加的变化量 Δ。
 
-你可以反复进行以下查询（每次只能进行一种查询）：
+4. **提交答案**：当你确定答案后，提交你推测的四个数 c1, c2, c3, c4。
 
-1. 采样查询：指定一个通道编号（1 到 {K}）和一个位置（R0 到 R{L}，或 T），系统会返回该通道对该位置的探测结果（一个非负整数）。
+请尽可能少地使用提问次数来确定答案。
 
-2. 终止宣告：当你确定目标层数后，提交你的答案。系统会判定正确或错误并结束游戏。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-## 查询与答案格式（必须严格遵守）
+- 查询当前统计量（内容为空）：
+<query_h></query_h>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 查询临时添加后的统计量（例如向类型 2 添加 3 个）：
+<query_add_value>type=2, q=3</query_add_value>
 
-- 采样查询（例如使用通道 2 探测位置 R5）：
-<query_sample>channel=2, position=R5</query_sample>
+- 查询临时添加的变化量（例如向类型 1 添加 1 个）：
+<query_add_delta>type=1, q=1</query_add_delta>
 
-- 采样查询（例如使用通道 1 探测目标 T）：
-<query_sample>channel=1, position=T</query_sample>
-
-- 提交最终答案（例如推断目标层数为 7）：
-<answer>7</answer>
-
-注意：
-- 通道编号范围为 1 到 {K}
-- 位置可以是 R0, R1, ..., R{L} 或 T
-- 答案必须是一个非负整数，表示目标层数 d
+- 提交最终答案（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     game_rule_en = """\
-Let's play a "Modular Depth Probe" deduction game. Here are the rules:
+Let's play a "Multiset Statistics Inference" game. Here are the rules:
 
-The game features a rooted tree where the root node has depth 0. There exists an unknown target node T whose depth d satisfies 0 less than or equal to d less than or equal to {Dmax} ({Dmax} is known).
+The game involves a multiset composed of four types of objects. The quantity of each type is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
 
-The system provides a reference path R0, R1, ..., R{L} starting from the root, where node Rk has depth exactly k. The system also provides {K} probe channels C1, C2, ..., C{K}.
+A statistic H is defined as the sum of unordered pairwise combinations within each type. Specifically, for each type i with ci objects, the number of pairs is ci × (ci - 1) / 2; H is the total sum of pairs across all four types.
 
-Each channel Ci has two hidden parameters:
-- Modulus m_i (an integer between 2 and 9)
-- Phase offset s_i (an integer between 0 and m_i minus 1)
+Your goal is to infer the exact values of these four unknown numbers c1, c2, c3, c4 through questioning.
 
-These parameters remain fixed throughout the game. When you use channel Ci to probe any node X, the system returns an integer r calculated as:
-    r = (depth of node X + s_i) modulo m_i
+You can ask the following four types of questions (one per turn):
 
-The system guarantees: the product of all channel moduli is greater than or equal to {Dmax} + 1, ensuring that the target depth d can be uniquely determined.
+1. **Query Current Statistic**: Ask for the current value of H. I will answer with a non-negative integer.
 
-Your goal is to infer the exact depth d of target node T through a finite number of sampling queries.
+2. **Query Statistic After Temporary Addition**: Specify a type i (between 1 and 4) and a non-negative integer q, asking "if we temporarily add q objects to type i, what would the statistic H become". I will answer with the new statistic value H' after the temporary addition. Note: This is only a temporary calculation and does not actually change the original composition.
 
-## Available Query Operations
+3. **Query Delta of Temporary Addition**: Specify a type i (between 1 and 4) and a non-negative integer q, asking "how much would the statistic H increase if we temporarily add q objects to type i". I will answer with the increase delta Δ.
 
-You may repeatedly perform the following queries (only one type per query):
+4. **Submit Answer**: When you are confident, submit your inferred four numbers c1, c2, c3, c4.
 
-1. Sampling Query: Specify a channel number (1 to {K}) and a position (R0 to R{L}, or T). The system returns the probe result for that channel at that position (a non-negative integer).
-
-2. Termination Declaration: When you have determined the target depth, submit your answer. The system will judge it as correct or incorrect and end the game.
-
-## Query and Answer Format (strictly required)
+Please use as few questions as possible to determine the answer.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Sampling Query (e.g., using channel 2 to probe position R5):
-<query_sample>channel=2, position=R5</query_sample>
+- Query current statistic (empty content):
+<query_h></query_h>
 
-- Sampling Query (e.g., using channel 1 to probe target T):
-<query_sample>channel=1, position=T</query_sample>
+- Query statistic after temporary addition (e.g., adding 3 to type 2):
+<query_add_value>type=2, q=3</query_add_value>
 
-- Submit Final Answer (e.g., inferring target depth is 7):
-<answer>7</answer>
+- Query delta of temporary addition (e.g., adding 1 to type 1):
+<query_add_delta>type=1, q=1</query_add_delta>
 
-Notes:
-- Channel number ranges from 1 to {K}
-- Position can be R0, R1, ..., R{L} or T
-- Answer must be a non-negative integer representing target depth d
+- Submit final answer (four numbers comma-separated, in order c1, c2, c3, c4):
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
-    tags = ["answer", "query_sample"]
-
     contextualized_rule_zh_1 = """\
-【交通网络嫌疑车辆定位系统】
+欢迎使用交通枢纽“同构车辆潜在冲突指数评估系统”。
 
-我们现在进行一项"交通路网环层深度探测"的分析任务，规则如下：
+本枢纽当前停靠了四种类型的车辆（如小客车、公交车、货车、摩托车）。每种车型的数量分别记为 c1, c2, c3, c4，均为未知的非负整数。
 
-城市交通路网呈现以市中心为根节点的树状结构，市中心的环层深度为 0。目前有一辆嫌疑车辆 T 处于未知环层深度 d，且已知 0 小于等于 d 小于等于 {Dmax}（{Dmax} 已知）。
+为了评估停车区的安全性，系统定义了一个潜在冲突指数 H。它表示同类型车辆之间可能发生的无序两两空间干涉（配对）数之和。具体而言，对每种车型 i，若有 ci 辆车，则存在 ci × (ci - 1) / 2 个潜在冲突对；H 是四种车型的潜在冲突对总和。
 
-交通指挥中心提供了一条主干道上的参考监控点集 R0, R1, ..., R{L}，其中监控点 Rk 的环层深度恰好为 k。同时，系统配备了 {K} 个不同的交通雷达扫描通道 C1, C2, ..., C{K}。
+你的目标是通过向系统进行参数查询，推断出这四种车型的准确数量 c1, c2, c3, c4。
 
-每个雷达通道 Ci 都有两个固定的硬件隐性参数：
-- 扫描周期 m_i（取值范围为 2 到 9 之间的整数）
-- 初始相位 s_i（取值范围为 0 到 m_i 减 1 之间的整数）
+你可以进行以下四类操作（每次仅限一个操作）：
 
-这些参数在整个分析过程中保持不变。当您调用通道 Ci 对任意目标 X（嫌疑车辆或参考监控点）进行扫描时，系统会返回一个雷达回波特征值 r，计算方式为：
-    r = (目标X的环层深度 + s_i) 对 m_i 取模
+1. **查询当前冲突指数**：询问当前的 H 值。系统会返回一个非负整数。
 
-系统保证：所有雷达通道扫描周期的乘积大于等于 {Dmax} + 1，这确保了嫌疑车辆的真实环层深度 d 可以被唯一解算。
+2. **查询虚拟调度后的冲突指数**：指定一个车型 i（1到4之间）和一个非负整数 q，询问"如果临时向停车区引流 q 辆车型 i，冲突指数 H 会变成多少"。系统会返回虚拟调度后的新指数 H'。注意：这只是沙盘推演，不改变实际车辆数。
 
-您的目标是通过有限次的雷达采样查询，推断出嫌疑车辆 T 的准确环层深度 d。
+3. **查询虚拟调度的指数变化量**：指定一个车型 i（1到4之间）和一个非负整数 q，询问"临时向停车区引流 q 辆车型 i 会使冲突指数 H 增加多少"。系统会返回增加的差值 Δ。
 
-## 可用的查询操作
+4. **提交分析报告**：当你确定各车型数量后，提交你推测的四个数 c1, c2, c3, c4。
 
-您可以反复进行以下查询（每次只能进行一种查询）：
+请尽可能少地使用查询次数来完成评估。
 
-1. 采样查询：指定一个雷达通道编号（1 到 {K}）和一个位置（R0 到 R{L}，或 T），系统会返回该通道对该位置的探测结果（一个非负整数）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-2. 终止宣告：当您确定嫌疑车辆的环层深度后，提交您的答案。系统会判定正确或错误并结束任务。
+- 查询当前冲突指数（内容为空）：
+<query_h></query_h>
 
-## 查询与答案格式（必须严格遵守）
+- 查询虚拟调度后的冲突指数（例如向车型 2 引流 3 辆）：
+<query_add_value>type=2, q=3</query_add_value>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 查询虚拟调度的指数变化量（例如向车型 1 引流 1 辆）：
+<query_add_delta>type=1, q=1</query_add_delta>
 
-- 采样查询（例如使用通道 2 探测位置 R5）：
-<query_sample>channel=2, position=R5</query_sample>
-
-- 采样查询（例如使用通道 1 探测目标 T）：
-<query_sample>channel=1, position=T</query_sample>
-
-- 提交最终答案（例如推断目标环层深度为 7）：
-<answer>7</answer>
-
-注意：
-- 通道编号范围为 1 到 {K}
-- 位置可以是 R0, R1, ..., R{L} 或 T
-- 答案必须是一个非负整数，表示目标环层深度 d
+- 提交最终分析报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Network Suspect Vehicle Localization System]
+[Traffic Scenario]
+Welcome to the Transit Hub "Homogeneous Vehicle Potential Conflict Index Evaluation System".
 
-We are now conducting a "Traffic Network Ring Depth Probe" analysis task. Here are the rules:
+The hub currently accommodates four types of vehicles (e.g., cars, buses, trucks, motorcycles). The quantity of each vehicle type is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
 
-The city's traffic network is structured as a rooted tree originating from the city center, which has a ring depth of 0. A suspect vehicle T is currently located at an unknown ring depth d, satisfying 0 less than or equal to d less than or equal to {Dmax} ({Dmax} is known).
+To assess the safety of the parking zone, the system defines a potential conflict index H. It represents the sum of unordered pairwise spatial interferences (pairs) among vehicles of the same type. Specifically, for each vehicle type i with ci vehicles, there are ci × (ci - 1) / 2 potential conflict pairs; H is the total sum of conflict pairs across all four vehicle types.
 
-The traffic command center provides a set of reference monitoring points R0, R1, ..., R{L} along a main arterial road, where point Rk has a ring depth of exactly k. The system is also equipped with {K} distinct traffic radar scan channels C1, C2, ..., C{K}.
+Your objective is to deduce the exact quantities of these four vehicle types, c1, c2, c3, c4, by querying the system parameters.
 
-Each radar channel Ci has two fixed hidden hardware parameters:
-- Scan cycle m_i (an integer between 2 and 9)
-- Initial phase s_i (an integer between 0 and m_i minus 1)
+You can perform the following four types of operations (one per turn):
 
-These parameters remain fixed throughout the analysis. When you use channel Ci to scan any target X (the suspect vehicle or a reference point), the system returns a radar echo characteristic value r, calculated as:
-    r = (ring depth of target X + s_i) modulo m_i
+1. **Query Current Conflict Index**: Ask for the current value of H. The system will return a non-negative integer.
 
-The system guarantees: the product of all radar channels' scan cycles is greater than or equal to {Dmax} + 1, ensuring that the true ring depth d can be uniquely determined.
+2. **Query Index After Virtual Dispatch**: Specify a vehicle type i (between 1 and 4) and a non-negative integer q, asking "if we virtually route q vehicles of type i into the parking zone, what would the conflict index H become". The system will return the new index H' after the virtual dispatch. Note: This is only a simulation and does not change the actual vehicle count.
 
-Your goal is to infer the exact ring depth d of the suspect vehicle T through a finite number of sampling queries.
+3. **Query Index Delta of Virtual Dispatch**: Specify a vehicle type i (between 1 and 4) and a non-negative integer q, asking "how much would the conflict index H increase if we virtually route q vehicles of type i into the zone". The system will return the increase delta Δ.
 
-## Available Query Operations
+4. **Submit Analysis Report**: When you are confident in the vehicle counts, submit your inferred four numbers c1, c2, c3, c4.
 
-You may repeatedly perform the following queries (only one type per query):
-
-1. Sampling Query: Specify a radar channel number (1 to {K}) and a position (R0 to R{L}, or T). The system returns the probe result for that channel at that position (a non-negative integer).
-
-2. Termination Declaration: When you have determined the target ring depth, submit your answer. The system will judge it as correct or incorrect and end the task.
-
-## Query and Answer Format (strictly required)
+Please use as few queries as possible to complete the assessment.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Sampling Query (e.g., using channel 2 to probe position R5):
-<query_sample>channel=2, position=R5</query_sample>
+- Query current conflict index (empty content):
+<query_h></query_h>
 
-- Sampling Query (e.g., using channel 1 to probe target T):
-<query_sample>channel=1, position=T</query_sample>
+- Query index after virtual dispatch (e.g., routing 3 vehicles to type 2):
+<query_add_value>type=2, q=3</query_add_value>
 
-- Submit Final Answer (e.g., inferring target ring depth is 7):
-<answer>7</answer>
+- Query index delta of virtual dispatch (e.g., routing 1 vehicle to type 1):
+<query_add_delta>type=1, q=1</query_add_delta>
 
-Notes:
-- Channel number ranges from 1 to {K}
-- Position can be R0, R1, ..., R{L} or T
-- Answer must be a non-negative integer representing target ring depth d
+- Submit final analysis report (four numbers comma-separated, in order c1, c2, c3, c4):
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     contextualized_rule_zh_2 = """\
-【未知病原体变异代数分析系统】
+欢迎进入医院“同源病原体交叉感染风险评估系统”。
 
-我们现在进行一项"生化光谱深度探测"的分析任务，规则如下：
+隔离病区目前收治了感染四种不同病原体类型的患者。每种病原体类型的患者人数分别记为 c1, c2, c3, c4，均为未知的非负整数。
 
-在病毒溯源研究中，病原体变异路径构成了一棵有根进化树，初始原始株的变异代数（深度）为 0。目前截获了一个未知变异株样本 T，其变异代数 d 满足 0 小于等于 d 小于等于 {Dmax}（{Dmax} 已知）。
+为了评估院内感染管控水平，系统定义了一个交叉感染风险基数 H。它表示同类型病原体患者之间可能发生的无序两两接触对数之和。具体而言，对每种病原体类型 i，若有 ci 名患者，则存在 ci × (ci - 1) / 2 个接触配对；H 是四种类型患者的接触配对总和。
 
-实验室提供了一组标准参照样本 R0, R1, ..., R{L}，其中参照样本 Rk 的变异代数恰好为 k。同时，系统配备了 {K} 种生化光谱分析通道 C1, C2, ..., C{K}。
+你的目标是通过向系统进行参数查询，推断出这四类患者的准确人数 c1, c2, c3, c4。
 
-每个分析通道 Ci 都有两个隐藏的生化特性参数：
-- 反应周期 m_i（取值范围为 2 到 9 之间的整数）
-- 相位偏置 s_i（取值范围为 0 到 m_i 减 1 之间的整数）
+你可以进行以下四类操作（每次仅限一个操作）：
 
-这些参数在整个分析过程中保持固定。当您使用通道 Ci 探测任意样本 X（未知样本或参照样本）时，系统会返回一个光谱显色指数 r，计算方式为：
-    r = (样本X的变异代数 + s_i) 对 m_i 取模
+1. **查询当前风险基数**：询问当前的 H 值。系统会返回一个非负整数。
 
-系统保证：所有通道反应周期的乘积大于等于 {Dmax} + 1，这确保了未知样本的变异代数 d 可以被唯一确定。
+2. **查询模拟收治后的风险基数**：指定一个病原体类型 i（1到4之间）和一个非负整数 q，询问"如果临时向病区模拟收治 q 名类型 i 的患者，风险基数 H 会变成多少"。系统会返回模拟收治后的新基数 H'。注意：这只是流行病学推演，不改变实际收治人数。
 
-您的目标是通过有限次的光谱采样查询，推断出未知变异株样本 T 的准确变异代数 d。
+3. **查询模拟收治的基数变化量**：指定一个病原体类型 i（1到4之间）和一个非负整数 q，询问"临时模拟收治 q 名类型 i 的患者会使风险基数 H 增加多少"。系统会返回增加的差值 Δ。
 
-## 可用的查询操作
+4. **提交流调报告**：当你确定各类型患者人数后，提交你推测的四个数 c1, c2, c3, c4。
 
-您可以反复进行以下查询（每次只能进行一种查询）：
+请尽可能少地使用查询次数来完成评估。
 
-1. 采样查询：指定一个通道编号（1 到 {K}）和一个位置（R0 到 R{L}，或 T），系统会返回该通道对该样本的探测结果（一个非负整数）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-2. 终止宣告：当您确定目标变异代数后，提交您的答案。系统会判定正确或错误并结束任务。
+- 查询当前风险基数（内容为空）：
+<query_h></query_h>
 
-## 查询与答案格式（必须严格遵守）
+- 查询模拟收治后的风险基数（例如向类型 2 模拟收治 3 名患者）：
+<query_add_value>type=2, q=3</query_add_value>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 查询模拟收治的基数变化量（例如向类型 1 模拟收治 1 名患者）：
+<query_add_delta>type=1, q=1</query_add_delta>
 
-- 采样查询（例如使用通道 2 探测参照样本 R5）：
-<query_sample>channel=2, position=R5</query_sample>
-
-- 采样查询（例如使用通道 1 探测目标样本 T）：
-<query_sample>channel=1, position=T</query_sample>
-
-- 提交最终答案（例如推断目标变异代数为 7）：
-<answer>7</answer>
-
-注意：
-- 通道编号范围为 1 到 {K}
-- 位置可以是 R0, R1, ..., R{L} 或 T
-- 答案必须是一个非负整数，表示目标变异代数 d
+- 提交最终流调报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Unknown Pathogen Mutation Generation Analysis System]
+[Medical Scenario]
+Welcome to the Hospital "Homologous Pathogen Cross-Infection Risk Assessment System".
 
-We are now conducting a "Biochemical Spectrum Depth Probe" analysis task. Here are the rules:
+The isolation ward currently admits patients infected with four different types of pathogens. The number of patients for each pathogen type is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
 
-In viral traceability research, the mutation path of pathogens forms a rooted evolutionary tree, where the original strain has a mutation generation (depth) of 0. An unknown mutant strain sample T has been intercepted, whose mutation generation d satisfies 0 less than or equal to d less than or equal to {Dmax} ({Dmax} is known).
+To evaluate the level of nosocomial infection control, the system defines a cross-infection risk baseline H. It represents the sum of unordered pairwise contact combinations among patients with the same pathogen type. Specifically, for each pathogen type i with ci patients, there are ci × (ci - 1) / 2 contact pairs; H is the total sum of contact pairs across all four patient types.
 
-The laboratory provides a set of standard reference samples R0, R1, ..., R{L}, where reference sample Rk has exactly a mutation generation of k. The system is also equipped with {K} biochemical spectrum analysis channels C1, C2, ..., C{K}.
+Your objective is to deduce the exact number of patients in these four categories, c1, c2, c3, c4, by querying the system parameters.
 
-Each analysis channel Ci has two hidden biochemical characteristic parameters:
-- Reaction cycle m_i (an integer between 2 and 9)
-- Phase bias s_i (an integer between 0 and m_i minus 1)
+You can perform the following four types of operations (one per turn):
 
-These parameters remain fixed throughout the analysis. When you use channel Ci to probe any sample X (the unknown sample or a reference sample), the system returns a spectral color index r, calculated as:
-    r = (mutation generation of sample X + s_i) modulo m_i
+1. **Query Current Risk Baseline**: Ask for the current value of H. The system will return a non-negative integer.
 
-The system guarantees: the product of all channel reaction cycles is greater than or equal to {Dmax} + 1, ensuring that the unknown sample's mutation generation d can be uniquely determined.
+2. **Query Baseline After Simulated Admission**: Specify a pathogen type i (between 1 and 4) and a non-negative integer q, asking "if we simulate the admission of q patients of type i to the ward, what would the risk baseline H become". The system will return the new baseline H' after the simulation. Note: This is purely an epidemiological projection and does not change the actual admission numbers.
 
-Your goal is to infer the exact mutation generation d of target sample T through a finite number of sampling queries.
+3. **Query Baseline Delta of Simulated Admission**: Specify a pathogen type i (between 1 and 4) and a non-negative integer q, asking "how much would the risk baseline H increase if we simulate the admission of q patients of type i". The system will return the increase delta Δ.
 
-## Available Query Operations
+4. **Submit Epidemiological Report**: When you are confident in the patient counts, submit your inferred four numbers c1, c2, c3, c4.
 
-You may repeatedly perform the following queries (only one type per query):
-
-1. Sampling Query: Specify a channel number (1 to {K}) and a position (R0 to R{L}, or T). The system returns the probe result for that channel at that sample position (a non-negative integer).
-
-2. Termination Declaration: When you have determined the target mutation generation, submit your answer. The system will judge it as correct or incorrect and end the task.
-
-## Query and Answer Format (strictly required)
+Please use as few queries as possible to complete the assessment.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Sampling Query (e.g., using channel 2 to probe reference sample R5):
-<query_sample>channel=2, position=R5</query_sample>
+- Query current risk baseline (empty content):
+<query_h></query_h>
 
-- Sampling Query (e.g., using channel 1 to probe target sample T):
-<query_sample>channel=1, position=T</query_sample>
+- Query baseline after simulated admission (e.g., simulating 3 patients for type 2):
+<query_add_value>type=2, q=3</query_add_value>
 
-- Submit Final Answer (e.g., inferring target mutation generation is 7):
-<answer>7</answer>
+- Query baseline delta of simulated admission (e.g., simulating 1 patient for type 1):
+<query_add_delta>type=1, q=1</query_add_delta>
 
-Notes:
-- Channel number ranges from 1 to {K}
-- Position can be R0, R1, ..., R{L} or T
-- Answer must be a non-negative integer representing target mutation generation d
+- Submit final epidemiological report (four numbers comma-separated, in order c1, c2, c3, c4):
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     contextualized_rule_zh_3 = """\
-【智能自适应认知层级评估系统】
+欢迎使用高校“跨学科交流同侪配对潜力分析系统”。
 
-我们现在进行一项"知识网络层级深度探测"的评估任务，规则如下：
+本次跨学科研讨会招募了来自四个不同学科大类（如文、理、工、商）的学生。每个学科的报名人数分别记为 c1, c2, c3, c4，均为未知的非负整数。
 
-在自适应学习平台中，知识网络被抽象为一棵有根树，零基础层级为 0。系统需要评估一名学生在某特定知识网络中的未知掌握层级 T（深度为 d），已知 0 小于等于 d 小于等于 {Dmax}（{Dmax} 已知）。
+为了评估研讨会的内部学术探讨氛围，系统定义了一个同侪交流基数 H。它表示同专业学生之间能够组成的两人学术讨论小组的无序配对数之和。具体而言，对每个学科 i，若有 ci 名学生，则可组成 ci × (ci - 1) / 2 个同侪配对；H 是四个学科同侪配对数的总和。
 
-标准题库中提取了一条标定好的标准试题路径 R0, R1, ..., R{L}，其中试题 Rk 的认知层级恰好为 k。同时，系统内置了 {K} 个独立的标准化认知探测模块 C1, C2, ..., C{K}。
+你的目标是通过向系统进行参数查询，推断出这四个学科的准确报名人数 c1, c2, c3, c4。
 
-每个探测模块 Ci 都有两个固定的底层算法参数：
-- 评估周期 m_i（取值范围为 2 到 9 之间的整数）
-- 认知偏移 s_i（取值范围为 0 到 m_i 减 1 之间的整数）
+你可以进行以下四类操作（每次仅限一个操作）：
 
-这些参数在整个评估过程中保持不变。当您调用模块 Ci 对任意目标 X（学生 T 或标准试题）进行认知探测时，系统会返回一个特征反馈分数 r，计算方式为：
-    r = (目标X的认知层级 + s_i) 对 m_i 取模
+1. **查询当前交流基数**：询问当前的 H 值。系统会返回一个非负整数。
 
-系统保证：所有探测模块评估周期的乘积大于等于 {Dmax} + 1，这确保了学生的真实认知层级 d 可以被唯一计算。
+2. **查询预扩招后的交流基数**：指定一个学科 i（1到4之间）和一个非负整数 q，询问"如果临时向学科 i 扩招 q 名学生，交流基数 H 会变成多少"。系统会返回预扩招后的新基数 H'。注意：这只是沙盘推演，不改变实际报名人数。
 
-您的目标是通过有限次的探测采样查询，推断出学生 T 的准确掌握层级 d。
+3. **查询预扩招的基数变化量**：指定一个学科 i（1到4之间）和一个非负整数 q，询问"临时向学科 i 扩招 q 名学生会使交流基数 H 增加多少"。系统会返回增加的差值 Δ。
 
-## 可用的查询操作
+4. **提交分析报告**：当你确定各学科报名人数后，提交你推测的四个数 c1, c2, c3, c4。
 
-您可以反复进行以下查询（每次只能进行一种查询）：
+请尽可能少地使用查询次数来完成评估。
 
-1. 采样查询：指定一个探测模块编号（1 到 {K}）和一个位置（R0 到 R{L}，或 T），系统会返回该模块对该目标的探测结果（一个非负整数）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-2. 终止宣告：当您确定目标认知层级后，提交您的答案。系统会判定正确或错误并结束评估。
+- 查询当前交流基数（内容为空）：
+<query_h></query_h>
 
-## 查询与答案格式（必须严格遵守）
+- 查询预扩招后的交流基数（例如向学科 2 扩招 3 名学生）：
+<query_add_value>type=2, q=3</query_add_value>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 查询预扩招的基数变化量（例如向学科 1 扩招 1 名学生）：
+<query_add_delta>type=1, q=1</query_add_delta>
 
-- 采样查询（例如使用模块 2 探测试题 R5）：
-<query_sample>channel=2, position=R5</query_sample>
-
-- 采样查询（例如使用模块 1 探测学生 T）：
-<query_sample>channel=1, position=T</query_sample>
-
-- 提交最终答案（例如推断学生认知层级为 7）：
-<answer>7</answer>
-
-注意：
-- 模块编号（channel）范围为 1 到 {K}
-- 位置（position）可以是 R0, R1, ..., R{L} 或 T
-- 答案必须是一个非负整数，表示目标认知层级 d
+- 提交最终分析报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     contextualized_rule_en_3 = """\
-[Intelligent Adaptive Cognitive Level Assessment System]
+[Education Scenario]
+Welcome to the University "Interdisciplinary Peer Matching Potential Analysis System".
 
-We are now conducting a "Knowledge Network Level Depth Probe" assessment task. Here are the rules:
+The current interdisciplinary seminar has enrolled students from four different major categories (e.g., Arts, Sciences, Engineering, Business). The number of enrolled students for each major is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
 
-In the adaptive learning platform, the knowledge network is abstracted as a rooted tree, where the zero-foundation level is 0. The system needs to assess a student's unknown mastery level T (depth d) in a specific knowledge network, satisfying 0 less than or equal to d less than or equal to {Dmax} ({Dmax} is known).
+To evaluate the internal academic discussion atmosphere of the seminar, the system defines a peer communication baseline H. It represents the sum of unordered pairwise two-person academic discussion groups that can be formed among students of the same major. Specifically, for each major i with ci students, ci × (ci - 1) / 2 peer pairs can be formed; H is the total sum of peer pairs across all four majors.
 
-The standard question bank provides a calibrated reference question path R0, R1, ..., R{L}, where question Rk has a cognitive level of exactly k. The system is also equipped with {K} independent standardized cognitive probe modules C1, C2, ..., C{K}.
+Your objective is to deduce the exact enrollment numbers of these four majors, c1, c2, c3, c4, by querying the system parameters.
 
-Each probe module Ci has two fixed underlying algorithm parameters:
-- Assessment cycle m_i (an integer between 2 and 9)
-- Cognitive offset s_i (an integer between 0 and m_i minus 1)
+You can perform the following four types of operations (one per turn):
 
-These parameters remain fixed throughout the assessment. When you use module Ci to probe any target X (student T or a reference question), the system returns a characteristic feedback score r, calculated as:
-    r = (cognitive level of target X + s_i) modulo m_i
+1. **Query Current Communication Baseline**: Ask for the current value of H. The system will return a non-negative integer.
 
-The system guarantees: the product of all probe module assessment cycles is greater than or equal to {Dmax} + 1, ensuring that the student's true cognitive level d can be uniquely calculated.
+2. **Query Baseline After Virtual Expansion**: Specify a major i (between 1 and 4) and a non-negative integer q, asking "if we virtually enroll q more students to major i, what would the communication baseline H become". The system will return the new baseline H' after the virtual expansion. Note: This is purely a simulation and does not change the actual enrollment.
 
-Your goal is to infer the exact mastery level d of student T through a finite number of sampling queries.
+3. **Query Baseline Delta of Virtual Expansion**: Specify a major i (between 1 and 4) and a non-negative integer q, asking "how much would the communication baseline H increase if we virtually enroll q more students to major i". The system will return the increase delta Δ.
 
-## Available Query Operations
+4. **Submit Analysis Report**: When you are confident in the enrollment numbers, submit your inferred four numbers c1, c2, c3, c4.
 
-You may repeatedly perform the following queries (only one type per query):
-
-1. Sampling Query: Specify a probe module number (1 to {K}) and a position (R0 to R{L}, or T). The system returns the probe result for that module on that target (a non-negative integer).
-
-2. Termination Declaration: When you have determined the target cognitive level, submit your answer. The system will judge it as correct or incorrect and end the assessment.
-
-## Query and Answer Format (strictly required)
+Please use as few queries as possible to complete the assessment.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Sampling Query (e.g., using module 2 to probe question R5):
-<query_sample>channel=2, position=R5</query_sample>
+- Query current communication baseline (empty content):
+<query_h></query_h>
 
-- Sampling Query (e.g., using module 1 to probe student T):
-<query_sample>channel=1, position=T</query_sample>
+- Query baseline after virtual expansion (e.g., adding 3 students to major 2):
+<query_add_value>type=2, q=3</query_add_value>
 
-- Submit Final Answer (e.g., inferring student cognitive level is 7):
-<answer>7</answer>
+- Query baseline delta of virtual expansion (e.g., adding 1 student to major 1):
+<query_add_delta>type=1, q=1</query_add_delta>
 
-Notes:
-- Module number (channel) ranges from 1 to {K}
-- Position can be R0, R1, ..., R{L} or T
-- Answer must be a non-negative integer representing target cognitive level d
+- Submit final analysis report (four numbers comma-separated, in order c1, c2, c3, c4):
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     contextualized_rule_zh_4 = """\
-【精密制造工序缺陷溯源系统】
+欢迎使用工厂流水线“同型号零件批次兼容性测试评估系统”。
 
-我们现在进行一项"加工流水线工序深度探测"的质检任务，规则如下：
+当前库存中存放着四种不同型号的关键零部件。每种型号零件的批次数量分别记为 c1, c2, c3, c4，均为未知的非负整数。
 
-在精密制造车间中，加工流水线呈现严格的工序依赖树状结构，初始原材料的工序深度为 0。目前发现了一个存在未知缺陷的工件 T，需反推发生缺陷的准确工序深度 d，已知 0 小于等于 d 小于等于 {Dmax}（{Dmax} 已知）。
+为了保障装配质量，品控部门定义了一个批次兼容性测试指标 H。它表示任意抽取两个同型号零件批次进行无序两两交叉对比测试的总组合数。具体而言，对每种型号 i，若有 ci 个批次，则需要进行 ci × (ci - 1) / 2 次交叉测试；H 是四种型号零件交叉测试次数的总和。
 
-质检中心提供了一组从标准生产线上提取的各道工序参照留样 R0, R1, ..., R{L}，其中留样 Rk 的工序深度恰好为 k。同时，系统调配了 {K} 个不同频段的无损超声波探伤通道 C1, C2, ..., C{K}。
+你的目标是通过向系统进行参数查询，推断出这四种型号的准确批次数量 c1, c2, c3, c4。
 
-每个探伤通道 Ci 都有两个固定的物理参数：
-- 驻波周期 m_i（取值范围为 2 到 9 之间的整数）
-- 相位差 s_i（取值范围为 0 到 m_i 减 1 之间的整数）
+你可以进行以下四类操作（每次仅限一个操作）：
 
-这些参数在整个溯源过程中保持不变。当您使用通道 Ci 对任意测试件 X（缺陷工件或参照留样）进行扫描时，仪器会返回一个共振特征模态值 r，计算方式为：
-    r = (测试件X的工序深度 + s_i) 对 m_i 取模
+1. **查询当前测试指标**：询问当前的 H 值。系统会返回一个非负整数。
 
-系统保证：所有探伤通道驻波周期的乘积大于等于 {Dmax} + 1，这确保了缺陷发生的工序深度 d 可以被绝对定位。
+2. **查询虚拟入库后的测试指标**：指定一个零件型号 i（1到4之间）和一个非负整数 q，询问"如果临时向库房虚拟调拨 q 个批次的型号 i，测试指标 H 会变成多少"。系统会返回虚拟入库后的新指标 H'。注意：这只是品控推演，不改变实际库存批次数。
 
-您的目标是通过有限次的探伤采样查询，推断出缺陷工件 T 对应的准确工序深度 d。
+3. **查询虚拟入库的指标变化量**：指定一个零件型号 i（1到4之间）和一个非负整数 q，询问"临时虚拟调拨 q 个批次的型号 i 会使测试指标 H 增加多少"。系统会返回增加的差值 Δ。
 
-## 可用的查询操作
+4. **提交品控盘点报告**：当你确定各型号批次数量后，提交你推测的四个数 c1, c2, c3, c4。
 
-您可以反复进行以下查询（每次只能进行一种查询）：
+请尽可能少地使用查询次数来完成盘点。
 
-1. 采样查询：指定一个探伤通道编号（1 到 {K}）和一个位置（R0 到 R{L}，或 T），系统会返回该通道对该测试件的探测结果（一个非负整数）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-2. 终止宣告：当您锁定缺陷发生深度后，提交您的答案。系统会判定正确或错误并结束任务。
+- 查询当前测试指标（内容为空）：
+<query_h></query_h>
 
-## 查询与答案格式（必须严格遵守）
+- 查询虚拟入库后的测试指标（例如向型号 2 调拨 3 个批次）：
+<query_add_value>type=2, q=3</query_add_value>
 
-每次查询只能包含一个标签。请使用以下 XML格式：
+- 查询虚拟入库的指标变化量（例如向型号 1 调拨 1 个批次）：
+<query_add_delta>type=1, q=1</query_add_delta>
 
-- 采样查询（例如使用通道 2 探测留样 R5）：
-<query_sample>channel=2, position=R5</query_sample>
-
-- 采样查询（例如使用通道 1 探测缺陷工件 T）：
-<query_sample>channel=1, position=T</query_sample>
-
-- 提交最终答案（例如推断缺陷工序深度为 7）：
-<answer>7</answer>
-
-注意：
-- 通道编号范围为 1 到 {K}
-- 位置可以是 R0, R1, ..., R{L} 或 T
-- 答案必须是一个非负整数，表示目标工序深度 d
+- 提交最终品控盘点报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Precision Manufacturing Process Defect Traceability System]
+[Manufacturing/Industry Scenario]
+Welcome to the Factory Assembly Line "Homogeneous Part Batch Compatibility Testing Evaluation System".
 
-We are now conducting a "Processing Pipeline Depth Probe" quality inspection task. Here are the rules:
+The current inventory holds critical components of four different models. The number of batches for each component model is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
 
-In the precision manufacturing workshop, the processing pipeline forms a strict process-dependency tree, where the raw material has a process depth of 0. An unknown defective workpiece T has been discovered, and we must backtrack its exact defect-originating process depth d, satisfying 0 less than or equal to d less than or equal to {Dmax} ({Dmax} is known).
+To ensure assembly quality, the quality control (QC) department defines a batch compatibility testing metric H. It represents the total number of unordered pairwise cross-comparison tests that can be conducted by randomly drawing two batches of the same component model. Specifically, for each model i with ci batches, ci × (ci - 1) / 2 cross-tests are required; H is the total sum of cross-tests across all four models.
 
-The quality control center provides a set of reference samples R0, R1, ..., R{L} extracted from standard processes, where sample Rk has a process depth of exactly k. The system has deployed {K} non-destructive ultrasonic testing channels C1, C2, ..., C{K} operating at different frequencies.
+Your objective is to deduce the exact batch quantities of these four models, c1, c2, c3, c4, by querying the system parameters.
 
-Each testing channel Ci has two fixed physical parameters:
-- Standing wave cycle m_i (an integer between 2 and 9)
-- Phase difference s_i (an integer between 0 and m_i minus 1)
+You can perform the following four types of operations (one per turn):
 
-These parameters remain fixed throughout the traceability process. When you use channel Ci to scan any test piece X (the defective workpiece or a reference sample), the instrument returns a resonant characteristic mode value r, calculated as:
-    r = (process depth of test piece X + s_i) modulo m_i
+1. **Query Current Testing Metric**: Ask for the current value of H. The system will return a non-negative integer.
 
-The system guarantees: the product of all channels' standing wave cycles is greater than or equal to {Dmax} + 1, ensuring that the defect depth d can be absolutely localized.
+2. **Query Metric After Virtual Restocking**: Specify a component model i (between 1 and 4) and a non-negative integer q, asking "if we virtually transfer q batches of model i to the warehouse, what would the testing metric H become". The system will return the new metric H' after the virtual restocking. Note: This is merely a QC projection and does not change the actual inventory.
 
-Your goal is to infer the exact process depth d of defective workpiece T through a finite number of sampling queries.
+3. **Query Metric Delta of Virtual Restocking**: Specify a component model i (between 1 and 4) and a non-negative integer q, asking "how much would the testing metric H increase if we virtually transfer q batches of model i". The system will return the increase delta Δ.
 
-## Available Query Operations
+4. **Submit QC Inventory Report**: When you are confident in the batch quantities, submit your inferred four numbers c1, c2, c3, c4.
 
-You may repeatedly perform the following queries (only one type per query):
-
-1. Sampling Query: Specify a testing channel number (1 to {K}) and a position (R0 to R{L}, or T). The system returns the probe result for that channel on that test piece (a non-negative integer).
-
-2. Termination Declaration: When you have locked in the defect origin depth, submit your answer. The system will judge it as correct or incorrect and end the task.
-
-## Query and Answer Format (strictly required)
+Please use as few queries as possible to complete the inventory check.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Sampling Query (e.g., using channel 2 to probe sample R5):
-<query_sample>channel=2, position=R5</query_sample>
+- Query current testing metric (empty content):
+<query_h></query_h>
 
-- Sampling Query (e.g., using channel 1 to probe defective workpiece T):
-<query_sample>channel=1, position=T</query_sample>
+- Query metric after virtual restocking (e.g., transferring 3 batches of model 2):
+<query_add_value>type=2, q=3</query_add_value>
 
-- Submit Final Answer (e.g., inferring defect process depth is 7):
-<answer>7</answer>
+- Query metric delta of virtual restocking (e.g., transferring 1 batch of model 1):
+<query_add_delta>type=1, q=1</query_add_delta>
 
-Notes:
-- Channel number ranges from 1 to {K}
-- Position can be R0, R1, ..., R{L} or T
-- Answer must be a non-negative integer representing target process depth d
+- Submit final QC inventory report (four numbers comma-separated, in order c1, c2, c3, c4):
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     contextualized_rule_zh_5 = """\
-【反洗钱金融追踪审计系统】
+欢迎进入法院档案室“同案由卷宗类案比对分析系统”。
 
-我们现在进行一项"资金流转层级深度追踪"的审计任务，规则如下：
+档案室目前积压了四种不同案件类型的卷宗（如民事、刑事、行政、经济）。每种类型案件的卷宗数量分别记为 c1, c2, c3, c4，均为未知的非负整数。
 
-在金融罪案调查中，非法资金的流转网络构成了一棵隐蔽的账户树，源头账户层级为 0。目前锁定了一个黑产目标账户 T，需确定其在洗钱网络中的确切流转层级 d，已知 0 小于等于 d 小于等于 {Dmax}（{Dmax} 已知）。
+为了评估文书审查的工作量，系统定义了一个类案比对基数 H。它表示在同类型卷宗之间进行无序两两交叉比对寻找类案参考的总操作次数。具体而言，对每种案件类型 i，若有 ci 本卷宗，则需进行 ci × (ci - 1) / 2 次交叉比对；H 是四种类型卷宗比对次数的总和。
 
-经侦部门掌握了一条清晰的对照流转链路账户 R0, R1, ..., R{L}，其中对照账户 Rk 的流转层级恰好为 k。同时，金融审计系统提供了 {K} 种独立的算法追踪模型通道 C1, C2, ..., C{K}。
+你的目标是通过向系统进行参数查询，推断出这四类卷宗的准确数量 c1, c2, c3, c4。
 
-每个审计模型 Ci 都有两个核心加密参数：
-- 哈希周期 m_i（取值范围为 2 到 9 之间的整数）
-- 加盐偏移量 s_i（取值范围为 0 到 m_i 减 1 之间的整数）
+你可以进行以下四类操作（每次仅限一个操作）：
 
-这些参数在整个追踪过程中保持锁定不变。当您调用模型 Ci 对任意账户 X（目标账户或对照账户）进行穿透计算时，系统会返回一个审计签名值 r，计算方式为：
-    r = (账户X的流转层级 + s_i) 对 m_i 取模
+1. **查询当前比推基数**：询问当前的 H 值。系统会返回一个非负整数。
 
-系统保证：所有审计模型哈希周期的乘积大于等于 {Dmax} + 1，这确保了目标账户的真实流转层级 d 可以被唯一还原。
+2. **查询模拟归档后的比对基数**：指定一个卷宗类型 i（1到4之间）和一个非负整数 q，询问"如果临时向档案室模拟移交 q 本类型 i 的卷宗，比对基数 H 会变成多少"。系统会返回模拟移交后的新基数 H'。注意：这只是算力推演，不改变实际积压的卷宗数。
 
-您的目标是通过有限次的模型采样查询，推断出目标账户 T 的准确资金流转层级 d。
+3. **查询模拟归档的基数变化量**：指定一个卷宗类型 i（1到4之间）和一个非负整数 q，询问"临时模拟移交 q 本类型 i 的卷宗会使比对基数 H 增加多少"。系统会返回增加的差值 Δ。
 
-## 可用的查询操作
+4. **提交审查排期报告**：当你确定各类型卷宗数量后，提交你推测的四个数 c1, c2, c3, c4。
 
-您可以反复进行以下查询（每次只能进行一种查询）：
+请尽可能少地使用查询次数来完成评估。
 
-1. 采样查询：指定一个审计模型编号（1 到 {K}）和一个位置（R0 到 R{L}，或 T），系统会返回该模型对该账户的计算结果（一个非负整数）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-2. 终止宣告：当您确信查明目标账户层级后，提交您的最终审计结果。系统会判定正确或错误并结案。
+- 查询当前比对基数（内容为空）：
+<query_h></query_h>
 
-## 查询与答案格式（必须严格遵守）
+- 查询模拟归档后的比对基数（例如向类型 2 模拟移交 3 本）：
+<query_add_value>type=2, q=3</query_add_value>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 查询模拟归档的基数变化量（例如向类型 1 模拟移交 1 本）：
+<query_add_delta>type=1, q=1</query_add_delta>
 
-- 采样查询（例如使用模型 2 追踪对照账户 R5）：
-<query_sample>channel=2, position=R5</query_sample>
-
-- 采样查询（例如使用模型 1 追踪目标账户 T）：
-<query_sample>channel=1, position=T</query_sample>
-
-- 提交最终答案（例如推断目标流转层级为 7）：
-<answer>7</answer>
-
-注意：
-- 模型编号（channel）范围为 1 到 {K}
-- 位置（position）可以是 R0, R1, ..., R{L} 或 T
-- 答案必须是一个非负整数，表示目标流转层级 d
+- 提交最终审查排期报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Anti-Money Laundering Financial Tracking and Audit System]
+[Legal Scenario]
+Welcome to the Court Archives "Homogeneous Case File Precedent Comparison System".
 
-We are now conducting a "Fund Transfer Level Depth Tracking" audit task. Here are the rules:
+The archives currently have a backlog of case files from four different legal domains (e.g., Civil, Criminal, Administrative, Economic). The number of files for each domain is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
 
-In financial crime investigations, the illicit fund transfer network forms a hidden account tree, where the source account has a transfer level of 0. A black-market target account T has been identified, and we must determine its exact transfer level d within the money laundering network, satisfying 0 less than or equal to d less than or equal to {Dmax} ({Dmax} is known).
+To evaluate the workload of document review, the system defines a precedent comparison baseline H. It represents the total number of unordered pairwise cross-comparisons performed among files of the same domain to find precedent references. Specifically, for each domain i with ci files, ci × (ci - 1) / 2 cross-comparisons are required; H is the total sum of comparison operations across all four domains.
 
-The Economic Crimes Investigation Department holds a clear reference transfer chain of accounts R0, R1, ..., R{L}, where reference account Rk has a transfer level of exactly k. The financial audit system provides {K} independent algorithm tracking model channels C1, C2, ..., C{K}.
+Your objective is to deduce the exact number of backlogged files in these four domains, c1, c2, c3, c4, by querying the system parameters.
 
-Each audit model Ci possesses two core cryptographic parameters:
-- Hash cycle m_i (an integer between 2 and 9)
-- Salt offset s_i (an integer between 0 and m_i minus 1)
+You can perform the following four types of operations (one per turn):
 
-These parameters remain locked and fixed throughout the tracking process. When you use model Ci to perform a penetration calculation on any account X (the target or a reference account), the system returns an audit signature value r, calculated as:
-    r = (transfer level of account X + s_i) modulo m_i
+1. **Query Current Comparison Baseline**: Ask for the current value of H. The system will return a non-negative integer.
 
-The system guarantees: the product of all models' hash cycles is greater than or equal to {Dmax} + 1, ensuring that the target account's true transfer level d can be uniquely recovered.
+2. **Query Baseline After Simulated Archiving**: Specify a case domain i (between 1 and 4) and a non-negative integer q, asking "if we simulate the transfer of q files of domain i into the archives, what would the comparison baseline H become". The system will return the new baseline H' after the simulation. Note: This is merely a computational projection and does not change the actual backlog.
 
-Your goal is to infer the exact transfer level d of target account T through a finite number of model sampling queries.
+3. **Query Baseline Delta of Simulated Archiving**: Specify a case domain i (between 1 and 4) and a non-negative integer q, asking "how much would the comparison baseline H increase if we simulate the transfer of q files of domain i". The system will return the increase delta Δ.
 
-## Available Query Operations
+4. **Submit Review Schedule Report**: When you are confident in the file counts, submit your inferred four numbers c1, c2, c3, c4.
 
-You may repeatedly perform the following queries (only one type per query):
-
-1. Sampling Query: Specify an audit model number (1 to {K}) and a position (R0 to R{L}, or T). The system returns the computed result for that model on that account (a non-negative integer).
-
-2. Termination Declaration: When you are confident in the target account level, submit your final audit result. The system will judge it as correct or incorrect and close the case.
-
-## Query and Answer Format (strictly required)
+Please use as few queries as possible to complete the assessment.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Sampling Query (e.g., using model 2 to track reference account R5):
-<query_sample>channel=2, position=R5</query_sample>
+- Query current comparison baseline (empty content):
+<query_h></query_h>
 
-- Sampling Query (e.g., using model 1 to track target account T):
-<query_sample>channel=1, position=T</query_sample>
+- Query baseline after simulated archiving (e.g., simulating transfer of 3 files to domain 2):
+<query_add_value>type=2, q=3</query_add_value>
 
-- Submit Final Answer (e.g., inferring target transfer level is 7):
-<answer>7</answer>
+- Query baseline delta of simulated archiving (e.g., simulating transfer of 1 file to domain 1):
+<query_add_delta>type=1, q=1</query_add_delta>
 
-Notes:
-- Model number (channel) ranges from 1 to {K}
-- Position can be R0, R1, ..., R{L} or T
-- Answer must be a non-negative integer representing target transfer level d
+- Submit final review schedule report (four numbers comma-separated, in order c1, c2, c3, c4):
+<answer>c1=5, c2=3, c3=4, c4=2</answer>
 """
 
-    # 难度配置说明：
-    # 1 (简单)      - Dmax=15, K=2通道, L=12, m_i较小
-    # 2 (中等偏下)  - Dmax=35, K=2通道, L=13, m_i中等
-    # 3 (中等偏上)  - Dmax=63, K=2通道, L=14, m_i较大
-    # 4 (较难)      - Dmax=120, K=3通道, L=15, 需要更多推理
-    # 5 (难)        - Dmax=200, K=3通道, L=16, 复杂配置
+    tags = ["answer", "query_h", "query_add_value", "query_add_delta"]
 
     DIFFICULTY_CONFIG = {
         1: {
-            "Dmax": 15,
-            "K": 2,
-            "L": 12,
-            "channels": [
-                {"m": 4, "s": 1},
-                {"m": 5, "s": 2}
-            ],
-            "target_depth": 7
+            "c1": 2,
+            "c2": 3,
+            "c3": 2,
+            "c4": 1,
         },
         2: {
-            "Dmax": 35,
-            "K": 2,
-            "L": 13,
-            "channels": [
-                {"m": 6, "s": 3},
-                {"m": 7, "s": 1}
-            ],
-            "target_depth": 23
+            "c1": 4,
+            "c2": 5,
+            "c3": 3,
+            "c4": 4,
         },
         3: {
-            "Dmax": 63,
-            "K": 2,
-            "L": 14,
-            "channels": [
-                {"m": 8, "s": 5},
-                {"m": 9, "s": 2}
-            ],
-            "target_depth": 47
+            "c1": 6,
+            "c2": 7,
+            "c3": 5,
+            "c4": 8,
         },
         4: {
-            "Dmax": 120,
-            "K": 3,
-            "L": 15,
-            "channels": [
-                {"m": 5, "s": 2},
-                {"m": 7, "s": 4},
-                {"m": 4, "s": 1}
-            ],
-            "target_depth": 89
+            "c1": 0,
+            "c2": 10,
+            "c3": 8,
+            "c4": 12,
         },
         5: {
-            "Dmax": 200,
-            "K": 3,
-            "L": 16,
-            "channels": [
-                {"m": 7, "s": 3},
-                {"m": 8, "s": 6},
-                {"m": 5, "s": 1}
-            ],
-            "target_depth": 173
-        }
+            "c1": 15,
+            "c2": 0,
+            "c3": 0,
+            "c4": 20,
+        },
     }
 
     def __init__(self, config):
@@ -643,156 +483,177 @@ Notes:
 
     def _initialize_game(self):
         diff = int(self.config.difficulty)
-
+        
         if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
+        
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        
+        self.c1 = cfg["c1"]
+        self.c2 = cfg["c2"]
+        self.c3 = cfg["c3"]
+        self.c4 = cfg["c4"]
+        
+        self.counts = [0, self.c1, self.c2, self.c3, self.c4]
+        
+        self.H = self._calculate_h(self.counts)
+        
+        self._game_info = {}
 
-        template = self.DIFFICULTY_CONFIG[diff]
-        
-        # 使用基于难度的固定种子，确保可复现性
-        rng = random.Random(42 + diff)
-        
-        Dmax = template["Dmax"]
-        K = template["K"]
-        L = template["L"]
-        
-        # 随机生成通道参数，但保留原有模数
-        channels = []
-        for ch_template in template["channels"]:
-            m = ch_template["m"]
-            s = rng.randint(0, m - 1)
-            channels.append({"m": m, "s": s})
-        
-        # 随机选择目标深度
-        target_depth = rng.randint(0, Dmax)
-        
-        # 设置游戏参数
-        self._game_info["Dmax"] = Dmax
-        self._game_info["K"] = K
-        self._game_info["L"] = L
-        
-        self.channels = channels
-        self.target_depth = target_depth
-        
-        # 验证可辨识性
-        product = 1
-        for ch in self.channels:
-            product *= ch["m"]
-        assert product >= Dmax + 1, "可辨识性条件不满足"
+    def _calculate_h(self, counts):
+        h = 0
+        for i in range(1, 5):
+            ci = counts[i]
+            h += ci * (ci - 1) // 2
+        return h
 
-    def _probe_node(self, channel_idx, depth):
-        """
-        计算通道 channel_idx（从0开始）对层数为 depth 的节点的探测结果
-        返回 (depth + s_i) mod m_i
-        """
-        ch = self.channels[channel_idx]
-        return (depth + ch["s"]) % ch["m"]
+    def _parse_type_q(self, content):
+        try:
+            parts = [x.strip() for x in content.split(",")]
+            type_val = None
+            q_val = None
+            
+            for part in parts:
+                if "=" in part:
+                    key, val = part.split("=", 1)
+                    key = key.strip()
+                    val = val.strip()
+                    if key == "type":
+                        type_val = int(val)
+                    elif key == "q":
+                        q_val = int(val)
+            
+            if type_val is None or q_val is None:
+                raise ValueError("Missing type or q")
+            
+            if type_val < 1 or type_val > 4:
+                raise ValueError("Type must be between 1 and 4")
+            
+            if q_val < 0:
+                raise ValueError("q must be non-negative")
+            
+            return type_val, q_val
+        
+        except Exception as e:
+            raise ValueError(f"Invalid format for type and q: {str(e)}")
 
     def evaluate(self, parsed_info):
-        """
-        评估最终答案是否正确
-        """
-        try:
-            guessed_depth = int(parsed_info["answer"].strip())
-        except:
-            return False
+        raw_ans = parsed_info["answer"]
         
-        return guessed_depth == self.target_depth
+        try:
+            parts = [x.strip() for x in raw_ans.split(",")]
+            ans_dict = {}
+            
+            for part in parts:
+                if "=" in part:
+                    key, val = part.split("=", 1)
+                    key = key.strip()
+                    val = val.strip()
+                    ans_dict[key] = int(val)
+            
+            if not all(key in ans_dict for key in ["c1", "c2", "c3", "c4"]):
+                return False
+            
+            return (ans_dict["c1"] == self.c1 and
+                    ans_dict["c2"] == self.c2 and
+                    ans_dict["c3"] == self.c3 and
+                    ans_dict["c4"] == self.c4)
+        
+        except Exception:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """
-        处理采样查询并返回探测结果
-        """
-        if "query_sample" not in parsed_info:
-            if getattr(self.config, "language", "en") == "zh":
-                return "错误：未找到有效的 query_sample 标签。"
-            else:
-                return "Error: No valid query_sample tag found."
         
-        # 解析查询：channel=X, position=Y
-        raw_query = parsed_info["query_sample"].strip()
-        parts = [x.strip() for x in raw_query.split(",")]
+        if "query_h" in parsed_info:
+            return str(self.H)
         
-        query_dict = {}
-        for part in parts:
-            if "=" in part:
-                k, v = part.split("=", 1)
-                query_dict[k.strip()] = v.strip()
-        
-        if "channel" not in query_dict or "position" not in query_dict:
-            if self.config.language == "zh":
-                return "错误：查询格式无效，需要同时指定 channel 和 position。"
-            else:
-                return "Error: Invalid query format. Both channel and position are required."
-        
-        # 解析通道编号（从1开始）
-        try:
-            channel_num = int(query_dict["channel"])
-            if channel_num < 1 or channel_num > self._game_info["K"]:
-                raise ValueError
-            channel_idx = channel_num - 1  # 转为0索引
-        except:
-            if self.config.language == "zh":
-                return f"错误：通道编号必须是 1 到 {self._game_info['K']} 之间的整数。"
-            else:
-                return f"Error: Channel number must be an integer between 1 and {self._game_info['K']}."
-        
-        # 解析位置
-        position = query_dict["position"].upper()
-        
-        if position == "T":
-            # 探测目标节点
-            depth = self.target_depth
-        elif position.startswith("R"):
-            # 探测参考路径节点
+        elif "query_add_value" in parsed_info:
             try:
-                path_idx = int(position[1:])
-                if path_idx < 0 or path_idx > self._game_info["L"]:
-                    raise ValueError
-                depth = path_idx  # Rk 的层数就是 k
-            except:
+                type_idx, q = self._parse_type_q(parsed_info["query_add_value"])
+                
+                temp_counts = self.counts.copy()
+                temp_counts[type_idx] += q
+                
+                h_prime = self._calculate_h(temp_counts)
+                
+                return str(h_prime)
+            
+            except ValueError as e:
                 if self.config.language == "zh":
-                    return f"错误：位置必须是 R0 到 R{self._game_info['L']} 或 T。"
+                    return f"错误：{str(e)}"
                 else:
-                    return f"Error: Position must be R0 to R{self._game_info['L']} or T."
-        else:
-            if self.config.language == "zh":
-                return f"错误：位置必须是 R0 到 R{self._game_info['L']} 或 T。"
-            else:
-                return f"Error: Position must be R0 to R{self._game_info['L']} or T."
+                    return f"Error: {str(e)}"
         
-        # 执行探测
-        result = self._probe_node(channel_idx, depth)
-        return str(result)
+        elif "query_add_delta" in parsed_info:
+            try:
+                type_idx, q = self._parse_type_q(parsed_info["query_add_delta"])
+                
+                ci = self.counts[type_idx]
+                delta = q * ci + q * (q - 1) // 2
+                
+                return str(delta)
+            
+            except ValueError as e:
+                if self.config.language == "zh":
+                    return f"错误：{str(e)}"
+                else:
+                    return f"Error: {str(e)}"
+        
+        else:
+            raise ValueError("No valid query tag found.")
 
-    def get_all_possible_queries(self) -> list:
+    def get_all_possible_queries(self) -> list[dict]:
         queries = []
-        K = self._game_info["K"]
-        L = self._game_info["L"]
-
-        for c in range(1, K + 1):
-            # 参考路径节点 R0 到 RL
-            for i in range(L + 1):
-                result = self._probe_node(c - 1, i)
+        
+        queries.append({
+            "query": "<query_h></query_h>",
+            "answer": str(self.H)
+        })
+        
+        q_range = range(1, 6)
+        
+        for type_idx in range(1, 5):
+            for q in q_range:
+                content = f"type={type_idx}, q={q}"
+                
+                temp_counts = self.counts.copy()
+                temp_counts[type_idx] += q
+                h_prime = self._calculate_h(temp_counts)
+                
                 queries.append({
-                    "query":  f"<query_sample>channel={c}, position=R{i}</query_sample>",
-                    "answer": str(result),
+                    "query": f"<query_add_value>{content}</query_add_value>",
+                    "answer": str(h_prime)
                 })
-
-            # 目标节点 T
-            result = self._probe_node(c - 1, self.target_depth)
-            queries.append({
-                "query":  f"<query_sample>channel={c}, position=T</query_sample>",
-                "answer": str(result),
-            })
-
+                
+                ci = self.counts[type_idx]
+                delta = q * ci + q * (q - 1) // 2
+                
+                queries.append({
+                    "query": f"<query_add_delta>{content}</query_add_delta>",
+                    "answer": str(delta)
+                })
+                
         return queries
 
-
     def _cf_make_wrong(self, correct: str) -> str:
-        # 返回值是纯整数（探测结果）
-        if correct.strip().lstrip('-').isdigit():
-            ch = self.channels[0]          # 用第一个通道的模数
-            val = int(correct.strip())
-            return str((val + 1) % ch["m"])  # +1 后对同一模数取模，保证仍在合法范围内
+        try:
+            val = int(correct)
+            if val == 0:
+                return str(val + 3)
+            elif val > 0:
+                return str(val + max(3, val // 2))
+            else:
+                return str(val - max(3, abs(val) // 2))
+        except ValueError:
+            pass
+        
+        if "是" in correct:
+            return correct.replace("是", "否")
+        if "Yes" in correct:
+            return correct.replace("Yes", "No")
+        if "YES" in correct:
+            return correct.replace("YES", "NO")
+        if "yes" in correct:
+            return correct.replace("yes", "no")
+            
         return correct + "_WRONG"

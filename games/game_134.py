@@ -1,597 +1,549 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   定位查询：序列中第k个位置的元素是什么
-# ============================================================
-
 from .base import Game
-import random
+import re
 
-class HiddenSequenceReconstructionGame(Game):
+class SequenceFunctionGame(Game):
 
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
+    game_rule_zh = """\
+我们来玩一个"序列函数推理"游戏，规则如下：
 
-    # ==========================================
-    # 场景 1：交通
-    # ==========================================
+游戏设定了一个初始为空的序列，每个元素取自 {{0, 1, 2}}。你可以逐步在序列末尾追加元素，序列最大长度为 12。
+
+我已秘密选定了一个函数 f，它的输入是序列的"后 4 位窗口"（若当前长度不足 4，则在左侧用 0 填充至 4 位），输出为 {{0, 1, 2}} 中的一个数值。这个函数在整个游戏过程中保持不变，且来自以下四个候选之一：
+
+- 律A：后 4 位元素之和对 3 取模
+- 律B：后 4 位的加权和对 3 取模，权重从旧到新依次为 [1, 2, 1, 2]
+- 律C：后 4 位中最新一位的数值
+- 律D：后 4 位中出现次数最多的数值；若有并列，则选最近一次出现位置更靠后的数值
+
+你的目标是：
+1. 推断出正确的函数（律A/律B/律C/律D）
+2. 在序列长度达到 12 时，使得函数在最终后 4 位窗口上的输出等于 {target}
+
+你可以反复进行以下操作（每次仅限一个操作）：
+
+1. 投掷操作：向序列末尾追加一个元素（0、1 或 2）。系统返回当前序列长度。
+2. 听回声：查询函数在当前后 4 位窗口上的输出值。系统返回 0、1 或 2。
+3. 查询长度：询问当前序列长度及剩余可追加次数。系统返回相关信息。
+4. 提交结论：提交你推断的函数类型。系统判定正确性；若此时长度已达 12，同时判定终局目标是否达成。
+
+当序列长度达到 12 时，游戏进入终局判定。你需要同时满足：
+- 提交的函数类型正确
+- 函数在最终后 4 位窗口的输出等于 {target}
+
+每次操作只能包含一个标签。请使用以下 XML 格式：
+
+- 投掷操作（例如追加元素 1）：
+<throw>1</throw>
+
+- 听回声：
+<echo></echo>
+
+- 查询长度：
+<query_length></query_length>
+
+- 提交结论（例如判断为律C）：
+<answer>C</answer>
+
+注意：请尽可能少地使用操作次数来完成推理和目标。
+"""
+
+    game_rule_en = """\
+Let's play a "Sequence Function Deduction" game. Here are the rules:
+
+There is an initially empty sequence where each element is from {{0, 1, 2}}. You can append elements to the end of the sequence step by step, with a maximum length of 12.
+
+I have secretly selected a function f that takes the "last 4 positions window" of the sequence as input (if the current length is less than 4, pad with 0s on the left to make it 4 positions) and outputs a value from {{0, 1, 2}}. This function remains constant throughout the game and is one of the following four candidates:
+
+- Rule A: Sum of the last 4 elements modulo 3
+- Rule B: Weighted sum of the last 4 elements modulo 3, with weights [1, 2, 1, 2] from oldest to newest
+- Rule C: The value of the newest element in the last 4 positions
+- Rule D: The most frequent value in the last 4 positions; if tied, choose the one with the most recent occurrence
+
+Your goals are:
+1. Deduce the correct function (Rule A/B/C/D)
+2. When the sequence length reaches 12, ensure the function's output on the final last 4 positions equals {target}
+
+You can repeatedly perform the following operations (one per turn):
+
+1. Throw: Append an element (0, 1, or 2) to the end of the sequence. The system returns the current sequence length.
+2. Echo: Query the function's output on the current last 4 positions window. The system returns 0, 1, or 2.
+3. Query Length: Ask for the current sequence length and remaining append operations. The system returns relevant information.
+4. Submit Answer: Submit your deduced function type. The system judges correctness; if the length has reached 12, it also judges whether the end goal is achieved.
+
+When the sequence length reaches 12, the game enters final judgment. You need to satisfy both:
+- The submitted function type is correct
+- The function's output on the final last 4 positions equals {target}
+
+Each operation must contain only one tag. Use the following XML format:
+
+- Throw operation (e.g., appending element 1):
+<throw>1</throw>
+
+- Echo:
+<echo></echo>
+
+- Query length:
+<query_length></query_length>
+
+- Submit answer (e.g., deducing Rule C):
+<answer>C</answer>
+
+Note: Try to use as few operations as possible to complete the deduction and achieve the goal.
+"""
+
     contextualized_rule_zh_1 = """\
-欢迎使用城市智能交通路网诊断系统。
-本系统记录了一条干道上连续的 {n} 个路口（按顺序编号）在特定高峰时段的交通流状态评级。每个路口的状态从集合 {{A, B, C, D}} 中取值（分别代表通畅、缓行、拥堵、严重拥堵）。系统已自动记录了这些固定状态，且整条干道并非单一状态。
+欢迎进入“智控交管系统”演练平台。本平台用于推演不同路段的交通演变规律并预测流量负荷。
+目前分配给你一个未定初始状态的监测路段，你可以逐步录入历史时段交通状态代码（可选代码：0=畅通，1=缓行，2=拥堵），最多可建立包含 12 个时段的演进序列。
 
-你的任务是推断出关键路口 {k} 的交通流状态。为了防止直接干预该路口的数据流，你不能直接查询路口 {k}，也不能在任何操作中包含路口 {k}。
+系统搭载了一个核心的“拥堵预测引擎” f，其输入为最近 4 个时段的状态序列（不足 4 位则在历史侧用代码 0 填充），输出为 {{0, 1, 2}} 预警负荷等级之一。该引擎的评估法则在全程保持不变，且必然是以下四种预设算法之一：
 
-你有 {budget} 次系统调用机会，可以使用以下五种分析指令（每次仅限一种）：
+- 律A：近 4 个状态代码之和对 3 取模。
+- 律B：近 4 个状态代码的加权和对 3 取模，从旧到新权重依次为 [1, 2, 1, 2]。
+- 律C：完全取决于最新一个时段的交通状态代码。
+- 律D：近 4 个状态中出现频次最高的代码；若频次并列，则取时间上最近发生的一个。
 
-1. 单点观察：查询特定路口 i 的状态（i 不能等于 {k}）
-2. 相等比较：对比路口 i 和路口 j 的状态是否相同（i 和 j 均不能等于 {k}）
-3. 区间计数：统计路段 [L, R] 中特定状态出现的次数（路段范围内不能包含路口 {k}）
-4. 周期检验：检测路段 [L, R] 是否存在空间周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，路口 i 和路口 i+p 的状态完全一致，且这些路口都不能等于 {k}）
-5. 镜像检验：检测路段 [L, R] 的状态分布是否呈镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，路口 L+t 和路口 R-t 的状态相同，且涉及路口不能等于 {k}）
+你的任务目标：
+1. 分析并推断出当前后台运作的正确引擎算法（律A/律B/律C/律D）。
+2. 在录入总时段达到 12 个时，使得引擎对最后 4 位窗口的负荷预测值严格等于 {target}。
 
-## 查询与提交答案的格式（必须严格遵守）
+你可以反复执行以下控制端指令（每次仅限一个）：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+1. 录入记录：向序列追加一个状态代码（0、1或2），系统返回当前已建立总时段数。
+2. 运行引擎：读取预测引擎基于当前末尾 4 位给出的负荷预估值，系统返回0、1或2。
+3. 进度核查：查询序列当前长度与剩余操作配额。
+4. 提交报告：提交你推断的算法型号，若此时总时段已达 12，系统将一并核对终局负荷目标。
 
-- 单点观察（例如查询路口 3）：
-<query_observe>3</query_observe>
+当序列长度达到 12 时，演练自动结算，你必须同时达成：
+- 提交的引擎型号正确。
+- 最终后 4 位窗口的预测负荷等于 {target}。
 
-- 相等比较（例如对比路口 2 和路口 5）：
-<query_compare>2,5</query_compare>
+- 录入记录（例如追加状态 1）：
+<throw>1</throw>
 
-- 区间计数（例如统计路段 [1, 4] 中状态 A 的数量）：
-<query_count>1,4,A</query_count>
+- 运行引擎：
+<echo></echo>
 
-- 周期检验（例如测试路段 [1, 6] 的空间周期 2）：
-<query_period>1,6,2</query_period>
+- 进度核查：
+<query_length></query_length>
 
-- 镜像检验（例如测试路段 [2, 5] 是否镜像对称）：
-<query_mirror>2,5</query_mirror>
-
-提交最终诊断结论时，直接说明路口 {k} 的状态，格式如下：
-
-<answer>A</answer>
-
-注意：答案必须是 A、B、C、D 中的一个。
+- 提交报告（例如认定为律C）：
+<answer>C</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the Urban Intelligent Traffic Network Diagnostic System.
-The system has recorded the traffic flow state ratings for {n} consecutive intersections (numbered sequentially) along a main arterial road during a specific peak period. The state of each intersection takes a value from the set {{A, B, C, D}} (representing Smooth, Slow, Congested, and Severely Congested, respectively). The system has secretly logged these fixed states, forming a sequence (not all intersections share the same state).
+Welcome to the "Intelligent Traffic Control System" drill platform. This platform simulates traffic progression and predicts flow load patterns.
+You are assigned a monitoring segment with an initially empty sequence. You can iteratively log historical traffic status codes (0=Clear, 1=Slow, 2=Congested), building an evolution sequence up to 12 periods.
 
-Your objective is to infer the traffic state at the critical intersection {k}. To prevent direct interference with the data stream of this node, you cannot query intersection {k} directly, nor can you involve intersection {k} in any operations.
+The system is equipped with a core "Congestion Prediction Engine" f, which takes the sequence's last 4 periods as input (padded with 0s on the older side if under 4) and outputs an alert load level from {{0, 1, 2}}. Its evaluation algorithm remains constant and operates strictly under one of four predetermined models:
 
-You have {budget} system call opportunities and can use the following five analytical commands (one per turn):
+- Rule A: Sum of the last 4 status codes modulo 3.
+- Rule B: Weighted sum of the last 4 status codes modulo 3, with historical weights [1, 2, 1, 2] from oldest to newest.
+- Rule C: Completely dependent on the traffic status code of the most recent period.
+- Rule D: The most frequent status code in the last 4 periods; if tied, it defaults to the most recent occurrence.
 
-1. Single Observation: Query the state of specific intersection i (i cannot equal {k})
-2. Equality Comparison: Check if intersections i and j share the same state (neither i nor j can equal {k})
-3. Range Count: Count how many times a specific state appears in the road segment [L, R] (the segment cannot include intersection {k})
-4. Period Check: Test if the road segment [L, R] exhibits a spatial period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, intersections i and i+p have the identical state, and these intersections cannot equal {k})
-5. Mirror Check: Verify if the state distribution in the road segment [L, R] is mirror-symmetric (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, intersections L+t and R-t have the same state, and these intersections cannot equal {k})
+Your objectives:
+1. Deduce the correct background engine algorithm (Rule A/B/C/D).
+2. Ensure that when the total logged periods reach 12, the engine's predicted load on the final 4-period window exactly equals {target}.
 
-## Query and Answer Format (strictly required)
+You can repeatedly execute the following terminal directives (one per operation):
 
-Each query must contain only one tag. Use the following XML format:
+1. Log Record: Append a status code (0, 1, or 2). System returns the current sequence length.
+2. Run Engine: Query the load prediction based on the current 4-period window. System returns 0, 1, or 2.
+3. Check Progress: Query current sequence length and remaining quota.
+4. Submit Report: Submit your deduced algorithm model. If the sequence length is exactly 12, the final target objective is also evaluated.
 
-- Single Observation (e.g., query intersection 3):
-<query_observe>3</query_observe>
+At sequence length 12, the drill concludes. You must ensure:
+- The submitted algorithm model is correct.
+- The predicted load on the final 4-period window equals {target}.
 
-- Equality Comparison (e.g., compare intersections 2 and 5):
-<query_compare>2,5</query_compare>
+- Log Record (e.g., logging status 1):
+<throw>1</throw>
 
-- Range Count (e.g., count state A in segment [1, 4]):
-<query_count>1,4,A</query_count>
+- Run Engine:
+<echo></echo>
 
-- Period Check (e.g., test period 2 in segment [1, 6]):
-<query_period>1,6,2</query_period>
+- Check Progress:
+<query_length></query_length>
 
-- Mirror Check (e.g., test if segment [2, 5] is mirror-symmetric):
-<query_mirror>2,5</query_mirror>
-
-When submitting the final diagnostic conclusion, directly specify the state at intersection {k}, using this format:
-
-<answer>A</answer>
-
-Note: The answer must be one of A, B, C, or D.
+- Submit Report (e.g., deducing Rule C):
+<answer>C</answer>
 """
 
-    # ==========================================
-    # 场景 2：医疗
-    # ==========================================
     contextualized_rule_zh_2 = """\
-欢迎使用临床基因组学序列推演辅助系统。
-系统对某异常基因链的 {n} 个连续位点进行了靶向测序。每个位点的核苷酸由集合 {{A, B, C, D}} 表示（分别代表腺嘌呤、胸腺嘧啶、胞嘧啶和鸟嘌呤的突变分型）。系统已锁定了一个固定的核苷酸序列（并非完全纯合）。
+欢迎进入“ICU生命体征监护系统”调参测试环境。
+本系统负责长效跟踪患者体征序列并自动触发医疗预警。目前序列为空，你需要逐个周期录入患者生命体征综合评估代码（0=正常，1=轻微波动，2=警报），最多录入 12 个监控周期。
 
-你的临床推断目标是确定靶点突变位点 {k} 的核苷酸类型。由于测序盲区限制，你无法直接读取位点 {k} 的信息，也严禁在任何探针查询中覆盖位点 {k}。
+系统核心的“健康风险预警机制” f 依赖患者最近 4 个周期的体征序列（不足 4 期则往前补测算基线 0），并输出 {{0, 1, 2}} 预警动作等级之一。该机制的触发逻辑全程固定，必定为以下四类之一：
 
-你有 {budget} 次测序探针调用机会，可使用以下五种测序分析策略（每次限用一种）：
+- 律A：近 4 个周期体征代码之和对 3 取模。
+- 律B：近 4 个周期代码的加权和对 3 取模，早晚期权重依次为 [1, 2, 1, 2]。
+- 律C：完全以最新一期体征评估代码为准。
+- 律D：近 4 期中最常出现的体征代码；若存在并列，则采信距离当前最近的一期记录。
 
-1. 单点观察：检测特定位点 i 的核苷酸类型（i 不能等于 {k}）
-2. 相等比较：比对位点 i 和位点 j 的核苷酸是否相同（i 和 j 均不能等于 {k}）
-3. 区间计数：统计基因片段 [L, R] 中某种特定核苷酸的数量（片段区间不能包含位点 {k}）
-4. 周期检验：分析基因片段 [L, R] 是否具备重复序列周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，位点 i 和位点 i+p 核苷酸相同，且不能涉及位点 {k}）
-5. 镜像检验：验证基因片段 [L, R] 是否构成回文镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，位点 L+t 和位点 R-t 核苷酸相同，且不能涉及位点 {k}）
+你的任务目标：
+1. 诊断出该监护仪启用的正确预警机制（律A/律B/律C/律D）。
+2. 在监控周期达到满额 12 期时，使该预警机制对最后 4 期的评估输出正好等于预设值 {target}。
 
-## 查询与提交答案的格式（必须严格遵守）
+测试阶段支持以下操作（每次独立调取）：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+1. 录入体征：向系统追加一个周期评估代码（0、1或2），系统返回当前建档的周期数。
+2. 试运行机制：获取当前 4 期体征窗口的风险预警计算结果，返回0、1或2。
+3. 查验周期：问询建档进度及可供修改录入的余量。
+4. 提交诊断：确认你的判定逻辑型号，若周期已达 12，系统将核对整体临床处置是否达标。
 
-- 单点观察（例如检测位点 3）：
-<query_observe>3</query_observe>
+录满 12 个周期时测试结束，需同步满足：
+- 机制研判正确。
+- 最终 4 期数据的预警输出精确等于 {target}。
 
-- 相等比较（例如比对位点 2 和位点 5）：
-<query_compare>2,5</query_compare>
+- 录入体征（例如录入1）：
+<throw>1</throw>
 
-- 区间计数（例如统计片段 [1, 4] 中核苷酸 A 的数量）：
-<query_count>1,4,A</query_count>
+- 试运行机制：
+<echo></echo>
 
-- 周期检验（例如测试片段 [1, 6] 的串联重复周期 2）：
-<query_period>1,6,2</query_period>
+- 查验周期：
+<query_length></query_length>
 
-- 镜像检验（例如测试片段 [2, 5] 是否回文对称）：
-<query_mirror>2,5</query_mirror>
-
-提交最终临床推断结论时，直接说明位点 {k} 的核苷酸，格式如下：
-
-<answer>A</answer>
-
-注意：答案必须是 A、B、C、D 中的一个。
+- 提交诊断（例如指定机制C）：
+<answer>C</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the Clinical Genomics Sequence Inference Assistant.
-The system has performed targeted sequencing on {n} consecutive loci of an abnormal genetic chain. The nucleotide at each locus is represented by the set {{A, B, C, D}} (indicating mutation subtypes of Adenine, Thymine, Cytosine, and Guanine). The system has locked in a fixed sequence (not entirely homozygous).
+Welcome to the parameter tuning environment of the "ICU Vital Signs Monitoring System."
+This system tracks patient vital sequences to trigger medical warnings. Starting with an empty sequence, you will log patient composite vital sign codes period by period (0=Normal, 1=Mild Fluctuation, 2=Alert), up to 12 monitoring periods.
 
-Your clinical inference objective is to determine the nucleotide type at the target mutation locus {k}. Due to sequencing blind spots, you cannot directly read locus {k}, nor can you cover locus {k} in any probe queries.
+The core "Health Risk Warning Mechanism" f processes the latest 4 periods of vital data (padded with baseline 0s if fewer than 4) to output an alert action level from {{0, 1, 2}}. The mechanism logic is strictly fixed throughout the test and is definitively one of the following four:
 
-You have {budget} sequencing probe calls available, utilizing the following five analytical strategies (one per turn):
+- Rule A: Sum of the last 4 period codes modulo 3.
+- Rule B: Weighted sum of the last 4 codes modulo 3, with early-to-late weights [1, 2, 1, 2].
+- Rule C: Driven entirely by the vital code of the most recent period.
+- Rule D: The most frequently occurring code in the last 4 periods; if tied, the most recent record takes precedence.
 
-1. Single Observation: Detect the nucleotide type at specific locus i (i cannot equal {k})
-2. Equality Comparison: Compare if the nucleotides at locus i and locus j are identical (neither i nor j can equal {k})
-3. Range Count: Count the occurrences of a specific nucleotide in the gene segment [L, R] (the segment cannot include locus {k})
-4. Period Check: Analyze if the gene segment [L, R] has a tandem repeat period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, loci i and i+p share the same nucleotide, and these loci cannot equal {k})
-5. Mirror Check: Verify if the gene segment [L, R] forms a palindromic mirror symmetry (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, loci L+t and R-t have the same nucleotide, and these loci cannot equal {k})
+Your objectives:
+1. Diagnose the correct warning mechanism active on the monitor (Rule A/B/C/D).
+2. When the monitoring sequence reaches exactly 12 periods, ensure the mechanism's assessment of the final 4-period window equals the target value {target}.
 
-## Query and Answer Format (strictly required)
+The test phase supports the following actions (one per call):
 
-Each query must contain only one tag. Use the following XML format:
+1. Log Vitals: Append a period code (0, 1, or 2), returning the current total logged periods.
+2. Trial Mechanism: Obtain the current computed risk warning level for the 4-period window (returns 0, 1, or 2).
+3. Check Periods: Query the charting progress and remaining capacity.
+4. Submit Diagnosis: Confirm your determined mechanism model. If periods reach 12, overall clinical handling goals will be evaluated.
 
-- Single Observation (e.g., detect locus 3):
-<query_observe>3</query_observe>
+At 12 periods, the test concludes. You must achieve both:
+- Correct mechanism diagnosis.
+- The final 4-period warning output precisely matches {target}.
 
-- Equality Comparison (e.g., compare loci 2 and 5):
-<query_compare>2,5</query_compare>
+- Log Vitals (e.g., logging 1):
+<throw>1</throw>
 
-- Range Count (e.g., count nucleotide A in segment [1, 4]):
-<query_count>1,4,A</query_count>
+- Trial Mechanism:
+<echo></echo>
 
-- Period Check (e.g., test tandem repeat period 2 in segment [1, 6]):
-<query_period>1,6,2</query_period>
+- Check Periods:
+<query_length></query_length>
 
-- Mirror Check (e.g., test if segment [2, 5] is palindromic):
-<query_mirror>2,5</query_mirror>
-
-When submitting the final clinical inference, directly specify the nucleotide at locus {k}, using this format:
-
-<answer>A</answer>
-
-Note: The answer must be one of A, B, C, or D.
+- Submit Diagnosis (e.g., declaring Rule C):
+<answer>C</answer>
 """
 
-    # ==========================================
-    # 场景 3：教育
-    # ==========================================
     contextualized_rule_zh_3 = """\
-欢迎进入学生学情轨迹纵向追踪平台。
-本平台收录了某学生在特定学科上的 {n} 次连续随堂测评结果。每次测评的知识掌握评级取自集合 {{A, B, C, D}}（分别对应优秀、良好、及格、待达标）。系统生成了一组反映其学习波动的固有测评序列（并非所有次成绩均一致）。
+欢迎使用“自适应学习行为分析器”干预配置后台。
+本模块专门针对学生学习过程中的阶段专注度建立考察序列。当前序列留空，你需要按教学切片分步录入学生状态代码（0=走神，1=一般，2=高度集中），完整跟踪档案的最大深度为 12 个节点。
 
-你的教学干预目标是推断出关键的第 {k} 次测评评级。受限于防作弊与盲测机制，你无法直接调取第 {k} 次的成绩档案，且任何学情数据查询均不可涵盖该次测评。
+系统后台运作着一个“学情干预评估器” f，它提取序列最新 4 个切片（节点不足则在前端默认以 0 补齐）进行测算，并输出 {{0, 1, 2}} 中一种干预触发级别。测算模型一经设定不再变动，包含以下四种基准框架：
 
-你有 {budget} 次学情检索额度，可以使用以下五种学情分析工具（每次仅限一项）：
+- 律A：最新 4 个状态代码加总并对 3 取模。
+- 律B：最新 4 个状态代码的加权计算并对 3 取模，按时间轴赋予权重 [1, 2, 1, 2]。
+- 律C：评估完全对应距离当前最近切片的状态代码。
+- 律D：最新 4 个状态里出现频次居首的代码；若遇并列，采纳时间离现在更近的反馈。
 
-1. 单点观察：查阅第 i 次测评的成绩评级（i 不能等于 {k}）
-2. 相等比较：对比第 i 次和第 j 次测评的评级是否一致（i 和 j 均不能等于 {k}）
-3. 区间计数：统计在第 [L, R] 次测评区间内某项评级获得的次数（测评区间不能包含第 {k} 次）
-4. 周期检验：分析测评区间 [L, R] 是否存在成绩波动的周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，第 i 次和第 i+p 次评级完全相同，且不能涉及第 {k} 次）
-5. 镜像检验：检验测评区间 [L, R] 的成绩走势是否呈现镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，第 L+t 次和第 R-t 次评级相同，且不能涉及第 {k} 次）
+你的任务目标：
+1. 鉴定当前所采用的干预测算模型（律A/律B/律C/律D）。
+2. 在切片记录数累积到 12 步时，调控录入节奏使最后 4 位窗口的干预触发级别准确等于 {target}。
 
-## 查询与提交答案的格式（必须严格遵守）
+你可以实施下列配置指令（每次单发指令）：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+1. 追加记录：录入一个切片代码（0、1或2），接口回复当前录入的总节点数。
+2. 请求测算：拉取评估器针对当前 4 位序列的试算结果，回复0、1或2。
+3. 状态检视：查看已记录切片进度及剩余节点数。
+4. 交付校验：递交你对模型的分析结论。到达 12 个节点时同步检查干预引导目标是否吻合。
 
-- 单点观察（例如查阅第 3 次测评）：
-<query_observe>3</query_observe>
+累计录入达到 12 切片时锁定评估，需双线达标：
+- 递交模型判断准确。
+- 结案时后 4 位输出触发值等同 {target}。
 
-- 相等比较（例如对比第 2 和第 5 次测评）：
-<query_compare>2,5</query_compare>
+- 追加记录（示例：录入状态1）：
+<throw>1</throw>
 
-- 区间计数（例如统计第 [1, 4] 次测评中获得评级 A 的次数）：
-<query_count>1,4,A</query_count>
+- 请求测算：
+<echo></echo>
 
-- 周期检验（例如测试区间 [1, 6] 的波动周期 2）：
-<query_period>1,6,2</query_period>
+- 状态检视：
+<query_length></query_length>
 
-- 镜像检验（例如测试区间 [2, 5] 成绩走势是否镜像对称）：
-<query_mirror>2,5</query_mirror>
-
-提交最终学情推断结论时，直接说明第 {k} 次测评的评级，格式如下：
-
-<answer>A</answer>
-
-注意：答案必须是 A、B、C、D 中的一个。
+- 交付校验（示例：判定为律C）：
+<answer>C</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Student Academic Trajectory Longitudinal Tracking Platform.
-This platform has recorded {n} consecutive quiz results for a specific student in a subject. The knowledge mastery rating for each quiz is drawn from the set {{A, B, C, D}} (representing Excellent, Good, Pass, and Needs Improvement). The system holds a fixed inherent sequence reflecting their learning fluctuations (not all quiz ratings are identical).
+Welcome to the backend configuration for the "Adaptive Learning Behavior Analyzer."
+This module builds an observational sequence of student focus levels across learning stages. Starting with an empty sequence, you log stage status codes sequentially (0=Distracted, 1=Normal, 2=Highly Focused), with the complete tracking profile capped at 12 nodes.
 
-Your pedagogical intervention goal is to infer the mastery rating of the critical {k}-th quiz. Restricted by blind-test and anti-cheating mechanisms, you cannot directly access the record for the {k}-th quiz, and no academic data queries may encompass this quiz.
+A background "Learning Intervention Evaluator" f processes the newest 4 sequence slices (padding the front with 0s if insufficient) to calculate an intervention trigger level from {{0, 1, 2}}. The evaluation model is fixed upon initiation and relies on one of four baseline frameworks:
 
-You have {budget} academic retrieval quotas and can utilize the following five learning analysis tools (one per turn):
+- Rule A: Sum of the newest 4 status codes modulo 3.
+- Rule B: Weighted sum of the newest 4 codes modulo 3, with timeline weights assigned as [1, 2, 1, 2].
+- Rule C: The evaluation directly mirrors the status code of the most recent slice.
+- Rule D: The most frequently observed code in the newest 4 slices; if tied, it adopts the more recent feedback.
 
-1. Single Observation: Review the rating of the i-th quiz (i cannot equal {k})
-2. Equality Comparison: Check if the ratings of the i-th and j-th quizzes are consistent (neither i nor j can equal {k})
-3. Range Count: Count how many times a specific rating was achieved within the quiz interval [L, R] (the interval cannot include the {k}-th quiz)
-4. Period Check: Analyze if the quiz interval [L, R] exhibits a performance fluctuation period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, the i-th and (i+p)-th quiz ratings are completely identical, and these cannot involve the {k}-th quiz)
-5. Mirror Check: Verify if the performance trend in quiz interval [L, R] presents a mirror symmetry (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, the (L+t)-th and (R-t)-th quiz ratings are identical, and these cannot involve the {k}-th quiz)
+Your objectives:
+1. Identify the active intervention evaluation model (Rule A/B/C/D).
+2. Through your logging sequence, ensure that at the 12th node, the calculated intervention trigger on the final 4-slice window exactly equals {target}.
 
-## Query and Answer Format (strictly required)
+You may issue the following configuration commands (single command per turn):
 
-Each query must contain only one tag. Use the following XML format:
+1. Append Record: Log a slice code (0, 1, or 2). The interface returns the total logged nodes.
+2. Request Calculation: Pull the evaluator's trial result for the current 4-slice sequence, returning 0, 1, or 2.
+3. Check Status: View recorded progress and remaining node allowance.
+4. Deliver Verification: Submit your analytical conclusion of the model. When 12 nodes are reached, the final intervention goal is assessed.
 
-- Single Observation (e.g., review the 3rd quiz):
-<query_observe>3</query_observe>
+Locking evaluation occurs at 12 logged slices. You must ensure:
+- The submitted model judgment is correct.
+- The final 4-slice trigger output matches {target}.
 
-- Equality Comparison (e.g., compare the 2nd and 5th quizzes):
-<query_compare>2,5</query_compare>
+- Append Record (e.g., logging status 1):
+<throw>1</throw>
 
-- Range Count (e.g., count the occurrences of rating A in the interval [1, 4]):
-<query_count>1,4,A</query_count>
+- Request Calculation:
+<echo></echo>
 
-- Period Check (e.g., test fluctuation period 2 in interval [1, 6]):
-<query_period>1,6,2</query_period>
+- Check Status:
+<query_length></query_length>
 
-- Mirror Check (e.g., test if the trend in interval [2, 5] is mirror-symmetric):
-<query_mirror>2,5</query_mirror>
-
-When submitting your final pedagogical inference, directly specify the rating of the {k}-th quiz, using this format:
-
-<answer>A</answer>
-
-Note: The answer must be one of A, B, C, or D.
+- Deliver Verification (e.g., assessing Rule C):
+<answer>C</answer>
 """
 
-    # ==========================================
-    # 场景 4：制造业/工业
-    # ==========================================
     contextualized_rule_zh_4 = """\
-欢迎登录智能制造质量控制与缺陷溯源系统。
-我们的自动化产线刚完成了 {n} 个连续批次（按生产顺序编号）的组件制造。每个批次的质检等级从集合 {{A, B, C, D}} 中评定（分别代表优等品、一等品、合格品和残次品）。系统后台记录了这组固定的质量分布序列（各批次质量并非完全一样）。
+欢迎登录“智能高精产线质检”控制终端。
+你的任务是对流水线抽检批次进行记录和算法逆推。你需逐个批次登记初筛品质等级代码（0=合格，1=次品，2=废品）以形成质检序列，系统最多接受 12 个批次的检测流。
 
-你的品控任务是推断出核心批次 {k} 的质检等级。由于核心批次样本正处于隔离封存状态，你不能直接调取批次 {k} 的品控参数，也不能在任何抽检指令中包含批次 {k}。
+终端内核集成了“产线停机复检算法” f，它持续监控最近 4 批的抽检序列（遇长度不足则在序列头端填 0 补偿），并抛出 {{0, 1, 2}} 以指导下一环节的操作定级。该算法版本已锁定不变，属于以下四大检控逻辑之一：
 
-你有 {budget} 次质量检验操作权限，可使用以下五种工业分析指令（每次限用一种）：
+- 律A：近 4 个批次品质代码之和对 3 取模。
+- 律B：近 4 个代码的加权叠加并对 3 取模，从先至后权值为 [1, 2, 1, 2]。
+- 律C：检控等级严格对齐最新一批的品质代码。
+- 律D：近 4 批中出现频次最高的品质代码；倘若并列，则以刚完成检验的那批为准。
 
-1. 单点观察：提取特定批次 i 的质检等级（i 不能等于 {k}）
-2. 相等比较：对比批次 i 和批次 j 的质检等级是否相同（i 和 j 均不能等于 {k}）
-3. 区间计数：统计生产批次区间 [L, R] 内某特定等级出现的频次（区间内不能包含批次 {k}）
-4. 周期检验：检测批次区间 [L, R] 中是否存在工艺偏差周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，批次 i 和批次 i+p 的等级完全一致，且均不能涉及批次 {k}）
-5. 镜像检验：验证批次区间 [L, R] 的质量分布是否呈镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，批次 L+t 和批次 R-t 等级相同，且均不能涉及批次 {k}）
+你的任务目标：
+1. 鉴定目前在线服役的检控逻辑类别（律A/律B/律C/律D）。
+2. 在总送检批次达到上限 12 时，使得最终 4 批组成的窗口能触发目标定级值 {target}。
 
-## 查询与提交答案的格式（必须严格遵守）
+测试面板可用指令（一次单一调用）：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+1. 登记代码：将单个品质代码（0、1或2）录入流转线，获取当前登记的批次数。
+2. 试算定级：调取目前最近 4 批的检控反馈预估，返回0、1或2。
+3. 容量盘查：核对已有检控序列长度和产线可操作额度。
+4. 归档结论：递交检控逻辑判定，若登记满 12 批则立刻核销最终目标控制的准确率。
 
-- 单点观察（例如提取批次 3）：
-<query_observe>3</query_observe>
+累计达 12 个批次进入清算验收，要求必须做到：
+- 逻辑判定选项正确。
+- 末端 4 位检测窗的预估定级锁定为 {target}。
 
-- 相等比较（例如对比批次 2 和批次 5）：
-<query_compare>2,5</query_compare>
+- 登记代码（例：录入次品1）：
+<throw>1</throw>
 
-- 区间计数（例如统计区间 [1, 4] 中等级 A 的批次数量）：
-<query_count>1,4,A</query_count>
+- 试算定级：
+<echo></echo>
 
-- 周期检验（例如测试区间 [1, 6] 的工艺周期 2）：
-<query_period>1,6,2</query_period>
+- 容量盘查：
+<query_length></query_length>
 
-- 镜像检验（例如测试区间 [2, 5] 的质量分布是否镜像对称）：
-<query_mirror>2,5</query_mirror>
-
-提交最终缺陷溯源结论时，直接说明批次 {k} 的质检等级，格式如下：
-
-<answer>A</answer>
-
-注意：答案必须是 A、B、C、D 中的一个。
+- 归档结论（例：鉴别为律C）：
+<answer>C</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Welcome to the Smart Manufacturing Quality Control and Defect Traceability System.
-Our automated production line has just completed manufacturing {n} consecutive batches of components (numbered by production sequence). The quality inspection grade for each batch is assessed from the set {{A, B, C, D}} (representing Premium, First-Class, Qualified, and Defective, respectively). The system backend has recorded this fixed quality distribution sequence (the batches are not all of uniform quality).
+[Manufacturing Scenario]
+Welcome to the "Smart High-Precision Line QC" control terminal.
+Your task is to record sampling batches and reverse-engineer the automated algorithms. You will register preliminary quality codes batch by batch (0=Pass, 1=Defective, 2=Scrap) to form a quality control sequence, capping at 12 testing batches.
 
-Your quality control task is to infer the inspection grade of the core batch {k}. Because the core batch samples are currently isolated and sealed, you cannot directly retrieve the QA parameters for batch {k}, nor can you include batch {k} in any sampling instructions.
+The terminal core runs the "Line Downtime Inspection Algorithm" f, which constantly monitors the latest 4-batch sequence (padding the start with 0s if short) to output an operational rating from {{0, 1, 2}} for downstream handling. This algorithm version is permanently locked and strictly follows one of four logics:
 
-You have {budget} quality inspection operation privileges and can use the following five industrial analysis commands (one per turn):
+- Rule A: Sum of the last 4 batch quality codes modulo 3.
+- Rule B: Weighted superposition of the last 4 codes modulo 3, with early-to-late weights [1, 2, 1, 2].
+- Rule C: The operational rating strictly aligns with the quality code of the newest batch.
+- Rule D: The most frequently occurring quality code in the last 4 batches; if tied, defaults to the most recently inspected batch.
 
-1. Single Observation: Extract the inspection grade of specific batch i (i cannot equal {k})
-2. Equality Comparison: Compare if batch i and batch j share the same inspection grade (neither i nor j can equal {k})
-3. Range Count: Count the frequency of a specific grade within the production batch interval [L, R] (the interval cannot include batch {k})
-4. Period Check: Detect if there is a process deviation period p in the batch interval [L, R] (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, batches i and i+p have identical grades, and neither can involve batch {k})
-5. Mirror Check: Verify if the quality distribution in the batch interval [L, R] is mirror-symmetric (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, batches L+t and R-t share the same grade, and neither can involve batch {k})
+Your objectives:
+1. Identify the active inspection logic category on the line (Rule A/B/C/D).
+2. Manage your entries so that when the submitted batches max out at 12, the final 4-batch window triggers the target operational rating {target}.
 
-## Query and Answer Format (strictly required)
+Available test panel commands (one call at a time):
 
-Each query must contain only one tag. Use the following XML format:
+1. Register Code: Feed a quality code (0, 1, or 2) into the line and receive the current registered batch count.
+2. Trial Rating: Extract the algorithm's anticipated rating for the current 4-batch window, returning 0, 1, or 2.
+3. Capacity Check: Audit the existing sequence length and available operational quota.
+4. Archive Conclusion: Submit your logic deduction. Upon reaching 12 batches, the final operational target accuracy is instantly validated.
 
-- Single Observation (e.g., extract batch 3):
-<query_observe>3</query_observe>
+Auditing commences once 12 batches accumulate, requiring that:
+- The logic deduction is correct.
+- The trial rating for the terminal 4-position window locks at {target}.
 
-- Equality Comparison (e.g., compare batches 2 and 5):
-<query_compare>2,5</query_compare>
+- Register Code (e.g., registering Defective 1):
+<throw>1</throw>
 
-- Range Count (e.g., count grade A batches in interval [1, 4]):
-<query_count>1,4,A</query_count>
+- Trial Rating:
+<echo></echo>
 
-- Period Check (e.g., test process period 2 in interval [1, 6]):
-<query_period>1,6,2</query_period>
+- Capacity Check:
+<query_length></query_length>
 
-- Mirror Check (e.g., test if quality distribution in interval [2, 5] is mirror-symmetric):
-<query_mirror>2,5</query_mirror>
-
-When submitting the final defect traceability conclusion, directly specify the inspection grade of batch {k}, using this format:
-
-<answer>A</answer>
-
-Note: The answer must be one of A, B, C, or D.
+- Archive Conclusion (e.g., identifying Rule C):
+<answer>C</answer>
 """
 
-    # ==========================================
-    # 场景 5：法律
-    # ==========================================
     contextualized_rule_zh_5 = """\
-欢迎使用司法判例类型化分析与类案检索系统。
-本系统整理了按时间顺序归档的 {n} 个关联历史判例。每个判例的法理适用类型被严格归入集合 {{A, B, C, D}} 中（分别代表驳回诉讼、部分支持、全部支持和发回重审）。系统已内置了这组确定的裁判链条（并非所有判例判决均一致）。
+欢迎使用“司法量刑辅助决策系统”逻辑比弹沙盒。
+本工具旨在梳理违法当事人的历史卷宗，模拟前科记录的复合权重。你可以在案卷序列中逐步增设记录代码（0=无异议，1=轻微违规，2=严重违法），卷宗最大允许溯及 12 宗。
 
-你的司法研判任务是推断出关键的第 {k} 号争议判例的适用类型。为保证研判程序的独立性，你被禁止直接查阅第 {k} 号判例的卷宗，同时任何卷宗批量检索条件中均不可包含第 {k} 号判例。
+在系统暗箱中设有一个“法定量刑从重基准”测算程式 f，它抓取案卷列表中最近 4 宗记录（如履历不足 4 宗，则用代表无罪的 0 补位至四件），并给出一个量刑调整指数，其值落于 {{0, 1, 2}}。此程式的测算基准不可变更，且必定吻合以下四个量刑法则之一：
 
-你有 {budget} 次司法数据库检索配额，可以使用以下五种法理分析工具（每次仅限一种）：
+- 律A：近 4 宗记录代码加总并对 3 取模。
+- 律B：近 4 宗记录代码依时间做加权计和并对 3 取模，早晚权重系数为 [1, 2, 1, 2]。
+- 律C：完全以最近发生的那一宗案卷违法等级为裁量准绳。
+- 律D：近 4 宗记录里最常出现的前科代码；在同等频次下，按距离目前最近的一次事实为准。
 
-1. 单点观察：调阅第 i 号判例的适用类型（i 不能等于 {k}）
-2. 相等比较：对比第 i 号和第 j 号判例的适用类型是否一致（i 和 j 均不能等于 {k}）
-3. 区间计数：统计在第 [L, R] 号判例区间中，特定适用类型作出的次数（卷宗区间不能包含第 {k} 号判例）
-4. 周期检验：审查第 [L, R] 号判例区间内是否具有裁判尺度波动的周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，第 i 号和第 i+p 号判例适用类型完全相同，且不可涉及第 {k} 号判例）
-5. 镜像检验：验证第 [L, R] 号判例区间的裁判演化是否呈现镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，第 L+t 号和第 R-t 号判例适用类型相同，且不可涉及第 {k} 号判例）
+你的任务目标：
+1. 从反馈中剖析出沙盒当下引用的法则类型（律A/律B/律C/律D）。
+2. 在卷宗记录恰好积攒至 12 宗时，引导测算程式在末尾 4 宗数据下的量刑调整指数稳稳命中目标 {target}。
 
-## 查询与提交答案的格式（必须严格遵守）
+你可以执行以下调查指令（单次提交一条指令）：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+1. 录入卷宗：在末尾追加新的记录代码（0、1或2），获取总在案宗数。
+2. 试算法理：向程式索要基于最新 4 宗案卷的量刑调整指数，获取到0、1或2。
+3. 盘查卷宗号：检索当前记录长度以及还可添加的案卷条数。
+4. 归档起诉书：敲定你推测的测算法则类别，当序列长度满 12 时，交由最终裁判进行核验。
 
-- 单点观察（例如调阅第 3 号判例）：
-<query_observe>3</query_observe>
+序列积满 12 宗便进入结案审查阶段，你必须两全其美：
+- 提交的法则断案无误。
+- 最终 4 宗案卷对应的测算指数恰好符合要求：{target}。
 
-- 相等比较（例如对比第 2 和第 5 号判例）：
-<query_compare>2,5</query_compare>
+- 录入卷宗（例：新增案卷1）：
+<throw>1</throw>
 
-- 区间计数（例如统计在第 [1, 4] 号判例区间中类型 A 的数量）：
-<query_count>1,4,A</query_count>
+- 试算法理：
+<echo></echo>
 
-- 周期检验（例如测试判例区间 [1, 6] 的裁判波动周期 2）：
-<query_period>1,6,2</query_period>
+- 盘查卷宗号：
+<query_length></query_length>
 
-- 镜像检验（例如测试判例区间 [2, 5] 裁判演化是否镜像对称）：
-<query_mirror>2,5</query_mirror>
-
-提交最终司法研判结论时，直接说明第 {k} 号判例的适用类型，格式如下：
-
-<answer>A</answer>
-
-注意：答案必须是 A、B、C、D 中的一个。
+- 归档起诉书（例：判明为律C）：
+<answer>C</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the Judicial Precedent Typological Analysis and Case Retrieval System.
-This system has curated {n} chronologically archived, interconnected historical precedents. The jurisprudential application type for each precedent is strictly classified into the set {{A, B, C, D}} (representing Case Dismissed, Partially Supported, Fully Supported, and Remanded for Retrial, respectively). The system has embedded this fixed chain of judgments (the precedents are not uniformly judged).
+Welcome to the logic alignment sandbox of the "Judicial Sentencing Auxiliary Decision System."
+This tool organizes an offender's historical case files to simulate the compounded weight of prior records. You incrementally append record codes into the case sequence (0=No Objection, 1=Minor Violation, 2=Serious Offense), with the dossier retrospectively capped at 12 items.
 
-Your judicial deliberation task is to infer the application type of the critical disputed precedent No. {k}. To ensure the independence of the deliberation procedure, you are prohibited from directly reviewing the dossier of precedent No. {k}, and no bulk dossier retrieval criteria may encompass precedent No. {k}.
+Operating in the background is a "Statutory Sentencing Aggravation Baseline" program f, which extracts the 4 most recent records (padding with 0s for 'innocence' if under 4 cases) to output a sentencing adjustment index valued in {{0, 1, 2}}. This baseline calculation is immutable and adheres exactly to one of four sentencing rules:
 
-You have {budget} judicial database retrieval quotas and can use the following five jurisprudential analysis tools (one per turn):
+- Rule A: Sum of the newest 4 record codes modulo 3.
+- Rule B: Chronologically weighted sum of the newest 4 codes modulo 3, with early-to-late weight factors [1, 2, 1, 2].
+- Rule C: Sentenced strictly on the violation severity of the most recent individual case.
+- Rule D: The most habitual prior record code in the newest 4 cases; upon frequency tie, the temporally nearest factual offense prevails.
 
-1. Single Observation: Access the application type of precedent No. i (i cannot equal {k})
-2. Equality Comparison: Check if the application types of precedents No. i and No. j are identical (neither i nor j can equal {k})
-3. Range Count: Count the frequency of a specific application type within the precedent interval [L, R] (the dossier interval cannot include precedent No. {k})
-4. Period Check: Examine if the precedent interval [L, R] exhibits a judgment standard fluctuation period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, precedents No. i and No. i+p share the identical application type, and neither can involve precedent No. {k})
-5. Mirror Check: Verify if the evolution of judgments in the precedent interval [L, R] demonstrates mirror symmetry (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, precedents No. L+t and No. R-t share the same application type, and neither can involve precedent No. {k})
+Your objectives:
+1. Deduce from the feedback which rule type the sandbox is presently referencing (Rule A/B/C/D).
+2. As the dossier accumulates exactly to 12 records, steer the calculation program to hit the definitive target index {target} across the terminal 4-case span.
 
-## Query and Answer Format (strictly required)
+You may execute these investigative directives (one per submission):
 
-Each query must contain only one tag. Use the following XML format:
+1. Enter File: Append a new record code (0, 1, or 2) to the end, receiving the total cataloged cases.
+2. Trial Jurisprudence: Request the sentencing adjustment index from the program based on the current 4-case window, retrieving 0, 1, or 2.
+3. Check Docket: Retrieve the current sequence tally and remaining case entry quota.
+4. Archive Indictment: Confirm your presumed calculation rule category. When the length reaches 12, it is submitted for the ultimate adjudicative review.
 
-- Single Observation (e.g., access precedent No. 3):
-<query_observe>3</query_observe>
+At a full 12 cases, case closure review activates, requiring dual success:
+- Accurate rule deduction submitted.
+- The adjustment index for the final 4 cases exactly fulfills the mandate: {target}.
 
-- Equality Comparison (e.g., compare precedents No. 2 and No. 5):
-<query_compare>2,5</query_compare>
+- Enter File (e.g., adding file 1):
+<throw>1</throw>
 
-- Range Count (e.g., count type A in precedent interval [1, 4]):
-<query_count>1,4,A</query_count>
+- Trial Jurisprudence:
+<echo></echo>
 
-- Period Check (e.g., test judgment fluctuation period 2 in interval [1, 6]):
-<query_period>1,6,2</query_period>
+- Check Docket:
+<query_length></query_length>
 
-- Mirror Check (e.g., test if judgment evolution in interval [2, 5] is mirror-symmetric):
-<query_mirror>2,5</query_mirror>
-
-When submitting your final judicial deliberation conclusion, directly specify the application type of precedent No. {k}, using this format:
-
-<answer>A</answer>
-
-Note: The answer must be one of A, B, C, or D.
+- Archive Indictment (e.g., establishing Rule C):
+<answer>C</answer>
 """
 
-    game_rule_zh = """\
-我们现在来玩一个"隐藏序列推断"游戏，规则如下：
-
-游戏设定了一个长度为 {n} 的有序序列，每个位置的元素从符号集合 {{A, B, C, D}} 中取值。我已经秘密为每个位置分配了一个符号，构成了一个固定的序列（不是所有位置都相同）。
-
-你的目标是推断出目标位置 {k} 的符号。但是，你不能直接询问位置 {k}，也不能在任何查询中涉及位置 {k}。
-
-你有 {budget} 次查询机会，可以使用以下五种查询方式（每次只能使用一种）：
-
-1. 单点观察：询问某个位置 i 的符号是什么（i 不能等于 {k}）
-2. 相等比较：询问位置 i 和位置 j 的符号是否相同（i 和 j 都不能等于 {k}）
-3. 区间计数：询问区间 [L, R] 中某个符号出现的次数（区间内不能包含位置 {k}）
-4. 周期检验：询问区间 [L, R] 是否存在周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，位置 i 和位置 i+p 的符号都相同，且这些位置都不能等于 {k}）
-5. 镜像检验：询问区间 [L, R] 是否镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，位置 L+t 和位置 R-t 的符号都相同，且这些位置都不能等于 {k}）
-
-## 查询与提交答案的格式（必须严格遵守）
-
-每次查询只能包含一个标签。请使用以下 XML 格式：
-
-- 单点观察（例如询问位置 3）：
-<query_observe>3</query_observe>
-
-- 相等比较（例如比较位置 2 和位置 5）：
-<query_compare>2,5</query_compare>
-
-- 区间计数（例如统计区间 [1, 4] 中符号 A 的数量）：
-<query_count>1,4,A</query_count>
-
-- 周期检验（例如测试区间 [1, 6] 的周期 2）：
-<query_period>1,6,2</query_period>
-
-- 镜像检验（例如测试区间 [2, 5] 是否镜像对称）：
-<query_mirror>2,5</query_mirror>
-
-提交最终答案时，直接说明位置 {k} 的符号，格式如下：
-
-<answer>A</answer>
-
-注意：答案必须是 A、B、C、D 中的一个。
-"""
-
-    game_rule_en = """\
-Let's play a "Hidden Sequence Reconstruction" game. Here are the rules:
-
-A sequence of length {n} has been set up, where each position contains a symbol from the set {{A, B, C, D}}. I have secretly assigned a symbol to each position, forming a fixed sequence (not all positions are the same).
-
-Your goal is to infer the symbol at target position {k}. However, you cannot directly query position {k}, nor can you involve position {k} in any query.
-
-You have {budget} query opportunities and can use the following five query types (one per turn):
-
-1. Single Observation: Ask what symbol is at position i (i cannot equal {k})
-2. Equality Comparison: Ask if positions i and j have the same symbol (neither i nor j can equal {k})
-3. Range Count: Ask how many times a symbol appears in range [L, R] (the range cannot include position {k})
-4. Period Check: Ask if range [L, R] has period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, positions i and i+p have the same symbol, and these positions cannot equal {k})
-5. Mirror Check: Ask if range [L, R] is mirror-symmetric (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, positions L+t and R-t have the same symbol, and these positions cannot equal {k})
-
-## Query and Answer Format (strictly required)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Single Observation (e.g., query position 3):
-<query_observe>3</query_observe>
-
-- Equality Comparison (e.g., compare positions 2 and 5):
-<query_compare>2,5</query_compare>
-
-- Range Count (e.g., count symbol A in range [1, 4]):
-<query_count>1,4,A</query_count>
-
-- Period Check (e.g., test period 2 in range [1, 6]):
-<query_period>1,6,2</query_period>
-
-- Mirror Check (e.g., test if range [2, 5] is mirror-symmetric):
-<query_mirror>2,5</query_mirror>
-
-When submitting the final answer, directly specify the symbol at position {k}, using this format:
-
-<answer>A</answer>
-
-Note: The answer must be one of A, B, C, or D.
-"""
-
-    tags = ["answer", "query_observe", "query_compare", "query_count", "query_period", "query_mirror"]
+    tags = ["answer", "throw", "echo", "query_length"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 5,
-                "k": 3,
-                "budget": 10,
-                "sequence": "A,B,A,B,A",  # 简单周期2，k=3位置是A
+                "rule_type": "C",
+                "target": 2,
             },
             2: {
-                "n": 7,
-                "k": 4,
-                "budget": 12,
-                "sequence": "A,B,C,D,C,B,A",  # 镜像对称，k=4位置是D
+                "rule_type": "A",
+                "target": 2,
             },
             3: {
-                "n": 9,
-                "k": 5,
-                "budget": 14,
-                "sequence": "A,B,C,A,B,C,A,B,C",  # 周期3，k=5位置是B
+                "rule_type": "B",
+                "target": 1,
             },
             4: {
-                "n": 11,
-                "k": 6,
-                "budget": 16,
-                "sequence": "A,A,B,B,C,D,C,B,B,A,A",  # 复杂镜像，k=6位置是D
+                "rule_type": "D",
+                "target": 0,
             },
             5: {
-                "n": 13,
-                "k": 7,
-                "budget": 18,
-                "sequence": "A,B,A,C,B,C,D,C,B,C,A,B,A",  # 混合模式，k=7位置是D
+                "rule_type": "D",
+                "target": 2,
             },
         },
         "en": {
             1: {
-                "n": 5,
-                "k": 3,
-                "budget": 10,
-                "sequence": "A,B,A,B,A",
+                "rule_type": "C",
+                "target": 2,
             },
             2: {
-                "n": 7,
-                "k": 4,
-                "budget": 12,
-                "sequence": "A,B,C,D,C,B,A",
+                "rule_type": "A",
+                "target": 2,
             },
             3: {
-                "n": 9,
-                "k": 5,
-                "budget": 14,
-                "sequence": "A,B,C,A,B,C,A,B,C",
+                "rule_type": "B",
+                "target": 1,
             },
             4: {
-                "n": 11,
-                "k": 6,
-                "budget": 16,
-                "sequence": "A,A,B,B,C,D,C,B,B,A,A",
+                "rule_type": "D",
+                "target": 0,
             },
             5: {
-                "n": 13,
-                "k": 7,
-                "budget": 18,
-                "sequence": "A,B,A,C,B,C,D,C,B,C,A,B,A",
+                "rule_type": "D",
+                "target": 2,
             },
         },
     }
 
     def __init__(self, config):
         super().__init__(config)
-        self.query_count = 0
 
     def _initialize_game(self):
-        """初始化游戏配置，设置序列、目标位置和查询预算"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -599,300 +551,154 @@ Note: The answer must be one of A, B, C, or D.
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["k"] = cfg["k"]
-        self._game_info["budget"] = cfg["budget"]
         
-        # 解析序列（索引从1开始）
-        symbols = cfg["sequence"].split(",")
-        self.sequence = {str(i+1): sym.strip() for i, sym in enumerate(symbols)}
-        self.target_k = str(cfg["k"])
-        self.budget = cfg["budget"]
-        self.answer = self.sequence[self.target_k]
+        self.max_length = 12
+        self.window_size = 4
+        self.rule_type = cfg["rule_type"]
+        self.target_value = cfg["target"]
+        
+        self._game_info["target"] = self.target_value
+        
+        self.sequence = []
+        
+        self.submitted_rule = None
+
+    def _get_window(self):
+        if len(self.sequence) >= self.window_size:
+            return self.sequence[-self.window_size:]
+        else:
+            padding = [0] * (self.window_size - len(self.sequence))
+            return padding + self.sequence
+
+    def _compute_function(self, window):
+        if self.rule_type == "A":
+            return sum(window) % 3
+        elif self.rule_type == "B":
+            weights = [1, 2, 1, 2]
+            weighted_sum = sum(w * v for w, v in zip(weights, window))
+            return weighted_sum % 3
+        elif self.rule_type == "C":
+            return window[-1]
+        elif self.rule_type == "D":
+            from collections import Counter
+            counter = Counter(window)
+            max_count = max(counter.values())
+            candidates = [v for v, c in counter.items() if c == max_count]
+            if len(candidates) == 1:
+                return candidates[0]
+            last_positions = {}
+            for i, v in enumerate(window):
+                last_positions[v] = i
+            return max(candidates, key=lambda v: last_positions[v])
+        else:
+            raise ValueError(f"Unknown rule type: {self.rule_type}")
 
     def evaluate(self, parsed_info):
-        """评估模型提交的答案是否正确"""
-        submitted_answer = parsed_info["answer"].strip().upper()
+        submitted = parsed_info["answer"].strip().upper()
         
-        # 检查答案是否在有效符号集合中
-        if submitted_answer not in ["A", "B", "C", "D"]:
+        if submitted != self.rule_type:
             return False
         
-        # 检查答案是否正确
-        return submitted_answer == self.answer
+        self.submitted_rule = submitted
+        
+        if len(self.sequence) >= self.max_length:
+            window = self._get_window()
+            output = self._compute_function(window)
+            return output == self.target_value
+        else:
+            return True
 
     def _cf_core_produce(self, parsed_info):
-        """处理模型的查询并返回相应的反馈（原始逻辑）"""
-        # 检查查询预算
-        self.query_count += 1
-        if self.query_count > self.budget:
-            raise ValueError(
-                f"Query budget exceeded: {self.query_count} > {self.budget}" 
-                if self.config.language == "en" 
-                else f"查询次数超出预算：{self.query_count} > {self.budget}"
-            )
-
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            same_res, diff_res = "相同", "不同"
-            valid_res, invalid_res = "成立", "不成立"
-            error_range = "错误：位置超出范围。"
-            error_involve_k = "错误：查询涉及目标位置 {k}。".format(k=self.target_k)
-            error_format = "错误：格式无效。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            same_res, diff_res = "Same", "Different"
-            valid_res, invalid_res = "Valid", "Invalid"
-            error_range = "Error: Position out of range."
-            error_involve_k = f"Error: Query involves target position {self.target_k}."
-            error_format = "Error: Invalid format."
-
-        # 1. 单点观察
-        if "query_observe" in parsed_info:
+        if "throw" in parsed_info:
+            if len(self.sequence) >= self.max_length:
+                return "错误：序列已达到最大长度。" if self.config.language == "zh" else "Error: Sequence has reached maximum length."
+            
             try:
-                pos = parsed_info["query_observe"].strip()
-                if pos not in self.sequence:
-                    return error_range
-                if pos == self.target_k:
-                    return error_involve_k
-                return self.sequence[pos]
+                value = int(parsed_info["throw"].strip())
+                if value not in [0, 1, 2]:
+                    raise ValueError
             except:
-                return error_format
+                return "错误：投掷的值必须是 0、1 或 2。" if self.config.language == "zh" else "Error: Throw value must be 0, 1, or 2."
+            
+            self.sequence.append(value)
+            
+            if self.config.language == "zh":
+                return f"已追加 {value}，当前序列长度：{len(self.sequence)}"
+            else:
+                return f"Appended {value}, current sequence length: {len(self.sequence)}"
 
-        # 2. 相等比较
-        elif "query_compare" in parsed_info:
-            try:
-                parts = [x.strip() for x in parsed_info["query_compare"].split(",")]
-                if len(parts) != 2:
-                    return error_format
-                pos1, pos2 = parts
-                if pos1 not in self.sequence or pos2 not in self.sequence:
-                    return error_range
-                if pos1 == self.target_k or pos2 == self.target_k:
-                    return error_involve_k
-                return same_res if self.sequence[pos1] == self.sequence[pos2] else diff_res
-            except:
-                return error_format
+        elif "echo" in parsed_info:
+            window = self._get_window()
+            output = self._compute_function(window)
+            
+            if self.config.language == "zh":
+                return f"回声：{output}"
+            else:
+                return f"Echo: {output}"
 
-        # 3. 区间计数
-        elif "query_count" in parsed_info:
-            try:
-                parts = [x.strip() for x in parsed_info["query_count"].split(",")]
-                if len(parts) != 3:
-                    return error_format
-                L, R, symbol = parts
-                L_int, R_int = int(L), int(R)
-                
-                if L_int < 1 or R_int > int(self._game_info["n"]) or L_int > R_int:
-                    return error_range
-                if symbol not in ["A", "B", "C", "D"]:
-                    return error_format
-                
-                # 检查区间是否包含目标位置
-                target_k_int = int(self.target_k)
-                if L_int <= target_k_int <= R_int:
-                    return error_involve_k
-                
-                # 统计符号出现次数
-                count = 0
-                for i in range(L_int, R_int + 1):
-                    if self.sequence[str(i)] == symbol:
-                        count += 1
-                return str(count)
-            except:
-                return error_format
-
-        # 4. 周期检验
-        elif "query_period" in parsed_info:
-            try:
-                parts = [x.strip() for x in parsed_info["query_period"].split(",")]
-                if len(parts) != 3:
-                    return error_format
-                L, R, p = parts
-                L_int, R_int, p_int = int(L), int(R), int(p)
-                
-                if L_int < 1 or R_int > int(self._game_info["n"]) or L_int > R_int or p_int <= 0:
-                    return error_range
-                
-                target_k_int = int(self.target_k)
-                
-                # 检查周期条件
-                for i in range(L_int, R_int - p_int + 1):
-                    if i == target_k_int or i + p_int == target_k_int:
-                        return error_involve_k
-                    if self.sequence[str(i)] != self.sequence[str(i + p_int)]:
-                        return invalid_res
-                return valid_res
-            except:
-                return error_format
-
-        # 5. 镜像检验
-        elif "query_mirror" in parsed_info:
-            try:
-                parts = [x.strip() for x in parsed_info["query_mirror"].split(",")]
-                if len(parts) != 2:
-                    return error_format
-                L, R = parts
-                L_int, R_int = int(L), int(R)
-                
-                if L_int < 1 or R_int > int(self._game_info["n"]) or L_int > R_int:
-                    return error_range
-                
-                target_k_int = int(self.target_k)
-                
-                # 检查镜像对称条件
-                for t in range(R_int - L_int + 1):
-                    left_pos = L_int + t
-                    right_pos = R_int - t
-                    if left_pos == target_k_int or right_pos == target_k_int:
-                        return error_involve_k
-                    if self.sequence[str(left_pos)] != self.sequence[str(right_pos)]:
-                        return invalid_res
-                return valid_res
-            except:
-                return error_format
+        elif "query_length" in parsed_info:
+            current_length = len(self.sequence)
+            remaining = self.max_length - current_length
+            
+            if self.config.language == "zh":
+                return f"当前序列长度：{current_length}，剩余可追加次数：{remaining}"
+            else:
+                return f"Current sequence length: {current_length}, remaining appends: {remaining}"
 
         else:
             raise ValueError("No valid query tag found.")
 
+    def get_all_possible_queries(self) -> list:
+        results = []
+        
+        original_sequence = list(self.sequence)
+        
+        for val in [0, 1, 2]:
+            query_xml = f"<throw>{val}</throw>"
+            parsed_info = {"throw": str(val)}
+            response = self._cf_core_produce(parsed_info)
+            results.append({
+                "query": query_xml,
+                "answer": response
+            })
+            self.sequence = list(original_sequence)
+        
+        query_xml = "<echo></echo>"
+        parsed_info = {"echo": ""}
+        response = self._cf_core_produce(parsed_info)
+        results.append({
+            "query": query_xml,
+            "answer": response
+        })
+        
+        query_xml = "<query_length></query_length>"
+        parsed_info = {"query_length": ""}
+        response = self._cf_core_produce(parsed_info)
+        results.append({
+            "query": query_xml,
+            "answer": response
+        })
+        
+        return results
+
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成一个与 correct 不同但同类型的错误答案"""
-        # 符号类答案
-        symbols = ["A", "B", "C", "D"]
-        if correct.strip().upper() in symbols:
-            wrong_choices = [s for s in symbols if s != correct.strip().upper()]
-            return random.choice(wrong_choices)
+        import re as _re
         
-        # 纯整数字符串（区间计数结果）
-        if correct.lstrip('-').isdigit():
-            val = int(correct)
-            return str(val + 1)
         
-        # 中文布尔/二值
-        zh_flip = {"是": "否", "否": "是", "相同": "不同", "不同": "相同",
-                   "成立": "不成立", "不成立": "成立"}
-        if correct in zh_flip:
-            return zh_flip[correct]
+        def _alter_number(match):
+            num = int(match.group(0))
+            if 0 <= num <= 2:
+                return str((num + 1) % 3)
+            return str(num + 1)
         
-        # 英文布尔/二值
-        en_flip = {"Yes": "No", "No": "Yes", "Same": "Different", "Different": "Same",
-                   "Valid": "Invalid", "Invalid": "Valid"}
-        if correct in en_flip:
-            return en_flip[correct]
-        # 大小写容错
-        for k_word, v_word in en_flip.items():
-            if correct.lower() == k_word.lower():
-                return v_word
+        numbers = list(_re.finditer(r'\d+', correct))
+        if numbers:
+            last_match = numbers[-1]
+            original_num = int(last_match.group(0))
+            if 0 <= original_num <= 2:
+                wrong_num = (original_num + 1) % 3
+            else:
+                wrong_num = original_num + 1
+            return correct[:last_match.start()] + str(wrong_num) + correct[last_match.end():]
         
-        # 兜底
-        return f"{correct}_WRONG"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
-        n = int(self._game_info["n"])
-        k = int(self.target_k)
-        
-        # 根据语言设置返回的字符串
-        if self.config.language == "zh":
-            same_res, diff_res = "相同", "不同"
-            valid_res, invalid_res = "成立", "不成立"
-        else:
-            same_res, diff_res = "Same", "Different"
-            valid_res, invalid_res = "Valid", "Invalid"
-
-        # 1. 单点观察 (Single Observation)
-        for i in range(1, n + 1):
-            if i == k:
-                continue
-            q_str = f"<query_observe>{i}</query_observe>"
-            ans = self.sequence[str(i)]
-            queries.append({"query": q_str, "answer": ans})
-
-        # 2. 相等比较 (Equality Comparison)
-        for i in range(1, n + 1):
-            for j in range(i + 1, n + 1):
-                if i == k or j == k:
-                    continue
-                q_str = f"<query_compare>{i},{j}</query_compare>"
-                ans = same_res if self.sequence[str(i)] == self.sequence[str(j)] else diff_res
-                queries.append({"query": q_str, "answer": ans})
-
-        # 3. 区间计数 (Range Count)
-        for L in range(1, n + 1):
-            for R in range(L, n + 1):
-                # 如果区间包含 k，则非法
-                if L <= k <= R:
-                    continue
-                for sym in ["A", "B", "C", "D"]:
-                    q_str = f"<query_count>{L},{R},{sym}</query_count>"
-                    count = 0
-                    for i in range(L, R + 1):
-                        if self.sequence[str(i)] == sym:
-                            count += 1
-                    queries.append({"query": q_str, "answer": str(count)})
-
-        # 4. 周期检验 (Period Check)
-        for L in range(1, n + 1):
-            for R in range(L, n + 1):
-                # 周期 p 的范围：L <= i <= R-p 必须至少存在一个有效的 i
-                # 即 R-p >= L => p <= R-L
-                max_p = R - L
-                if max_p < 1:
-                    continue
-                
-                for p in range(1, max_p + 1):
-                    # 检查是否涉及 k
-                    involved = False
-                    is_periodic = True
-                    
-                    # 周期检验逻辑
-                    for i in range(L, R - p + 1):
-                        if i == k or (i + p) == k:
-                            involved = True
-                            break
-                        if self.sequence[str(i)] != self.sequence[str(i + p)]:
-                            is_periodic = False
-                            break  # 与 _cf_core_produce 一致
-                    
-                    if involved:
-                        continue
-                    
-                    q_str = f"<query_period>{L},{R},{p}</query_period>"
-                    ans = valid_res if is_periodic else invalid_res
-                    queries.append({"query": q_str, "answer": ans})
-
-        # 5. 镜像检验 (Mirror Check)
-        for L in range(1, n + 1):
-            for R in range(L, n + 1):
-                involved = False
-                is_mirror = True
-                
-                # 镜像检验逻辑
-                for t in range(R - L + 1):
-                    left_pos = L + t
-                    right_pos = R - t
-                    if left_pos == k or right_pos == k:
-                        involved = True
-                        break
-                    if self.sequence[str(left_pos)] != self.sequence[str(right_pos)]:
-                        is_mirror = False
-                        break  # 与 _cf_core_produce 一致
-                
-                if involved:
-                    continue
-                
-                q_str = f"<query_mirror>{L},{R}</query_mirror>"
-                ans = valid_res if is_mirror else invalid_res
-                queries.append({"query": q_str, "answer": ans})
-
-        return queries
+        return correct + " [WRONG]"

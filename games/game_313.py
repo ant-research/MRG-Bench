@@ -1,972 +1,648 @@
 from .base import Game
-import re
 
-class GraphFunctionInferenceGame(Game):
+class GraphPropertyInferenceGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"图函数推断"游戏，规则如下：
+我们来玩一个"图属性推理"游戏，规则如下：
 
-游戏设定了一个无权无向图，包含节点 A, B, C, D, E, F, G, H，其中 H 是目标节点。图的边连接关系为：
-- A 连接 B, C
-- B 连接 A, D
-- C 连接 A, E
-- D 连接 B, E, F
-- E 连接 C, D, G
-- F 连接 D, G
-- G 连接 E, F, H
-- H 连接 G
+游戏设定了一个无向图，顶点集合为 V = {A, B, C, D, E, F}。图中的每条边都具有两类属性：颜色（红色或蓝色）和线型（实线或虚线）。完整的边及其属性如下：
 
-你当前位于节点 A。
+- A-B：红色，实线
+- B-C：红色，实线
+- E-F：红色，实线
+- A-C：红色，虚线
+- C-D：蓝色，实线
+- D-E：蓝色，实线
+- A-F：蓝色，实线
+- B-E：蓝色，虚线
 
-在这个游戏中，每个节点 v 都有一个真实值 D(v)，表示从该节点到目标节点 H 的最短路径长度（边数）。但你无法直接获得 D(v)，只能通过读数获得一个整数 R。
+我已经秘密选择了一种"边保留规则"，并按此规则从完整图中保留了一部分边，形成一个子图 G_h。保留规则有且仅有以下四种之一：
 
-读数 R 由一个未知函数 f 计算得出，即 R = f(D)。该函数从以下四种候选中选择其一：
-1. Alpha：R 等于 D
-2. Beta：当 D 为奇数时 R 等于 D 加 1，否则 R 等于 D
-3. Gamma：当 D 为奇数时 R 等于 D 减 1，否则 R 等于 D
-4. Delta：当 D 等于 2 时 R 等于 3，否则 R 等于 D
+- 规则 R：仅保留所有红色边（不考虑线型）
+- 规则 B：仅保留所有蓝色边（不考虑线型）
+- 规则 S：仅保留所有实线边（不考虑颜色）
+- 规则 D：仅保留所有虚线边（不考虑颜色）
 
-你的目标是：
-1. 通过在不同节点处获取读数，推断出真实采用的函数类型
-2. 给出从节点 A 到节点 H 的真实最短路径长度
+你的目标是推断出我选择的规则类型（R、B、S 或 D），并计算在该规则下子图 G_h 的连通分量个数。
 
-你可以执行以下操作：
-1. 移动到相邻节点：指定目标节点名称，若该节点与当前节点相邻则移动成功，否则返回非法提示
-2. 查询读数：获取当前节点的读数 R
-3. 查询当前位置：获取当前所在节点名称
+你可以向我进行"度奇偶查询"：选择一个顶点（A、B、C、D、E 或 F），询问该顶点在子图 G_h 中的度数是否为奇数。我会如实回答"是"或"否"。每次查询只能针对一个顶点。
 
-资源限制：
-- 最多执行 {max_moves} 次移动
-- 最多执行 {max_queries} 次读数查询
-- 当前位置查询不计入限制
-- 操作顺序自定，未用次数可放弃
+约束条件：
+- 你必须至少进行 2 次查询后才能提交答案。
+- 你最多可以进行 6 次查询。
+- 所有查询的答案基于同一固定的隐藏规则，规则不会改变。
 
-## 操作格式（严格要求）
+进行度奇偶查询时，使用以下 XML 格式（例如查询顶点 A）：
 
-每次只能包含一个操作标签：
+<query_degree>A</query_degree>
 
-- 移动到节点（例如移动到 B）：
-<move>B</move>
+提交最终答案时，必须说明规则类型（R、B、S 或 D）和连通分量个数，格式如下：
 
-- 查询当前读数：
-<query_reading></query_reading>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 提交最终答案（需同时给出函数类型和最短路径长度）：
-<answer>function=Alpha, distance=4</answer>
-
-注意：函数类型必须是 Alpha、Beta、Gamma、Delta 之一，距离必须是非负整数。
+<answer>rule=R, components=2</answer>
 """
 
     game_rule_en = """\
-Let's play a "Graph Function Inference" game. Here are the rules:
+Let's play a "Graph Property Inference" game. Here are the rules:
 
-The game is set on an unweighted undirected graph with nodes A, B, C, D, E, F, G, H, where H is the target node. The edge connections are:
-- A connects to B, C
-- B connects to A, D
-- C connects to A, E
-- D connects to B, E, F
-- E connects to C, D, G
-- F connects to D, G
-- G connects to E, F, H
-- H connects to G
+The game is set on an undirected graph with vertex set V = {A, B, C, D, E, F}. Each edge in the graph has two attributes: color (Red or Blue) and line type (Solid or Dashed). The complete edge list with attributes is:
 
-You start at node A.
+- A-B: Red, Solid
+- B-C: Red, Solid
+- E-F: Red, Solid
+- A-C: Red, Dashed
+- C-D: Blue, Solid
+- D-E: Blue, Solid
+- A-F: Blue, Solid
+- B-E: Blue, Dashed
 
-In this game, each node v has a true value D(v), representing the shortest path length (number of edges) from that node to the target node H. However, you cannot directly obtain D(v); you can only get an integer R through a reading.
+I have secretly selected an "edge retention rule" and applied it to create a subgraph G_h by keeping only certain edges. There are exactly four possible rules:
 
-The reading R is computed by an unknown function f, where R = f(D). This function is one of the following four candidates:
-1. Alpha: R equals D
-2. Beta: when D is odd, R equals D plus 1; otherwise R equals D
-3. Gamma: when D is odd, R equals D minus 1; otherwise R equals D
-4. Delta: when D equals 2, R equals 3; otherwise R equals D
+- Rule R: Keep all Red edges only (regardless of line type)
+- Rule B: Keep all Blue edges only (regardless of line type)
+- Rule S: Keep all Solid edges only (regardless of color)
+- Rule D: Keep all Dashed edges only (regardless of color)
 
-Your goals are:
-1. Infer the true function type by obtaining readings at different nodes
-2. Determine the true shortest path length from node A to node H
+Your goal is to infer which rule type I selected (R, B, S, or D) and calculate the number of connected components in the resulting subgraph G_h.
 
-You can perform the following operations:
-1. Move to an adjacent node: specify the target node name; if adjacent, move succeeds; otherwise an error is returned
-2. Query reading: obtain the reading R at the current node
-3. Query current position: obtain the name of the current node
+You can perform "degree parity queries": select a vertex (A, B, C, D, E, or F) and ask whether its degree in subgraph G_h is odd. I will truthfully answer "Yes" or "No". Each query can only target one vertex.
 
-Resource limits:
-- At most {max_moves} move operations
-- At most {max_queries} reading queries
-- Position queries do not count toward limits
-- Operation order is flexible; unused operations may be abandoned
+Constraints:
+- You must perform at least 2 queries before submitting your answer.
+- You can perform at most 6 queries.
+- All query answers are based on the same fixed hidden rule, which does not change.
 
-## Operation Format (strictly required)
+To perform a degree parity query, use the following XML format (e.g., querying vertex A):
 
-Each request must contain only one operation tag:
+<query_degree>A</query_degree>
 
-- Move to a node (e.g., move to B):
-<move>B</move>
+When submitting your final answer, specify the rule type (R, B, S, or D) and the number of connected components, using this format:
 
-- Query current reading:
-<query_reading></query_reading>
-
-- Query current position:
-<query_position></query_position>
-
-- Submit final answer (must provide both function type and shortest path distance):
-<answer>function=Alpha, distance=4</answer>
-
-Note: function type must be one of Alpha, Beta, Gamma, Delta, and distance must be a non-negative integer.
+<answer>rule=R, components=2</answer>
 """
 
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-欢迎进入城市智能交通网络诊断系统。系统检测到部分路网传感器的延迟评估算法发生异常。
+我们来玩一个“城市交通网络推理”游戏。
 
-本诊断设定了一个无权无向的路网图，包含路口节点 A, B, C, D, E, F, G, H，其中 H 是市中心核心枢纽节点。图的道路连接关系为：
-- A 连接 B, C
-- B 连接 A, D
-- C 连接 A, E
-- D 连接 B, E, F
-- E 连接 C, D, G
-- F 连接 D, G
-- G 连接 E, F, H
-- H 连接 G
+在一份交通规划图中，节点集合 V = {A, B, C, D, E, F} 代表六个主要的交通枢纽。枢纽之间的道路在图纸上通过两类属性进行标记：路线颜色（红色或蓝色）和道路类型（实线或虚线）。完整的道路网络及其属性如下：
 
-你当前位于节点 A。
+- A-B：红色，实线
+- B-C：红色，实线
+- E-F：红色，实线
+- A-C：红色，虚线
+- C-D：蓝色，实线
+- D-E：蓝色，实线
+- A-F：蓝色，实线
+- B-E：蓝色，虚线
 
-在这个路网中，每个节点 v 都有一个真实值 D(v)，表示从该节点到核心枢纽 H 的真实最短路径长度（路段数）。但你无法直接获得 D(v)，只能通过传感器探针获得一个整数读数 R。
+由于一场极端天气，城市交通指挥中心启动了应急预案，仅保留了符合特定“道路保留规则”的子图 G_h，其余道路全部封闭。保留规则有且仅有以下四种之一：
 
-读数 R 由一个未知的延迟评估函数 f 计算得出，即 R = f(D)。该函数从以下四种算法候选中选择其一：
-1. Alpha：R 等于 D
-2. Beta：当 D 为奇数时 R 等于 D 加 1，否则 R 等于 D
-3. Gamma：当 D 为奇数时 R 等于 D 减 1，否则 R 等于 D
-4. Delta：当 D 等于 2 时 R 等于 3，否则 R 等于 D
+- 规则 R：仅保留所有红色道路（不考虑实线/虚线）
+- 规则 B：仅保留所有蓝色道路（不考虑实线/虚线）
+- 规则 S：仅保留所有实线道路（不考虑红色/蓝色）
+- 规则 D：仅保留所有虚线道路（不考虑红色/蓝色）
 
-你的任务目标是：
-1. 通过在不同路口节点处获取读数，推断出系统当前真实采用的算法函数类型
-2. 给出从节点 A 到节点 H 的真实最短路径长度（路段数）
+你的目标是推断出指挥中心启动的规则类型（R、B、S 或 D），并计算在该规则下，保持连通的交通网络分量个数（即连通分量个数）。
 
-你可以执行以下操作：
-1. 移动到相邻节点：指定目标节点名称，若该节点与当前节点相邻则移动成功，否则返回非法提示
-2. 查询读数：获取当前节点的传感器读数 R
-3. 查询当前位置：获取当前所在的节点名称
+你可以向我进行“枢纽连通奇偶查询”：选择一个交通枢纽（A、B、C、D、E 或 F），询问该枢纽在应急网络 G_h 中处于开放状态的连通道路数是否为奇数。我会如实回答“是”或“否”。每次查询只能针对一个枢纽。
 
-资源限制：
-- 最多执行 {max_moves} 次移动
-- 最多执行 {max_queries} 次读数查询
-- 当前位置查询不计入限制
-- 操作顺序自定，未用次数可放弃
+约束条件：
+- 你必须至少进行 2 次查询后才能提交答案。
+- 你最多可以进行 6 次查询。
+- 所有查询的答案基于同一固定的隐藏应急规则，规则不会改变。
 
-## 操作格式（严格要求）
+进行枢纽连通奇偶查询时，使用以下 XML 格式（例如查询枢纽 A）：
 
-每次只能包含一个操作标签：
+<query_degree>A</query_degree>
 
-- 移动到节点（例如移动到 B）：
-<move>B</move>
+提交最终答案时，必须说明规则类型（R、B、S 或 D）和连通分量个数，格式如下：
 
-- 查询当前读数：
-<query_reading></query_reading>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 提交最终答案（需同时给出函数类型和最短路径长度）：
-<answer>function=Alpha, distance=4</answer>
-
-注意：函数类型必须是 Alpha、Beta、Gamma、Delta 之一，距离必须是非负整数。
+<answer>rule=R, components=2</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Welcome to the Urban Intelligent Traffic Network Diagnostic System. An anomaly has been detected in the delay estimation algorithms of some road network sensors.
+[Traffic Scenario]
+Let's play a "City Traffic Network Inference" game.
 
-The diagnostics define an unweighted undirected road network graph with intersection nodes A, B, C, D, E, F, G, H, where H is the central hub node. The road connections are:
-- A connects to B, C
-- B connects to A, D
-- C connects to A, E
-- D connects to B, E, F
-- E connects to C, D, G
-- F connects to D, G
-- G connects to E, F, H
-- H connects to G
+In a traffic planning map, the vertex set V = {A, B, C, D, E, F} represents six major traffic hubs. The roads between these hubs are marked with two attributes: route color (Red or Blue) and road type (Solid or Dashed). The complete road network and its attributes are as follows:
 
-You start at node A.
+- A-B: Red, Solid
+- B-C: Red, Solid
+- E-F: Red, Solid
+- A-C: Red, Dashed
+- C-D: Blue, Solid
+- D-E: Blue, Solid
+- A-F: Blue, Solid
+- B-E: Blue, Dashed
 
-In this network, each node v has a true value D(v), representing the true shortest path length (number of segments) from that node to the central hub H. However, you cannot directly obtain D(v); you can only get an integer reading R through a sensor probe.
+Due to extreme weather, the city traffic command center has activated an emergency plan, retaining only a subgraph G_h of roads that meet a specific "road retention rule," while closing all others. There are exactly four possible rules:
 
-The reading R is computed by an unknown delay estimation function f, where R = f(D). This function is one of the following four algorithm candidates:
-1. Alpha: R equals D
-2. Beta: when D is odd, R equals D plus 1; otherwise R equals D
-3. Gamma: when D is odd, R equals D minus 1; otherwise R equals D
-4. Delta: when D equals 2, R equals 3; otherwise R equals D
+- Rule R: Keep all Red roads only (regardless of Solid/Dashed)
+- Rule B: Keep all Blue roads only (regardless of Solid/Dashed)
+- Rule S: Keep all Solid roads only (regardless of Red/Blue)
+- Rule D: Keep all Dashed roads only (regardless of Red/Blue)
 
-Your goals are:
-1. Infer the true algorithm function type by obtaining readings at different intersection nodes
-2. Determine the true shortest path length (number of segments) from node A to node H
+Your goal is to infer which rule type (R, B, S, or D) the command center activated, and calculate the number of connected traffic network components in the resulting subgraph G_h.
 
-You can perform the following operations:
-1. Move to an adjacent node: specify the target node name; if adjacent, move succeeds; otherwise an error is returned
-2. Query reading: obtain the sensor reading R at the current node
-3. Query current position: obtain the name of the current node
+You can perform "hub connectivity parity queries": select a traffic hub (A, B, C, D, E, or F) and ask whether its number of open connected roads in G_h is odd. I will truthfully answer "Yes" or "No". Each query can only target one hub.
 
-Resource limits:
-- At most {max_moves} move operations
-- At most {max_queries} reading queries
-- Position queries do not count toward limits
-- Operation order is flexible; unused operations may be abandoned
+Constraints:
+- You must perform at least 2 queries before submitting your answer.
+- You can perform at most 6 queries.
+- All query answers are based on the same fixed hidden emergency rule, which does not change.
 
-## Operation Format (strictly required)
+To perform a hub connectivity parity query, use the following XML format (e.g., querying hub A):
 
-Each request must contain only one operation tag:
+<query_degree>A</query_degree>
 
-- Move to a node (e.g., move to B):
-<move>B</move>
+When submitting your final answer, specify the rule type (R, B, S, or D) and the number of connected components, using this format:
 
-- Query current reading:
-<query_reading></query_reading>
-
-- Query current position:
-<query_position></query_position>
-
-- Submit final answer (must provide both function type and shortest path distance):
-<answer>function=Alpha, distance=4</answer>
-
-Note: function type must be one of Alpha, Beta, Gamma, Delta, and distance must be a non-negative integer.
+<answer>rule=R, components=2</answer>
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-欢迎使用靶向药物代谢路径分析系统。我们需要确定药物分子到达病灶靶点的真实代谢级联数。
+我们来玩一个“神经通路属性推理”游戏。
 
-系统构建了一个无权无向的代谢通路图，包含分子节点 A, B, C, D, E, F, G, H，其中 H 是终极靶点。图的代谢连接关系为：
-- A 连接 B, C
-- B 连接 A, D
-- C 连接 A, E
-- D 连接 B, E, F
-- E 连接 C, D, G
-- F 连接 D, G
-- G 连接 E, F, H
-- H 连接 G
+在一份大脑神经网络图谱中，节点集合 V = {A, B, C, D, E, F} 代表六个关键的脑功能区。功能区之间的神经通路具有两类生物标记属性：染色反应（红色或蓝色）和纤维密度（实线代表高密度，虚线代表低密度）。完整的神经通路及其属性如下：
 
-你当前位于节点 A。
+- A-B：红色，实线
+- B-C：红色，实线
+- E-F：红色，实线
+- A-C：红色，虚线
+- C-D：蓝色，实线
+- D-E：蓝色，实线
+- A-F：蓝色，实线
+- B-E：蓝色，虚线
 
-在这个通路中，每个节点 v 都有一个真实值 D(v)，表示从该节点到目标节点 H 的真实最短路径长度（代谢级联数）。但你无法直接获得 D(v)，只能通过生化探针获得一个整数读数 R。
+由于某种特定神经递质的阻断，目前只有符合秘密“通路存活规则”的子图 G_h 仍在运作。存活规则有且仅有以下四种之一：
 
-读数 R 由一个未知的结合指数函数 f 计算得出，即 R = f(D)。该机制从以下四种候选中选择其一：
-1. Alpha：R 等于 D
-2. Beta：当 D 为奇数时 R 等于 D 加 1，否则 R 等于 D
-3. Gamma：当 D 为奇数时 R 等于 D 减 1，否则 R 等于 D
-4. Delta：当 D 等于 2 时 R 等于 3，否则 R 等于 D
+- 规则 R：仅存活所有红色通路（不考虑纤维密度）
+- 规则 B：仅存活所有蓝色通路（不考虑纤维密度）
+- 规则 S：仅存活所有实线通路（不考虑染色反应）
+- 规则 D：仅存活所有虚线通路（不考虑染色反应）
 
-你的任务目标是：
-1. 通过在不同分子节点处获取探针读数，推断出真实采用的结合机制函数类型
-2. 给出从节点 A 到节点 H 的真实最短路径长度（代谢级联数）
+你的目标是推断出导致当前状态的规则类型（R、B、S 或 D），并计算在该规则下正常运作的神经网络连通分量个数。
 
-你可以执行以下操作：
-1. 移动到相邻节点：指定目标节点名称，若该节点与当前节点相邻则移动成功，否则返回非法提示
-2. 查询读数：获取当前节点的探针读数 R
-3. 查询当前位置：获取当前所在的节点名称
+你可以向我进行“脑区活跃度奇偶查询”：选择一个脑功能区（A、B、C、D、E 或 F），询问该脑区在存活子图 G_h 中连接的活跃通路数是否为奇数。我会如实回答“是”或“否”。每次查询只能针对一个脑功能区。
 
-资源限制：
-- 最多执行 {max_moves} 次移动
-- 最多执行 {max_queries} 次读数查询
-- 当前位置查询不计入限制
-- 操作顺序自定，未用次数可放弃
+约束条件：
+- 你必须至少进行 2 次查询后才能提交答案。
+- 你最多可以进行 6 次查询。
+- 所有查询的答案基于同一固定的隐藏存活规则，规则不会改变。
 
-## 操作格式（严格要求）
+进行脑区活跃度奇偶查询时，使用以下 XML 格式（例如查询脑区 A）：
 
-每次只能包含一个操作标签：
+<query_degree>A</query_degree>
 
-- 移动到节点（例如移动到 B）：
-<move>B</move>
+提交最终答案时，必须说明规则类型（R、B、S 或 D）和连通分量个数，格式如下：
 
-- 查询当前读数：
-<query_reading></query_reading>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 提交最终答案（需同时给出函数类型和最短路径长度）：
-<answer>function=Alpha, distance=4</answer>
-
-注意：函数类型必须是 Alpha、Beta、Gamma、Delta 之一，距离必须是非负整数。
+<answer>rule=R, components=2</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Welcome to the Targeted Drug Metabolic Pathway Analysis System. We need to determine the true metabolic cascade stages for drug molecules to reach the lesion target.
+[Medical Scenario]
+Let's play a "Neural Pathway Attribute Inference" game.
 
-The system constructs an unweighted undirected metabolic pathway graph with molecule nodes A, B, C, D, E, F, G, H, where H is the ultimate target. The metabolic connections are:
-- A connects to B, C
-- B connects to A, D
-- C connects to A, E
-- D connects to B, E, F
-- E connects to C, D, G
-- F connects to D, G
-- G connects to E, F, H
-- H connects to G
+In a brain neural network atlas, the vertex set V = {A, B, C, D, E, F} represents six key functional brain regions. The neural pathways between these regions have two biomarker attributes: staining reaction (Red or Blue) and fiber density (Solid for high, Dashed for low). The complete pathways and their attributes are:
 
-You start at node A.
+- A-B: Red, Solid
+- B-C: Red, Solid
+- E-F: Red, Solid
+- A-C: Red, Dashed
+- C-D: Blue, Solid
+- D-E: Blue, Solid
+- A-F: Blue, Solid
+- B-E: Blue, Dashed
 
-In this pathway, each node v has a true value D(v), representing the true shortest path length (number of metabolic cascades) from that node to the target node H. However, you cannot directly obtain D(v); you can only get an integer reading R through a biochemical probe.
+Due to the blockage of a specific neurotransmitter, only a subgraph G_h of pathways meeting a secret "pathway survival rule" remains active. There are exactly four possible survival rules:
 
-The reading R is computed by an unknown binding index function f, where R = f(D). This mechanism is one of the following four candidates:
-1. Alpha: R equals D
-2. Beta: when D is odd, R equals D plus 1; otherwise R equals D
-3. Gamma: when D is odd, R equals D minus 1; otherwise R equals D
-4. Delta: when D equals 2, R equals 3; otherwise R equals D
+- Rule R: Only Red pathways survive (regardless of density)
+- Rule B: Only Blue pathways survive (regardless of density)
+- Rule S: Only Solid pathways survive (regardless of staining)
+- Rule D: Only Dashed pathways survive (regardless of staining)
 
-Your goals are:
-1. Infer the true binding mechanism function type by obtaining probe readings at different molecule nodes
-2. Determine the true shortest path length (number of metabolic cascades) from node A to node H
+Your goal is to infer the rule type (R, B, S, or D) causing the current state, and calculate the number of isolated functional neural networks (connected components) in G_h.
 
-You can perform the following operations:
-1. Move to an adjacent node: specify the target node name; if adjacent, move succeeds; otherwise an error is returned
-2. Query reading: obtain the probe reading R at the current node
-3. Query current position: obtain the name of the current node
+You can perform "brain region activity parity queries": select a functional region (A, B, C, D, E, or F) and ask whether its number of active connecting pathways in G_h is odd. I will truthfully answer "Yes" or "No". Each query can only target one region.
 
-Resource limits:
-- At most {max_moves} move operations
-- At most {max_queries} reading queries
-- Position queries do not count toward limits
-- Operation order is flexible; unused operations may be abandoned
+Constraints:
+- You must perform at least 2 queries before submitting your answer.
+- You can perform at most 6 queries.
+- All query answers are based on the same fixed hidden survival rule, which does not change.
 
-## Operation Format (strictly required)
+To perform a brain region activity parity query, use the following XML format (e.g., querying region A):
 
-Each request must contain only one operation tag:
+<query_degree>A</query_degree>
 
-- Move to a node (e.g., move to B):
-<move>B</move>
+When submitting your final answer, specify the rule type (R, B, S, or D) and the number of connected components, using this format:
 
-- Query current reading:
-<query_reading></query_reading>
-
-- Query current position:
-<query_position></query_position>
-
-- Submit final answer (must provide both function type and shortest path distance):
-<answer>function=Alpha, distance=4</answer>
-
-Note: function type must be one of Alpha, Beta, Gamma, Delta, and distance must be a non-negative integer.
+<answer>rule=R, components=2</answer>
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-欢迎使用自适应学习图谱分析引擎。系统正在评估学生掌握核心素养的最佳知识溯源路径。
+我们来玩一个“知识图谱属性推理”游戏。
 
-系统生成了一个无权无向的知识网络图，包含模块节点 A, B, C, D, E, F, G, H，其中 H 是核心素养目标节点。图的知识关联关系为：
-- A 连接 B, C
-- B 连接 A, D
-- C 连接 A, E
-- D 连接 B, E, F
-- E 连接 C, D, G
-- F 连接 D, G
-- G 连接 E, F, H
-- H 连接 G
+在某学科的知识图谱中，节点集合 V = {A, B, C, D, E, F} 代表六个核心知识点。知识点之间的认知关联边具有两类属性：学科模块（红色模块或蓝色模块）和关联强度（实线代表强关联，虚线代表弱关联）。完整的认知关联网络及其属性如下：
 
-你当前位于节点 A。
+- A-B：红色，实线
+- B-C：红色，实线
+- E-F：红色，实线
+- A-C：红色，虚线
+- C-D：蓝色，实线
+- D-E：蓝色，实线
+- A-F：蓝色，实线
+- B-E：蓝色，虚线
 
-在这个网络中，每个节点 v 都有一个真实值 D(v)，表示从该节点到目标节点 H 的真实最短路径长度（前置模块数）。但你无法直接获得 D(v)，只能通过认知测试获得一个整数读数 R。
+在一次教学评估中，系统根据学生的学习偏好，仅激活了符合某项“认知保留规则”的子图 G_h。保留规则有且仅有以下四种之一：
 
-读数 R 由一个未知的负荷评估函数 f 计算得出，即 R = f(D)。该模型从以下四种候选中选择其一：
-1. Alpha：R 等于 D
-2. Beta：当 D 为奇数时 R 等于 D 加 1，否则 R 等于 D
-3. Gamma：当 D 为奇数时 R 等于 D 减 1，否则 R 等于 D
-4. Delta：当 D 等于 2 时 R 等于 3，否则 R 等于 D
+- 规则 R：仅保留所有红色模块的关联（不考虑强弱）
+- 规则 B：仅保留所有蓝色模块的关联（不考虑强弱）
+- 规则 S：仅保留所有实线强关联（不考虑模块）
+- 规则 D：仅保留所有虚线弱关联（不考虑模块）
 
-你的任务目标是：
-1. 通过在不同模块节点处获取测试读数，推断出系统当前真实采用的负荷评估函数类型
-2. 给出从节点 A 到节点 H 的真实最短路径长度（前置模块数）
+你的目标是推断出系统激活的规则类型（R、B、S 或 D），并计算在该规则下形成的独立知识簇（连通分量）个数。
 
-你可以执行以下操作：
-1. 移动到相邻节点：指定目标节点名称，若该节点与当前节点相邻则移动成功，否则返回非法提示
-2. 查询读数：获取当前节点的认知测试读数 R
-3. 查询当前位置：获取当前所在的节点名称
+你可以向我进行“知识点连接奇偶查询”：选择一个核心知识点（A、B、C、D、E 或 F），询问该知识点在子图 G_h 中激活的关联边数是否为奇数。我会如实回答“是”或“否”。每次查询只能针对一个知识点。
 
-资源限制：
-- 最多执行 {max_moves} 次移动
-- 最多执行 {max_queries} 次读数查询
-- 当前位置查询不计入限制
-- 操作顺序自定，未用次数可放弃
+约束条件：
+- 你必须至少进行 2 次查询后才能提交答案。
+- 你最多可以进行 6 次查询。
+- 所有查询的答案基于同一固定的隐藏评估规则，规则不会改变。
 
-## 操作格式（严格要求）
+进行知识点连接奇偶查询时，使用以下 XML 格式（例如查询知识点 A）：
 
-每次只能包含一个操作标签：
+<query_degree>A</query_degree>
 
-- 移动到节点（例如移动到 B）：
-<move>B</move>
+提交最终答案时，必须说明规则类型（R、B、S 或 D）和连通分量个数，格式如下：
 
-- 查询当前读数：
-<query_reading></query_reading>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 提交最终答案（需同时给出函数类型和最短路径长度）：
-<answer>function=Alpha, distance=4</answer>
-
-注意：函数类型必须是 Alpha、Beta、Gamma、Delta 之一，距离必须是非负整数。
+<answer>rule=R, components=2</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Adaptive Learning Graph Analysis Engine. The system is evaluating the optimal knowledge traceability path for students to master core competencies.
+Let's play a "Knowledge Graph Property Inference" game.
 
-The system generates an unweighted undirected knowledge network graph with module nodes A, B, C, D, E, F, G, H, where H is the core competency target node. The knowledge associations are:
-- A connects to B, C
-- B connects to A, D
-- C connects to A, E
-- D connects to B, E, F
-- E connects to C, D, G
-- F connects to D, G
-- G connects to E, F, H
-- H connects to G
+In a subject's knowledge graph, the vertex set V = {A, B, C, D, E, F} represents six core concepts. The cognitive links between concepts have two attributes: subject module (Red or Blue) and link strength (Solid for strong, Dashed for weak). The complete cognitive network and its attributes are:
 
-You start at node A.
+- A-B: Red, Solid
+- B-C: Red, Solid
+- E-F: Red, Solid
+- A-C: Red, Dashed
+- C-D: Blue, Solid
+- D-E: Blue, Solid
+- A-F: Blue, Solid
+- B-E: Blue, Dashed
 
-In this network, each node v has a true value D(v), representing the true shortest path length (number of prerequisite modules) from that node to the target node H. However, you cannot directly obtain D(v); you can only get an integer reading R through a cognitive test.
+During a teaching assessment, the system activates only a subgraph G_h of links that match a specific "cognitive retention rule" based on a student's learning preference. There are exactly four possible rules:
 
-The reading R is computed by an unknown cognitive load estimation function f, where R = f(D). This model is one of the following four candidates:
-1. Alpha: R equals D
-2. Beta: when D is odd, R equals D plus 1; otherwise R equals D
-3. Gamma: when D is odd, R equals D minus 1; otherwise R equals D
-4. Delta: when D equals 2, R equals 3; otherwise R equals D
+- Rule R: Retain all Red module links only (regardless of strength)
+- Rule B: Retain all Blue module links only (regardless of strength)
+- Rule S: Retain all Solid strong links only (regardless of module)
+- Rule D: Retain all Dashed weak links only (regardless of module)
 
-Your goals are:
-1. Infer the true load estimation function type by obtaining test readings at different module nodes
-2. Determine the true shortest path length (number of prerequisite modules) from node A to node H
+Your goal is to infer the rule type (R, B, S, or D) activated by the system, and calculate the number of independent knowledge clusters (connected components) formed under this rule.
 
-You can perform the following operations:
-1. Move to an adjacent node: specify the target node name; if adjacent, move succeeds; otherwise an error is returned
-2. Query reading: obtain the cognitive test reading R at the current node
-3. Query current position: obtain the name of the current node
+You can perform "concept link parity queries": select a core concept (A, B, C, D, E, or F) and ask whether its number of active links in subgraph G_h is odd. I will truthfully answer "Yes" or "No". Each query can only target one concept.
 
-Resource limits:
-- At most {max_moves} move operations
-- At most {max_queries} reading queries
-- Position queries do not count toward limits
-- Operation order is flexible; unused operations may be abandoned
+Constraints:
+- You must perform at least 2 queries before submitting your answer.
+- You can perform at most 6 queries.
+- All query answers are based on the same fixed hidden assessment rule, which does not change.
 
-## Operation Format (strictly required)
+To perform a concept link parity query, use the following XML format (e.g., querying concept A):
 
-Each request must contain only one operation tag:
+<query_degree>A</query_degree>
 
-- Move to a node (e.g., move to B):
-<move>B</move>
+When submitting your final answer, specify the rule type (R, B, S, or D) and the number of connected components, using this format:
 
-- Query current reading:
-<query_reading></query_reading>
-
-- Query current position:
-<query_position></query_position>
-
-- Submit final answer (must provide both function type and shortest path distance):
-<answer>function=Alpha, distance=4</answer>
-
-Note: function type must be one of Alpha, Beta, Gamma, Delta, and distance must be a non-negative integer.
+<answer>rule=R, components=2</answer>
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-欢迎来到柔性制造供应链流转分析系统。您需要排查物料流转到总装车间的真实工序距离。
+我们来玩一个“工业产线属性推理”游戏。
 
-系统映射了一个无权无向的生产拓扑图，包含工站节点 A, B, C, D, E, F, G, H，其中 H 是总装车间节点。图的物流连接关系为：
-- A 连接 B, C
-- B 连接 A, D
-- C 连接 A, E
-- D 连接 B, E, F
-- E 连接 C, D, G
-- F 连接 D, G
-- G 连接 E, F, H
-- H 连接 G
+在一个智能工厂的车间布局图中，节点集合 V = {A, B, C, D, E, F} 代表六个核心生产工作站。工作站之间的传送带连接具有两类属性：材质标准（红色聚氨酯或蓝色橡胶）和运行模式（实线代表连续运行，虚线代表间歇运行）。完整的传送带网络及其属性如下：
 
-你当前位于节点 A。
+- A-B：红色，实线
+- B-C：红色，实线
+- E-F：红色，实线
+- A-C：红色，虚线
+- C-D：蓝色，实线
+- D-E：蓝色，实线
+- A-F：蓝色，实线
+- B-E：蓝色，虚线
 
-在这个拓扑中，每个节点 v 都有一个真实值 D(v)，表示从该工站到目标节点 H 的真实最短路径长度（流转工序数）。但你无法直接获得 D(v)，只能通过系统调度接口获得一个整数读数 R。
+由于中控系统的安全自检，当前仅有符合某项“安全接通规则”的传送带子集 G_h 处于通电运行状态。该接通规则有且仅有以下四种之一：
 
-读数 R 由一个未知的预估流转函数 f 计算得出，即 R = f(D)。该策略从以下四种候选中选择其一：
-1. Alpha：R 等于 D
-2. Beta：当 D 为奇数时 R 等于 D 加 1，否则 R 等于 D
-3. Gamma：当 D 为奇数时 R 等于 D 减 1，否则 R 等于 D
-4. Delta：当 D 等于 2 时 R 等于 3，否则 R 等于 D
+- 规则 R：仅接通所有红色传送带（不考虑运行模式）
+- 规则 B：仅接通所有蓝色传送带（不考虑运行模式）
+- 规则 S：仅接通所有实线传送带（不考虑材质）
+- 规则 D：仅接通所有虚线传送带（不考虑材质）
 
-你的任务目标是：
-1. 通过在不同工站节点处获取预估读数，推断出调度系统真实采用的函数策略类型
-2. 给出从节点 A 到节点 H 的真实最短路径长度（流转工序数）
+你的目标是排查出中控系统执行的规则类型（R、B、S 或 D），并计算在当前状态下，车间内形成了多少条独立的生产流（即连通分量个数）。
 
-你可以执行以下操作：
-1. 移动到相邻节点：指定目标节点名称，若该节点与当前节点相邻则移动成功，否则返回非法提示
-2. 查询读数：获取当前节点的预估流转读数 R
-3. 查询当前位置：获取当前所在的节点名称
+你可以向我进行“工作站端口奇偶查询”：选择一个工作站（A、B、C、D、E 或 F），询问该工作站在子图 G_h 中通电的传送带数量是否为奇数。我会如实回答“是”或“否”。每次查询只能针对一个工作站。
 
-资源限制：
-- 最多执行 {max_moves} 次移动
-- 最多执行 {max_queries} 次读数查询
-- 当前位置查询不计入限制
-- 操作顺序自定，未用次数可放弃
+约束条件：
+- 你必须至少进行 2 次查询后才能提交排查结论。
+- 你最多可以进行 6 次查询。
+- 所有查询的答案均基于同一固定的隐藏安全规则，规则不会改变。
 
-## 操作格式（严格要求）
+进行工作站端口奇偶查询时，使用以下 XML 格式（例如查询工作站 A）：
 
-每次只能包含一个操作标签：
+<query_degree>A</query_degree>
 
-- 移动到节点（例如移动到 B）：
-<move>B</move>
+提交最终答案时，必须说明规则类型（R、B、S 或 D）和连通分量个数，格式如下：
 
-- 查询当前读数：
-<query_reading></query_reading>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 提交最终答案（需同时给出函数类型和最短路径长度）：
-<answer>function=Alpha, distance=4</answer>
-
-注意：函数类型必须是 Alpha、Beta、Gamma、Delta 之一，距离必须是非负整数。
+<answer>rule=R, components=2</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Welcome to the Flexible Manufacturing Supply Chain Routing System. You need to troubleshoot the true process distance for materials to reach the final assembly shop.
+Let's play an "Industrial Production Line Inference" game.
 
-The system maps an unweighted undirected production topology graph with workstation nodes A, B, C, D, E, F, G, H, where H is the final assembly shop node. The logistics connections are:
-- A connects to B, C
-- B connects to A, D
-- C connects to A, E
-- D connects to B, E, F
-- E connects to C, D, G
-- F connects to D, G
-- G connects to E, F, H
-- H connects to G
+In a smart factory layout, the vertex set V = {A, B, C, D, E, F} represents six core production workstations. The conveyor belts connecting them feature two attributes: material standard (Red polyurethane or Blue rubber) and operation mode (Solid for continuous, Dashed for intermittent). The complete conveyor network and its attributes are:
 
-You start at node A.
+- A-B: Red, Solid
+- B-C: Red, Solid
+- E-F: Red, Solid
+- A-C: Red, Dashed
+- C-D: Blue, Solid
+- D-E: Blue, Solid
+- A-F: Blue, Solid
+- B-E: Blue, Dashed
 
-In this topology, each node v has a true value D(v), representing the true shortest path length (number of routing processes) from that workstation to the target node H. However, you cannot directly obtain D(v); you can only get an integer reading R through a scheduling interface.
+Due to a safety self-check by the central control system, only a subset of belts G_h matching a specific "safety activation rule" is currently powered on. There are exactly four possible activation rules:
 
-The reading R is computed by an unknown estimated routing function f, where R = f(D). This strategy is one of the following four candidates:
-1. Alpha: R equals D
-2. Beta: when D is odd, R equals D plus 1; otherwise R equals D
-3. Gamma: when D is odd, R equals D minus 1; otherwise R equals D
-4. Delta: when D equals 2, R equals 3; otherwise R equals D
+- Rule R: Power only Red belts (regardless of operation mode)
+- Rule B: Power only Blue belts (regardless of operation mode)
+- Rule S: Power only Solid belts (regardless of material)
+- Rule D: Power only Dashed belts (regardless of material)
 
-Your goals are:
-1. Infer the true strategy function type by obtaining estimated readings at different workstation nodes
-2. Determine the true shortest path length (number of routing processes) from node A to node H
+Your goal is to troubleshoot which rule type (R, B, S, or D) the control system executed, and calculate the number of independent production flows (connected components) currently formed in the workshop.
 
-You can perform the following operations:
-1. Move to an adjacent node: specify the target node name; if adjacent, move succeeds; otherwise an error is returned
-2. Query reading: obtain the estimated routing reading R at the current node
-3. Query current position: obtain the name of the current node
+You can perform "workstation port parity queries": select a workstation (A, B, C, D, E, or F) and ask whether its number of powered conveyor belts in G_h is odd. I will truthfully answer "Yes" or "No". Each query can only target one workstation.
 
-Resource limits:
-- At most {max_moves} move operations
-- At most {max_queries} reading queries
-- Position queries do not count toward limits
-- Operation order is flexible; unused operations may be abandoned
+Constraints:
+- You must perform at least 2 queries before submitting your conclusion.
+- You can perform at most 6 queries.
+- All query answers are based on the same fixed hidden safety rule, which does not change.
 
-## Operation Format (strictly required)
+To perform a workstation port parity query, use the following XML format (e.g., querying workstation A):
 
-Each request must contain only one operation tag:
+<query_degree>A</query_degree>
 
-- Move to a node (e.g., move to B):
-<move>B</move>
+When submitting your final answer, specify the rule type (R, B, S, or D) and the number of connected components, using this format:
 
-- Query current reading:
-<query_reading></query_reading>
-
-- Query current position:
-<query_position></query_position>
-
-- Submit final answer (must provide both function type and shortest path distance):
-<answer>function=Alpha, distance=4</answer>
-
-Note: function type must be one of Alpha, Beta, Gamma, Delta, and distance must be a non-negative integer.
+<answer>rule=R, components=2</answer>
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-欢迎进入法律证据链图谱推演系统。您需要通过证据节点推导出最终定罪的核心推演路径。
+我们来玩一个“资金网络属性推理”游戏。
 
-系统构建了一个无权无向的证据关联图，包含证据节点 A, B, C, D, E, F, G, H，其中 H 是核心定罪事实节点。图的逻辑连接关系为：
-- A 连接 B, C
-- B 连接 A, D
-- C 连接 A, E
-- D 连接 B, E, F
-- E 连接 C, D, G
-- F 连接 D, G
-- G 连接 E, F, H
-- H 连接 G
+在某起复杂的经济犯罪调查中，节点集合 V = {A, B, C, D, E, F} 代表六个涉案的洗钱实体。实体之间的资金流转记录具有两类属性：账户性质（红色境内账户或蓝色离岸账户）和交易类型（实线代表直接转账，虚线代表空壳嵌套）。完整的资金流转网络及其属性如下：
 
-你当前位于节点 A。
+- A-B：红色，实线
+- B-C：红色，实线
+- E-F：红色，实线
+- A-C：红色，虚线
+- C-D：蓝色，实线
+- D-E：蓝色，实线
+- A-F：蓝色，实线
+- B-E：蓝色，虚线
 
-在这个证据网中，每个节点 v 都有一个真实值 D(v)，表示从该节点到核心定罪事实 H 的真实最短路径长度（逻辑推演步数）。但你无法直接获得 D(v)，只能通过AI助手获得一个整数读数 R。
+经过经侦部门的初步过滤，确认犯罪嫌疑人仅利用了符合某项“洗钱掩饰规则”的交易子网 G_h 进行作案。该掩饰规则有且仅有以下四种之一：
 
-读数 R 由一个未知的权重计算函数 f 得出，即 R = f(D)。该机制从以下四种候选中选择其一：
-1. Alpha：R 等于 D
-2. Beta：当 D 为奇数时 R 等于 D 加 1，否则 R 等于 D
-3. Gamma：当 D 为奇数时 R 等于 D 减 1，否则 R 等于 D
-4. Delta：当 D 等于 2 时 R 等于 3，否则 R 等于 D
+- 规则 R：仅利用所有红色境内交易（不考虑交易类型）
+- 规则 B：仅利用所有蓝色离岸交易（不考虑交易类型）
+- 规则 S：仅利用所有实线直接转账（不考虑账户性质）
+- 规则 D：仅利用所有虚线空壳嵌套（不考虑账户性质）
 
-你的任务目标是：
-1. 通过在不同证据节点处获取权重读数，推断出AI助手真实采用的函数类型
-2. 给出从节点 A 到节点 H 的真实最短路径长度（逻辑推演步数）
+你的目标是侦破嫌疑人所采用的掩饰规则类型（R、B、S 或 D），并计算在该规则下形成的独立资金流转团伙（即连通分量）个数。
 
-你可以执行以下操作：
-1. 移动到相邻节点：指定目标节点名称，若该节点与当前节点相邻则移动成功，否则返回非法提示
-2. 查询读数：获取当前节点的关联权重读数 R
-3. 查询当前位置：获取当前所在的节点名称
+你可以向我进行“实体交易频次奇偶查询”：选择一个涉案实体（A、B、C、D、E 或 F），询问该实体在涉案子网 G_h 中参与的交易记录数是否为奇数。我会如实回答“是”或“否”。每次查询只能针对一个实体。
 
-资源限制：
-- 最多执行 {max_moves} 次移动
-- 最多执行 {max_queries} 次读数查询
-- 当前位置查询不计入限制
-- 操作顺序自定，未用次数可放弃
+约束条件：
+- 你必须至少进行 2 次查询后才能提交案件结论。
+- 你最多可以进行 6 次查询。
+- 所有查询的答案均基于同一固定的隐藏掩饰规则，规则不会改变。
 
-## 操作格式（严格要求）
+进行实体交易频次奇偶查询时，使用以下 XML 格式（例如查询实体 A）：
 
-每次只能包含一个操作标签：
+<query_degree>A</query_degree>
 
-- 移动到节点（例如移动到 B）：
-<move>B</move>
+提交最终答案时，必须说明规则类型（R、B、S 或 D）和连通分量个数，格式如下：
 
-- 查询当前读数：
-<query_reading></query_reading>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 提交最终答案（需同时给出函数类型和最短路径长度）：
-<answer>function=Alpha, distance=4</answer>
-
-注意：函数类型必须是 Alpha、Beta、Gamma、Delta 之一，距离必须是非负整数。
+<answer>rule=R, components=2</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the Legal Evidence Chain Graph Inference System. You must deduce the core inferential path to the final conviction through evidence nodes.
+[Legal Scenario]
+Let's play a "Financial Network Attribute Inference" game.
 
-The system constructs an unweighted undirected evidence association graph with evidence nodes A, B, C, D, E, F, G, H, where H is the core conviction fact node. The logical connections are:
-- A connects to B, C
-- B connects to A, D
-- C connects to A, E
-- D connects to B, E, F
-- E connects to C, D, G
-- F connects to D, G
-- G connects to E, F, H
-- H connects to G
+In a complex economic crime investigation, the vertex set V = {A, B, C, D, E, F} represents six entities involved in money laundering. The transaction records between these entities have two attributes: account nature (Red domestic or Blue offshore) and transaction type (Solid for direct transfer, Dashed for shell company nesting). The complete transaction network and its attributes are:
 
-You start at node A.
+- A-B: Red, Solid
+- B-C: Red, Solid
+- E-F: Red, Solid
+- A-C: Red, Dashed
+- C-D: Blue, Solid
+- D-E: Blue, Solid
+- A-F: Blue, Solid
+- B-E: Blue, Dashed
 
-In this evidence network, each node v has a true value D(v), representing the true shortest path length (number of logical deduction steps) from that node to the core conviction fact H. However, you cannot directly obtain D(v); you can only get an integer reading R through an AI assistant.
+After preliminary filtering by the economic crime investigation department, it is confirmed that the suspects only used a transaction subnet G_h that matches a specific "laundering concealment rule." There are exactly four possible rules:
 
-The reading R is computed by an unknown weight calculation function f, where R = f(D). This mechanism is one of the following four candidates:
-1. Alpha: R equals D
-2. Beta: when D is odd, R equals D plus 1; otherwise R equals D
-3. Gamma: when D is odd, R equals D minus 1; otherwise R equals D
-4. Delta: when D equals 2, R equals 3; otherwise R equals D
+- Rule R: Use only Red domestic transactions (regardless of type)
+- Rule B: Use only Blue offshore transactions (regardless of type)
+- Rule S: Use only Solid direct transfers (regardless of nature)
+- Rule D: Use only Dashed shell nesting (regardless of nature)
 
-Your goals are:
-1. Infer the true calculation function type used by the AI assistant by obtaining weight readings at different evidence nodes
-2. Determine the true shortest path length (number of logical deduction steps) from node A to node H
+Your goal is to uncover the concealment rule type (R, B, S, or D) used by the suspects, and calculate the number of independent financial syndicates (connected components) formed under this rule.
 
-You can perform the following operations:
-1. Move to an adjacent node: specify the target node name; if adjacent, move succeeds; otherwise an error is returned
-2. Query reading: obtain the association weight reading R at the current node
-3. Query current position: obtain the name of the current node
+You can perform "entity transaction frequency parity queries": select an involved entity (A, B, C, D, E, or F) and ask whether its number of transaction records in the subnet G_h is odd. I will truthfully answer "Yes" or "No". Each query can only target one entity.
 
-Resource limits:
-- At most {max_moves} move operations
-- At most {max_queries} reading queries
-- Position queries do not count toward limits
-- Operation order is flexible; unused operations may be abandoned
+Constraints:
+- You must perform at least 2 queries before submitting your conclusion.
+- You can perform at most 6 queries.
+- All query answers are based on the same fixed hidden concealment rule, which does not change.
 
-## Operation Format (strictly required)
+To perform an entity transaction frequency parity query, use the following XML format (e.g., querying entity A):
 
-Each request must contain only one operation tag:
+<query_degree>A</query_degree>
 
-- Move to a node (e.g., move to B):
-<move>B</move>
+When submitting your final answer, specify the rule type (R, B, S, or D) and the number of connected components, using this format:
 
-- Query current reading:
-<query_reading></query_reading>
-
-- Query current position:
-<query_position></query_position>
-
-- Submit final answer (must provide both function type and shortest path distance):
-<answer>function=Alpha, distance=4</answer>
-
-Note: function type must be one of Alpha, Beta, Gamma, Delta, and distance must be a non-negative integer.
+<answer>rule=R, components=2</answer>
 """
 
-    tags = ["answer", "move", "query_reading", "query_position"]
-    
+    tags = ["answer", "query_degree"]
     reasoning_type = "溯因推理"
     data_structure = "图"
 
-    # 图结构定义（固定）
-    GRAPH = {
-        "A": ["B", "C"],
-        "B": ["A", "D"],
-        "C": ["A", "E"],
-        "D": ["B", "E", "F"],
-        "E": ["C", "D", "G"],
-        "F": ["D", "G"],
-        "G": ["E", "F", "H"],
-        "H": ["G"]
-    }
-
-    # 从每个节点到 H 的最短距离（预计算）
-    DISTANCES = {
-        "A": 4,
-        "B": 3,
-        "C": 3,
-        "D": 2,
-        "E": 2,
-        "F": 2,
-        "G": 1,
-        "H": 0
-    }
-
-    # 难度配置
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {"max_moves": 8, "max_queries": 8, "function_type": "Alpha"},
-            2: {"max_moves": 6, "max_queries": 6, "function_type": "Beta"},
-            3: {"max_moves": 6, "max_queries": 6, "function_type": "Gamma"},
-            4: {"max_moves": 5, "max_queries": 5, "function_type": "Delta"},
-            5: {"max_moves": 4, "max_queries": 4, "function_type": "Beta"}
+        1: {
+            "rule_type": "R",
+            "edges": [("A", "B"), ("B", "C"), ("E", "F"), ("A", "C")],
+            "components": 3,
         },
-        "en": {
-            1: {"max_moves": 8, "max_queries": 8, "function_type": "Alpha"},
-            2: {"max_moves": 6, "max_queries": 6, "function_type": "Beta"},
-            3: {"max_moves": 6, "max_queries": 6, "function_type": "Gamma"},
-            4: {"max_moves": 5, "max_queries": 5, "function_type": "Delta"},
-            5: {"max_moves": 4, "max_queries": 4, "function_type": "Beta"}
-        }
+        2: {
+            "rule_type": "B",
+            "edges": [("C", "D"), ("D", "E"), ("A", "F"), ("B", "E")],
+            "components": 2,
+        },
+        3: {
+            "rule_type": "S",
+            "edges": [("A", "B"), ("B", "C"), ("E", "F"), ("C", "D"), ("D", "E"), ("A", "F")],
+            "components": 1,
+        },
+        4: {
+            "rule_type": "D",
+            "edges": [("A", "C"), ("B", "E")],
+            "components": 4,
+        },
+        5: {
+            "rule_type": "B",
+            "edges": [("C", "D"), ("D", "E"), ("A", "F"), ("B", "E")],
+            "components": 2,
+        },
     }
 
     def __init__(self, config):
+        self.query_count = 0
         super().__init__(config)
 
+    def _init_rule(self):
+        context = self.config.context
+        rule_map = {
+            0: (self.game_rule_zh, self.game_rule_en),
+            1: (self.contextualized_rule_zh_1, self.contextualized_rule_en_1),
+            2: (self.contextualized_rule_zh_2, self.contextualized_rule_en_2),
+            3: (self.contextualized_rule_zh_3, self.contextualized_rule_en_3),
+            4: (self.contextualized_rule_zh_4, self.contextualized_rule_en_4),
+            5: (self.contextualized_rule_zh_5, self.contextualized_rule_en_5),
+        }
+        if context not in rule_map:
+            raise KeyError(f"Unsupported context: {context}")
+        
+        zh_rule, en_rule = rule_map[context]
+        
+        if self.config.language == "zh":
+            self.game_rule = zh_rule
+            self.user_prompt = getattr(self, 'user_prompt_zh', '')
+        elif self.config.language == "en":
+            self.game_rule = en_rule
+            self.user_prompt = getattr(self, 'user_prompt_en', '')
+        else:
+            raise KeyError(f"Unsupported language: {self.config.language}")
+
     def _initialize_game(self):
-        """初始化游戏状态"""
-        lang = self.config.language
         diff = int(self.config.difficulty)
 
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        self.rule_type = cfg["rule_type"]
+        self.edges = cfg["edges"]
+        self.components = cfg["components"]
         
-        # 设置游戏参数
-        self._game_info["max_moves"] = cfg["max_moves"]
-        self._game_info["max_queries"] = cfg["max_queries"]
+        self.graph = {v: [] for v in ["A", "B", "C", "D", "E", "F"]}
+        for u, v in self.edges:
+            self.graph[u].append(v)
+            self.graph[v].append(u)
         
-        # 游戏状态
-        self.current_node = "A"
-        self.function_type = cfg["function_type"]
-        self.moves_used = 0
-        self.queries_used = 0
-        self.max_moves = cfg["max_moves"]
-        self.max_queries = cfg["max_queries"]
-
-    def _apply_function(self, D):
-        """根据函数类型计算读数 R"""
-        if self.function_type == "Alpha":
-            return D
-        elif self.function_type == "Beta":
-            if D % 2 == 1:  # 奇数
-                return D + 1
-            else:
-                return D
-        elif self.function_type == "Gamma":
-            if D % 2 == 1:  # 奇数
-                return D - 1
-            else:
-                return D
-        elif self.function_type == "Delta":
-            if D == 2:
-                return 3
-            else:
-                return D
-        else:
-            raise ValueError(f"Unknown function type: {self.function_type}")
+        self.degrees = {v: len(neighbors) for v, neighbors in self.graph.items()}
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
+        if self.query_count < 2:
+            if self.config.language == "zh":
+                raise ValueError("错误：必须至少进行 2 次查询后才能提交答案。")
+            else:
+                raise ValueError("Error: You must perform at least 2 queries before submitting an answer.")
+            
         raw_ans = parsed_info["answer"]
-        
-        # 解析答案：function=X, distance=Y
-        kv_pairs = [x.strip() for x in raw_ans.split(",")]
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
         ans_dict = {}
         for kv in kv_pairs:
-            if "=" not in kv:
-                continue
             k, v = kv.split("=", 1)
             ans_dict[k.strip()] = v.strip()
         
-        if "function" not in ans_dict or "distance" not in ans_dict:
+        if "rule" not in ans_dict or "components" not in ans_dict:
             return False
         
-        # 检查函数类型
-        if ans_dict["function"] != self.function_type:
+        if ans_dict["rule"] != self.rule_type:
             return False
         
-        # 检查距离（A 到 H 的真实距离）
         try:
-            distance = int(ans_dict["distance"])
-            if distance != self.DISTANCES["A"]:
-                return False
+            model_components = int(ans_dict["components"])
         except:
             return False
-        
-        return True
+            
+        return model_components == self.components
 
     def _cf_core_produce(self, parsed_info):
-        """执行原始业务逻辑"""
-        is_zh = (self.config.language == "zh")
-        
-        # 优先级：move > query_reading > query_position
-        if "move" in parsed_info:
-            target = parsed_info["move"].strip().upper()
-            
-            # 检查移动次数限制
-            if self.moves_used >= self.max_moves:
-                return "移动次数已用尽。" if is_zh else "Move limit reached."
-            
-            # 检查目标节点是否相邻
-            if target not in self.GRAPH:
-                return f"节点 {target} 不存在。" if is_zh else f"Node {target} does not exist."
-            
-            if target not in self.GRAPH[self.current_node]:
-                return f"节点 {target} 与当前节点不相邻，移动失败。" if is_zh else f"Node {target} is not adjacent to current node. Move failed."
-            
-            # 执行移动
-            self.current_node = target
-            self.moves_used += 1
-            return f"已移动到节点 {target}。剩余移动次数：{self.max_moves - self.moves_used}" if is_zh else f"Moved to node {target}. Remaining moves: {self.max_moves - self.moves_used}"
-        
-        elif "query_reading" in parsed_info:
-            # 检查查询次数限制
-            if self.queries_used >= self.max_queries:
-                return "读数查询次数已用尽。" if is_zh else "Query limit reached."
-            
-            # 获取当前节点的真实距离并应用函数
-            D = self.DISTANCES[self.current_node]
-            R = self._apply_function(D)
-            self.queries_used += 1
-            
-            return f"当前读数 R = {R}。剩余查询次数：{self.max_queries - self.queries_used}" if is_zh else f"Current reading R = {R}. Remaining queries: {self.max_queries - self.queries_used}"
-        
-        elif "query_position" in parsed_info:
-            # 位置查询不计入限制
-            return f"当前位置：节点 {self.current_node}" if is_zh else f"Current position: node {self.current_node}"
-        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_max = "提示：已达到最大查询次数（6次），请直接提交你的最终答案。"
+            error_vertex = "错误：顶点无效，必须是 A、B、C、D、E 或 F 之一。请重新查询。"
         else:
-            raise ValueError("No valid operation tag found.")
+            yes_res, no_res = "Yes", "No"
+            error_max = "Notice: Maximum query limit (6) reached. Please submit your final answer now."
+            error_vertex = "Error: Invalid vertex, must be one of A, B, C, D, E, or F. Please try again."
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """生成一个错误的响应，用于反事实干预模式"""
-        import re as _re
-        # 尝试从正确响应中提取读数 R 并修改
-        m = _re.search(r'(R\s*=\s*)(\d+)', correct)
-        if m:
-            prefix = m.group(1)
-            real_val = int(m.group(2))
-            wrong_val = real_val + 1
-            return correct[:m.start()] + prefix + str(wrong_val) + correct[m.end():]
-        
-        # 尝试从移动响应中修改剩余次数
-        m = _re.search(r'((?:Remaining moves|剩余移动次数)[：:]\s*)(\d+)', correct)
-        if m:
-            prefix = m.group(1)
-            real_val = int(m.group(2))
-            wrong_val = max(0, real_val - 1)
-            return correct[:m.start()] + prefix + str(wrong_val) + correct[m.end():]
-        
-        # 尝试从位置响应中修改节点
-        m = _re.search(r'((?:node|节点)\s*)([A-H])', correct)
-        if m:
-            prefix = m.group(1)
-            real_node = m.group(2)
-            all_nodes = list(self.GRAPH.keys())
-            wrong_candidates = [n for n in all_nodes if n != real_node]
-            if wrong_candidates:
-                wrong_node = wrong_candidates[0]
-                return correct[:m.start()] + prefix + wrong_node + correct[m.end():]
-        
-        # 兜底：在正确答案后附加误导信息
-        return correct + " [ERROR]"
+        if "query_degree" in parsed_info:
+            if self.query_count >= 6:
+                return error_max
+                
+            vertex = parsed_info["query_degree"].strip().upper()
+            
+            if vertex not in ["A", "B", "C", "D", "E", "F"]:
+                return error_vertex
+            
+            self.query_count += 1
+            
+            degree = self.degrees[vertex]
+            is_odd = (degree % 2 == 1)
+            
+            return yes_res if is_odd else no_res
+        else:
+            raise ValueError("No valid query tag found.")
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举一个完整的探索序列：从 A 出发，沿路径访问所有节点并查询读数。
-        返回的查询序列模拟了真实游戏流程（移动→查询读数），
-        使得 LLM 拥有足够信息来推断函数类型和最短路径。
-        """
         results = []
-        is_zh = (self.config.language == "zh")
-        
-        # 最优探索路径，4次移动覆盖所有关键D值(4,3,2,1,0)
-        visit_path = ["A", "C", "E", "G", "H"]
-        
-        sim_pos = "A"
-        sim_moves = 0
-        sim_queries = 0
-        
-        # 先查询起始节点 A 的读数
-        D_a = self.DISTANCES[sim_pos]
-        R_a = self._apply_function(D_a)
-        sim_queries += 1
-        results.append({
-            "query": "<query_reading></query_reading>",
-            "answer": f"Current reading R = {R_a}. Remaining queries: {self.max_queries - sim_queries}" if not is_zh else f"当前读数 R = {R_a}。剩余查询次数：{self.max_queries - sim_queries}"
-        })
-        
-        # 查询起始位置
-        results.append({
-            "query": "<query_position></query_position>",
-            "answer": f"Current position: node {sim_pos}" if not is_zh else f"当前位置：节点 {sim_pos}"
-        })
-        
-        # 按路径移动并查询每个新节点的读数
-        visited_readings = {"A"}
-        
-        for target in visit_path[1:]:
-            # 移动
-            if target in self.GRAPH[sim_pos]:
-                sim_moves += 1
-                sim_pos = target
-                remaining_moves = self.max_moves - sim_moves
-                move_ans = (f"已移动到节点 {target}。剩余移动次数：{remaining_moves}" if is_zh 
-                           else f"Moved to node {target}. Remaining moves: {remaining_moves}")
-            else:
-                move_ans = (f"节点 {target} 与当前节点不相邻，移动失败。" if is_zh 
-                           else f"Node {target} is not adjacent to current node. Move failed.")
-                # 跳过这个目标，不查询读数
-                results.append({
-                    "query": f"<move>{target}</move>",
-                    "answer": move_ans
-                })
-                continue
+        possible_vertices = ["A", "B", "C", "D", "E", "F"]
+
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+
+        for vertex in possible_vertices:
+            degree = self.degrees[vertex]
+            is_odd = (degree % 2 == 1)
+            answer = yes_res if is_odd else no_res
             
             results.append({
-                "query": f"<move>{target}</move>",
-                "answer": move_ans
+                "query": f"<query_degree>{vertex}</query_degree>",
+                "answer": answer
             })
-            
-            # 如果此节点尚未查询过读数，则查询
-            if target not in visited_readings:
-                D_val = self.DISTANCES[target]
-                R_val = self._apply_function(D_val)
-                sim_queries += 1
-                read_ans = (f"当前读数 R = {R_val}。剩余查询次数：{self.max_queries - sim_queries}" if is_zh 
-                           else f"Current reading R = {R_val}. Remaining queries: {self.max_queries - sim_queries}")
-                results.append({
-                    "query": "<query_reading></query_reading>",
-                    "answer": read_ans
-                })
-                visited_readings.add(target)
         
         return results
+
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        lower_correct = correct.lower()
+        if self.config.language == "zh":
+            if "是" in correct:
+                return correct.replace("是", "否")
+            elif "否" in correct:
+                return correct.replace("否", "是")
+        else:
+            if "yes" in lower_correct:
+                return "No" if correct[0].isupper() else "no"
+            elif "no" in lower_correct:
+                return "Yes" if correct[0].isupper() else "yes"
+        
+        return correct + "_WRONG"

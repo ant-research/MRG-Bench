@@ -1,591 +1,657 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   最小顶点覆盖：覆盖所有边所需的最少节点数是多少
-# ============================================================
-
 from .base import Game
-import random
-import re
-import itertools
+import math
+from typing import List, Dict
 
-
-class BipartiteVertexCoverGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "图"
+class HiddenParentFunctionGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"二分图最小顶点覆盖"的推理游戏，规则如下：
+我们来玩一个"隐藏父函数推理"游戏，规则如下：
 
-游戏设定了一个固定但未知的无向图 G，其顶点集 V 包含 {n} 个顶点，编号从 1 到 {n}。该图具有以下性质：
-- G 是一个完全二分图，即存在未知的二分划分 V = L ∪ R（L 和 R 不相交），图中的边集 E 恰好为所有连接 L 和 R 之间顶点的边。
-- 记 L 的大小为 a，R 的大小为 b，但 a 和 b 的具体数值未知。
-- 图在整个游戏过程中保持不变，无自环、无重边。
+游戏设定了一个节点集合 {{0, 1, 2, ..., {N}}}，其中存在一个隐藏的父函数 f，对于每个节点 i（i 大于等于 1），都有 f(i) 是一个小于 i 的非负整数，即 f(i) 属于 {{0, 1, ..., i-1}}。这样所有节点通过父函数形成了一棵以 0 为根的树结构。
 
-你的目标是通过查询推断出该图的最小顶点覆盖数（记为 τ），在完全二分图中，τ 等于 min(a, b)。
+父函数 f 遵循某个固定的数值规则（例如：某种数学公式），但具体规则对你是隐藏的。
 
-你可以反复进行以下查询操作（每次仅限一个查询），我会根据真实图结构如实回答：
+你的目标是：推断出目标节点集合 T = {{{target_nodes}}} 中每个节点的父节点值，即对于每个 t 在 T 中，找出 f(t) 的值。
 
-**查询操作**：给定任意顶点子集 S（可以为空集），系统返回两项信息：
-1. OPEN：删除 S 中所有顶点后，剩余诱导子图中仍存在的边数。
-2. All_blocked：一个布尔值，表示剩余边数是否为 0（YES 表示为 0，NO 表示不为 0）。
+为了帮助你推理，你可以向我提出两类查询（查询次数有限）：
 
-当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+1. **值查询**：询问某个非目标节点 x 的父节点值 f(x)。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，且 x 不能是目标节点（即 x 不在 T 中）。
+   - 回答：返回 f(x) 的具体数值。
+   - 预算：你最多可以进行 {L} 次值查询。
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **等式查询**：询问某个节点 x 的父节点是否等于 y。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，y 必须在 {{0, ..., x-1}} 范围内。
+   - 回答：回答"是"或"否"。
+   - 预算：你最多可以进行 {M} 次等式查询。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你收集到足够信息后，请提交最终答案。答案需要包含目标集合 T 中所有节点的父节点值。
 
-- 查询操作（例如查询删除顶点 1 和 3 后的情况）：
-<query>1,3</query>
+每次只能提交一个查询或答案。请使用以下 XML 格式：
 
-- 查询空集（内容为空）：
-<query></query>
+- 值查询（例如查询节点 5 的父节点）：
+<query_value>5</query_value>
 
-提交最终答案时，必须给出最小顶点覆盖数 τ，格式如下：
-<answer>5</answer>
+- 等式查询（例如询问节点 7 的父节点是否为 3）：
+<query_equal>7,3</query_equal>
 
-请尽可能用较少的查询次数完成推理。
+- 提交最终答案（格式为"节点=父节点"的列表，用分号分隔）：
+<answer>8=4;12=6;15=7</answer>
+
+注意：答案中必须包含目标集合 T 中的所有节点，且格式严格按照上述要求。
 """
 
     game_rule_en = """\
-Let's play a "Bipartite Minimum Vertex Cover" deduction game. Here are the rules:
+Let's play a "Hidden Parent Function Inference" game. Here are the rules:
 
-The game has set up a fixed but unknown undirected graph G. Its vertex set V contains {n} vertices, numbered from 1 to {n}. The graph has the following properties:
-- G is a complete bipartite graph, meaning there exists an unknown bipartition V = L ∪ R (L and R are disjoint), and the edge set E consists exactly of all edges connecting vertices between L and R.
-- Let the size of L be a and the size of R be b, but the specific values of a and b are unknown.
-- The graph remains unchanged throughout the game, with no self-loops or multiple edges.
+The game defines a node set {{0, 1, 2, ..., {N}}}, where there exists a hidden parent function f. For each node i (i greater than or equal to 1), f(i) is a non-negative integer less than i, i.e., f(i) belongs to {{0, 1, ..., i-1}}. All nodes form a tree structure rooted at 0 through the parent function.
 
-Your goal is to infer the minimum vertex cover number (denoted as τ) of this graph through queries. In a complete bipartite graph, τ equals min(a, b).
+The parent function f follows a fixed numerical rule (e.g., some mathematical formula), but the specific rule is hidden from you.
 
-You can repeatedly perform the following query operation (one query per turn), and I will answer truthfully based on the actual graph structure:
+Your goal is: Infer the parent node value for each node in the target node set T = {{{target_nodes}}}, i.e., for each t in T, find the value of f(t).
 
-**Query Operation**: Given any subset S of vertices (can be empty), the system returns two pieces of information:
-1. OPEN: The number of edges remaining in the induced subgraph after removing all vertices in S.
-2. All_blocked: A boolean value indicating whether the remaining edge count is 0 (YES means 0, NO means non-zero).
+To help you reason, you can make two types of queries (with limited query budget):
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+1. **Value Query**: Ask for the parent node value f(x) of a non-target node x.
+   - Constraint: x must be in the range {{1, ..., {N}}}, and x cannot be a target node (i.e., x not in T).
+   - Answer: Returns the specific value of f(x).
+   - Budget: You can make at most {L} value queries.
 
-## Query and Answer Format (strictly required)
+2. **Equality Query**: Ask whether the parent node of node x equals y.
+   - Constraint: x must be in the range {{1, ..., {N}}}, y must be in the range {{0, ..., x-1}}.
+   - Answer: Answers "Yes" or "No".
+   - Budget: You can make at most {M} equality queries.
 
-Each query must contain only one tag. Use the following XML format:
+When you have collected enough information, submit your final answer. The answer must include the parent node values for all nodes in the target set T.
 
-- Query operation (e.g., querying the situation after removing vertices 1 and 3):
-<query>1,3</query>
+You can only submit one query or answer at a time. Use the following XML format:
 
-- Query empty set (empty content):
-<query></query>
+- Value Query (e.g., query the parent of node 5):
+<query_value>5</query_value>
 
-When submitting the final answer, you must provide the minimum vertex cover number τ in the following format:
-<answer>5</answer>
+- Equality Query (e.g., ask if the parent of node 7 is 3):
+<query_equal>7,3</query_equal>
 
-Please try to complete the reasoning with as few queries as possible.
+- Submit Final Answer (format as "node=parent" list, separated by semicolons):
+<answer>8=4;12=6;15=7</answer>
+
+Note: The answer must include all nodes in the target set T, with strict adherence to the format above.
 """
 
     contextualized_rule_zh_1 = """\
-【智能交通管控网络诊断】
-我们来玩一个"交通网络最小枢纽封锁"的推理游戏，规则如下：
+我们正在进行城市交通路网的层级调度链路梳理。
 
-游戏设定了一个固定但未知的城市交通网络 G，其交通枢纽集 V 包含 {n} 个枢纽，编号从 1 到 {n}。该网络具有以下性质：
-- G 是一个完全二分图，即存在未知的划分 V = L ∪ R（L代表居住区枢纽，R代表商业区枢纽，且互不相交），网络中的通勤路线集 E 恰好为所有连接 L 和 R 之间枢纽的路线。
-- 记居住区枢纽 L 的数量为 a，商业区枢纽 R 的数量为 b，但 a 和 b 的具体数值未知。
-- 网络在整个游戏过程中保持不变，无自环、无重边。
+系统设定了一个交通节点集合 {{0, 1, 2, ..., {N}}}，其中存在一个隐藏的直接上级调度节点 f，对于每个交通节点 i（i 大于等于 1），都有 f(i) 是一个小于 i 的非负整数，即 f(i) 属于 {{0, 1, ..., i-1}}。这样所有交通节点通过调度关系形成了一棵以 0（总控制中心）为根的层级控制树。
 
-你的目标是通过查询推断出彻底阻断所有居住区与商业区通勤路线所需封锁的最少枢纽数（记为 τ），在完全二分图结构中，τ 等于 min(a, b)。
+直接上级调度节点 f 遵循某个固定的系统分配规则，但具体规则对你是隐藏的。
 
-你可以反复进行以下查询操作（每次仅限一个查询），我会根据真实网络结构如实回答：
+你的目标是：推断出需要紧急维护的目标集合 T = {{{target_nodes}}} 中每个交通节点的直接上级调度节点值，即对于每个 t 在 T 中，找出 f(t) 的值。
 
-**查询操作**：给定任意枢纽子集 S（可以为空集），系统返回两项信息：
-1. OPEN：封锁 S 中所有枢纽后，剩余网络中仍保持畅通的通勤路线数量。
-2. All_blocked：一个布尔值，表示剩余路线数是否为 0（YES 表示所有路线已阻断，NO 表示仍有路线畅通）。
+为了帮助你推理，你可以向我提出两类查询（查询次数有限）：
 
-当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+1. **值查询**（向上级调度追溯）：询问某个非目标交通节点 x 的直接上级调度节点值 f(x)。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，且 x 不能是目标交通节点（即 x 不在 T 中）。
+   - 回答：返回 f(x) 的具体数值。
+   - 预算：你最多可以进行 {L} 次值查询。
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **等式查询**（校验调度关系）：询问某个交通节点 x 的直接上级调度节点是否等于 y。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，y 必须在 {{0, ..., x-1}} 范围内。
+   - 回答：回答"是"或"否"。
+   - 预算：你最多可以进行 {M} 次等式查询。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你收集到足够信息后，请提交最终答案。答案需要包含目标集合 T 中所有交通节点的直接上级调度节点值。
 
-- 查询操作（例如查询封锁枢纽 1 和 3 后的情况）：
-<query>1,3</query>
+每次只能提交一个查询或答案。请使用以下 XML 格式：
 
-- 查询空集（内容为空）：
-<query></query>
+- 值查询（例如查询交通节点 5 的直接上级调度节点）：
+<query_value>5</query_value>
 
-提交最终答案时，必须给出最少需要封锁的枢纽数 τ，格式如下：
-<answer>5</answer>
+- 等式查询（例如询问交通节点 7 的直接上级调度节点是否为 3）：
+<query_equal>7,3</query_equal>
 
-请尽可能用较少的查询次数完成推理。
+- 提交最终答案（格式为"交通节点=直接上级调度节点"的列表，用分号分隔）：
+<answer>8=4;12=6;15=7</answer>
+
+注意：答案中必须包含目标集合 T 中的所有交通节点，且格式严格按照上述要求。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's play a "Traffic Network Minimum Hub Lockdown" deduction game. Here are the rules:
+We are sorting out the hierarchical dispatch links of the urban traffic network.
 
-The game has set up a fixed but unknown city traffic network G. Its transport hub set V contains {n} hubs, numbered from 1 to {n}. The network has the following properties:
-- G is a complete bipartite graph, meaning there exists an unknown bipartition V = L ∪ R (L represents residential area hubs and R represents commercial area hubs, and they are disjoint). The commuter route set E consists exactly of all routes connecting residential hubs L and commercial hubs R.
-- Let the number of residential hubs L be a and the commercial hubs R be b, but the specific values of a and b are unknown.
-- The network remains unchanged throughout the game, with no self-loops or multiple edges.
+The system defines a traffic node set {{0, 1, 2, ..., {N}}}, where there exists a hidden direct superior dispatch node f. For each traffic node i (i greater than or equal to 1), f(i) is a non-negative integer less than i, i.e., f(i) belongs to {{0, 1, ..., i-1}}. All traffic nodes form a hierarchical control tree rooted at 0 (the main control center) through the dispatch relations.
 
-Your goal is to infer the minimum number of hubs to lock down in order to completely block all commuting routes between residential and commercial areas (denoted as τ) through queries. In a complete bipartite structure, τ equals min(a, b).
+The direct superior dispatch node f follows a fixed system allocation rule, but the specific rule is hidden from you.
 
-You can repeatedly perform the following query operation (one query per turn), and I will answer truthfully based on the actual network structure:
+Your goal is: Infer the direct superior dispatch node value for each traffic node in the target set T = {{{target_nodes}}} requiring emergency maintenance, i.e., for each t in T, find the value of f(t).
 
-**Query Operation**: Given any subset S of hubs (can be empty), the system returns two pieces of information:
-1. OPEN: The number of commuting routes remaining clear in the network after locking down all hubs in S.
-2. All_blocked: A boolean value indicating whether the remaining route count is 0 (YES means all routes are blocked, NO means routes are still open).
+To help you reason, you can make two types of queries (with limited query budget):
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+1. **Value Query** (Trace Superior Dispatch): Ask for the direct superior dispatch node value f(x) of a non-target traffic node x.
+   - Constraint: x must be in the range {{1, ..., {N}}}, and x cannot be a target traffic node (i.e., x not in T).
+   - Answer: Returns the specific value of f(x).
+   - Budget: You can make at most {L} value queries.
 
-## Query and Answer Format (strictly required)
+2. **Equality Query** (Verify Dispatch Relation): Ask whether the direct superior dispatch node of traffic node x equals y.
+   - Constraint: x must be in the range {{1, ..., {N}}}, y must be in the range {{0, ..., x-1}}.
+   - Answer: Answers "Yes" or "No".
+   - Budget: You can make at most {M} equality queries.
 
-Each query must contain only one tag. Use the following XML format:
+When you have collected enough information, submit your final answer. The answer must include the direct superior dispatch node values for all traffic nodes in the target set T.
 
-- Query operation (e.g., querying the situation after locking down hubs 1 and 3):
-<query>1,3</query>
+You can only submit one query or answer at a time. Use the following XML format:
 
-- Query empty set (empty content):
-<query></query>
+- Value Query (e.g., query the direct superior dispatch node of traffic node 5):
+<query_value>5</query_value>
 
-When submitting the final answer, you must provide the minimum number of hubs to lock down τ in the following format:
-<answer>5</answer>
+- Equality Query (e.g., ask if the direct superior dispatch node of traffic node 7 is 3):
+<query_equal>7,3</query_equal>
 
-Please try to complete the reasoning with as few queries as possible.
+- Submit Final Answer (format as "traffic node=direct superior dispatch node" list, separated by semicolons):
+<answer>8=4;12=6;15=7</answer>
+
+Note: The answer must include all traffic nodes in the target set T, with strict adherence to the format above.
 """
 
     contextualized_rule_zh_2 = """\
-【医疗感染传播链分析】
-我们来玩一个"医疗感染源最小隔离"的推理游戏，规则如下：
+我们正在执行一项传染病溯源的流行病学调查任务。
 
-游戏设定了一个固定但未知的医院内接触网络 G，其追踪对象集 V 包含 {n} 个对象，编号从 1 到 {n}。该网络具有以下性质：
-- G 是一个完全二分图，即存在未知的划分 V = L ∪ R（L代表病患，R代表共用医疗设备，互不相交），网络中的感染接触链 E 恰好为所有连接 L 和 R 之间的接触记录。
-- 记病患 L 的数量为 a，设备 R 的数量为 b，但 a 和 b 的具体数值未知。
-- 接触网络在整个游戏过程中保持不变，无自环、无重边。
+系统设定了一个感染病例集合 {{0, 1, 2, ..., {N}}}，其中存在一个隐藏的直接传染源 f，对于每个病例 i（i 大于等于 1），都有 f(i) 是一个小于 i 的非负整数，即 f(i) 属于 {{0, 1, ..., i-1}}。这样所有病例通过传播链形成了一棵以 0（零号病人）为根的感染树。
 
-你的目标是通过查询推断出彻底切断所有病患与设备之间接触链所需隔离/停用的最少对象数（记为 τ），在完全二分图结构中，τ 等于 min(a, b)。
+直接传染源 f 遵循某个固定的病毒传播机制，但具体机制对你是隐藏的。
 
-你可以反复进行以下查询操作（每次仅限一个查询），我会根据真实网络结构如实回答：
+你的目标是：推断出重点关注的目标集合 T = {{{target_nodes}}} 中每个病例的直接传染源编号，即对于每个 t 在 T 中，找出 f(t) 的值。
 
-**查询操作**：给定任意对象子集 S（可以为空集），系统返回两项信息：
-1. OPEN：隔离/停用 S 中所有对象后，剩余网络中仍存在的接触链数量。
-2. All_blocked：一个布尔值，表示剩余接触链是否为 0（YES 表示完全切断，NO 表示仍有遗留接触）。
+为了帮助你推理，你可以向我提出两类查询（查询次数有限）：
 
-当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+1. **值查询**（流行病学调查）：询问某个非目标病例 x 的直接传染源编号 f(x)。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，且 x 不能是目标病例（即 x 不在 T 中）。
+   - 回答：返回 f(x) 的具体数值。
+   - 预算：你最多可以进行 {L} 次值查询。
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **等式查询**（接触史比对）：询问某个病例 x 的直接传染源是否等于病例 y。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，y 必须在 {{0, ..., x-1}} 范围内。
+   - 回答：回答"是"或"否"。
+   - 预算：你最多可以进行 {M} 次等式查询。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你收集到足够信息后，请提交最终答案。答案需要包含目标集合 T 中所有病例的直接传染源编号。
 
-- 查询操作（例如查询隔离对象 1 和 3 后的情况）：
-<query>1,3</query>
+每次只能提交一个查询或答案。请使用以下 XML 格式：
 
-- 查询空集（内容为空）：
-<query></query>
+- 值查询（例如查询病例 5 的直接传染源）：
+<query_value>5</query_value>
 
-提交最终答案时，必须给出最少需要隔离的对象数 τ，格式如下：
-<answer>5</answer>
+- 等式查询（例如询问病例 7 的直接传染源是否为 3）：
+<query_equal>7,3</query_equal>
 
-请尽可能用较少的查询次数完成推理。
+- 提交最终答案（格式为"病例=直接传染源"的列表，用分号分隔）：
+<answer>8=4;12=6;15=7</answer>
+
+注意：答案中必须包含目标集合 T 中的所有病例，且格式严格按照上述要求。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Let's play a "Medical Infection Source Minimum Quarantine" deduction game. Here are the rules:
+[Healthcare Scenario]
+We are executing an epidemiological investigation task for tracing infectious diseases.
 
-The game has set up a fixed but unknown hospital contact network G. Its tracked entity set V contains {n} entities, numbered from 1 to {n}. The network has the following properties:
-- G is a complete bipartite graph, meaning there exists an unknown bipartition V = L ∪ R (L represents patients and R represents shared medical devices, and they are disjoint). The infection exposure chain set E consists exactly of all exposure records connecting patients L and devices R.
-- Let the number of patients L be a and devices R be b, but the specific values of a and b are unknown.
-- The contact network remains unchanged throughout the game, with no self-loops or multiple edges.
+The system defines an infection case set {{0, 1, 2, ..., {N}}}, where there exists a hidden direct source of infection f. For each case i (i greater than or equal to 1), f(i) is a non-negative integer less than i, i.e., f(i) belongs to {{0, 1, ..., i-1}}. All cases form an infection tree rooted at 0 (patient zero) through the transmission chain.
 
-Your goal is to infer the minimum number of entities to quarantine or disable in order to completely break all exposure pathways between patients and devices (denoted as τ) through queries. In a complete bipartite structure, τ equals min(a, b).
+The direct source of infection f follows a fixed virus transmission mechanism, but the specific mechanism is hidden from you.
 
-You can repeatedly perform the following query operation (one query per turn), and I will answer truthfully based on the actual network structure:
+Your goal is: Infer the direct source of infection ID for each case in the key monitoring target set T = {{{target_nodes}}}, i.e., for each t in T, find the value of f(t).
 
-**Query Operation**: Given any subset S of entities (can be empty), the system returns two pieces of information:
-1. OPEN: The number of exposure pathways remaining in the network after quarantining/disabling all entities in S.
-2. All_blocked: A boolean value indicating whether the remaining pathway count is 0 (YES means all pathways are broken, NO means some remain).
+To help you reason, you can make two types of queries (with limited query budget):
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+1. **Value Query** (Epidemiological Investigation): Ask for the direct source of infection ID f(x) of a non-target case x.
+   - Constraint: x must be in the range {{1, ..., {N}}}, and x cannot be a target case (i.e., x not in T).
+   - Answer: Returns the specific value of f(x).
+   - Budget: You can make at most {L} value queries.
 
-## Query and Answer Format (strictly required)
+2. **Equality Query** (Contact History Comparison): Ask whether the direct source of infection for case x equals y.
+   - Constraint: x must be in the range {{1, ..., {N}}}, y must be in the range {{0, ..., x-1}}.
+   - Answer: Answers "Yes" or "No".
+   - Budget: You can make at most {M} equality queries.
 
-Each query must contain only one tag. Use the following XML format:
+When you have collected enough information, submit your final answer. The answer must include the direct source of infection IDs for all cases in the target set T.
 
-- Query operation (e.g., querying the situation after quarantining entities 1 and 3):
-<query>1,3</query>
+You can only submit one query or answer at a time. Use the following XML format:
 
-- Query empty set (empty content):
-<query></query>
+- Value Query (e.g., query the direct source of infection of case 5):
+<query_value>5</query_value>
 
-When submitting the final answer, you must provide the minimum number of entities to quarantine τ in the following format:
-<answer>5</answer>
+- Equality Query (e.g., ask if the direct source of infection of case 7 is 3):
+<query_equal>7,3</query_equal>
 
-Please try to complete the reasoning with as few queries as possible.
+- Submit Final Answer (format as "case=direct source of infection" list, separated by semicolons):
+<answer>8=4;12=6;15=7</answer>
+
+Note: The answer must include all cases in the target set T, with strict adherence to the format above.
 """
 
     contextualized_rule_zh_3 = """\
-【教育平台作业互评系统排查】
-我们来玩一个"互评系统最小冻结"的推理游戏，规则如下：
+我们正在构建知识图谱的前置依赖系统大纲。
 
-游戏设定了一个固定但未知的在线互评网络 G，其账户/作业集 V 包含 {n} 个实体，编号从 1 到 {n}。该网络具有以下性质：
-- G 是一个完全二分图，即存在未知的划分 V = L ∪ R（L代表评审学生，R代表提交的作业，互不相交），网络中的互评分配集 E 恰好为所有连接 L 和 R 之间的评审任务。
-- 记学生 L 的数量为 a，作业 R 的数量为 b，但 a 和 b 的具体数值未知。
-- 互评网络在整个游戏过程中保持不变，无自环、无重边。
+系统设定了一个知识点集合 {{0, 1, 2, ..., {N}}}，其中存在一个隐藏的核心前置知识点 f，对于每个知识点 i（i 大于等于 1），都有 f(i) 是一个小于 i 的非负整数，即 f(i) 属于 {{0, 1, ..., i-1}}。这样所有知识点通过先决条件关系形成了一棵以 0（基础启蒙知识）为根的学习路径树。
 
-你的目标是通过查询推断出彻底取消所有评审任务所需冻结的最少实体数（记为 τ），在完全二分图结构中，τ 等于 min(a, b)。
+核心前置知识点 f 遵循某个固定的教学法规则，但具体规则对你是隐藏的。
 
-你可以反复进行以下查询操作（每次仅限一个查询），我会根据真实网络结构如实回答：
+你的目标是：推断出特定高阶课程的目标集合 T = {{{target_nodes}}} 中每个知识点的核心前置知识点值，即对于每个 t 在 T 中，找出 f(t) 的值。
 
-**查询操作**：给定任意实体子集 S（可以为空集），系统返回两项信息：
-1. OPEN：冻结 S 中所有实体后，剩余网络中仍在进行中的评审任务数量。
-2. All_blocked：一个布尔值，表示剩余任务是否为 0（YES 表示任务全取消，NO 表示仍有任务进行）。
+为了帮助你推理，你可以向我提出两类查询（查询次数有限）：
 
-当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+1. **值查询**（教学大纲查询）：询问某个非目标知识点 x 的核心前置知识点 f(x)。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，且 x 不能是目标知识点（即 x 不在 T 中）。
+   - 回答：返回 f(x) 的具体数值。
+   - 预算：你最多可以进行 {L} 次值查询。
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **等式查询**（先修条件测试）：询问某个知识点 x 的核心前置知识点是否等于 y。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，y 必须在 {{0, ..., x-1}} 范围内。
+   - 回答：回答"是"或"否"。
+   - 预算：你最多可以进行 {M} 次等式查询。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你收集到足够信息后，请提交最终答案。答案需要包含目标集合 T 中所有知识点的核心前置知识点值。
 
-- 查询操作（例如查询冻结实体 1 和 3 后的情况）：
-<query>1,3</query>
+每次只能提交一个查询或答案。请使用以下 XML 格式：
 
-- 查询空集（内容为空）：
-<query></query>
+- 值查询（例如查询知识点 5 的核心前置知识点）：
+<query_value>5</query_value>
 
-提交最终答案时，必须给出最少需要冻结的实体数 τ，格式如下：
-<answer>5</answer>
+- 等式查询（例如询问知识点 7 的核心前置知识点是否为 3）：
+<query_equal>7,3</query_equal>
 
-请尽可能用较少的查询次数完成推理。
+- 提交最终答案（格式为"知识点=核心前置知识点"的列表，用分号分隔）：
+<answer>8=4;12=6;15=7</answer>
+
+注意：答案中必须包含目标集合 T 中的所有知识点，且格式严格按照上述要求。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Peer Review System Minimum Freeze" deduction game. Here are the rules:
+We are constructing the prerequisite dependency outline for a knowledge graph.
 
-The game has set up a fixed but unknown online peer review network G. Its account/submission set V contains {n} entities, numbered from 1 to {n}. The network has the following properties:
-- G is a complete bipartite graph, meaning there exists an unknown bipartition V = L ∪ R (L represents reviewing students and R represents submitted assignments, and they are disjoint). The review assignment set E consists exactly of all review tasks connecting students L and assignments R.
-- Let the number of students L be a and assignments R be b, but the specific values of a and b are unknown.
-- The peer review network remains unchanged throughout the game, with no self-loops or multiple edges.
+The system defines a knowledge point set {{0, 1, 2, ..., {N}}}, where there exists a hidden core prerequisite knowledge point f. For each knowledge point i (i greater than or equal to 1), f(i) is a non-negative integer less than i, i.e., f(i) belongs to {{0, 1, ..., i-1}}. All knowledge points form a learning path tree rooted at 0 (foundational introductory knowledge) through prerequisite relations.
 
-Your goal is to infer the minimum number of entities to freeze in order to completely cancel all pending review assignments (denoted as τ) through queries. In a complete bipartite structure, τ equals min(a, b).
+The core prerequisite knowledge point f follows a fixed pedagogical rule, but the specific rule is hidden from you.
 
-You can repeatedly perform the following query operation (one query per turn), and I will answer truthfully based on the actual network structure:
+Your goal is: Infer the core prerequisite knowledge point value for each knowledge point in the target set T = {{{target_nodes}}} representing specific advanced courses, i.e., for each t in T, find the value of f(t).
 
-**Query Operation**: Given any subset S of entities (can be empty), the system returns two pieces of information:
-1. OPEN: The number of active review assignments remaining in the network after freezing all entities in S.
-2. All_blocked: A boolean value indicating whether the remaining assignment count is 0 (YES means all canceled, NO means some are still active).
+To help you reason, you can make two types of queries (with limited query budget):
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+1. **Value Query** (Syllabus Query): Ask for the core prerequisite knowledge point f(x) of a non-target knowledge point x.
+   - Constraint: x must be in the range {{1, ..., {N}}}, and x cannot be a target knowledge point (i.e., x not in T).
+   - Answer: Returns the specific value of f(x).
+   - Budget: You can make at most {L} value queries.
 
-## Query and Answer Format (strictly required)
+2. **Equality Query** (Prerequisite Condition Test): Ask whether the core prerequisite knowledge point of knowledge point x equals y.
+   - Constraint: x must be in the range {{1, ..., {N}}}, y must be in the range {{0, ..., x-1}}.
+   - Answer: Answers "Yes" or "No".
+   - Budget: You can make at most {M} equality queries.
 
-Each query must contain only one tag. Use the following XML format:
+When you have collected enough information, submit your final answer. The answer must include the core prerequisite knowledge point values for all knowledge points in the target set T.
 
-- Query operation (e.g., querying the situation after freezing entities 1 and 3):
-<query>1,3</query>
+You can only submit one query or answer at a time. Use the following XML format:
 
-- Query empty set (empty content):
-<query></query>
+- Value Query (e.g., query the core prerequisite knowledge point of knowledge point 5):
+<query_value>5</query_value>
 
-When submitting the final answer, you must provide the minimum number of entities to freeze τ in the following format:
-<answer>5</answer>
+- Equality Query (e.g., ask if the core prerequisite knowledge point of knowledge point 7 is 3):
+<query_equal>7,3</query_equal>
 
-Please try to complete the reasoning with as few queries as possible.
+- Submit Final Answer (format as "knowledge point=core prerequisite knowledge point" list, separated by semicolons):
+<answer>8=4;12=6;15=7</answer>
+
+Note: The answer must include all knowledge points in the target set T, with strict adherence to the format above.
 """
 
     contextualized_rule_zh_4 = """\
-【工业自动化生产线阻断测试】
-我们来玩一个"生产线最小关停"的推理游戏，规则如下：
+我们正在进行供应链与生产工序的追溯审查。
 
-游戏设定了一个固定但未知的工厂车间结构 G，其系统组件集 V 包含 {n} 个组件，编号从 1 到 {n}。该网络具有以下性质：
-- G 是一个完全二分图，即存在未知的划分 V = L ∪ R（L代表装配机械臂，R代表传送带，互不相交），网络中的物料传输链路 E 恰好为所有连接 L 和 R 之间的传输关系。
-- 记机械臂 L 的数量为 a，传送带 R 的数量为 b，但 a 和 b 的具体数值未知。
-- 车间结构在整个游戏过程中保持不变，无自环、无重边。
+系统设定了一个生产工序集合 {{0, 1, 2, ..., {N}}}，其中存在一个隐藏的直接上游工序 f，对于每个工序 i（i 大于等于 1），都有 f(i) 是一个小于 i 的非负整数，即 f(i) 属于 {{0, 1, ..., i-1}}。这样所有生产工序通过装配依赖关系形成了一棵以 0（原材料获取）为根的BOM（物料清单）树。
 
-你的目标是通过查询推断出彻底阻断所有机械臂与传送带之间物料传输所需关停的最少组件数（记为 τ），在完全二分图结构中，τ 等于 min(a, b)。
+直接上游工序 f 遵循某个固定的工业设计规范，但具体规范对你是隐藏的。
 
-你可以反复进行以下查询操作（每次仅限一个查询），我会根据真实网络结构如实回答：
+你的目标是：推断出存在质量缺陷的目标集合 T = {{{target_nodes}}} 中每个生产工序的直接上游工序值，即对于每个 t 在 T 中，找出 f(t) 的值。
 
-**查询操作**：给定任意组件子集 S（可以为空集），系统返回两项信息：
-1. OPEN：关停 S 中所有组件后，剩余系统中仍保持连通的物料传输链路数量。
-2. All_blocked：一个布尔值，表示剩余链路是否为 0（YES 表示全部阻断，NO 表示仍有链路通畅）。
+为了帮助你推理，你可以向我提出两类查询（查询次数有限）：
 
-当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+1. **值查询**（BOM单审查）：询问某个非目标工序 x 的直接上游工序 f(x)。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，且 x 不能是目标工序（即 x 不在 T 中）。
+   - 回答：返回 f(x) 的具体数值。
+   - 预算：你最多可以进行 {L} 次值查询。
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **等式查询**（装配校验）：询问某个工序 x 的直接上游工序是否等于 y。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，y 必须在 {{0, ..., x-1}} 范围内。
+   - 回答：回答"是"或"否"。
+   - 预算：你最多可以进行 {M} 次等式查询。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你收集到足够信息后，请提交最终答案。答案需要包含目标集合 T 中所有生产工序的直接上游工序值。
 
-- 查询操作（例如查询关停组件 1 和 3 后的情况）：
-<query>1,3</query>
+每次只能提交一个查询或答案。请使用以下 XML 格式：
 
-- 查询空集（内容为空）：
-<query></query>
+- 值查询（例如查询生产工序 5 的直接上游工序）：
+<query_value>5</query_value>
 
-提交最终答案时，必须给出最少需要关停的组件数 τ，格式如下：
-<answer>5</answer>
+- 等式查询（例如询问生产工序 7 的直接上游工序是否为 3）：
+<query_equal>7,3</query_equal>
 
-请尽可能用较少的查询次数完成推理。
+- 提交最终答案（格式为"生产工序=直接上游工序"的列表，用分号分隔）：
+<answer>8=4;12=6;15=7</answer>
+
+注意：答案中必须包含目标集合 T 中的所有生产工序，且格式严格按照上述要求。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Let's play an "Automated Assembly Line Minimum Shutdown" deduction game. Here are the rules:
+We are conducting a traceability review of the supply chain and production processes.
 
-The game has set up a fixed but unknown factory floor structure G. Its system component set V contains {n} components, numbered from 1 to {n}. The network has the following properties:
-- G is a complete bipartite graph, meaning there exists an unknown bipartition V = L ∪ R (L represents assembly robots and R represents conveyor belts, and they are disjoint). The material transfer link set E consists exactly of all transfer operations connecting robots L and belts R.
-- Let the number of robots L be a and belts R be b, but the specific values of a and b are unknown.
-- The factory floor structure remains unchanged throughout the game, with no self-loops or multiple edges.
+The system defines a production process set {{0, 1, 2, ..., {N}}}, where there exists a hidden direct upstream process f. For each process i (i greater than or equal to 1), f(i) is a non-negative integer less than i, i.e., f(i) belongs to {{0, 1, ..., i-1}}. All production processes form a BOM (Bill of Materials) tree rooted at 0 (raw material acquisition) through assembly dependencies.
 
-Your goal is to infer the minimum number of components to power off in order to completely halt all material transfers between robots and conveyor belts (denoted as τ) through queries. In a complete bipartite structure, τ equals min(a, b).
+The direct upstream process f follows a fixed industrial design specification, but the specific specification is hidden from you.
 
-You can repeatedly perform the following query operation (one query per turn), and I will answer truthfully based on the actual network structure:
+Your goal is: Infer the direct upstream process value for each production process in the target set T = {{{target_nodes}}} that exhibits quality defects, i.e., for each t in T, find the value of f(t).
 
-**Query Operation**: Given any subset S of components (can be empty), the system returns two pieces of information:
-1. OPEN: The number of active transfer links remaining in the system after powering off all components in S.
-2. All_blocked: A boolean value indicating whether the remaining link count is 0 (YES means completely halted, NO means some transfers remain).
+To help you reason, you can make two types of queries (with limited query budget):
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+1. **Value Query** (BOM Review): Ask for the direct upstream process f(x) of a non-target process x.
+   - Constraint: x must be in the range {{1, ..., {N}}}, and x cannot be a target process (i.e., x not in T).
+   - Answer: Returns the specific value of f(x).
+   - Budget: You can make at most {L} value queries.
 
-## Query and Answer Format (strictly required)
+2. **Equality Query** (Assembly Verification): Ask whether the direct upstream process of process x equals y.
+   - Constraint: x must be in the range {{1, ..., {N}}}, y must be in the range {{0, ..., x-1}}.
+   - Answer: Answers "Yes" or "No".
+   - Budget: You can make at most {M} equality queries.
 
-Each query must contain only one tag. Use the following XML format:
+When you have collected enough information, submit your final answer. The answer must include the direct upstream process values for all production processes in the target set T.
 
-- Query operation (e.g., querying the situation after powering off components 1 and 3):
-<query>1,3</query>
+You can only submit one query or answer at a time. Use the following XML format:
 
-- Query empty set (empty content):
-<query></query>
+- Value Query (e.g., query the direct upstream process of production process 5):
+<query_value>5</query_value>
 
-When submitting the final answer, you must provide the minimum number of components to power off τ in the following format:
-<answer>5</answer>
+- Equality Query (e.g., ask if the direct upstream process of production process 7 is 3):
+<query_equal>7,3</query_equal>
 
-Please try to complete the reasoning with as few queries as possible.
+- Submit Final Answer (format as "production process=direct upstream process" list, separated by semicolons):
+<answer>8=4;12=6;15=7</answer>
+
+Note: The answer must include all production processes in the target set T, with strict adherence to the format above.
 """
 
     contextualized_rule_zh_5 = """\
-【跨国金融欺诈网络追踪】
-我们来玩一个"洗钱网络最小冻结"的推理游戏，规则如下：
+我们正在建立法律条款与司法判例的溯源网络。
 
-游戏设定了一个固定但未知的非法资金网络 G，其涉案主体集 V 包含 {n} 个主体，编号从 1 到 {n}。该网络具有以下性质：
-- G 是一个完全二分图，即存在未知的划分 V = L ∪ R（L代表空壳公司，R代表离岸账户，互不相交），网络中的交易关联集 E 恰好为所有连接 L 和 R 之间的资金流水记录。
-- 记空壳公司 L 的数量为 a，离岸账户 R 的数量为 b，但 a 和 b 的具体数值未知。
-- 资金网络在整个游戏过程中保持不变，无自环、无重边。
+系统设定了一个法律条款集合 {{0, 1, 2, ..., {N}}}，其中存在一个隐藏的直接上位法依据 f，对于每个条款 i（i 大于等于 1），都有 f(i) 是一个小于 i 的非负整数，即 f(i) 属于 {{0, 1, ..., i-1}}。这样所有法律条款通过法理渊源形成了一棵以 0（宪法基础）为根的法理树。
 
-你的目标是通过查询推断出彻底切断所有空壳公司与离岸账户之间资金流转所需冻结的最少主体数（记为 τ），在完全二分图结构中，τ 等于 min(a, b)。
+直接上位法依据 f 遵循某个固定的立法逻辑，但具体逻辑对你是隐藏的。
 
-你可以反复进行以下查询操作（每次仅限一个查询），我会根据真实网络结构如实回答：
+你的目标是：推断出核心争议条款目标集合 T = {{{target_nodes}}} 中每个条款的直接上位法依据值，即对于每个 t 在 T 中，找出 f(t) 的值。
 
-**查询操作**：给定任意主体子集 S（可以为空集），系统返回两项信息：
-1. OPEN：冻结 S 中所有主体后，剩余网络中仍存在的资金流水记录数量。
-2. All_blocked：一个布尔值，表示剩余交易记录是否为 0（YES 表示资金流已被彻底切断，NO 表示仍有流转可能）。
+为了帮助你推理，你可以向我提出两类查询（查询次数有限）：
 
-当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+1. **值查询**（法理渊源检索）：询问某个非目标条款 x 的直接上位法依据 f(x)。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，且 x 不能是目标条款（即 x 不在 T 中）。
+   - 回答：返回 f(x) 的具体数值。
+   - 预算：你最多可以进行 {L} 次值查询。
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **等式查询**（法律适用核对）：询问某个条款 x 的直接上位法依据是否等于 y。
+   - 约束：x 必须在 {{1, ..., {N}}} 范围内，y 必须在 {{0, ..., x-1}} 范围内。
+   - 回答：回答"是"或"否"。
+   - 预算：你最多可以进行 {M} 次等式查询。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你收集到足够信息后，请提交最终答案。答案需要包含目标集合 T 中所有条款的直接上位法依据值。
 
-- 查询操作（例如查询冻结主体 1 和 3 后的情况）：
-<query>1,3</query>
+每次只能提交一个查询或答案。请使用以下 XML 格式：
 
-- 查询空集（内容为空）：
-<query></query>
+- 值查询（例如查询法律条款 5 的直接上位法依据）：
+<query_value>5</query_value>
 
-提交最终答案时，必须给出最少需要冻结的主体数 τ，格式如下：
-<answer>5</answer>
+- 等式查询（例如询问法律条款 7 的直接上位法依据是否为 3）：
+<query_equal>7,3</query_equal>
 
-请尽可能用较少的查询次数完成推理。
+- 提交最终答案（格式为"法律条款=直接上位法依据"的列表，用分号分隔）：
+<answer>8=4;12=6;15=7</answer>
+
+注意：答案中必须包含目标集合 T 中的所有法律条款，且格式严格按照上述要求。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's play a "Financial Fraud Network Minimum Freeze" deduction game. Here are the rules:
+[Legal Scenario]
+We are establishing a traceability network for legal provisions and judicial precedents.
 
-The game has set up a fixed but unknown illicit fund network G. Its involved subject set V contains {n} subjects, numbered from 1 to {n}. The network has the following properties:
-- G is a complete bipartite graph, meaning there exists an unknown bipartition V = L ∪ R (L represents shell companies and R represents offshore bank accounts, and they are disjoint). The transaction link set E consists exactly of all fund flow records connecting shell companies L and offshore accounts R.
-- Let the number of shell companies L be a and offshore accounts R be b, but the specific values of a and b are unknown.
-- The fund network remains unchanged throughout the game, with no self-loops or multiple edges.
+The system defines a legal provision set {{0, 1, 2, ..., {N}}}, where there exists a hidden direct higher-level legal basis f. For each provision i (i greater than or equal to 1), f(i) is a non-negative integer less than i, i.e., f(i) belongs to {{0, 1, ..., i-1}}. All legal provisions form a jurisprudential tree rooted at 0 (constitutional basis) through jurisprudential origins.
 
-Your goal is to infer the minimum number of subjects to freeze in order to completely sever all fund flows between shell companies and offshore accounts (denoted as τ) through queries. In a complete bipartite structure, τ equals min(a, b).
+The direct higher-level legal basis f follows a fixed legislative logic, but the specific logic is hidden from you.
 
-You can repeatedly perform the following query operation (one query per turn), and I will answer truthfully based on the actual network structure:
+Your goal is: Infer the direct higher-level legal basis value for each provision in the target set T = {{{target_nodes}}} of core disputed provisions, i.e., for each t in T, find the value of f(t).
 
-**Query Operation**: Given any subset S of subjects (can be empty), the system returns two pieces of information:
-1. OPEN: The number of active transaction links remaining in the network after freezing all subjects in S.
-2. All_blocked: A boolean value indicating whether the remaining transaction count is 0 (YES means all flows severed, NO means some remain).
+To help you reason, you can make two types of queries (with limited query budget):
 
-When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+1. **Value Query** (Jurisprudential Origin Search): Ask for the direct higher-level legal basis f(x) of a non-target provision x.
+   - Constraint: x must be in the range {{1, ..., {N}}}, and x cannot be a target provision (i.e., x not in T).
+   - Answer: Returns the specific value of f(x).
+   - Budget: You can make at most {L} value queries.
 
-## Query and Answer Format (strictly required)
+2. **Equality Query** (Legal Application Verification): Ask whether the direct higher-level legal basis of provision x equals y.
+   - Constraint: x must be in the range {{1, ..., {N}}}, y must be in the range {{0, ..., x-1}}.
+   - Answer: Answers "Yes" or "No".
+   - Budget: You can make at most {M} equality queries.
 
-Each query must contain only one tag. Use the following XML format:
+When you have collected enough information, submit your final answer. The answer must include the direct higher-level legal basis values for all provisions in the target set T.
 
-- Query operation (e.g., querying the situation after freezing subjects 1 and 3):
-<query>1,3</query>
+You can only submit one query or answer at a time. Use the following XML format:
 
-- Query empty set (empty content):
-<query></query>
+- Value Query (e.g., query the direct higher-level legal basis of legal provision 5):
+<query_value>5</query_value>
 
-When submitting the final answer, you must provide the minimum number of subjects to freeze τ in the following format:
-<answer>5</answer>
+- Equality Query (e.g., ask if the direct higher-level legal basis of legal provision 7 is 3):
+<query_equal>7,3</query_equal>
 
-Please try to complete the reasoning with as few queries as possible.
+- Submit Final Answer (format as "legal provision=direct higher-level legal basis" list, separated by semicolons):
+<answer>8=4;12=6;15=7</answer>
+
+Note: The answer must include all legal provisions in the target set T, with strict adherence to the format above.
 """
 
-    tags = ["answer", "query"]
-
-    # 难度说明：
-    # 1 (简单)       - N=6,  a=2, b=4
-    # 2 (中等偏下)   - N=10, a=3, b=7
-    # 3 (中等偏上)   - N=15, a=6, b=9
-    # 4 (较难)       - N=20, a=8, b=12
-    # 5 (难)         - N=25, a=10, b=15
+    tags = ["answer", "query_value", "query_equal"]
+    
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
-        1: {"n": 6,  "a": 2,  "b": 4},
-        2: {"n": 10, "a": 3,  "b": 7},
-        3: {"n": 15, "a": 6,  "b": 9},
-        4: {"n": 20, "a": 8,  "b": 12},
-        5: {"n": 25, "a": 10, "b": 15},
+        "zh": {
+            1: {"N": 10, "rule": "div2", "target_nodes": [8], "L": 6, "M": 3},
+            2: {"N": 15, "rule": "div2", "target_nodes": [12, 14], "L": 8, "M": 4},
+            3: {"N": 20, "rule": "div3", "target_nodes": [15, 18], "L": 10, "M": 5},
+            4: {"N": 30, "rule": "digit_sum", "target_nodes": [20, 25, 28], "L": 12, "M": 6},
+            5: {"N": 50, "rule": "popcount", "target_nodes": [35, 42, 47], "L": 15, "M": 8},
+        },
+        "en": {
+            1: {"N": 10, "rule": "div2", "target_nodes": [8], "L": 6, "M": 3},
+            2: {"N": 15, "rule": "div2", "target_nodes": [12, 14], "L": 8, "M": 4},
+            3: {"N": 20, "rule": "div3", "target_nodes": [15, 18], "L": 10, "M": 5},
+            4: {"N": 30, "rule": "digit_sum", "target_nodes": [20, 25, 28], "L": 12, "M": 6},
+            5: {"N": 50, "rule": "popcount", "target_nodes": [35, 42, 47], "L": 15, "M": 8},
+        },
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，设置二分图结构"""
+        lang = self.config.language
         diff = int(self.config.difficulty)
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
-        n = cfg["n"]
-        self._game_info["n"] = n
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.N = cfg["N"]
+        self.rule_type = cfg["rule"]
+        self.target_nodes = set(cfg["target_nodes"])
+        self.L = cfg["L"]
+        self.M = cfg["M"]
 
-        self.a = cfg["a"]
-        self.b = cfg["b"]
+        self.value_query_count = 0
+        self.equal_query_count = 0
 
-        rng = random.Random(42 + diff * 1000 + n)
-        vertices = list(range(1, n + 1))
-        rng.shuffle(vertices)
+        self.parent_function = {}
+        for i in range(1, self.N + 1):
+            self.parent_function[i] = self._compute_parent(i)
 
-        self.L = set(vertices[:self.a])
-        self.R = set(vertices[self.a:])
+        self._game_info["N"] = self.N
+        self._game_info["target_nodes"] = ", ".join(map(str, sorted(self.target_nodes)))
+        self._game_info["L"] = self.L
+        self._game_info["M"] = self.M
 
-        self.tau = min(self.a, self.b)
-        self.V = set(range(1, n + 1))
-
-    def _compute_remaining_edges(self, S):
-        """
-        计算删除子集 S 后剩余的边数
-        在完全二分图中，U(S) = (a - |S∩L|) × (b - |S∩R|)
-        """
-        S_set = set(S)
-        # 计算 S 与 L、R 的交集大小
-        S_in_L = len(S_set & self.L)
-        S_in_R = len(S_set & self.R)
-        
-        # 剩余 L 中的顶点数
-        remaining_L = self.a - S_in_L
-        # 剩余 R 中的顶点数
-        remaining_R = self.b - S_in_R
-        
-        # 剩余边数 = 剩余 L 顶点数 × 剩余 R 顶点数
-        return remaining_L * remaining_R
+    def _compute_parent(self, i):
+        if self.rule_type == "div2":
+            return i // 2
+        elif self.rule_type == "div3":
+            return i // 3
+        elif self.rule_type == "digit_sum":
+            digit_sum = sum(int(d) for d in str(i))
+            result = i - digit_sum
+            return max(0, result)
+        elif self.rule_type == "popcount":
+            popcount = bin(i).count('1')
+            result = i - popcount
+            return max(0, result)
+        else:
+            raise ValueError(f"Unknown rule type: {self.rule_type}")
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案是否正确"""
+        raw_ans = parsed_info["answer"].strip()
+        
         try:
-            answer = int(parsed_info["answer"].strip())
-            return answer == self.tau
+            pairs = [p.strip() for p in raw_ans.split(";") if p.strip()]
+            answer_dict = {}
+            for pair in pairs:
+                if "=" not in pair:
+                    return False
+                node_str, parent_str = pair.split("=", 1)
+                node = int(node_str.strip())
+                parent = int(parent_str.strip())
+                answer_dict[node] = parent
         except:
             return False
 
+        if set(answer_dict.keys()) != self.target_nodes:
+            return False
+
+        for node in self.target_nodes:
+            if answer_dict[node] != self.parent_function[node]:
+                return False
+
+        return True
+
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑"""
-        if "query" not in parsed_info:
-            raise ValueError("No valid query tag found.")
-        
-        query_content = parsed_info["query"].strip()
-        
-        # 解析查询的顶点集合
-        if query_content == "":
-            # 空集查询
-            S = []
-        else:
-            try:
-                S = [int(x.strip()) for x in query_content.split(",") if x.strip()]
-                # 验证顶点编号是否合法
-                for v in S:
-                    if v not in self.V:
-                        if self.config.language == "zh":
-                            return "错误：顶点编号超出范围。"
-                        else:
-                            return "Error: Vertex ID out of range."
-            except:
-                if self.config.language == "zh":
-                    return "错误：查询格式无效。"
-                else:
-                    return "Error: Invalid query format."
-        
-        # 计算剩余边数
-        remaining_edges = self._compute_remaining_edges(S)
-        
-        # 判断是否所有边都被阻断
-        all_blocked = "YES" if remaining_edges == 0 else "NO"
-        
-        # 构造响应
         if self.config.language == "zh":
-            response = f"OPEN: {remaining_edges}\nAll_blocked: {all_blocked}"
+            yes_res, no_res = "是", "否"
+            error_format = "错误：格式无效。"
+            error_range = "错误：节点编号超出范围。"
+            error_target = "错误：不能对目标节点进行值查询。"
+            error_budget_value = "错误：值查询次数已用尽。"
+            error_budget_equal = "错误：等式查询次数已用尽。"
+            error_constraint = "错误：y 必须在 [0, x-1] 范围内。"
         else:
-            response = f"OPEN: {remaining_edges}\nAll_blocked: {all_blocked}"
-        
-        return response
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid format."
+            error_range = "Error: Node ID out of range."
+            error_target = "Error: Cannot perform value query on target nodes."
+            error_budget_value = "Error: Value query budget exhausted."
+            error_budget_equal = "Error: Equality query budget exhausted."
+            error_constraint = "Error: y must be in range [0, x-1]."
+
+        if "query_value" in parsed_info:
+            if self.value_query_count >= self.L:
+                return error_budget_value
+            
+            try:
+                x = int(parsed_info["query_value"].strip())
+            except:
+                return error_format
+
+            if x < 1 or x > self.N:
+                return error_range
+            if x in self.target_nodes:
+                return error_target
+
+            self.value_query_count += 1
+            return str(self.parent_function[x])
+
+        elif "query_equal" in parsed_info:
+            if self.equal_query_count >= self.M:
+                return error_budget_equal
+
+            try:
+                raw = parsed_info["query_equal"].strip()
+                x_str, y_str = raw.split(",")
+                x = int(x_str.strip())
+                y = int(y_str.strip())
+            except:
+                return error_format
+
+            if x < 1 or x > self.N:
+                return error_range
+            if y < 0 or y >= x:
+                return error_constraint
+
+            self.equal_query_count += 1
+            return yes_res if self.parent_function[x] == y else no_res
+
+        else:
+            raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        import re as _re
-        
-        new_resp = correct
-        
-        # 只修改 OPEN 数值
-        def perturb_open(m):
-            val = int(m.group(1))
-            # 如果原值为 0，改成 1；否则改成 val + 1（确保不同）
-            return f"OPEN: {val + 1 if val == 0 else val + 1}"
-        
-        new_resp = _re.sub(r'OPEN:\s*(\d+)', perturb_open, new_resp)
-        
-        if new_resp != correct:
-            return new_resp
-        
-        return correct + "_WRONG"
+        if correct.startswith("Error:") or correct.startswith("错误："):
+            return correct
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        返回所有单顶点查询——删除每个顶点后的边数信息。
-        通过 n 次单顶点查询即可完全推断二分划分及 τ。
-        """
-        sorted_vertices = sorted(list(self.V))
-        results = []
+        try:
+            correct_val = int(correct)
+            if correct_val == 0:
+                return str(correct_val + 1)
+            else:
+                return str(correct_val - 1)
+        except ValueError:
+            if correct in ("Yes", "yes"):
+                return "No"
+            elif correct in ("No", "no"):
+                return "Yes"
+            elif correct == "是":
+                return "否"
+            elif correct == "否":
+                return "是"
+            else:
+                return correct + " [WRONG]"
+
+    def get_all_possible_queries(self) -> List[Dict]:
+        queries = []
         
-        for v in sorted_vertices:
-            query_str = str(v)
-            S = [v]
-            
-            remaining_edges = self._compute_remaining_edges(S)
-            all_blocked = "YES" if remaining_edges == 0 else "NO"
-            
-            response = f"OPEN: {remaining_edges}\nAll_blocked: {all_blocked}"
-            
-            results.append({
-                "query": f"<query>{query_str}</query>",
-                "answer": response
-            })
-        
-        return results
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+
+        for x in range(1, self.N + 1):
+            if x not in self.target_nodes:
+                ans = str(self.parent_function[x])
+                
+                queries.append({
+                    "query": f"<query_value>{x}</query_value>",
+                    "answer": ans
+                })
+
+        for x in sorted(self.target_nodes):
+            for y in range(0, x):
+                is_correct = (self.parent_function[x] == y)
+                ans = yes_res if is_correct else no_res
+                
+                queries.append({
+                    "query": f"<query_equal>{x},{y}</query_equal>",
+                    "answer": ans
+                })
+
+        return queries

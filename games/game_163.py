@@ -1,588 +1,782 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   前缀条件：最长满足某条件的前缀长度是多少
-# ============================================================
-
 from .base import Game
-import random
-import itertools
+import re
+from fractions import Fraction
 
+class AttributeSetInferenceGame(Game):
 
-class StablePrefixGame(Game):
-
-    # [BUG FIX] 原问题：str.format()会将 {-3...} 识别为不存在的占位符键，导致 KeyError。
-    # 修改：将单大括号 {-3...} 修改为双大括号 {{-3...}} 进行转义，使其作为普通字符显示。
     game_rule_zh = """\
-我们来玩一个"稳定前缀推理"游戏，规则如下：
+我们来玩一个"属性集合推断"的游戏，规则如下：
 
-游戏设定了一个字母集合 {{A, B, C}}。我已为每个字母秘密分配了一个整数权重 w(A)、w(B)、w(C)，取值范围均在 {{-3, -2, -1, 0, 1, 2, 3}} 之间，且至少有一个为正、至少有一个为负。这些权重在整个游戏过程中保持固定。
+游戏设定了一个有限集合 S，规模为 {n}（共 {n} 个元素）。集合中每个元素可以携带三个二值属性中的任意子集：A、B、C（可能不携带任何属性，也可能同时携带全部三个属性）。属性分配在游戏开始时已固定，不会改变。
 
-对于任意由字母 A、B、C 组成的序列 T，我们定义：
-- 前缀累计和：初始值为 0，对于第 i 个位置，s_i 等于从第 1 个到第 i 个字母权重的累加和。
-- 稳定前缀：长度为 L 的前缀若满足所有位置 j（1 到 L）的累计和 s_j 都大于等于 0，则该前缀是稳定的；一旦某个位置 j 使得 s_j 小于 0，则该位置及之后的前缀都不稳定。
-- 最长稳定前缀长度：满足上述稳定条件的最大前缀长度 L。
+你的目标是：推断出集合中"恰好具有两个属性"的元素数量 X（0 小于等于 X 小于等于 {n}），以及其占比 X/{n}（用最简分数表示）。
 
-我还准备了一个目标序列 S（长度为 {target_length}）：
-{target_sequence}
+你只能进行"并集覆盖查询"，即查询"至少具有某些属性之一"的元素的数量或比例。
 
-你的任务是通过查询推断出三个字母的权重，并计算目标序列 S 的最长稳定前缀长度。
+允许查询的七种属性并集为：
+1. A：至少具有属性 A
+2. B：至少具有属性 B
+3. C：至少具有属性 C
+4. A 或 B：至少具有属性 A 或属性 B（或两者都有）
+5. B 或 C：至少具有属性 B 或属性 C（或两者都有）
+6. C 或 A：至少具有属性 C 或属性 A（或两者都有）
+7. A 或 B 或 C：至少具有属性 A、B、C 中的任意一个（或多个）
 
-你可以反复提出以下两类查询（每次只能提一个查询）：
+对于每次查询，你需要声明请求返回的信息类型：
+- 数量（count）：返回满足条件的元素个数（整数）
+- 比例（ratio）：返回满足条件的元素占比（最简分数形式）
+- 两者（both）：同时返回数量和比例
 
-1. 单序列查询：提供一个测试序列 T（建议长度不超过 30），询问它的最长稳定前缀长度。我会返回一个整数。
-2. 双序列对比查询：提供两个测试序列 T1 和 T2，询问哪个序列的最长稳定前缀长度更长。我会返回"T1更长"、"T2更长"或"相等"。
+以下查询类型是不允许的，若尝试将导致游戏失败：
+- 任何交集查询（例如"同时具有 A 和 B"）
+- 任何"恰好 k 个""至少 k 个""至多 k 个"属性的查询
+- 空集或不在上述七种之列的集合
 
-注意：你不能直接查询目标序列 S 的最长稳定前缀长度。
+每次只能提交一个查询，使用以下 XML 格式：
 
-当你收集到足够信息后，请提交最终答案。
+- 查询单个属性 A 的数量：
+<query>A, count</query>
 
-## 查询与提交答案的格式
+- 查询属性 B 或 C 的比例：
+<query>B or C, ratio</query>
 
-每次只能包含一个查询标签，使用以下 XML 格式：
+- 查询属性 A 或 B 或 C 的数量和比例：
+<query>A or B or C, both</query>
 
-- 单序列查询（例如查询序列 AABBC）：
-<query_single>AABBC</query_single>
+注意：属性名称大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
 
-- 双序列对比查询（例如比较序列 AAB 和 BCA，用竖线分隔）：
-<query_compare>AAB|BCA</query_compare>
+当你收集足够信息后，请提交最终答案，格式如下：
 
-提交最终答案时，需要给出三个字母的权重以及目标序列的最长稳定前缀长度，格式如下：
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+其中 X 是恰好具有两个属性的元素数量，X/{n} 是最简分数形式的比例。
+
+请尽可能少地进行查询，高效推断出答案。
 """
 
     game_rule_en = """\
-Let's play a "Stable Prefix Inference" game. Here are the rules:
+Let's play an "Attribute Set Inference" game. Here are the rules:
 
-The game uses a letter set {{A, B, C}}. I have secretly assigned an integer weight to each letter: w(A), w(B), w(C), each ranging from -3 to 3, with at least one positive and at least one negative. These weights remain fixed throughout the game.
+There is a finite set S with a size of {n} (containing {n} elements). Each element in the set may carry any subset of three binary attributes: A, B, C (it may carry no attributes, or all three attributes). The attribute assignments are fixed at the start and will not change.
 
-For any sequence T composed of letters A, B, C, we define:
-- Prefix cumulative sum: Starting from 0, for position i, s_i equals the sum of weights from position 1 to i.
-- Stable prefix: A prefix of length L is stable if all positions j (from 1 to L) have cumulative sum s_j greater than or equal to 0; once any position j has s_j less than 0, that position and all longer prefixes are unstable.
-- Longest stable prefix length: The maximum prefix length L satisfying the stability condition.
+Your goal is: to infer the count X of elements that have "exactly two attributes" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
 
-I have also prepared a target sequence S (length {target_length}):
-{target_sequence}
+You can only perform "union coverage queries", i.e., querying the count or proportion of elements that have "at least one of certain attributes".
 
-Your task is to infer the weights of the three letters through queries, and calculate the longest stable prefix length of target sequence S.
+The seven allowed attribute unions are:
+1. A: at least has attribute A
+2. B: at least has attribute B
+3. C: at least has attribute C
+4. A or B: at least has attribute A or attribute B (or both)
+5. B or C: at least has attribute B or attribute C (or both)
+6. C or A: at least has attribute C or attribute A (or both)
+7. A or B or C: at least has any one (or more) of attributes A, B, C
 
-You can repeatedly make the following two types of queries (one query per turn):
+For each query, you need to specify the type of information to return:
+- count: returns the number of elements satisfying the condition (integer)
+- ratio: returns the proportion of elements satisfying the condition (simplified fraction)
+- both: returns both count and ratio
 
-1. Single sequence query: Provide a test sequence T (recommended length up to 30), asking for its longest stable prefix length. I will return an integer.
-2. Dual sequence comparison query: Provide two test sequences T1 and T2, asking which has a longer longest stable prefix length. I will return "T1 longer", "T2 longer", or "Equal".
+The following query types are not allowed and will cause game failure if attempted:
+- Any intersection queries (e.g., "has both A and B")
+- Any queries about "exactly k", "at least k", or "at most k" attributes
+- Empty set or sets not among the seven types above
 
-Note: You cannot directly query the longest stable prefix length of the target sequence S.
+Only one query can be submitted at a time, using the following XML format:
 
-When you have gathered enough information, submit your final answer.
+- Query the count of single attribute A:
+<query>A, count</query>
 
-## Query and Answer Format
+- Query the ratio of attribute B or C:
+<query>B or C, ratio</query>
 
-Each turn must contain only one query tag, using the following XML format:
+- Query both count and ratio of attribute A or B or C:
+<query>A or B or C, both</query>
 
-- Single sequence query (e.g., querying sequence AABBC):
-<query_single>AABBC</query_single>
+Note: Attribute names are case-sensitive, use "or" as connector, query type is count, ratio, or both.
 
-- Dual sequence comparison query (e.g., comparing sequences AAB and BCA, separated by vertical bar):
-<query_compare>AAB|BCA</query_compare>
+When you have collected sufficient information, submit your final answer in the following format:
 
-When submitting the final answer, provide the weights of the three letters and the longest stable prefix length of the target sequence, in this format:
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+Where X is the count of elements with exactly two attributes, and X/{n} is the proportion in simplified fraction form.
+
+Please use as few queries as possible to efficiently infer the answer.
 """
 
     contextualized_rule_zh_1 = """\
-智能交通管控系统评估。我们来评估一个"畅通度稳定序列"，规则如下：
+智能交通系统正在进行路口监控探头的能力评估。
 
-系统设定了三种交通干预措施，代号为 {{A, B, C}}。我已为每种措施秘密分配了一个车流畅通度影响权重 w(A)、w(B)、w(C)，取值范围均在 {{-3, -2, -1, 0, 1, 2, 3}} 之间，且至少有一个为正、至少有一个为负。这些权重在整个评估过程中保持固定。
+当前区域共有 {n} 个监控探头（集合规模为 {n}）。每个探头可以搭载三种违章抓拍功能（属性）中的任意组合：A（违停抓拍）、B（超速抓拍）、C（闯红灯抓拍）。有的探头可能没有任何抓拍功能，有的可能同时搭载了三项。探头的硬件配置在评估开始时已固定，不会改变。
 
-对于任意由干预措施 A、B、C 组成的执行序列 T，我们定义：
-- 累计畅通度：初始值为 0，对于第 i 个时间步，s_i 等于从第 1 步到第 i 步措施权重的累加和。
-- 稳定运行状态：长度为 L 的措施序列若满足所有步骤 j（1 到 L）的累计畅通度 s_j 都大于等于 0，则交通流保持稳定；一旦某个步骤 j 使得 s_j 小于 0，该路段将发生严重拥堵，该位置及之后的措施都将失效且不稳定。
-- 最大稳定运行步数（最长稳定前缀长度）：满足上述畅通条件的连续执行的最大步骤数 L。
+你的目标是：推断出"恰好搭载了两项抓拍功能"的探头数量 X（0 小于等于 X 小于等于 {n}），以及其占探头总数的比例 X/{n}（用最简分数表示）。
 
-我还准备了一个目标执行序列 S（长度为 {target_length}）：
-{target_sequence}
+你只能向交通数据库发起"并集覆盖查询"，即查询"至少搭载了某些抓拍功能之一"的探头的数量或比例。
 
-你的任务是通过模拟查询，推断出三种措施的畅通度权重，并计算目标序列 S 的最大稳定运行步数。
+允许查询的七种功能并集为：
+1. A：至少具备 A（违停抓拍）
+2. B：至少具备 B（超速抓拍）
+3. C：至少具备 C（闯红灯抓拍）
+4. A 或 B：至少具备 A 或 B（或两者都有）
+5. B 或 C：至少具备 B 或 C（或两者都有）
+6. C 或 A：至少具备 C 或 A（或两者都有）
+7. A 或 B 或 C：至少具备 A、B、C 中的任意一项（或多项）
 
-你可以反复提出以下两类查询（每次只能提一个查询）：
+对于每次查询，你需要声明请求返回的系统数据类型：
+- 数量（count）：返回满足条件的探头个数（整数）
+- 比例（ratio）：返回满足条件的探头占比（最简分数形式）
+- 两者（both）：同时返回数量和比例
 
-1. 单序列测试：提供一个测试措施序列 T（建议长度不超过 30），询问它的最大稳定运行步数。我会返回一个整数。
-2. 双序列对比：提供两个测试序列 T1 和 T2，询问哪个序列的最大稳定运行步数更长。我会返回"T1更长"、"T2更长"或"相等"。
+以下查询类型是不允许的，若尝试将导致系统拒绝访问（评估失败）：
+- 任何交集查询（例如"同时具备 A 和 B"）
+- 任何"恰好 k 项""至少 k 项""至多 k 项"功能的精确条件查询
+- 空集或不在上述七种之列的组合
 
-注意：你不能直接测试目标序列 S 的最大稳定运行步数。
+每次只能提交一个查询，使用以下 XML 格式：
 
-当你收集到足够信息后，请提交最终报告。
+- 查询单个功能 A 的数量：
+<query>A, count</query>
 
-## 查询与提交答案的格式
+- 查询功能 B 或 C 的比例：
+<query>B or C, ratio</query>
 
-每次只能包含一个查询标签，使用以下 XML 格式：
+- 查询功能 A 或 B 或 C 的数量和比例：
+<query>A or B or C, both</query>
 
-- 单序列测试（例如查询序列 AABBC）：
-<query_single>AABBC</query_single>
+注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
 
-- 双序列对比测试（例如比较序列 AAB 和 BCA，用竖线分隔）：
-<query_compare>AAB|BCA</query_compare>
+当你收集足够信息后，请提交最终评估报告，格式如下：
 
-提交最终答案时，需要给出三种措施的权重以及目标序列的最大稳定运行步数，格式如下：
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+其中 X 是恰好具备两项抓拍功能的探头数量，X/{n} 是最简分数形式的比例。
+
+请尽可能少地进行查询，高效推断出评估答案。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Intelligent traffic control system evaluation. Let's evaluate a "Stable Smoothness Sequence" with the following rules:
+[Transportation Scenario]
+An intelligent transportation system is evaluating the capabilities of intersection surveillance cameras.
 
-The system defines three traffic intervention measures, coded as {{A, B, C}}. I have secretly assigned a traffic smoothness impact weight w(A), w(B), w(C) to each measure, ranging from -3 to 3, with at least one positive and at least one negative. These weights remain fixed throughout the evaluation.
+There are currently {n} surveillance cameras in the area (a set size of {n}). Each camera may be equipped with any combination of three violation detection functions (attributes): A (Illegal Parking Detection), B (Speeding Detection), and C (Red Light Running Detection). Some cameras may have no detection functions, while others may have all three. The hardware configurations of the cameras are fixed at the start of the evaluation and will not change.
 
-For any execution sequence T composed of measures A, B, C, we define:
-- Cumulative smoothness: Starting from 0, for time step i, s_i equals the sum of measure weights from step 1 to i.
-- Stable operation state: A measure prefix of length L is stable if all steps j (from 1 to L) have a cumulative smoothness s_j greater than or equal to 0, meaning the traffic flow remains stable; once any step j has s_j less than 0, severe congestion occurs, and that position and all subsequent measures fail and become unstable.
-- Maximum stable operation steps (Longest stable prefix length): The maximum continuous steps L satisfying the above smoothness condition.
+Your goal is: to infer the count X of cameras that are equipped with "exactly two detection functions" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
 
-I have also prepared a target execution sequence S (length {target_length}):
-{target_sequence}
+You can only perform "union coverage queries" to the traffic database, i.e., querying the count or proportion of cameras that have "at least one of certain detection functions".
 
-Your task is to infer the smoothness weights of the three measures through simulated queries, and calculate the maximum stable operation steps of target sequence S.
+The seven allowed function unions are:
+1. A: at least has function A
+2. B: at least has function B
+3. C: at least has function C
+4. A or B: at least has function A or B (or both)
+5. B or C: at least has function B or C (or both)
+6. C or A: at least has function C or A (or both)
+7. A or B or C: at least has any one (or more) of functions A, B, C
 
-You can repeatedly make the following two types of queries (one query per turn):
+For each query, you need to specify the type of system data to return:
+- count: returns the number of cameras satisfying the condition (integer)
+- ratio: returns the proportion of cameras satisfying the condition (simplified fraction)
+- both: returns both count and ratio
 
-1. Single sequence test: Provide a test measure sequence T (recommended length up to 30), asking for its maximum stable operation steps. I will return an integer.
-2. Dual sequence comparison: Provide two test sequences T1 and T2, asking which has longer maximum stable operation steps. I will return "T1 longer", "T2 longer", or "Equal".
+The following query types are not allowed and will cause database access denial (evaluation failure) if attempted:
+- Any intersection queries (e.g., "equipped with both A and B")
+- Any exact condition queries about "exactly k", "at least k", or "at most k" functions
+- Empty set or combinations not among the seven types above
 
-Note: You cannot directly test the maximum stable operation steps of the target sequence S.
+Only one query can be submitted at a time, using the following XML format:
 
-When you have gathered enough information, submit your final report.
+- Query the count of single function A:
+<query>A, count</query>
 
-## Query and Answer Format
+- Query the ratio of function B or C:
+<query>B or C, ratio</query>
 
-Each turn must contain only one query tag, using the following XML format:
+- Query both count and ratio of function A or B or C:
+<query>A or B or C, both</query>
 
-- Single sequence test (e.g., testing sequence AABBC):
-<query_single>AABBC</query_single>
+Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
 
-- Dual sequence comparison test (e.g., comparing sequences AAB and BCA, separated by vertical bar):
-<query_compare>AAB|BCA</query_compare>
+When you have collected sufficient information, submit your final evaluation report in the following format:
 
-When submitting the final answer, provide the weights of the three measures and the maximum stable operation steps of the target sequence, in this format:
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+Where X is the count of cameras with exactly two detection functions, and X/{n} is the proportion in simplified fraction form.
+
+Please use as few queries as possible to efficiently infer the evaluation answer.
 """
 
     contextualized_rule_zh_2 = """\
-临床用药安全性评估。我们来评估一个"体征稳定疗程"，规则如下：
+医学研究团队正在对一组临床试验患者样本进行病史分析。
 
-医疗系统设定了三种靶向药物，代号为 {{A, B, C}}。我已为每种药物秘密分配了一个免疫力指标调节权重 w(A)、w(B)、w(C)，取值范围均在 {{-3, -2, -1, 0, 1, 2, 3}} 之间，且至少有一个为正、至少有一个为负。这些权重在整个评估过程中保持固定。
+本次试验共有 {n} 名患者样本（集合规模为 {n}）。每名患者可能伴有三种基础疾病史（属性）中的任意组合：A（高血压病史）、B（糖尿病史）、C（心血管疾病史）。部分患者可能没有任何此类病史，而部分患者可能同时伴有三种病史。患者的病史档案在分析开始时已固定，不会改变。
 
-对于任意由药物 A、B、C 组成的用药序列 T，我们定义：
-- 累计免疫力指标：初始基准值为 0，对于第 i 个疗程，s_i 等于从第 1 个到第 i 个疗程药物权重的累加和。
-- 安全稳定期：长度为 L 的用药前缀若满足所有疗程 j（1 到 L）的累计指标 s_j 都大于等于 0，则患者体征是稳定的；一旦某个疗程 j 使得 s_j 小于 0，患者将出现危重反应，该阶段及之后的治疗均判定为不稳定。
-- 最长安全疗程数（最长稳定前缀长度）：满足上述安全条件的最大连续疗程数 L。
+你的目标是：推断出"恰好伴有两项基础疾病史"的患者数量 X（0 小于等于 X 小于等于 {n}），以及其占样本总数的比例 X/{n}（用最简分数表示）。
 
-我还准备了一个目标用药序列 S（长度为 {target_length}）：
-{target_sequence}
+你只能向医疗电子病历系统发起"并集覆盖查询"，即查询"至少伴有某几种病史之一"的患者数量或比例。
 
-你的任务是通过查询推断出三种药物的调节权重，并计算目标序列 S 的最长安全疗程数。
+允许查询的七种病史并集为：
+1. A：至少伴有 A（高血压病史）
+2. B：至少伴有 B（糖尿病史）
+3. C：至少伴有 C（心血管疾病史）
+4. A 或 B：至少伴有 A 或 B（或两者皆有）
+5. B 或 C：至少伴有 B 或 C（或两者皆有）
+6. C 或 A：至少伴有 C 或 A（或两者皆有）
+7. A 或 B 或 C：至少伴有 A、B、C 中的任意一项（或多项）
 
-你可以反复提出以下两类查询（每次只能提一个查询）：
+对于每次查询，你需要声明请求返回的统计数据类型：
+- 数量（count）：返回满足条件的患者人数（整数）
+- 比例（ratio）：返回满足条件的患者占比（最简分数形式）
+- 两者（both）：同时返回数量和比例
 
-1. 单疗程序列查询：提供一个测试序列 T（建议长度不超过 30），询问它的最长安全疗程数。我会返回一个整数。
-2. 双疗程序列对比：提供两个测试序列 T1 和 T2，询问哪个序列的最长安全疗程数更长。我会返回"T1更长"、"T2更长"或"相等"。
+以下查询类型是不允许的，若尝试将导致系统报错（分析失败）：
+- 任何交集查询（例如"同时伴有 A 和 B"）
+- 任何"恰好 k 项""至少 k 项""至多 k 项"病史的精确条件查询
+- 空集或不在上述七种之列的组合
 
-注意：你不能直接查询目标序列 S 的最长安全疗程数。
+每次只能提交一个查询，使用以下 XML 格式：
 
-当你收集到足够临床数据后，请提交最终诊断。
+- 查询单项病史 A 的数量：
+<query>A, count</query>
 
-## 查询与提交答案的格式
+- 查询病史 B 或 C 的比例：
+<query>B or C, ratio</query>
 
-每次只能包含一个查询标签，使用以下 XML 格式：
+- 查询病史 A 或 B 或 C 的数量和比例：
+<query>A or B or C, both</query>
 
-- 单疗程序列查询（例如查询序列 AABBC）：
-<query_single>AABBC</query_single>
+注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
 
-- 双疗程序列对比（例如比较序列 AAB 和 BCA，用竖线分隔）：
-<query_compare>AAB|BCA</query_compare>
+当你收集足够信息后，请提交最终分析结论，格式如下：
 
-提交最终答案时，需要给出三种药物的权重以及目标序列的最长安全疗程数，格式如下：
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+其中 X 是恰好伴有两项基础疾病史的患者数量，X/{n} 是最简分数形式的比例。
+
+请尽可能少地进行查询，高效推断出分析答案。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Clinical medication safety evaluation. Let's assess a "Stable Vitals Course" with the following rules:
+[Healthcare Scenario]
+A medical research team is conducting a medical history analysis on a cohort of clinical trial patients.
 
-The medical system has set three targeted drugs, coded as {{A, B, C}}. I have secretly assigned an immunity index regulation weight w(A), w(B), w(C) to each drug, ranging from -3 to 3, with at least one positive and at least one negative. These weights remain fixed throughout the assessment.
+There are {n} patient samples in this trial (a set size of {n}). Each patient may have any combination of three underlying medical histories (attributes): A (Hypertension History), B (Diabetes History), and C (Cardiovascular Disease History). Some patients may have no such medical histories, while others may present all three. The patients' medical records are fixed at the start of the analysis and will not change.
 
-For any medication sequence T composed of drugs A, B, C, we define:
-- Cumulative immunity index: Starting from a baseline of 0, for treatment course i, s_i equals the sum of drug weights from course 1 to i.
-- Safe stable period: A medication prefix of length L is safe and stable if all courses j (from 1 to L) have a cumulative index s_j greater than or equal to 0, indicating the patient's vitals are stable; once any course j has s_j less than 0, the patient will develop a critical reaction, and that stage and all subsequent treatments are deemed unstable.
-- Maximum safe courses (Longest stable prefix length): The maximum continuous courses L satisfying the safety condition above.
+Your goal is: to infer the count X of patients who have "exactly two underlying medical histories" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
 
-I have also prepared a target medication sequence S (length {target_length}):
-{target_sequence}
+You can only perform "union coverage queries" to the electronic medical record system, i.e., querying the count or proportion of patients who have "at least one of certain medical histories".
 
-Your task is to infer the regulation weights of the three drugs through queries, and calculate the maximum safe courses of target sequence S.
+The seven allowed medical history unions are:
+1. A: at least has A (Hypertension History)
+2. B: at least has B (Diabetes History)
+3. C: at least has C (Cardiovascular Disease History)
+4. A or B: at least has A or B (or both)
+5. B or C: at least has B or C (or both)
+6. C or A: at least has C or A (or both)
+7. A or B or C: at least has any one (or more) of histories A, B, C
 
-You can repeatedly make the following two types of queries (one query per turn):
+For each query, you need to specify the type of statistical data to return:
+- count: returns the number of patients satisfying the condition (integer)
+- ratio: returns the proportion of patients satisfying the condition (simplified fraction)
+- both: returns both count and ratio
 
-1. Single course sequence query: Provide a test sequence T (recommended length up to 30), asking for its maximum safe courses. I will return an integer.
-2. Dual course sequence comparison: Provide two test sequences T1 and T2, asking which has longer maximum safe courses. I will return "T1 longer", "T2 longer", or "Equal".
+The following query types are not allowed and will cause a system error (analysis failure) if attempted:
+- Any intersection queries (e.g., "has both A and B")
+- Any exact condition queries about "exactly k", "at least k", or "at most k" medical histories
+- Empty set or combinations not among the seven types above
 
-Note: You cannot directly query the maximum safe courses of the target sequence S.
+Only one query can be submitted at a time, using the following XML format:
 
-When you have gathered enough clinical data, submit your final diagnosis.
+- Query the count of a single history A:
+<query>A, count</query>
 
-## Query and Answer Format
+- Query the ratio of history B or C:
+<query>B or C, ratio</query>
 
-Each turn must contain only one query tag, using the following XML format:
+- Query both count and ratio of history A or B or C:
+<query>A or B or C, both</query>
 
-- Single course sequence query (e.g., querying sequence AABBC):
-<query_single>AABBC</query_single>
+Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
 
-- Dual course sequence comparison (e.g., comparing sequences AAB and BCA, separated by vertical bar):
-<query_compare>AAB|BCA</query_compare>
+When you have collected sufficient information, submit your final analysis conclusion in the following format:
 
-When submitting the final answer, provide the weights of the three drugs and the maximum safe courses of the target sequence, in this format:
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+Where X is the count of patients with exactly two underlying medical histories, and X/{n} is the proportion in simplified fraction form.
+
+Please use as few queries as possible to efficiently infer the analysis answer.
 """
 
     contextualized_rule_zh_3 = """\
-学生学习状态与课程安排评估。我们来测试一个"学习心态稳定序列"，规则如下：
+高校科研管理处正在对校内各科研实验室的资质特征进行统计盘点。
 
-教务系统设定了三种不同难度的教学模块，代号为 {{A, B, C}}。我已为每个模块秘密分配了一个学习信心指数权重 w(A)、w(B)、w(C)，取值范围均在 {{-3, -2, -1, 0, 1, 2, 3}} 之间，且至少有一个为正、至少有一个为负。这些权重在整个评估过程中保持固定。
+全校共有 {n} 个受评实验室（集合规模为 {n}）。每个实验室可能具备三种科研资质（属性）中的任意组合：A（国家级基金资助）、B（跨学科研究项目）、C（产学研合作基地）。有的实验室可能正处于起步阶段，不具备任何资质；有的则可能同时囊括这三项。各实验室的资质状态在盘点开始时已锁定，不会发生改变。
 
-对于任意由模块 A、B、C 组成的课程排期序列 T，我们定义：
-- 累计信心指数：初始值为 0，对于第 i 节课，s_i 等于从第 1 节到第 i 节课权重的累加和。
-- 稳定学习期：长度为 L 的课程前缀若满足所有课时 j（1 到 L）的累计指数 s_j 都大于等于 0，则学生的学习状态是稳定的；一旦某节课 j 使得 s_j 小于 0，学生将产生严重厌学情绪，该节点及后续课程均被视为不稳定吸收。
-- 最长稳定课时数（最长稳定前缀长度）：满足上述心态稳定条件的最大连续课程数量 L。
+你的目标是：推断出"恰好具备两项科研资质"的实验室数量 X（0 小于等于 X 小于等于 {n}），以及其占总数的比例 X/{n}（用最简分数表示）。
 
-我还准备了一个目标排期序列 S（长度为 {target_length}）：
-{target_sequence}
+你只能向科研管理系统发起"并集覆盖查询"，即查询"至少具备某几项资质之一"的实验室数量或比例。
 
-你的任务是通过系统测试推断出三种模块的信心权重，并计算目标序列 S 的最长稳定课时数。
+允许查询的七种资质并集为：
+1. A：至少具备 A（国家级基金资助）
+2. B：至少具备 B（跨学科研究项目）
+3. C：至少具备 C（产学研合作基地）
+4. A 或 B：至少具备 A 或 B（或两者皆有）
+5. B 或 C：至少具备 B 或 C（或两者皆有）
+6. C 或 A：至少具备 C 或 A（或两者皆有）
+7. A 或 B 或 C：至少具备 A、B、C 中的任意一项（或多项）
 
-你可以反复提出以下两类查询（每次只能提一个查询）：
+对于每次查询，你需要声明请求返回的指标类型：
+- 数量（count）：返回满足条件的实验室个数（整数）
+- 比例（ratio）：返回满足条件的实验室占比（最简分数形式）
+- 两者（both）：同时返回数量和比例
 
-1. 单排期测试：提供一个测试排期 T（建议长度不超过 30），询问它的最长稳定课时数。我会返回一个整数。
-2. 双排期对比：提供两个测试排期 T1 和 T2，询问哪个排期的最长稳定课时数更长。我会返回"T1更长"、"T2更长"或"相等"。
+以下查询类型是不允许的，若尝试将导致系统拦截（盘点失败）：
+- 任何交集查询（例如"同时具备 A 和 B"）
+- 任何"恰好 k 项""至少 k 项""至多 k 项"资质的精确条件查询
+- 空集或不在上述七种之列的组合
 
-注意：你不能直接测试目标序列 S 的最长稳定课时数。
+每次只能提交一个查询，使用以下 XML 格式：
 
-当你收集到足够反馈后，请提交最终排期评估。
+- 查询单项资质 A 的数量：
+<query>A, count</query>
 
-## 查询与提交答案的格式
+- 查询资质 B 或 C 的比例：
+<query>B or C, ratio</query>
 
-每次只能包含一个查询标签，使用以下 XML 格式：
+- 查询资质 A 或 B 或 C 的数量和比例：
+<query>A or B or C, both</query>
 
-- 单排期测试（例如测试排期 AABBC）：
-<query_single>AABBC</query_single>
+注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
 
-- 双排期对比测试（例如比较排期 AAB 和 BCA，用竖线分隔）：
-<query_compare>AAB|BCA</query_compare>
+当你收集足够信息后，请提交最终盘点结果，格式如下：
 
-提交最终答案时，需要给出三种模块的信心权重以及目标序列的最长稳定课时数，格式如下：
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+其中 X 是恰好具备两项科研资质的实验室数量，X/{n} 是最简分数形式的比例。
+
+请尽可能少地进行查询，高效推断出盘点答案。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Student learning state and curriculum scheduling evaluation. Let's test a "Stable Learning Mindset Sequence" with the following rules:
+The university's research management office is taking an inventory of the qualification characteristics of various research laboratories on campus.
 
-The academic system defines three teaching modules of varying difficulty, coded as {{A, B, C}}. I have secretly assigned a learning confidence index weight w(A), w(B), w(C) to each module, ranging from -3 to 3, with at least one positive and at least one negative. These weights remain fixed throughout the evaluation.
+There are {n} laboratories under evaluation in total (a set size of {n}). Each laboratory may possess any combination of three research qualifications (attributes): A (National Fund Support), B (Interdisciplinary Project), and C (Industry-Academia Collaboration). Some starting labs may have no qualifications, while others may hold all three simultaneously. The qualification statuses of the laboratories are locked at the start of the inventory and will not change.
 
-For any curriculum schedule sequence T composed of modules A, B, C, we define:
-- Cumulative confidence index: Starting from 0, for class i, s_i equals the sum of module weights from class 1 to i.
-- Stable learning period: A curriculum prefix of length L is stable if all classes j (from 1 to L) have a cumulative index s_j greater than or equal to 0, keeping the student's learning state stable; once any class j has s_j less than 0, the student will develop severe study burnout, and that point and subsequent classes are deemed unstable for absorption.
-- Maximum stable classes (Longest stable prefix length): The maximum continuous classes L satisfying the mindset stability condition above.
+Your goal is: to infer the count X of laboratories that possess "exactly two research qualifications" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
 
-I have also prepared a target schedule sequence S (length {target_length}):
-{target_sequence}
+You can only perform "union coverage queries" to the research management system, i.e., querying the count or proportion of laboratories that have "at least one of certain qualifications".
 
-Your task is to infer the confidence weights of the three modules through system tests, and calculate the maximum stable classes of target sequence S.
+The seven allowed qualification unions are:
+1. A: at least has A (National Fund Support)
+2. B: at least has B (Interdisciplinary Project)
+3. C: at least has C (Industry-Academia Collaboration)
+4. A or B: at least has A or B (or both)
+5. B or C: at least has B or C (or both)
+6. C or A: at least has C or A (or both)
+7. A or B or C: at least has any one (or more) of qualifications A, B, C
 
-You can repeatedly make the following two types of queries (one query per turn):
+For each query, you need to specify the type of indicator to return:
+- count: returns the number of laboratories satisfying the condition (integer)
+- ratio: returns the proportion of laboratories satisfying the condition (simplified fraction)
+- both: returns both count and ratio
 
-1. Single schedule test: Provide a test schedule T (recommended length up to 30), asking for its maximum stable classes. I will return an integer.
-2. Dual schedule comparison: Provide two test schedules T1 and T2, asking which has more maximum stable classes. I will return "T1 longer", "T2 longer", or "Equal".
+The following query types are not allowed and will be intercepted by the system (inventory failure) if attempted:
+- Any intersection queries (e.g., "possesses both A and B")
+- Any exact condition queries about "exactly k", "at least k", or "at most k" qualifications
+- Empty set or combinations not among the seven types above
 
-Note: You cannot directly test the maximum stable classes of the target sequence S.
+Only one query can be submitted at a time, using the following XML format:
 
-When you have gathered enough feedback, submit your final schedule evaluation.
+- Query the count of a single qualification A:
+<query>A, count</query>
 
-## Query and Answer Format
+- Query the ratio of qualification B or C:
+<query>B or C, ratio</query>
 
-Each turn must contain only one query tag, using the following XML format:
+- Query both count and ratio of qualification A or B or C:
+<query>A or B or C, both</query>
 
-- Single schedule test (e.g., testing schedule AABBC):
-<query_single>AABBC</query_single>
+Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
 
-- Dual schedule comparison test (e.g., comparing schedules AAB and BCA, separated by vertical bar):
-<query_compare>AAB|BCA</query_compare>
+When you have collected sufficient information, submit your final inventory result in the following format:
 
-When submitting the final answer, provide the confidence weights of the three modules and the maximum stable classes of the target sequence, in this format:
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+Where X is the count of laboratories with exactly two research qualifications, and X/{n} is the proportion in simplified fraction form.
+
+Please use as few queries as possible to efficiently infer the inventory answer.
 """
 
     contextualized_rule_zh_4 = """\
-工业设备健康度监控评估。我们来运行一个"应力稳定指令列"，规则如下：
+智能制造工厂的质检中心正在审查批次流水线上的精密加工零件。
 
-系统预设了三种加工工艺指令，代号为 {{A, B, C}}。我已为每种指令秘密分配了一个设备应力影响权重 w(A)、w(B)、w(C)，取值范围均在 {{-3, -2, -1, 0, 1, 2, 3}} 之间，且至少有一个为正、至少有一个为负。正数代表应力释放，负数代表应力损耗。这些权重在整个检测过程中保持固定。
+当前质检批次包含 {n} 个精密零件（集合规模为 {n}）。每个零件在生产过程中可能经过了三种特殊工艺（属性）中的任意组合：A（表面抛光处理）、B（热处理强化）、C（防锈涂层覆盖）。部分零件可能仅为毛坯，未经过这些特殊处理，而部分零件可能经过了全部三道工艺。各零件的工艺记录在审查开始时已封存，不会改变。
 
-对于任意由指令 A、B、C 组成的加工序列 T，我们定义：
-- 累计应力健康度：初始基准值为 0，对于第 i 步指令，s_i 等于从第 1 步到第 i 步指令权重的累加和。
-- 稳定运行区间：长度为 L 的指令前缀若满足所有步骤 j（1 到 L）的累计健康度 s_j 都大于等于 0，则设备运行在安全公差内；一旦某一步 j 使得 s_j 小于 0，设备将触发过载停机，该步及之后的指令均无法有效执行（不稳定）。
-- 最大连续执行指令数（最长稳定前缀长度）：满足上述安全条件的最大连续指令长度 L。
+你的目标是：推断出"恰好经过两道特殊工艺处理"的零件数量 X（0 小于等于 X 小于等于 {n}），以及其占批次总数的比例 X/{n}（用最简分数表示）。
 
-我还准备了一个目标加工序列 S（长度为 {target_length}）：
-{target_sequence}
+你只能向生产控制系统（MES）发起"并集覆盖查询"，即查询"至少经过某几道特殊工艺之一"的零件数量或比例。
 
-你的任务是通过模拟运行推断出三种指令的应力权重，并计算目标序列 S 的最大连续执行指令数。
+允许查询的七种工艺并集为：
+1. A：至少经过 A（表面抛光处理）
+2. B：至少经过 B（热处理强化）
+3. C：至少经过 C（防锈涂层覆盖）
+4. A 或 B：至少经过 A 或 B（或两者皆有）
+5. B 或 C：至少经过 B 或 C（或两者皆有）
+6. C 或 A：至少经过 C 或 A（或两者皆有）
+7. A 或 B 或 C：至少经过 A、B、C 中的任意一道（或多道）
 
-你可以反复提出以下两类查询（每次只能提一个查询）：
+对于每次查询，你需要声明请求返回的质检参数类型：
+- 数量（count）：返回满足条件的零件个数（整数）
+- 比例（ratio）：返回满足条件的零件占比（最简分数形式）
+- 两者（both）：同时返回数量和比例
 
-1. 单序列试运行：提供一个测试指令列 T（建议长度不超过 30），询问它的最大连续执行指令数。我会返回一个整数。
-2. 双序列对比运行：提供两个测试指令列 T1 和 T2，询问哪个序列的最大连续执行指令数更长。我会返回"T1更长"、"T2更长"或"相等"。
+以下查询类型是不允许的，若尝试将导致 MES 系统阻断（审查失败）：
+- 任何交集查询（例如"同时经过 A 和 B"）
+- 任何"恰好 k 道""至少 k 道""至多 k 道"工艺的精确条件查询
+- 空集或不在上述七种之列的组合
 
-注意：你不能直接试运行目标序列 S 并查询其最大连续执行指令数。
+每次只能提交一个查询，使用以下 XML 格式：
 
-当你收集到足够的设备参数后，请提交最终报告。
+- 查询单一工艺 A 的数量：
+<query>A, count</query>
 
-## 查询与提交答案的格式
+- 查询工艺 B 或 C 的比例：
+<query>B or C, ratio</query>
 
-每次只能包含一个查询标签，使用以下 XML 格式：
+- 查询工艺 A 或 B 或 C 的数量和比例：
+<query>A or B or C, both</query>
 
-- 单序列试运行（例如测试指令列 AABBC）：
-<query_single>AABBC</query_single>
+注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
 
-- 双序列对比运行（例如比较指令列 AAB 和 BCA，用竖线分隔）：
-<query_compare>AAB|BCA</query_compare>
+当你收集足够信息后，请提交最终质检报告，格式如下：
 
-提交最终答案时，需要给出三种指令的权重以及目标序列的最大连续执行指令数，格式如下：
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+其中 X 是恰好经过两道特殊工艺处理的零件数量，X/{n} 是最简分数形式的比例。
+
+请尽可能少地进行查询，高效推断出质检答案。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Industrial equipment health monitoring assessment. Let's run a "Stable Stress Command Sequence" with the following rules:
+[Manufacturing/Industrial Scenario]
+The quality inspection center of a smart manufacturing plant is reviewing precision machined parts from an assembly line batch.
 
-The system predefines three processing command types, coded as {{A, B, C}}. I have secretly assigned an equipment stress impact weight w(A), w(B), w(C) to each command, ranging from -3 to 3, with at least one positive and at least one negative. Positive values represent stress release, while negative values represent stress accumulation. These weights remain fixed throughout the inspection.
+The current inspection batch contains {n} precision parts (a set size of {n}). Each part may have undergone any combination of three special processes (attributes) during production: A (Surface Polishing), B (Heat Treatment), and C (Anti-rust Coating). Some parts may be roughcast without these treatments, while others may have undergone all three processes. The process records for each part are sealed at the start of the review and will not change.
 
-For any processing sequence T composed of commands A, B, C, we define:
-- Cumulative stress health: Starting from a baseline of 0, for command step i, s_i equals the sum of command weights from step 1 to i.
-- Stable operating interval: A command prefix of length L is stable if all steps j (from 1 to L) have cumulative health s_j greater than or equal to 0, ensuring the equipment operates within safe tolerances; once any step j has s_j less than 0, the equipment triggers overload shutdown, and that step and all subsequent commands fail to execute (unstable).
-- Maximum continuous executed commands (Longest stable prefix length): The maximum continuous command length L satisfying the safety condition above.
+Your goal is: to infer the count X of parts that have undergone "exactly two special processes" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
 
-I have also prepared a target processing sequence S (length {target_length}):
-{target_sequence}
+You can only perform "union coverage queries" to the Manufacturing Execution System (MES), i.e., querying the count or proportion of parts that have "undergone at least one of certain special processes".
 
-Your task is to infer the stress weights of the three commands through simulated runs, and calculate the maximum continuous executed commands of target sequence S.
+The seven allowed process unions are:
+1. A: at least undergone A (Surface Polishing)
+2. B: at least undergone B (Heat Treatment)
+3. C: at least undergone C (Anti-rust Coating)
+4. A or B: at least undergone A or B (or both)
+5. B or C: at least undergone B or C (or both)
+6. C or A: at least undergone C or A (or both)
+7. A or B or C: at least undergone any one (or more) of processes A, B, C
 
-You can repeatedly make the following two types of queries (one query per turn):
+For each query, you need to specify the type of quality inspection parameter to return:
+- count: returns the number of parts satisfying the condition (integer)
+- ratio: returns the proportion of parts satisfying the condition (simplified fraction)
+- both: returns both count and ratio
 
-1. Single sequence trial run: Provide a test command sequence T (recommended length up to 30), asking for its maximum continuous executed commands. I will return an integer.
-2. Dual sequence comparison run: Provide two test command sequences T1 and T2, asking which has longer maximum continuous executed commands. I will return "T1 longer", "T2 longer", or "Equal".
+The following query types are not allowed and will be blocked by the MES system (review failure) if attempted:
+- Any intersection queries (e.g., "undergone both A and B")
+- Any exact condition queries about "exactly k", "at least k", or "at most k" processes
+- Empty set or combinations not among the seven types above
 
-Note: You cannot directly trial run the target sequence S to query its maximum continuous executed commands.
+Only one query can be submitted at a time, using the following XML format:
 
-When you have gathered enough equipment parameters, submit your final report.
+- Query the count of a single process A:
+<query>A, count</query>
 
-## Query and Answer Format
+- Query the ratio of process B or C:
+<query>B or C, ratio</query>
 
-Each turn must contain only one query tag, using the following XML format:
+- Query both count and ratio of process A or B or C:
+<query>A or B or C, both</query>
 
-- Single sequence trial run (e.g., testing command sequence AABBC):
-<query_single>AABBC</query_single>
+Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
 
-- Dual sequence comparison run (e.g., comparing command sequences AAB and BCA, separated by vertical bar):
-<query_compare>AAB|BCA</query_compare>
+When you have collected sufficient information, submit your final inspection report in the following format:
 
-When submitting the final answer, provide the weights of the three commands and the maximum continuous executed commands of the target sequence, in this format:
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+Where X is the count of parts that have undergone exactly two special processes, and X/{n} is the proportion in simplified fraction form.
+
+Please use as few queries as possible to efficiently infer the inspection answer.
 """
 
     contextualized_rule_zh_5 = """\
-案件证据链有效性推演。我们来进行"可信度稳定链"的逻辑质证，规则如下：
+法院司法数据中心正在对一批处于审理阶段的复杂商业纠纷案件进行卷宗归类。
 
-庭审过程包含三种类型的举证策略，代号为 {{A, B, C}}。我已为每种策略秘密分配了一个心证可信度权重 w(A)、w(B)、w(C)，取值范围均在 {{-3, -2, -1, 0, 1, 2, 3}} 之间，且至少有一个为正（增强可信度）、至少有一个为负（削弱可信度）。这些权重在整个推演过程中保持固定。
+当前批次共有 {n} 宗案件（集合规模为 {n}）。每宗案件的诉状中可能涉及三种特定法律争议（属性）中的任意组合：A（涉及知识产权争议）、B（涉及跨国贸易条款）、C（涉及垄断经营行为）。有的案件可能仅涉及常规违约，未包含上述争议；有的重大案件则可能同时牵涉这三项争议。案卷的争议定性在归类工作开始时已固化，不会改变。
 
-对于任意由策略 A、B、C 组成的证据出示序列 T，我们定义：
-- 累计可信度：初始基准为 0，对于第 i 轮举证，s_i 等于从第 1 轮到第 i 轮策略权重的累加和。
-- 证据链有效区：长度为 L 的举证前缀若满足所有轮次 j（1 到 L）的累计可信度 s_j 都大于等于 0，则证据链保持有效连贯；一旦某轮 j 使得 s_j 小于 0，法庭心证基础彻底崩塌，该轮及之后的证据均不被采信。
-- 最大有效采纳轮数（最长稳定前缀长度）：满足上述采纳条件的最大证据连贯轮数 L。
+你的目标是：推断出"恰好具备两项争议特征"的案件数量 X（0 小于等于 X 小于等于 {n}），以及其占案件总数的比例 X/{n}（用最简分数表示）。
 
-我还准备了一个目标举证序列 S（长度为 {target_length}）：
-{target_sequence}
+你只能向司法数据系统发起"并集覆盖查询"，即查询"至少涉及某几项法律争议之一"的案件数量或比例。
 
-你的任务是通过质证推演，推断出三种举证策略的权重，并计算目标序列 S 的最大有效采纳轮数。
+允许查询的七种争议并集为：
+1. A：至少涉及 A（知识产权争议）
+2. B：至少涉及 B（跨国贸易条款）
+3. C：至少涉及 C（垄断经营行为）
+4. A 或 B：至少涉及 A 或 B（或两者皆有）
+5. B 或 C：至少涉及 B 或 C（或两者皆有）
+6. C 或 A：至少涉及 C 或 A（或两者皆有）
+7. A 或 B 或 C：至少涉及 A、B、C 中的任意一项（或多项）
 
-你可以反复提出以下两类质证申请（每次只能提一个申请）：
+对于每次查询，你需要声明请求返回的数据视图类型：
+- 数量（count）：返回满足条件的案件宗数（整数）
+- 比例（ratio）：返回满足条件的案件占比（最简分数形式）
+- 两者（both）：同时返回数量和比例
 
-1. 单链条推演：提供一个测试证据链 T（建议长度不超过 30），询问它的最大有效采纳轮数。法庭推演系统会返回一个整数。
-2. 双链条对比推演：提供两个测试证据链 T1 和 T2，询问哪个链条的最大有效采纳轮数更长。系统会返回"T1更长"、"T2更长"或"相等"。
+以下查询类型是不允许的，若尝试将导致系统驳回请求（归类失败）：
+- 任何交集查询（例如"同时涉及 A 和 B"）
+- 任何"恰好牵涉 k 项""至少牵涉 k 项""至多牵涉 k 项"争议的精确条件查询
+- 空集或不在上述七种之列的组合
 
-注意：你不能直接推演目标序列 S 的最大有效采纳轮数。
+每次只能提交一个查询，使用以下 XML 格式：
 
-当你收集到足够的庭审反馈后，请提交最终辩护结案陈词。
+- 查询单一争议 A 的数量：
+<query>A, count</query>
 
-## 查询与提交答案的格式
+- 查询争议 B 或 C 的比例：
+<query>B or C, ratio</query>
 
-每次只能包含一个查询标签，使用以下 XML 格式：
+- 查询争议 A 或 B 或 C 的数量和比例：
+<query>A or B or C, both</query>
 
-- 单链条推演（例如推演序列 AABBC）：
-<query_single>AABBC</query_single>
+注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
 
-- 双链条对比推演（例如比较序列 AAB 和 BCA，用竖线分隔）：
-<query_compare>AAB|BCA</query_compare>
+当你收集足够信息后，请提交最终的卷宗归类结论，格式如下：
 
-提交最终答案时，需要给出三种策略的权重以及目标序列的最大有效采纳轮数，格式如下：
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+其中 X 是恰好具备两项争议特征的案件数量，X/{n} 是最简分数形式的比例。
+
+请尽可能少地进行查询，高效推断出归类答案。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Case evidence chain validity deduction. Let's conduct a logical cross-examination of a "Stable Credibility Chain" with the following rules:
+The court's judicial data center is classifying the dossiers of a batch of complex commercial dispute cases currently under trial.
 
-The trial process involves three types of evidentiary strategies, coded as {{A, B, C}}. I have secretly assigned a judicial credibility weight w(A), w(B), w(C) to each strategy, ranging from -3 to 3, with at least one positive (enhancing credibility) and at least one negative (weakening credibility). These weights remain fixed throughout the deduction process.
+There are {n} cases in the current batch (a set size of {n}). The complaint for each case may involve any combination of three specific legal disputes (attributes): A (Intellectual Property Dispute), B (Cross-border Trade Clause), and C (Monopoly Behavior). Some cases may only involve conventional breaches of contract without these specific disputes, while some major cases might entangle all three. The qualitative nature of the disputes in the dossiers is fixed at the start of the classification and will not change.
 
-For any evidence presentation sequence T composed of strategies A, B, C, we define:
-- Cumulative credibility: Starting from a baseline of 0, for presentation round i, s_i equals the sum of strategy weights from round 1 to i.
-- Valid evidence chain zone: A presentation prefix of length L is valid if all rounds j (from 1 to L) have cumulative credibility s_j greater than or equal to 0, maintaining the chain's coherence; once any round j has s_j less than 0, the court's foundation of credibility completely collapses, and that round and subsequent evidence will not be admitted.
-- Maximum valid admitted rounds (Longest stable prefix length): The maximum continuous evidence rounds L satisfying the admission condition above.
+Your goal is: to infer the count X of cases that have "exactly two dispute characteristics" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
 
-I have also prepared a target presentation sequence S (length {target_length}):
-{target_sequence}
+You can only perform "union coverage queries" to the judicial data system, i.e., querying the count or proportion of cases that "involve at least one of certain legal disputes".
 
-Your task is to infer the weights of the three strategies through cross-examination deductions, and calculate the maximum valid admitted rounds of target sequence S.
+The seven allowed dispute unions are:
+1. A: at least involves A (Intellectual Property Dispute)
+2. B: at least involves B (Cross-border Trade Clause)
+3. C: at least involves C (Monopoly Behavior)
+4. A or B: at least involves A or B (or both)
+5. B or C: at least involves B or C (or both)
+6. C or A: at least involves C or A (or both)
+7. A or B or C: at least involves any one (or more) of disputes A, B, C
 
-You can repeatedly file the following two types of cross-examination applications (one application per turn):
+For each query, you need to specify the type of data view to return:
+- count: returns the number of cases satisfying the condition (integer)
+- ratio: returns the proportion of cases satisfying the condition (simplified fraction)
+- both: returns both count and ratio
 
-1. Single chain deduction: Provide a test evidence chain T (recommended length up to 30), asking for its maximum valid admitted rounds. The court deduction system will return an integer.
-2. Dual chain comparison deduction: Provide two test evidence chains T1 and T2, asking which has more maximum valid admitted rounds. The system will return "T1 longer", "T2 longer", or "Equal".
+The following query types are not allowed and will result in the system rejecting the request (classification failure) if attempted:
+- Any intersection queries (e.g., "involves both A and B")
+- Any exact condition queries about "exactly involving k", "at least involving k", or "at most involving k" disputes
+- Empty set or combinations not among the seven types above
 
-Note: You cannot directly deduce the maximum valid admitted rounds of the target sequence S.
+Only one query can be submitted at a time, using the following XML format:
 
-When you have gathered enough trial feedback, submit your final defense closing statement.
+- Query the count of a single dispute A:
+<query>A, count</query>
 
-## Query and Answer Format
+- Query the ratio of dispute B or C:
+<query>B or C, ratio</query>
 
-Each turn must contain only one query tag, using the following XML format:
+- Query both count and ratio of dispute A or B or C:
+<query>A or B or C, both</query>
 
-- Single chain deduction (e.g., deducing sequence AABBC):
-<query_single>AABBC</query_single>
+Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
 
-- Dual chain comparison deduction (e.g., comparing sequences AAB and BCA, separated by vertical bar):
-<query_compare>AAB|BCA</query_compare>
+When you have collected sufficient information, submit your final dossier classification conclusion in the following format:
 
-When submitting the final answer, provide the weights of the three strategies and the maximum valid admitted rounds of the target sequence, in this format:
+<answer>count=X, ratio=X/{n}</answer>
 
-<answer>w(A)=1, w(B)=-2, w(C)=3, L=5</answer>
+Where X is the count of cases with exactly two dispute characteristics, and X/{n} is the proportion in simplified fraction form.
+
+Please use as few queries as possible to efficiently infer the classification answer.
 """
 
-    tags = ["answer", "query_single", "query_compare"]
-
-    # 难度配置：
-    # 1 (简单)       - 目标序列较短，权重差异明显
-    # 2 (中等偏下)   - 目标序列中等，权重有0
-    # 3 (中等偏上)   - 目标序列较长，权重较复杂
-    # 4 (较难)       - 目标序列长，权重接近
-    # 5 (难)         - 目标序列很长，权重分布复杂
+    tags = ["answer", "query"]
+    
+    reasoning_type = "演绎推理"
+    data_structure = "集合"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "target_sequence": "AABBC",
-                "target_length": 5,
-                "w_A": 2,
-                "w_B": -1,
-                "w_C": 1,
+                "n": 5,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["B", "C"],
+                    "3": ["A"],
+                    "4": ["C"],
+                    "5": ["A", "B", "C"],
+                },
             },
             2: {
-                "target_sequence": "ABCABC",
-                "target_length": 6,
-                "w_A": 3,
-                "w_B": 0,
-                "w_C": -2,
+                "n": 8,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["B", "C"],
+                    "3": ["C", "A"],
+                    "4": ["A"],
+                    "5": ["B"],
+                    "6": ["C"],
+                    "7": ["A", "B", "C"],
+                    "8": [],
+                },
             },
             3: {
-                "target_sequence": "AABBCCABC",
-                "target_length": 9,
-                "w_A": 1,
-                "w_B": 2,
-                "w_C": -3,
+                "n": 10,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["A", "B"],
+                    "3": ["B", "C"],
+                    "4": ["B", "C"],
+                    "5": ["C", "A"],
+                    "6": ["A"],
+                    "7": ["B"],
+                    "8": ["C"],
+                    "9": ["A", "B", "C"],
+                    "10": [],
+                },
             },
             4: {
-                "target_sequence": "ABCABCABCABC",
-                "target_length": 12,
-                "w_A": 1,
-                "w_B": -1,
-                "w_C": 2,
+                "n": 12,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["A", "B"],
+                    "3": ["A", "B"],
+                    "4": ["B", "C"],
+                    "5": ["B", "C"],
+                    "6": ["C", "A"],
+                    "7": ["C", "A"],
+                    "8": ["A"],
+                    "9": ["B"],
+                    "10": ["C"],
+                    "11": ["A", "B", "C"],
+                    "12": ["A", "B", "C"],
+                },
             },
             5: {
-                "target_sequence": "AABBCCBBAACCAABBC",
-                "target_length": 17,
-                "w_A": 2,
-                "w_B": -2,
-                "w_C": 1,
+                "n": 15,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["A", "B"],
+                    "3": ["A", "B"],
+                    "4": ["A", "B"],
+                    "5": ["B", "C"],
+                    "6": ["B", "C"],
+                    "7": ["B", "C"],
+                    "8": ["C", "A"],
+                    "9": ["C", "A"],
+                    "10": ["A"],
+                    "11": ["A"],
+                    "12": ["B"],
+                    "13": ["C"],
+                    "14": ["A", "B", "C"],
+                    "15": ["A", "B", "C"],
+                },
             },
         },
         "en": {
             1: {
-                "target_sequence": "AABBC",
-                "target_length": 5,
-                "w_A": 2,
-                "w_B": -1,
-                "w_C": 1,
+                "n": 5,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["B", "C"],
+                    "3": ["A"],
+                    "4": ["C"],
+                    "5": ["A", "B", "C"],
+                },
             },
             2: {
-                "target_sequence": "ABCABC",
-                "target_length": 6,
-                "w_A": 3,
-                "w_B": 0,
-                "w_C": -2,
+                "n": 8,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["B", "C"],
+                    "3": ["C", "A"],
+                    "4": ["A"],
+                    "5": ["B"],
+                    "6": ["C"],
+                    "7": ["A", "B", "C"],
+                    "8": [],
+                },
             },
             3: {
-                "target_sequence": "AABBCCABC",
-                "target_length": 9,
-                "w_A": 1,
-                "w_B": 2,
-                "w_C": -3,
+                "n": 10,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["A", "B"],
+                    "3": ["B", "C"],
+                    "4": ["B", "C"],
+                    "5": ["C", "A"],
+                    "6": ["A"],
+                    "7": ["B"],
+                    "8": ["C"],
+                    "9": ["A", "B", "C"],
+                    "10": [],
+                },
             },
             4: {
-                "target_sequence": "ABCABCABCABC",
-                "target_length": 12,
-                "w_A": 1,
-                "w_B": -1,
-                "w_C": 2,
+                "n": 12,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["A", "B"],
+                    "3": ["A", "B"],
+                    "4": ["B", "C"],
+                    "5": ["B", "C"],
+                    "6": ["C", "A"],
+                    "7": ["C", "A"],
+                    "8": ["A"],
+                    "9": ["B"],
+                    "10": ["C"],
+                    "11": ["A", "B", "C"],
+                    "12": ["A", "B", "C"],
+                },
             },
             5: {
-                "target_sequence": "AABBCCBBAACCAABBC",
-                "target_length": 17,
-                "w_A": 2,
-                "w_B": -2,
-                "w_C": 1,
+                "n": 15,
+                "attributes": {
+                    "1": ["A", "B"],
+                    "2": ["A", "B"],
+                    "3": ["A", "B"],
+                    "4": ["A", "B"],
+                    "5": ["B", "C"],
+                    "6": ["B", "C"],
+                    "7": ["B", "C"],
+                    "8": ["C", "A"],
+                    "9": ["C", "A"],
+                    "10": ["A"],
+                    "11": ["A"],
+                    "12": ["B"],
+                    "13": ["C"],
+                    "14": ["A", "B", "C"],
+                    "15": ["A", "B", "C"],
+                },
             },
         },
     }
-
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，根据难度和语言配置设定目标序列和权重"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -590,299 +784,177 @@ When submitting the final answer, provide the weights of the three strategies an
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
         
-        # 设置游戏信息
-        self._game_info["target_sequence"] = cfg["target_sequence"]
-        self._game_info["target_length"] = cfg["target_length"]
+        self.attributes = cfg["attributes"]
+        self.n = cfg["n"]
         
-        # 设置权重（Ground Truth）
-        self.weights = {
-            'A': cfg["w_A"],
-            'B': cfg["w_B"],
-            'C': cfg["w_C"],
-        }
+        self.answer_count = 0
+        for element_id, attrs in self.attributes.items():
+            if len(attrs) == 2:
+                self.answer_count += 1
         
-        # 保存目标序列
-        self.target_seq = cfg["target_sequence"]
-        
-        # 计算目标序列的最长稳定前缀长度（Ground Truth）
-        self.target_length = self._compute_stable_prefix_length(self.target_seq)
+        self.answer_ratio = Fraction(self.answer_count, self.n)
 
-    def _compute_stable_prefix_length(self, sequence):
-        """
-        计算给定序列的最长稳定前缀长度
-        返回满足所有前缀累计和大于等于0的最大长度
-        """
-        cumsum = 0
-        for i, char in enumerate(sequence):
-            if char not in self.weights:
-                return 0  # 非法字符
-            cumsum += self.weights[char]
-            if cumsum < 0:
-                return i  # 返回上一个位置的索引（即长度）
-        return len(sequence)  # 所有前缀都稳定
+    def _parse_query(self, query_str):
+        parts = [p.strip() for p in query_str.split(",")]
+        if len(parts) != 2:
+            raise ValueError("Query format error: expected 'attributes, type'")
+        
+        attr_part = parts[0].strip()
+        query_type = parts[1].strip().lower()
+        
+        if query_type not in ["count", "ratio", "both"]:
+            raise ValueError(f"Invalid query type: {query_type}")
+        
+        attr_list = [a.strip() for a in re.split(r'\s+or\s+', attr_part, flags=re.IGNORECASE)]
+        
+        valid_attrs = {"A", "B", "C"}
+        for attr in attr_list:
+            if attr not in valid_attrs:
+                raise ValueError(f"Invalid attribute: {attr}")
+        
+        attr_set = frozenset(attr_list)
+        allowed_sets = [
+            frozenset(["A"]),
+            frozenset(["B"]),
+            frozenset(["C"]),
+            frozenset(["A", "B"]),
+            frozenset(["B", "C"]),
+            frozenset(["C", "A"]),
+            frozenset(["A", "B", "C"]),
+        ]
+        
+        if attr_set not in allowed_sets:
+            raise ValueError(f"Query set not allowed: {attr_list}")
+        
+        return attr_list, query_type
+
+    def _compute_union_count(self, attr_list):
+        count = 0
+        for element_id, element_attrs in self.attributes.items():
+            if any(attr in element_attrs for attr in attr_list):
+                count += 1
+        return count
 
     def evaluate(self, parsed_info):
-        """
-        评估玩家提交的答案
-        答案格式：w(A)=x, w(B)=y, w(C)=z, L=k
-        """
+        raw_ans = parsed_info["answer"]
+        
         try:
-            raw_ans = parsed_info["answer"]
-            # 解析键值对
             kv_pairs = [x.strip() for x in raw_ans.split(",")]
             ans_dict = {}
-            
             for kv in kv_pairs:
                 if "=" not in kv:
-                    return False
+                    continue
                 k, v = kv.split("=", 1)
                 ans_dict[k.strip()] = v.strip()
             
-            # 检查必需的键
-            required_keys = ["w(A)", "w(B)", "w(C)", "L"]
-            for key in required_keys:
-                if key not in ans_dict:
-                    return False
-            
-            # 解析权重
-            try:
-                w_a = int(ans_dict["w(A)"])
-                w_b = int(ans_dict["w(B)"])
-                w_c = int(ans_dict["w(C)"])
-                l_val = int(ans_dict["L"])
-            except ValueError:
+            if "count" not in ans_dict or "ratio" not in ans_dict:
                 return False
             
-            # 验证权重是否正确
-            if w_a != self.weights['A'] or w_b != self.weights['B'] or w_c != self.weights['C']:
+            model_count = int(ans_dict["count"])
+            if model_count != self.answer_count:
                 return False
             
-            # 验证 L 是否正确
-            if l_val != self.target_length:
+            model_ratio_str = ans_dict["ratio"]
+            ratio_parts = model_ratio_str.replace(" ", "").split("/")
+            if len(ratio_parts) != 2:
                 return False
+            model_ratio = Fraction(int(ratio_parts[0]), int(ratio_parts[1]))
             
-            return True
+            return model_ratio == self.answer_ratio
             
         except Exception:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """
-        原始的业务逻辑，处理单序列查询和双序列对比查询
-        """
-        # 优先处理单序列查询
-        if "query_single" in parsed_info:
-            seq = parsed_info["query_single"].strip().upper()
-            
-            # 检查是否查询了目标序列
-            if seq == self.target_seq:
-                if self.config.language == "zh":
-                    return "错误：不能直接查询目标序列 S 的最长稳定前缀长度。"
-                else:
-                    return "Error: You cannot directly query the target sequence S."
-            
-            # 验证序列只包含合法字符
-            if not all(c in ['A', 'B', 'C'] for c in seq):
-                if self.config.language == "zh":
-                    return "错误：序列只能包含字母 A、B、C。"
-                else:
-                    return "Error: Sequence can only contain letters A, B, C."
-            
-            # 检查长度限制
-            if len(seq) > 30:
-                if self.config.language == "zh":
-                    return "错误：序列长度不应超过 30。"
-                else:
-                    return "Error: Sequence length should not exceed 30."
-            
-            if len(seq) == 0:
-                return "0"
-            
-            # 计算并返回最长稳定前缀长度
-            length = self._compute_stable_prefix_length(seq)
-            return str(length)
+        if "query" not in parsed_info:
+            raise ValueError("No query tag found.")
         
-        # 处理双序列对比查询
-        elif "query_compare" in parsed_info:
-            try:
-                raw = parsed_info["query_compare"].strip()
-                if "|" not in raw:
-                    raise ValueError("Invalid format")
-                
-                seq1, seq2 = [s.strip().upper() for s in raw.split("|", 1)]
-                
-                # 检查是否查询了目标序列
-                if seq1 == self.target_seq or seq2 == self.target_seq:
-                    if self.config.language == "zh":
-                        return "错误：不能直接查询目标序列 S。"
-                    else:
-                        return "Error: You cannot directly query the target sequence S."
-                
-                # 验证序列只包含合法字符
-                if not all(c in ['A', 'B', 'C'] for c in seq1 + seq2):
-                    if self.config.language == "zh":
-                        return "错误：序列只能包含字母 A、B、C。"
-                    else:
-                        return "Error: Sequences can only contain letters A, B, C."
-                
-                # 检查长度限制
-                if len(seq1) > 30 or len(seq2) > 30:
-                    if self.config.language == "zh":
-                        return "错误：序列长度不应超过 30。"
-                    else:
-                        return "Error: Sequence length should not exceed 30."
-                
-                # 计算两个序列的最长稳定前缀长度
-                len1 = self._compute_stable_prefix_length(seq1)
-                len2 = self._compute_stable_prefix_length(seq2)
-                
-                # 返回比较结果
-                if self.config.language == "zh":
-                    if len1 > len2:
-                        return "T1更长"
-                    elif len1 < len2:
-                        return "T2更长"
-                    else:
-                        return "相等"
-                else:
-                    if len1 > len2:
-                        return "T1 longer"
-                    elif len1 < len2:
-                        return "T2 longer"
-                    else:
-                        return "Equal"
-                        
-            except Exception:
-                if self.config.language == "zh":
-                    return "错误：查询格式无效，请使用 T1|T2 格式。"
-                else:
-                    return "Error: Invalid query format, please use T1|T2 format."
+        query_str = parsed_info["query"]
+        attr_list, query_type = self._parse_query(query_str)
         
+        count = self._compute_union_count(attr_list)
+        ratio = Fraction(count, self.n)
+        
+        if query_type == "count":
+            return str(count)
+        elif query_type == "ratio":
+            return f"{ratio.numerator}/{ratio.denominator}"
         else:
-            raise ValueError("No valid query tag found.")
+            return f"count={count}, ratio={ratio.numerator}/{ratio.denominator}"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        由于序列空间巨大，此处仅枚举长度为 1 到 3 的序列作为单查询样本，
-        以及长度为 1 到 2 的序列对作为对比查询样本。
-        """
-        queries = []
-        letters = ['A', 'B', 'C']
+        results = []
         
-        # 生成基础序列集：长度 1-3
-        # 3^1 + 3^2 + 3^3 = 3 + 9 + 27 = 39 个序列
-        sequences = []
-        for length in range(1, 4):
-            for p in itertools.product(letters, repeat=length):
-                seq = "".join(p)
-                if seq != self.target_seq:
-                    sequences.append(seq)
+        allowed_attributes = [
+            "A", 
+            "B", 
+            "C", 
+            "A or B", 
+            "B or C", 
+            "C or A", 
+            "A or B or C"
+        ]
         
-        # 1. 生成单序列查询
-        for seq in sequences:
-            # 直接调用内部计算方法，绕过 produce_response 的校验和反事实逻辑
-            ans_val = self._compute_stable_prefix_length(seq)
-            queries.append({
-                "query": f"<query_single>{seq}</query_single>",
-                "answer": str(ans_val)
-            })
-            
-        # 2. 生成双序列对比查询
-        # 为了避免组合爆炸 (39*39 ~ 1500)，仅使用长度 <= 2 的序列进行对比
-        # 长度 1-2 的序列共有 12 个，12*12 = 144 个组合
-        short_sequences = [s for s in sequences if len(s) <= 2]
+        allowed_types = ["count", "ratio", "both"]
         
-        for s1 in short_sequences:
-            for s2 in short_sequences:
-                if s1 == s2:
-                    continue  # 跳过自身与自身的比较
+        for attr_str in allowed_attributes:
+            for type_str in allowed_types:
+                query_content = f"{attr_str}, {type_str}"
                 
-                # 排除涉及目标序列的情况（虽然长度限制已大概率排除，但为了严谨）
-                if s1 == self.target_seq or s2 == self.target_seq:
+                parsed_info = {"query": query_content}
+                
+                try:
+                    answer = self._cf_core_produce(parsed_info)
+                    results.append({
+                        "query": f"<query>{query_content}</query>",
+                        "answer": answer
+                    })
+                except Exception:
                     continue
-                
-                # 内部逻辑复现
-                len1 = self._compute_stable_prefix_length(s1)
-                len2 = self._compute_stable_prefix_length(s2)
-                
-                ans = ""
-                if self.config.language == "zh":
-                    if len1 > len2:
-                        ans = "T1更长"
-                    elif len1 < len2:
-                        ans = "T2更长"
-                    else:
-                        ans = "相等"
-                else:
-                    if len1 > len2:
-                        ans = "T1 longer"
-                    elif len1 < len2:
-                        ans = "T2 longer"
-                    else:
-                        ans = "Equal"
-                
-                queries.append({
-                    "query": f"<query_compare>{s1}|{s2}</query_compare>",
-                    "answer": ans
-                })
-                
-        return queries
+                    
+        return results
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """
-        根据正确答案生成一个格式一致但内容错误的答案
-        """
-        stripped = correct.strip()
-
-        # 如果正确答案本身就是错误提示，不进行反事实干预，直接返回原文
-        error_prefixes_zh = ["错误：", "错误:"]
-        error_prefixes_en = ["Error:"]
-        for prefix in error_prefixes_zh + error_prefixes_en:
-            if stripped.startswith(prefix):
-                return stripped  # 错误消息不做反事实处理
-
-        # 处理纯整数字符串（含"0"）
-        if stripped.isdigit():
-            return str(int(stripped) + 1)
-
-        # 尝试处理可能带符号的整数（如负数，虽然本游戏不应出现）
-        try:
-            val = int(stripped)
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit():
+            val = int(correct)
             return str(val + 1)
-        except ValueError:
-            pass
-
-        # 处理比较查询结果——返回另一个合法的比较结果
-        if self.config.language == "zh":
-            zh_map = {"T1更长": "T2更长", "T2更长": "T1更长", "相等": "T1更长"}
-            if correct in zh_map:
-                return zh_map[correct]
-        else:
-            en_map = {"T1 longer": "T2 longer", "T2 longer": "T1 longer", "Equal": "T1 longer"}
-            if correct in en_map:
-                return en_map[correct]
-
-        # 通用关键词替换回退
+        
+        if "count=" in correct and "ratio=" in correct:
+            try:
+                kv_pairs = [x.strip() for x in correct.split(",")]
+                ans_dict = {}
+                for kv in kv_pairs:
+                    if "=" in kv:
+                        k, v = kv.split("=", 1)
+                        ans_dict[k.strip()] = v.strip()
+                c = int(ans_dict["count"])
+                wrong_c = c + 1
+                return f"count={wrong_c}, ratio={wrong_c}/{self.n}"
+            except Exception:
+                return correct + "_WRONG"
+        
+        if "/" in correct:
+            try:
+                parts = correct.split("/")
+                numerator = int(parts[0].strip())
+                denominator = int(parts[1].strip())
+                wrong_num = numerator + 1
+                return f"{wrong_num}/{denominator}"
+            except Exception:
+                return correct + "_WRONG"
+                
         if self.config.language == "zh":
             if "是" in correct:
                 return correct.replace("是", "否")
             if "否" in correct:
                 return correct.replace("否", "是")
         else:
-            lower_correct = correct.lower()
-            if "yes" in lower_correct:
-                if "Yes" in correct:
-                    return correct.replace("Yes", "No")
-                if "YES" in correct:
-                    return correct.replace("YES", "NO")
-                return correct.replace("yes", "no")
-            if "no" in lower_correct:
-                if "No" in correct:
-                    return correct.replace("No", "Yes")
-                if "NO" in correct:
-                    return correct.replace("NO", "YES")
-                return correct.replace("no", "yes")
+            lower_c = correct.lower()
+            if "yes" in lower_c:
+                return correct.replace("Yes", "No").replace("yes", "no").replace("YES", "NO")
+            if "no" in lower_c:
+                return correct.replace("No", "Yes").replace("no", "yes").replace("NO", "YES")
 
         return correct + "_WRONG"

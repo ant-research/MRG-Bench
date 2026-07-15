@@ -1,529 +1,602 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   前驱后继：某元素的紧邻前一个/后一个元素是什么
-# ============================================================
-
-import random
 from .base import Game
+import re
+import random
 
-
-class TotalOrderNeighborGame(Game):
-    """
-    全序邻居推理游戏
-    
-    游戏目标：通过有限次查询，确定目标元素在未知全序中的紧邻前驱和后继。
-    """
-
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
+class HiddenScoringRuleGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"全序邻居推理"游戏，规则如下：
+我们现在来玩一个"隐藏评分规则"的推理游戏，规则如下：
 
-存在一个包含 9 个互不相同元素的集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些元素按某个固定但未知的线性全序排列，用位置函数 pos 表示该全序，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
+游戏设定了一个黑箱系统，维护一个多重集合，元素取自 4 种类型，记为 {1, 2, 3, 4}。系统状态由各类型的计数 (n1, n2, n3, n4) 决定，初始为 (0, 0, 0, 0)。
 
-已知目标元素为 {target_element}。你的任务是确定该目标元素的紧邻前驱和紧邻后继：
-- 若目标元素位置大于 1，则前驱是位置恰好比它小 1 的元素；否则前驱为"无"。
-- 若目标元素位置小于 9，则后继是位置恰好比它大 1 的元素；否则后继为"无"。
+系统会根据当前状态计算一个整数评分 S，该评分由以下五个特征和五个隐藏系数决定：
 
-你可以通过以下三类是非问题进行查询（每次仅限一个问题）：
+S = a × Pairs + b × Distinct + c × Odd + d × Triplets + e × Total
 
-1. **顺序查询 BEFORE(x, y)**：询问元素 x 的位置是否小于元素 y 的位置。
-   格式：<query_before>x,y</query_before>
+五个特征的定义：
+1. Pairs：所有类型的配对数之和，即对每个类型 i，计算 ni × (ni - 1) / 2，然后求和
+2. Distinct：当前计数大于 0 的类型个数
+3. Odd：当前计数为奇数的类型个数
+4. Triplets：所有类型的三元组数之和，即对每个类型 i，计算 floor(ni / 3)，然后求和
+5. Total：所有类型的计数总和
 
-2. **介于查询 BETWEEN(z; x, y)**：询问元素 z 的位置是否严格介于元素 x 和 y 之间（即 pos(x) 小于 pos(z) 小于 pos(y)，或 pos(y) 小于 pos(z) 小于 pos(x)）。
-   格式：<query_between>z,x,y</query_between>
+隐藏系数 a, b, c, d, e 是未知的整数，取值范围均为 [-3, 3]，且不全为 0。这些系数在整个游戏过程中保持不变。
 
-3. **相邻查询 ADJ(x, y)**：询问元素 x 和 y 的位置是否相邻（即位置差的绝对值等于 1）。
-   格式：<query_adj>x,y</query_adj>
+你的目标是通过与系统交互，推断出这五个隐藏系数的准确值。
 
-**查询限制**：
-- 总查询次数不超过 12 次。
-- 相邻查询 ADJ 最多只能使用 3 次。
-- 超出限制的查询将被视为无效。
+你可以执行以下操作：
 
-每次查询后，我会回答"是"或"否"。
+1. 添加操作：向集合中添加一个类型 i 的元素（i 可以是 1、2、3 或 4）。系统会返回：
+   - 已添加的类型
+   - 当前计数向量 (n1, n2, n3, n4)
+   - 当前评分 S
 
-当你收集到足够信息后，请提交最终答案。答案格式如下：
+2. 查询操作：查询当前状态。系统会返回：
+   - 当前计数向量 (n1, n2, n3, n4)
+   - 当前评分 S
 
-<answer>predecessor=元素或无, successor=元素或无</answer>
+3. 重置操作：将集合重置为空，即 (n1, n2, n3, n4) 变为 (0, 0, 0, 0)，评分 S 变为 0。系统会返回：
+   - 已重置的确认信息
+   - 当前计数向量和评分
 
-例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
+4. 提交答案：当你认为已经推断出隐藏系数时，提交你的答案。
 
-若答案错误、格式不符或超出查询限制，游戏失败。请尽可能少地使用查询次数来推断正确答案。
+每次操作只能包含一个标签。请使用以下 XML 格式：
+
+- 添加类型 2 的元素：
+<add>2</add>
+
+- 查询当前状态：
+<query></query>
+
+- 重置集合：
+<reset></reset>
+
+- 提交最终答案（五个系数用逗号分隔）：
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+注意：提交答案时必须包含所有五个系数，格式严格按照 a=整数, b=整数, c=整数, d=整数, e=整数，每个系数的值必须在 [-3, 3] 范围内。若答案错误或格式不符，游戏失败。
 """
 
     game_rule_en = """\
-Let's play a "Total Order Neighbor Deduction" game. Here are the rules:
+Let's play a "Hidden Scoring Rule" deduction game. Here are the rules:
 
-There exists a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} containing 9 distinct elements. These elements are arranged in a fixed but unknown linear total order, represented by a position function pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
+The game features a black-box system that maintains a multiset of elements from 4 types, labeled {1, 2, 3, 4}. The system state is determined by the count of each type (n1, n2, n3, n4), initially (0, 0, 0, 0).
 
-The target element is {target_element}. Your task is to determine the immediate predecessor and immediate successor of the target element:
-- If the target's position is greater than 1, the predecessor is the element at position exactly 1 less; otherwise, the predecessor is "none".
-- If the target's position is less than 9, the successor is the element at position exactly 1 greater; otherwise, the successor is "none".
+The system calculates an integer score S based on the current state, determined by five features and five hidden coefficients:
 
-You may ask three types of yes/no questions (one question per turn):
+S = a × Pairs + b × Distinct + c × Odd + d × Triplets + e × Total
 
-1. **Order Query BEFORE(x, y)**: Ask if element x's position is less than element y's position.
-   Format: <query_before>x,y</query_before>
+Definition of the five features:
+1. Pairs: Sum of pairwise combinations for all types, i.e., for each type i, calculate ni × (ni - 1) / 2, then sum
+2. Distinct: Number of types with count greater than 0
+3. Odd: Number of types with odd count
+4. Triplets: Sum of triplet counts for all types, i.e., for each type i, calculate floor(ni / 3), then sum
+5. Total: Sum of all type counts
 
-2. **Between Query BETWEEN(z; x, y)**: Ask if element z's position is strictly between elements x and y (i.e., pos(x) < pos(z) < pos(y) or pos(y) < pos(z) < pos(x)).
-   Format: <query_between>z,x,y</query_between>
+The hidden coefficients a, b, c, d, e are unknown integers, each ranging from [-3, 3], and not all zero. These coefficients remain constant throughout the game.
 
-3. **Adjacent Query ADJ(x, y)**: Ask if elements x and y are adjacent in position (i.e., the absolute difference of their positions equals 1).
-   Format: <query_adj>x,y</query_adj>
+Your goal is to deduce the exact values of these five hidden coefficients through interaction with the system.
 
-**Query Limits**:
-- Total number of queries cannot exceed 12.
-- Adjacent queries ADJ can be used at most 3 times.
-- Queries exceeding these limits will be considered invalid.
+You can perform the following operations:
 
-After each query, I will answer "Yes" or "No".
+1. Add operation: Add an element of type i to the set (i can be 1, 2, 3, or 4). The system returns:
+   - The type that was added
+   - Current count vector (n1, n2, n3, n4)
+   - Current score S
 
-When you have gathered sufficient information, submit your final answer in the following format:
+2. Query operation: Query the current state. The system returns:
+   - Current count vector (n1, n2, n3, n4)
+   - Current score S
 
-<answer>predecessor=element_or_none, successor=element_or_none</answer>
+3. Reset operation: Reset the set to empty, i.e., (n1, n2, n3, n4) becomes (0, 0, 0, 0), score S becomes 0. The system returns:
+   - Confirmation of reset
+   - Current count vector and score
 
-For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
+4. Submit answer: When you believe you have deduced the hidden coefficients, submit your answer.
 
-If the answer is incorrect, the format is invalid, or query limits are exceeded, the game fails. Try to infer the correct answer with as few queries as possible.
+Each operation must contain only one tag. Use the following XML format:
+
+- Add an element of type 2:
+<add>2</add>
+
+- Query current state:
+<query></query>
+
+- Reset the set:
+<reset></reset>
+
+- Submit final answer (five coefficients separated by commas):
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+Note: When submitting your answer, you must include all five coefficients in the format a=integer, b=integer, c=integer, d=integer, e=integer, with each coefficient value in the range [-3, 3]. If the answer is incorrect or the format is invalid, the game fails.
 """
 
-    # ==========================================
-    # 场景 1：交通
-    # ==========================================
     contextualized_rule_zh_1 = """\
-我们来执行一次"轨道交通线网排查"任务，规则如下：
+欢迎使用“城市智能交通调度评估系统”。
 
-存在一条单向轨道交通线，包含 9 个互不相同的站点集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些站点按未知的固定线性顺序排列，用位置 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
+系统监控一个特定路段，该路段允许通行 4 种类型的车辆，记为 {1, 2, 3, 4}（分别代表小型车、公交车、货车、摩托车）。路段状态由各车型的数量 (n1, n2, n3, n4) 决定，初始为 (0, 0, 0, 0)。
 
-已知目标排查站点为 {target_element}。你的任务是确定该站点的上行紧邻站点（前驱）和下行紧邻站点（后继）：
-- 若目标站点位置大于 1，则前驱是位置恰好比它小 1 的站点；否则前驱为"无"。
-- 若目标站点位置小于 9，则后继是位置恰好比它大 1 的站点；否则后继为"无"。
+系统会根据当前路况计算一个整数型的综合“交通拥堵指数” S，该指数由以下五个交通特征和五个隐藏权重系数决定：
 
-你可以通过调度中心发起以下三类是非查询（每次仅限一个问题）：
+S = a × 交互冲突 + b × 车型丰富度 + c × 信号不对称度 + d × 车队编组 + e × 总车流
 
-1. **先后查询 BEFORE(x, y)**：询问站点 x 是否在站点 y 之前到达。
-   格式：<query_before>x,y</query_before>
+五个特征的定义：
+1. 交互冲突（Pairs）：所有车型的潜在同类交互对数之和，即对每个车型 i，计算 ni × (ni - 1) / 2，然后求和
+2. 车型丰富度（Distinct）：当前数量大于 0 的车型种类数
+3. 信号不对称度（Odd）：当前数量为奇数的车型种类数
+4. 车队编组（Triplets）：所有车型的三车连队数之和，即对每个车型 i，计算 floor(ni / 3)，然后求和
+5. 总车流（Total）：所有车型的数量总和
 
-2. **区间查询 BETWEEN(z; x, y)**：询问站点 z 是否严格位于站点 x 和 y 之间。
-   格式：<query_between>z,x,y</query_between>
+隐藏系数 a, b, c, d, e 是未知的整数，取值范围均为 [-3, 3]，且不全为 0。这些系数代表了不同交通因素对拥堵的影响权重，在整个分析过程中保持不变。
 
-3. **相邻查询 ADJ(x, y)**：询问站点 x 和 y 是否是直接相邻的站点。
-   格式：<query_adj>x,y</query_adj>
+你的目标是通过向路段中添加车辆并观察指数变化，推断出这五个隐藏系数的准确值。
 
-**查询限制**：
-- 总查询次数不超过 12 次。
-- 相邻查询 ADJ 最多只能使用 3 次。
-- 超出限制的查询将被系统拦截并视为无效。
+你可以执行以下操作：
 
-每次查询后，调度系统会回答"是"或"否"。
+1. 添加操作：向路段中放入一辆类型 i 的车辆（i 可以是 1、2、3 或 4）。系统会返回已添加的类型、当前车辆计数向量和当前拥堵指数 S。
+2. 查询操作：查询当前路况状态。系统会返回当前计数向量和拥堵指数 S。
+3. 重置操作：清空该路段，即计数变为 (0, 0, 0, 0)，指数 S 变为 0。
+4. 提交答案：当你认为已经推断出隐藏系数时，提交你的答案。
 
-当你收集到足够信息后，请提交最终排查报告。答案格式如下：
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-<answer>predecessor=站点或无, successor=站点或无</answer>
+- 添加类型 2 的车辆：
+<add>2</add>
 
-例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
+- 查询当前路况状态：
+<query></query>
 
-若报告错误、格式不符或超出查询限制，排查任务失败。请尽可能高效地使用查询次数来推断正确结果。
+- 清空路段：
+<reset></reset>
+
+- 提交最终答案（五个系数用逗号分隔）：
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+注意：提交答案时必须包含所有五个系数，格式严格按照 a=整数, b=整数, c=整数, d=整数, e=整数，每个系数的值必须在 [-3, 3] 范围内。若答案错误或格式不符，排查失败。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's execute a "Rail Transit Network Inspection" task. Here are the rules:
+Welcome to the "Urban Intelligent Traffic Scheduling Evaluation System".
 
-There is a one-way rail transit line containing a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} of 9 distinct stations. These stations are arranged in a fixed but unknown linear sequence, represented by a position function pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
+The system monitors a specific road segment that allows 4 types of vehicles, labeled {1, 2, 3, 4} (representing cars, buses, trucks, and motorcycles, respectively). The segment state is determined by the count of each vehicle type (n1, n2, n3, n4), initially (0, 0, 0, 0).
 
-The target station under inspection is {target_element}. Your task is to determine the immediate upstream station (predecessor) and immediate downstream station (successor) of this target:
-- If the target's position is greater than 1, the predecessor is the station at position exactly 1 less; otherwise, the predecessor is "none".
-- If the target's position is less than 9, the successor is the station at position exactly 1 greater; otherwise, the successor is "none".
+The system calculates an integer "Traffic Congestion Index" S based on the current traffic state, determined by five traffic features and five hidden weight coefficients:
 
-You may query the dispatch center with three types of yes/no questions (one question per turn):
+S = a × Interaction Conflicts + b × Vehicle Diversity + c × Signal Asymmetry + d × Platoon Formations + e × Total Traffic
 
-1. **Precedence Query BEFORE(x, y)**: Ask if station x is reached before station y.
-   Format: <query_before>x,y</query_before>
+Definition of the five features:
+1. Interaction Conflicts (Pairs): Sum of potential pairwise interactions for all vehicle types, i.e., for each type i, calculate ni × (ni - 1) / 2, then sum
+2. Vehicle Diversity (Distinct): Number of vehicle types with count greater than 0
+3. Signal Asymmetry (Odd): Number of vehicle types with an odd count
+4. Platoon Formations (Triplets): Sum of three-vehicle platoons for all types, i.e., for each type i, calculate floor(ni / 3), then sum
+5. Total Traffic (Total): Sum of all vehicle counts
 
-2. **Interval Query BETWEEN(z; x, y)**: Ask if station z is strictly located between stations x and y.
-   Format: <query_between>z,x,y</query_between>
+The hidden coefficients a, b, c, d, e are unknown integers, each ranging from [-3, 3], and not all zero. These coefficients represent the weights of different traffic factors on congestion and remain constant throughout the analysis.
 
-3. **Adjacency Query ADJ(x, y)**: Ask if stations x and y are directly adjacent on the line.
-   Format: <query_adj>x,y</query_adj>
+Your goal is to deduce the exact values of these five hidden coefficients by adding vehicles to the segment and observing the index changes.
 
-**Query Limits**:
-- Total number of queries cannot exceed 12.
-- Adjacency queries ADJ can be used at most 3 times.
-- Queries exceeding these limits will be rejected as invalid.
+You can perform the following operations:
 
-After each query, the dispatch system will answer "Yes" or "No".
+1. Add operation: Add a vehicle of type i to the segment (i can be 1, 2, 3, or 4). The system returns the added type, current count vector, and current Congestion Index S.
+2. Query operation: Query the current traffic state. The system returns the current count vector and Congestion Index S.
+3. Reset operation: Clear the road segment, i.e., (n1, n2, n3, n4) becomes (0, 0, 0, 0), Index S becomes 0.
+4. Submit answer: When you believe you have deduced the hidden coefficients, submit your answer.
 
-When you have gathered sufficient information, submit your final inspection report in the following format:
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>predecessor=station_or_none, successor=station_or_none</answer>
+- Add a vehicle of type 2:
+<add>2</add>
 
-For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
+- Query current traffic state:
+<query></query>
 
-If the report is incorrect, the format is invalid, or query limits are exceeded, the inspection task fails. Please utilize your queries as efficiently as possible.
+- Clear the road segment:
+<reset></reset>
+
+- Submit final answer (five coefficients separated by commas):
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+Note: When submitting your answer, you must include all five coefficients in the format a=integer, b=integer, c=integer, d=integer, e=integer, with each coefficient value in the range [-3, 3]. If the answer is incorrect or the format is invalid, the evaluation fails.
 """
 
-    # ==========================================
-    # 场景 2：医疗
-    # ==========================================
     contextualized_rule_zh_2 = """\
-我们来进行一项"临床诊疗路径推断"任务，规则如下：
+欢迎使用“临床联合用药风险评估系统”。
 
-存在一个包含 9 个互不相同的临床诊疗阶段的集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些阶段按严格的时间先后顺序排列，用阶段次序 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
+系统正在评估一个患者的给药处方，该处方包含 4 种类型的临床干预药物，记为 {1, 2, 3, 4}（分别代表抗生素、镇痛药、维生素、抗病毒药）。处方状态由各类药物的给药单位计数 (n1, n2, n3, n4) 决定，初始为空，即 (0, 0, 0, 0)。
 
-已知当前关注的诊疗阶段为 {target_element}。你的任务是确定该阶段的紧邻前置阶段（前驱）和紧邻后续阶段（后继）：
-- 若目标阶段次序大于 1，则前驱是次序恰好比它小 1 的阶段；否则前驱为"无"。
-- 若目标阶段次序小于 9，则后继是次序恰好比它大 1 的阶段；否则后继为"无"。
+系统会根据当前的用药组合计算一个整数型的“副作用风险评分” S，该评分由以下五个临床特征和五个隐藏风险系数决定：
 
-你可以通过医疗信息系统进行以下三类是非查询（每次仅限一个问题）：
+S = a × 药物相互作用 + b × 用药复杂性 + c × 剂量不对称度 + d × 毒性蓄积 + e × 总给药负荷
 
-1. **时序查询 BEFORE(x, y)**：询问阶段 x 是否在阶段 y 之前发生。
-   格式：<query_before>x,y</query_before>
+五个特征的定义：
+1. 药物相互作用（Pairs）：同类药物潜在交叉反应对数之和，即对每类药物 i，计算 ni × (ni - 1) / 2，然后求和
+2. 用药复杂性（Distinct）：当前计数大于 0 的药物种类数
+3. 剂量不对称度（Odd）：当前给药单位为奇数的药物种类数
+4. 毒性蓄积（Triplets）：所有药物的三联用药蓄积量之和，即对每类药物 i，计算 floor(ni / 3)，然后求和
+5. 总给药负荷（Total）：所有药物单位的数量总和
 
-2. **穿插查询 BETWEEN(z; x, y)**：询问阶段 z 是否严格发生在阶段 x 和 y 的执行期间。
-   格式：<query_between>z,x,y</query_between>
+隐藏系数 a, b, c, d, e 是未知的整数，取值范围均为 [-3, 3]，且不全为 0。这些系数代表了不同临床特征对副作用的贡献度，在整个评估过程中保持不变。
 
-3. **衔接查询 ADJ(x, y)**：询问阶段 x 和 y 是否是紧密相连的两个诊疗阶段。
-   格式：<query_adj>x,y</query_adj>
+你的目标是通过向处方中增添药物并观察风险评分的变化，推断出这五个隐藏系数的准确值。
 
-**查询限制**：
-- 总查询次数不超过 12 次。
-- 衔接查询 ADJ 最多只能使用 3 次。
-- 超出限制的查询将被系统拒绝。
+你可以执行以下操作：
 
-每次查询后，系统会回答"是"或"否"。
+1. 添加操作：向处方中增加一个单位的类型 i 药物（i 可以是 1、2、3 或 4）。系统会返回已添加的类型、当前用药计数向量和当前副作用风险评分 S。
+2. 查询操作：查询当前处方状态。系统会返回当前计数向量和副作用风险评分 S。
+3. 重置操作：清空当前处方，即 (n1, n2, n3, n4) 变为 (0, 0, 0, 0)，风险评分 S 变为 0。
+4. 提交答案：当你认为已经推断出隐藏风险系数时，提交你的答案。
 
-当你收集到足够信息后，请提交最终推断报告。答案格式如下：
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-<answer>predecessor=阶段或无, successor=阶段或无</answer>
+- 添加类型 2 的药物：
+<add>2</add>
 
-例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
+- 查询当前处方状态：
+<query></query>
 
-若报告错误、格式不符或超出查询限制，推断任务失败。请合理规划查询路径以完成推导。
+- 清空处方：
+<reset></reset>
+
+- 提交最终答案（五个系数用逗号分隔）：
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+注意：提交答案时必须包含所有五个系数，格式严格按照 a=整数, b=整数, c=整数, d=整数, e=整数，每个系数的值必须在 [-3, 3] 范围内。若答案错误或格式不符，评估失败。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's perform a "Clinical Pathway Deduction" task. Here are the rules:
+Welcome to the "Clinical Polypharmacy Risk Assessment System".
 
-There exists a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} containing 9 distinct clinical diagnosis and treatment stages. These stages are arranged in a strict chronological order, represented by a sequence function pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
+The system is evaluating a patient's prescription regimen, which includes 4 types of clinical interventions, labeled {1, 2, 3, 4} (representing antibiotics, painkillers, vitamins, and antivirals, respectively). The regimen state is determined by the dosage count of each drug type (n1, n2, n3, n4), initially empty, i.e., (0, 0, 0, 0).
 
-The target stage of interest is {target_element}. Your task is to determine the immediate preceding stage (predecessor) and immediate succeeding stage (successor) of this target:
-- If the target's sequence is greater than 1, the predecessor is the stage at sequence exactly 1 less; otherwise, the predecessor is "none".
-- If the target's sequence is less than 9, the successor is the stage at sequence exactly 1 greater; otherwise, the successor is "none".
+The system calculates an integer "Side Effect Risk Score" S based on the current medication combination, determined by five clinical features and five hidden risk coefficients:
 
-You can query the medical information system with three types of yes/no questions (one question per turn):
+S = a × Drug Interactions + b × Treatment Complexity + c × Dosage Imbalance + d × Toxicity Accumulation + e × Total Medication Load
 
-1. **Chronology Query BEFORE(x, y)**: Ask if stage x occurs before stage y.
-   Format: <query_before>x,y</query_before>
+Definition of the five features:
+1. Drug Interactions (Pairs): Sum of potential cross-reaction pairs for all drugs, i.e., for each type i, calculate ni × (ni - 1) / 2, then sum
+2. Treatment Complexity (Distinct): Number of drug types with a count greater than 0
+3. Dosage Imbalance (Odd): Number of drug types with an odd dosage count
+4. Toxicity Accumulation (Triplets): Sum of triple-dose accumulations for all types, i.e., for each type i, calculate floor(ni / 3), then sum
+5. Total Medication Load (Total): Sum of all drug dosage counts
 
-2. **Intervention Query BETWEEN(z; x, y)**: Ask if stage z occurs strictly between stages x and y.
-   Format: <query_between>z,x,y</query_between>
+The hidden coefficients a, b, c, d, e are unknown integers, each ranging from [-3, 3], and not all zero. These coefficients represent the contribution of different clinical features to side effects and remain constant throughout the assessment.
 
-3. **Connection Query ADJ(x, y)**: Ask if stages x and y are consecutive clinical stages.
-   Format: <query_adj>x,y</query_adj>
+Your goal is to deduce the exact values of these five hidden coefficients by adding drugs to the regimen and observing the risk score changes.
 
-**Query Limits**:
-- Total number of queries cannot exceed 12.
-- Connection queries ADJ can be used at most 3 times.
-- Queries exceeding these limits will be rejected.
+You can perform the following operations:
 
-After each query, the system will answer "Yes" or "No".
+1. Add operation: Add one unit of drug type i to the regimen (i can be 1, 2, 3, or 4). The system returns the added type, current dosage count vector, and current Risk Score S.
+2. Query operation: Query the current regimen state. The system returns the current count vector and Risk Score S.
+3. Reset operation: Clear the prescription regimen, i.e., (n1, n2, n3, n4) becomes (0, 0, 0, 0), Risk Score S becomes 0.
+4. Submit answer: When you believe you have deduced the hidden risk coefficients, submit your answer.
 
-When you have gathered sufficient information, submit your final deduction report in the following format:
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>predecessor=stage_or_none, successor=stage_or_none</answer>
+- Add a drug of type 2:
+<add>2</add>
 
-For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
+- Query current regimen state:
+<query></query>
 
-If the report is incorrect, the format is invalid, or query limits are exceeded, the deduction task fails. Please plan your query path logically.
+- Clear the prescription regimen:
+<reset></reset>
+
+- Submit final answer (five coefficients separated by commas):
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+Note: When submitting your answer, you must include all five coefficients in the format a=integer, b=integer, c=integer, d=integer, e=integer, with each coefficient value in the range [-3, 3]. If the answer is incorrect or the format is invalid, the assessment fails.
 """
 
-    # ==========================================
-    # 场景 3：教育
-    # ==========================================
     contextualized_rule_zh_3 = """\
-我们来制定一份"进阶课程先修链路规划"，规则如下：
+欢迎使用“智能教学认知负荷监测系统”。
 
-存在一个包含 9 个互不相同学习模块的集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些模块按难度等级构成了一条严格的单向选修链路，用等级 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
+系统正在追踪一位学生的周学习计划，该计划由 4 种类型的学习任务组成，记为 {1, 2, 3, 4}（分别代表阅读、写作、练习、讨论）。学习计划的状态由各类型任务的数量 (n1, n2, n3, n4) 决定，初始为 (0, 0, 0, 0)。
 
-已知核心关注课程为 {target_element}。你的任务是确定该课程的直接先修课程（前驱）和直接后续课程（后继）：
-- 若目标课程等级大于 1，则前驱是等级恰好比它小 1 的课程；否则前驱为"无"。
-- 若目标课程等级小于 9，则后继是等级恰好比它大 1 的课程；否则后继为"无"。
+系统会根据当前的任务编排计算一个整数型的“认知负荷综合评分” S，该评分由以下五个教学特征和五个隐藏评估系数决定：
 
-你可以向教务系统发起以下三类是非查询（每次仅限一个问题）：
+S = a × 任务干扰 + b × 学习形式多样性 + c × 节奏紊乱度 + d × 深度沉浸周期 + e × 总学习量
 
-1. **难度查询 BEFORE(x, y)**：询问课程 x 的等级是否低于课程 y（需先于 y 学习）。
-   格式：<query_before>x,y</query_before>
+五个特征的定义：
+1. 任务干扰（Pairs）：同类任务的疲劳叠加干扰对数之和，即对每种任务 i，计算 ni × (ni - 1) / 2，然后求和
+2. 学习形式多样性（Distinct）：当前被分配数量大于 0 的任务种类数
+3. 节奏紊乱度（Odd）：当前分配数量为奇数的任务种类数
+4. 深度沉浸周期（Triplets）：所有任务的三连深度学习周期数之和，即对每种任务 i，计算 floor(ni / 3)，然后求和
+5. 总学习量（Total）：所有任务的数量总和
 
-2. **介于查询 BETWEEN(z; x, y)**：询问课程 z 的等级是否严格介于课程 x 和 y 之间。
-   格式：<query_between>z,x,y</query_between>
+隐藏系数 a, b, c, d, e 是未知的整数，取值范围均为 [-3, 3]，且不全为 0。这些系数代表了不同教学因素对大脑认知负荷的影响比重，在整个监测期间保持不变。
 
-3. **相邻查询 ADJ(x, y)**：询问课程 x 和 y 是否为难度相邻的两个模块。
-   格式：<query_adj>x,y</query_adj>
+你的目标是通过向学习计划中添加任务并观察认知负荷的变化，推断出这五个隐藏系数的准确值。
 
-**查询限制**：
-- 总查询次数不超过 12 次。
-- 相邻查询 ADJ 最多只能使用 3 次。
-- 超出限制的查询将被记为无效操作。
+你可以执行以下操作：
 
-每次查询后，教务系统会返回"是"或"否"。
+1. 添加操作：向计划中添加一个类型 i 的学习任务（i 可以是 1、2、3 或 4）。系统会返回已添加的类型、当前任务计数向量和当前认知负荷评分 S。
+2. 查询操作：查询当前学习计划状态。系统会返回当前计数向量和认知负荷评分 S。
+3. 重置操作：清空该学习计划，即 (n1, n2, n3, n4) 变为 (0, 0, 0, 0)，负荷评分 S 变为 0。
+4. 提交答案：当你认为已经推断出隐藏评估系数时，提交你的答案。
 
-当你收集到足够信息后，请提交最终链路规划。答案格式如下：
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-<answer>predecessor=课程或无, successor=课程或无</answer>
+- 添加类型 2 的学习任务：
+<add>2</add>
 
-例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
+- 查询当前学习计划状态：
+<query></query>
 
-若规划错误、格式不符或超出查询限制，任务失败。请以最少的查询次数还原出正确的选修关系。
+- 清空学习计划：
+<reset></reset>
+
+- 提交最终答案（五个系数用逗号分隔）：
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+注意：提交答案时必须包含所有五个系数，格式严格按照 a=整数, b=整数, c=整数, d=整数, e=整数，每个系数的值必须在 [-3, 3] 范围内。若答案错误或格式不符，排查失败。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's formulate an "Advanced Course Prerequisite Pathway", following these rules:
+Welcome to the "Intelligent Teaching Cognitive Load Monitoring System".
 
-There is a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} containing 9 distinct learning modules. These modules form a strict one-way elective pathway based on difficulty level, represented by a level function pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
+The system tracks a student's weekly study plan, composed of 4 types of learning tasks labeled {1, 2, 3, 4} (representing reading, writing, practice, and discussion, respectively). The study plan state is determined by the count of each task type (n1, n2, n3, n4), initially (0, 0, 0, 0).
 
-The core course in focus is {target_element}. Your task is to determine the immediate prerequisite course (predecessor) and immediate subsequent course (successor) of this module:
-- If the target's level is greater than 1, the predecessor is the course at level exactly 1 less; otherwise, the predecessor is "none".
-- If the target's level is less than 9, the successor is the course at level exactly 1 greater; otherwise, the successor is "none".
+The system calculates an integer "Comprehensive Cognitive Load Score" S based on the current task arrangement, determined by five pedagogical features and five hidden evaluation coefficients:
 
-You can query the academic system with three types of yes/no questions (one question per turn):
+S = a × Task Interference + b × Subject Diversity + c × Rhythm Disruption + d × Deep Immersion Cycles + e × Total Study Volume
 
-1. **Difficulty Query BEFORE(x, y)**: Ask if course x's level is lower than course y (must be studied before y).
-   Format: <query_before>x,y</query_before>
+Definition of the five features:
+1. Task Interference (Pairs): Sum of fatigue-stacking interference pairs for same-type tasks, i.e., for each task i, calculate ni × (ni - 1) / 2, then sum
+2. Subject Diversity (Distinct): Number of task types with an assigned count greater than 0
+3. Rhythm Disruption (Odd): Number of task types with an odd assigned count
+4. Deep Immersion Cycles (Triplets): Sum of deep-learning triple-cycles for all tasks, i.e., for each task i, calculate floor(ni / 3), then sum
+5. Total Study Volume (Total): Sum of all task counts
 
-2. **Intermediate Query BETWEEN(z; x, y)**: Ask if course z's level is strictly between courses x and y.
-   Format: <query_between>z,x,y</query_between>
+The hidden coefficients a, b, c, d, e are unknown integers, each ranging from [-3, 3], and not all zero. These coefficients represent the impact weights of different pedagogical factors on cognitive load and remain constant throughout the monitoring period.
 
-3. **Adjacency Query ADJ(x, y)**: Ask if courses x and y are two modules with adjacent difficulties.
-   Format: <query_adj>x,y</query_adj>
+Your goal is to deduce the exact values of these five hidden coefficients by adding tasks to the study plan and observing the cognitive load changes.
 
-**Query Limits**:
-- Total number of queries cannot exceed 12.
-- Adjacency queries ADJ can be used at most 3 times.
-- Queries exceeding these limits will be recorded as invalid operations.
+You can perform the following operations:
 
-After each query, the academic system will return "Yes" or "No".
+1. Add operation: Add a learning task of type i to the plan (i can be 1, 2, 3, or 4). The system returns the added type, current task count vector, and current Cognitive Load Score S.
+2. Query operation: Query the current study plan state. The system returns the current count vector and Cognitive Load Score S.
+3. Reset operation: Clear the study plan, i.e., (n1, n2, n3, n4) becomes (0, 0, 0, 0), Score S becomes 0.
+4. Submit answer: When you believe you have deduced the hidden evaluation coefficients, submit your answer.
 
-When you have gathered sufficient information, submit your final pathway plan in the following format:
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>predecessor=course_or_none, successor=course_or_none</answer>
+- Add a task of type 2:
+<add>2</add>
 
-For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
+- Query current study plan state:
+<query></query>
 
-If the plan is incorrect, the format is invalid, or query limits are exceeded, the task fails. Deduce the correct prerequisite relationships with minimal queries.
+- Clear the study plan:
+<reset></reset>
+
+- Submit final answer (five coefficients separated by commas):
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+Note: When submitting your answer, you must include all five coefficients in the format a=integer, b=integer, c=integer, d=integer, e=integer, with each coefficient value in the range [-3, 3]. If the answer is incorrect or the format is invalid, the tracking fails.
 """
 
-    # ==========================================
-    # 场景 4：制造业/工业
-    # ==========================================
     contextualized_rule_zh_4 = """\
-我们来执行一项"工业流水线工序测绘"任务，规则如下：
+欢迎使用“化工混合批次稳定性分析系统”。
 
-存在一条装配流水线，包含 9 道互不相同的加工工序集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些工序按未知的严格加工顺序排列，用工位次序 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
+系统用于分析反应釜内的一个化学混合批次，该批次包含 4 种反应原料，记为 {1, 2, 3, 4}（分别代表合金、聚合物、催化剂、溶剂）。批次的投料状态由各物料的计量单位 (n1, n2, n3, n4) 决定，初始状态为空，即 (0, 0, 0, 0)。
 
-已知目标质检工序为 {target_element}。你的任务是查明该工序的上一道紧邻工序（前驱）和下一道紧邻工序（后继）：
-- 若目标工序次序大于 1，则前驱是次序恰好比它小 1 的工序；否则前驱为"无"。
-- 若目标工序次序小于 9，则后继是次序恰好比它大 1 的工序；否则后继为"无"。
+系统会根据当前的物料构成计算一个整数型的“批次不稳定性指数” S，该指数由以下五个理化特征和五个隐藏工艺系数决定：
 
-你可以向制造执行系统（MES）发起以下三类是非查询（每次仅限一个问题）：
+S = a × 组分交叉反应 + b × 物料混合度 + c × 计量偏差 + d × 凝聚团簇 + e × 总投料量
 
-1. **排期查询 BEFORE(x, y)**：询问工序 x 是否在工序 y 之前执行。
-   格式：<query_before>x,y</query_before>
+五个特征的定义：
+1. 组分交叉反应（Pairs）：同类物料之间的自促反应概率对数之和，即对每种原料 i，计算 ni × (ni - 1) / 2，然后求和
+2. 物料混合度（Distinct）：当前投料量大于 0 的物料种类数
+3. 计量偏差（Odd）：当前投料量为奇数的物料种类数
+4. 凝聚团簇（Triplets）：所有物料的三联聚集体团簇数之和，即对每种原料 i，计算 floor(ni / 3)，然后求和
+5. 总投料量（Total）：所有原料的单位数量总和
 
-2. **夹插查询 BETWEEN(z; x, y)**：询问工序 z 的执行时间是否严格介于工序 x 和 y 之间。
-   格式：<query_between>z,x,y</query_between>
+隐藏系数 a, b, c, d, e 是未知的整数，取值范围均为 [-3, 3]，且不全为 0。这些系数代表了不同理化参数对反应釜稳定性的影响权重，在整个测定过程中保持不变。
 
-3. **上下游查询 ADJ(x, y)**：询问工序 x 和 y 是否是流水线上直接相连的两道工序。
-   格式：<query_adj>x,y</query_adj>
+你的目标是通过向反应釜中逐步添加原料并观察不稳定性指数的波动，推断出这五个隐藏工艺系数的准确值。
 
-**查询限制**：
-- 总查询次数不超过 12 次。
-- 上下游查询 ADJ 最多只能使用 3 次。
-- 超出限制的查询指令将报错。
+你可以执行以下操作：
 
-每次查询后，系统会反馈"是"或"否"。
+1. 添加操作：向反应釜中投入一个单位的类型 i 原料（i 可以是 1、2、3 或 4）。系统会返回已添加的类型、当前投料计数向量和当前不稳定性指数 S。
+2. 查询操作：查询当前批次状态。系统会返回当前计数向量和不稳定性指数 S。
+3. 重置操作：清空排干反应釜，即 (n1, n2, n3, n4) 变为 (0, 0, 0, 0)，不稳定性指数 S 变为 0。
+4. 提交答案：当你认为已经推断出隐藏工艺系数时，提交你的答案。
 
-当你收集到足够信息后，请提交最终工序测绘结果。答案格式如下：
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-<answer>predecessor=工序或无, successor=工序或无</answer>
+- 投入类型 2 的原料：
+<add>2</add>
 
-例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
+- 查询当前批次状态：
+<query></query>
 
-若测绘错误、格式不符或超出查询限制，任务失败。请最优化你的查询策略。
+- 清空反应釜：
+<reset></reset>
+
+- 提交最终答案（五个系数用逗号分隔）：
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+注意：提交答案时必须包含所有五个系数，格式严格按照 a=整数, b=整数, c=整数, d=整数, e=整数，每个系数的值必须在 [-3, 3] 范围内。若答案错误或格式不符，测定失败。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Let's perform an "Industrial Assembly Line Process Mapping" task. Here are the rules:
+[Manufacturing Scenario]
+Welcome to the "Chemical Mixing Batch Stability Analysis System".
 
-There is an assembly line comprising a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} of 9 distinct manufacturing processes. These processes are arranged in a strict but unknown processing sequence, represented by a workstation index pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
+The system is used to analyze a chemical mixing batch inside a reactor, comprising 4 types of raw materials labeled {1, 2, 3, 4} (representing alloys, polymers, catalysts, and solvents, respectively). The batch state is determined by the dosage units of each material (n1, n2, n3, n4), initially empty, i.e., (0, 0, 0, 0).
 
-The target quality inspection process is {target_element}. Your task is to identify the immediate preceding process (predecessor) and immediate succeeding process (successor) of this target:
-- If the target's sequence is greater than 1, the predecessor is the process at index exactly 1 less; otherwise, the predecessor is "none".
-- If the target's sequence is less than 9, the successor is the process at index exactly 1 greater; otherwise, the successor is "none".
+The system calculates an integer "Batch Instability Index" S based on the current material composition, determined by five physicochemical features and five hidden process coefficients:
 
-You can query the Manufacturing Execution System (MES) with three types of yes/no questions (one question per turn):
+S = a × Component Cross-Reactions + b × Material Diversity + c × Stoichiometric Deviation + d × Coagulation Clusters + e × Total Material Volume
 
-1. **Schedule Query BEFORE(x, y)**: Ask if process x is executed before process y.
-   Format: <query_before>x,y</query_before>
+Definition of the five features:
+1. Component Cross-Reactions (Pairs): Sum of auto-catalytic probability pairs among the same materials, i.e., for each material i, calculate ni × (ni - 1) / 2, then sum
+2. Material Diversity (Distinct): Number of material types with a dosage volume greater than 0
+3. Stoichiometric Deviation (Odd): Number of material types with an odd dosage volume
+4. Coagulation Clusters (Triplets): Sum of triple-aggregate clusters for all materials, i.e., for each material i, calculate floor(ni / 3), then sum
+5. Total Material Volume (Total): Sum of all material units
 
-2. **Interleaved Query BETWEEN(z; x, y)**: Ask if process z's execution is strictly between processes x and y.
-   Format: <query_between>z,x,y</query_between>
+The hidden coefficients a, b, c, d, e are unknown integers, each ranging from [-3, 3], and not all zero. These coefficients represent the influence weights of different physicochemical parameters on reactor stability and remain constant throughout the assay.
 
-3. **Upstream/Downstream Query ADJ(x, y)**: Ask if processes x and y are directly connected processes on the assembly line.
-   Format: <query_adj>x,y</query_adj>
+Your goal is to deduce the exact values of these five hidden process coefficients by gradually adding materials to the reactor and observing the instability index fluctuations.
 
-**Query Limits**:
-- Total number of queries cannot exceed 12.
-- Upstream/Downstream queries ADJ can be used at most 3 times.
-- Queries exceeding these limits will trigger an error.
+You can perform the following operations:
 
-After each query, the system will return "Yes" or "No".
+1. Add operation: Add one unit of material type i to the reactor (i can be 1, 2, 3, or 4). The system returns the added type, current count vector, and current Instability Index S.
+2. Query operation: Query the current batch state. The system returns the current count vector and Instability Index S.
+3. Reset operation: Drain and clear the reactor, i.e., (n1, n2, n3, n4) becomes (0, 0, 0, 0), Instability Index S becomes 0.
+4. Submit answer: When you believe you have deduced the hidden process coefficients, submit your answer.
 
-When you have gathered sufficient information, submit your final mapping result in the following format:
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>predecessor=process_or_none, successor=process_or_none</answer>
+- Add a material of type 2:
+<add>2</add>
 
-For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
+- Query current batch state:
+<query></query>
 
-If the mapping is incorrect, the format is invalid, or query limits are exceeded, the task fails. Please optimize your querying strategy.
+- Clear the reactor:
+<reset></reset>
+
+- Submit final answer (five coefficients separated by commas):
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+Note: When submitting your answer, you must include all five coefficients in the format a=integer, b=integer, c=integer, d=integer, e=integer, with each coefficient value in the range [-3, 3]. If the answer is incorrect or the format is invalid, the assay fails.
 """
 
-    # ==========================================
-    # 场景 5：法律
-    # ==========================================
     contextualized_rule_zh_5 = """\
-我们来进行一项"司法诉讼法定程序梳理"任务，规则如下：
+欢迎使用“司法证据链冲突审查系统”。
 
-存在一个包含 9 个互不相同的法定环节的集合 S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}}。这些环节必须按法律规定的严格先后顺序进行，用程序次序 pos 表示，其中 pos(si) 属于 {{1, 2, 3, 4, 5, 6, 7, 8, 9}}。
+系统正在协助梳理一宗案件的证据链，该证据链允许提取 4 种法定的证据形式，记为 {1, 2, 3, 4}（分别代表证人证言、书证、物证、电子数据）。当前的卷宗状态由各证据形式的采信件数 (n1, n2, n3, n4) 决定，初始状态为空卷，即 (0, 0, 0, 0)。
 
-已知当前审查的法定环节为 {target_element}。你的任务是确定该环节的上一法定环节（前置程序）和下一法定环节（后置程序）：
-- 若目标环节次序大于 1，则前置程序是次序恰好比它小 1 的环节；否则前置程序为"无"。
-- 若目标环节次序小于 9，则后置程序是次序恰好比它大 1 的环节；否则后置程序为"无"。
+系统会根据目前的证据汇总计算一个整数型的“证据链疑点指数” S，该指数由以下五个司法特征和五个隐藏审查系数决定：
 
-你可以查阅法典并进行以下三类是非查询（每次仅限一个问题）：
+S = a × 交叉质证对 + b × 证据形式多样性 + c × 孤证不对称度 + d × 相互印证链 + e × 总证据量
 
-1. **顺位查询 BEFORE(x, y)**：询问环节 x 是否在环节 y 之前启动。
-   格式：<query_before>x,y</query_before>
+五个特征的定义：
+1. 交叉质证对（Pairs）：同类证据间潜在的交叉比对数量之和，即对每种证据 i，计算 ni × (ni - 1) / 2，然后求和
+2. 证据形式多样性（Distinct）：当前采信件数大于 0 的证据形式种类数
+3. 孤证不对称度（Odd）：当前采信件数为奇数的证据形式种类数
+4. 相互印证链（Triplets）：所有证据形成的三联印证闭环数之和，即对每种证据 i，计算 floor(ni / 3)，然后求和
+5. 总证据量（Total）：所有证据采信件数的总和
 
-2. **穿插查询 BETWEEN(z; x, y)**：询问环节 z 是否必须在环节 x 和 y 的执行期间启动。
-   格式：<query_between>z,x,y</query_between>
+隐藏系数 a, b, c, d, e 是未知的整数，取值范围均为 [-3, 3]，且不全为 0。这些系数体现了不同证据组合在法庭质证过程中的冲突或支持效力，在整宗案件的审查期间保持不变。
 
-3. **衔接查询 ADJ(x, y)**：询问环节 x 和 y 是否是法定顺序上紧密衔接的两个程序。
-   格式：<query_adj>x,y</query_adj>
+你的目标是通过向证据链中逐步收录证据并观察疑点指数的变化，推断出这五个隐藏审查系数的准确值。
 
-**查询限制**：
-- 总查询次数不超过 12 次。
-- 衔接查询 ADJ 最多只能使用 3 次。
-- 超出限制的查阅请求将被驳回。
+你可以执行以下操作：
 
-每次查询后，法典检索引擎会回答"是"或"否"。
+1. 添加操作：向卷宗中采信一件类型 i 的证据（i 可以是 1、2、3 或 4）。系统会返回已添加的证据类型、当前证据采信向量和当前疑点指数 S。
+2. 查询操作：查询当前卷宗状态。系统会返回当前采信向量和疑点指数 S。
+3. 重置操作：清空当前卷宗证据链，即 (n1, n2, n3, n4) 变为 (0, 0, 0, 0)，疑点指数 S 变为 0。
+4. 提交答案：当你认为已经推断出隐藏审查系数时，提交你的答案。
 
-当你收集到足够信息后，请提交最终梳理结论。答案格式如下：
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-<answer>predecessor=环节或无, successor=环节或无</answer>
+- 收录类型 2 的证据：
+<add>2</add>
 
-例如：<answer>predecessor=s3, successor=s7</answer> 或 <answer>predecessor=无, successor=s2</answer>
+- 查询当前卷宗状态：
+<query></query>
 
-若结论错误、格式不符或超出查询限制，梳理任务失败。请严密论证并控制查询频次。
+- 清空卷宗：
+<reset></reset>
+
+- 提交最终答案（五个系数用逗号分隔）：
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+注意：提交答案时必须包含所有五个系数，格式严格按照 a=整数, b=整数, c=整数, d=整数, e=整数，每个系数的值必须在 [-3, 3] 范围内。若答案错误或格式不符，审查失败。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Let's conduct a "Judicial Litigation Statutory Procedure Review" task. Here are the rules:
+[Law Scenario]
+Welcome to the "Judicial Evidence Chain Conflict Review System".
 
-There exists a set S = {{s1, s2, s3, s4, s5, s6, s7, s8, s9}} containing 9 distinct statutory procedures. These procedures must be executed in a strict chronological order mandated by law, represented by a procedural sequence pos, where pos(si) is in {{1, 2, 3, 4, 5, 6, 7, 8, 9}}.
+The system is assisting in sorting out the evidence chain of a case, which allows the extraction of 4 statutory forms of evidence, labeled {1, 2, 3, 4} (representing testimonial, documentary, physical, and electronic evidence, respectively). The current docket state is determined by the accepted count of each evidence form (n1, n2, n3, n4), initially an empty docket, i.e., (0, 0, 0, 0).
 
-The target statutory procedure under review is {target_element}. Your task is to determine the previous statutory procedure (predecessor) and the next statutory procedure (successor) for this target:
-- If the target's sequence is greater than 1, the predecessor is the procedure exactly 1 step prior; otherwise, the predecessor is "none".
-- If the target's sequence is less than 9, the successor is the procedure exactly 1 step after; otherwise, the successor is "none".
+The system calculates an integer "Evidence Chain Suspicion Index" S based on the current evidence summary, determined by five judicial features and five hidden review coefficients:
 
-You can consult the legal code to make three types of yes/no queries (one query per turn):
+S = a × Cross-Examination Pairs + b × Evidence Diversity + c × Verification Asymmetry + d × Corroboration Chains + e × Total Evidence Count
 
-1. **Sequence Query BEFORE(x, y)**: Ask if procedure x is initiated before procedure y.
-   Format: <query_before>x,y</query_before>
+Definition of the five features:
+1. Cross-Examination Pairs (Pairs): Sum of potential cross-comparisons among the same type of evidence, i.e., for each evidence i, calculate ni × (ni - 1) / 2, then sum
+2. Evidence Diversity (Distinct): Number of evidence forms with an accepted count greater than 0
+3. Verification Asymmetry (Odd): Number of evidence forms with an odd accepted count
+4. Corroboration Chains (Triplets): Sum of triple corroborative loops formed by evidence, i.e., for each evidence i, calculate floor(ni / 3), then sum
+5. Total Evidence Count (Total): Sum of all accepted evidence counts
 
-2. **Interim Query BETWEEN(z; x, y)**: Ask if procedure z is initiated strictly between procedures x and y.
-   Format: <query_between>z,x,y</query_between>
+The hidden coefficients a, b, c, d, e are unknown integers, each ranging from [-3, 3], and not all zero. These coefficients reflect the conflict or supportive validity of different evidence combinations during courtroom cross-examination, and remain constant throughout the case review.
 
-3. **Connection Query ADJ(x, y)**: Ask if procedures x and y are strictly consecutive procedures in the statutory order.
-   Format: <query_adj>x,y</query_adj>
+Your goal is to deduce the exact values of these five hidden review coefficients by gradually incorporating evidence into the chain and observing changes in the suspicion index.
 
-**Query Limits**:
-- Total number of queries cannot exceed 12.
-- Connection queries ADJ can be used at most 3 times.
-- Queries exceeding these limits will be dismissed.
+You can perform the following operations:
 
-After each query, the legal retrieval engine will answer "Yes" or "No".
+1. Add operation: Accept a piece of evidence of type i into the docket (i can be 1, 2, 3, or 4). The system returns the added evidence type, current evidence accepted vector, and current Suspicion Index S.
+2. Query operation: Query the current docket state. The system returns the current accepted vector and Suspicion Index S.
+3. Reset operation: Clear the current evidence chain in the docket, i.e., (n1, n2, n3, n4) becomes (0, 0, 0, 0), Suspicion Index S becomes 0.
+4. Submit answer: When you believe you have deduced the hidden review coefficients, submit your answer.
 
-When you have gathered sufficient information, submit your final review conclusion in the following format:
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>predecessor=procedure_or_none, successor=procedure_or_none</answer>
+- Incorporate evidence of type 2:
+<add>2</add>
 
-For example: <answer>predecessor=s3, successor=s7</answer> or <answer>predecessor=none, successor=s2</answer>
+- Query current docket state:
+<query></query>
 
-If the conclusion is incorrect, the format is invalid, or query limits are exceeded, the review task fails. Construct your arguments rigorously to minimize queries.
+- Clear the docket:
+<reset></reset>
+
+- Submit final answer (five coefficients separated by commas):
+<answer>a=1, b=2, c=-1, d=0, e=3</answer>
+
+Note: When submitting your answer, you must include all five coefficients in the format a=integer, b=integer, c=integer, d=integer, e=integer, with each coefficient value in the range [-3, 3]. If the answer is incorrect or the format is invalid, the review fails.
 """
 
-    tags = ["answer", "query_before", "query_between", "query_adj"]
-
-    # 难度配置：
-    # 1 (简单)      - 目标在位置2，容易找到邻居
-    # 2 (中等偏下)  - 目标在位置4，中间位置
-    # 3 (中等偏上)  - 目标在位置7，需要更多推理
-    # 4 (较难)      - 目标在位置1，边界情况（无前驱）
-    # 5 (难)        - 目标在位置9，边界情况（无后继）
+    tags = ["answer", "add", "query", "reset"]
+    
+    reasoning_type = "归纳推理"
+    data_structure = "集合"
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "order": ["s5", "s2", "s8", "s1", "s6", "s4", "s9", "s3", "s7"],
-                "target": "s2",  # 位置2
-            },
-            2: {
-                "order": ["s3", "s7", "s1", "s5", "s9", "s4", "s2", "s8", "s6"],
-                "target": "s5",  # 位置4
-            },
-            3: {
-                "order": ["s4", "s9", "s2", "s6", "s1", "s8", "s3", "s5", "s7"],
-                "target": "s3",  # 位置7
-            },
-            4: {
-                "order": ["s7", "s3", "s5", "s9", "s2", "s1", "s4", "s8", "s6"],
-                "target": "s7",  # 位置1，无前驱
-            },
-            5: {
-                "order": ["s2", "s6", "s4", "s8", "s3", "s9", "s1", "s5", "s7"],
-                "target": "s7",  # 位置9，无后继
-            },
+        1: {
+            "a": 0,
+            "b": 2,
+            "c": 0,
+            "d": 0,
+            "e": 1,
         },
-        "en": {
-            1: {
-                "order": ["s5", "s2", "s8", "s1", "s6", "s4", "s9", "s3", "s7"],
-                "target": "s2",  # Position 2
-            },
-            2: {
-                "order": ["s3", "s7", "s1", "s5", "s9", "s4", "s2", "s8", "s6"],
-                "target": "s5",  # Position 4
-            },
-            3: {
-                "order": ["s4", "s9", "s2", "s6", "s1", "s8", "s3", "s5", "s7"],
-                "target": "s3",  # Position 7
-            },
-            4: {
-                "order": ["s7", "s3", "s5", "s9", "s2", "s1", "s4", "s8", "s6"],
-                "target": "s7",  # Position 1, no predecessor
-            },
-            5: {
-                "order": ["s2", "s6", "s4", "s8", "s3", "s9", "s1", "s5", "s7"],
-                "target": "s7",  # Position 9, no successor
-            },
+        2: {
+            "a": 1,
+            "b": 0,
+            "c": -1,
+            "d": 0,
+            "e": 2,
+        },
+        3: {
+            "a": 1,
+            "b": 1,
+            "c": 1,
+            "d": -1,
+            "e": 0,
+        },
+        4: {
+            "a": 2,
+            "b": -1,
+            "c": 1,
+            "d": 1,
+            "e": -2,
+        },
+        5: {
+            "a": -3,
+            "b": 2,
+            "c": -2,
+            "d": 3,
+            "e": -1,
         },
     }
 
@@ -531,55 +604,48 @@ If the conclusion is incorrect, the format is invalid, or query limits are excee
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据难度配置设置全序和目标元素"""
-        lang = self.config.language
         diff = int(self.config.difficulty)
 
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        cfg = self.DIFFICULTY_CONFIG[diff]
         
-        # 存储全序排列
-        self.order = cfg["order"]  # 列表，索引0对应位置1
+        self.coeff_a = cfg["a"]
+        self.coeff_b = cfg["b"]
+        self.coeff_c = cfg["c"]
+        self.coeff_d = cfg["d"]
+        self.coeff_e = cfg["e"]
         
-        # 目标元素
-        self.target = cfg["target"]
-        self._game_info["target_element"] = self.target
+        self.counts = [0, 0, 0, 0]
         
-        # 构建位置映射
-        self.pos_map = {elem: idx + 1 for idx, elem in enumerate(self.order)}
-        
-        # 计算正确答案
-        target_pos = self.pos_map[self.target]
-        
-        if target_pos > 1:
-            self.correct_predecessor = self.order[target_pos - 2]  # 位置target_pos-1对应索引target_pos-2
-        else:
-            self.correct_predecessor = "none" if lang == "en" else "无"
-            
-        if target_pos < 9:
-            self.correct_successor = self.order[target_pos]  # 位置target_pos+1对应索引target_pos
-        else:
-            self.correct_successor = "none" if lang == "en" else "无"
-        
-        # 初始化查询计数器
-        self.total_queries = 0
-        self.adj_queries = 0
-        self.max_total_queries = 12
-        self.max_adj_queries = 3
+        self._game_info = {}
 
-    def _is_valid_element(self, elem):
-        """检查元素是否在集合S中"""
-        return elem in self.pos_map
+    def _compute_features(self):
+        pairs = sum(n * (n - 1) // 2 for n in self.counts)
+        
+        distinct = sum(1 for n in self.counts if n > 0)
+        
+        odd = sum(1 for n in self.counts if n % 2 == 1)
+        
+        triplets = sum(n // 3 for n in self.counts)
+        
+        total = sum(self.counts)
+        
+        return pairs, distinct, odd, triplets, total
+
+    def _compute_score(self):
+        pairs, distinct, odd, triplets, total = self._compute_features()
+        score = (self.coeff_a * pairs + 
+                 self.coeff_b * distinct + 
+                 self.coeff_c * odd + 
+                 self.coeff_d * triplets + 
+                 self.coeff_e * total)
+        return score
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].replace("，", ",")
+        raw_ans = parsed_info["answer"]
         
-        # 解析答案: predecessor=x, successor=y
         kv_pairs = [x.strip() for x in raw_ans.split(",")]
         ans_dict = {}
         
@@ -587,167 +653,137 @@ If the conclusion is incorrect, the format is invalid, or query limits are excee
             if "=" not in kv:
                 continue
             k, v = kv.split("=", 1)
-            ans_dict[k.strip()] = v.strip()
+            k = k.strip().lower()
+            try:
+                ans_dict[k] = int(v.strip())
+            except:
+                return False
         
-        if "predecessor" not in ans_dict or "successor" not in ans_dict:
+        required_keys = ["a", "b", "c", "d", "e"]
+        if not all(k in ans_dict for k in required_keys):
             return False
         
-        # 标准化"无"的表示
-        pred = ans_dict["predecessor"]
-        succ = ans_dict["successor"]
+        for k in required_keys:
+            if ans_dict[k] < -3 or ans_dict[k] > 3:
+                return False
         
-        # 将各种"无"的表达统一
-        none_values = {"none", "无", "None", "NONE"}
-        if pred in none_values:
-            pred = self.correct_predecessor if self.correct_predecessor in none_values else pred
-        if succ in none_values:
-            succ = self.correct_successor if self.correct_successor in none_values else succ
-        
-        # 比较答案
-        pred_correct = (pred == self.correct_predecessor) or (
-            pred in none_values and self.correct_predecessor in none_values
-        )
-        succ_correct = (succ == self.correct_successor) or (
-            succ in none_values and self.correct_successor in none_values
-        )
-        
-        return pred_correct and succ_correct
+        return (ans_dict["a"] == self.coeff_a and
+                ans_dict["b"] == self.coeff_b and
+                ans_dict["c"] == self.coeff_c and
+                ans_dict["d"] == self.coeff_d and
+                ans_dict["e"] == self.coeff_e)
 
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑：根据查询类型生成响应"""
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_limit = "错误：已达到查询次数上限，无法继续查询。请直接提交你的最终答案。"
-            error_adj_limit = "错误：相邻查询次数已达上限，该查询无效。请使用其他类型的查询或提交答案。"
-            error_format = "错误：查询格式无效或元素不存在。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            error_limit = "Error: Query limit reached. No more queries allowed. Please submit your final answer."
-            error_adj_limit = "Error: Adjacent query limit reached. This query is invalid. Please use other query types or submit your answer."
-            error_format = "Error: Invalid query format or element does not exist."
-
-        # 检查总查询次数 —— 不再直接设 failed，而是拒绝查询，提示提交答案
-        if self.total_queries >= self.max_total_queries:
-            return error_limit
-
-        # 优先级：BEFORE > BETWEEN > ADJ
-        if "query_before" in parsed_info:
-            try:
-                raw = parsed_info["query_before"]
-                x, y = [elem.strip() for elem in raw.split(",")]
-                
-                if not self._is_valid_element(x) or not self._is_valid_element(y):
-                    return error_format
-                
-                self.total_queries += 1
-                result = self.pos_map[x] < self.pos_map[y]
-                return yes_res if result else no_res
-                
-            except Exception:
-                return error_format
-
-        elif "query_between" in parsed_info:
-            try:
-                raw = parsed_info["query_between"]
-                parts = [elem.strip() for elem in raw.split(",")]
-                
-                if len(parts) != 3:
-                    return error_format
-                
-                z, x, y = parts
-                
-                if not all(self._is_valid_element(e) for e in [z, x, y]):
-                    return error_format
-                
-                self.total_queries += 1
-                pos_z, pos_x, pos_y = self.pos_map[z], self.pos_map[x], self.pos_map[y]
-                
-                result = (pos_x < pos_z < pos_y) or (pos_y < pos_z < pos_x)
-                return yes_res if result else no_res
-                
-            except Exception:
-                return error_format
-
-        elif "query_adj" in parsed_info:
-            # 检查 ADJ 查询次数限制 —— 不再设 failed，仅拒绝该查询
-            if self.adj_queries >= self.max_adj_queries:
-                return error_adj_limit
-            
-            try:
-                raw = parsed_info["query_adj"]
-                x, y = [elem.strip() for elem in raw.split(",")]
-                
-                if not self._is_valid_element(x) or not self._is_valid_element(y):
-                    return error_format
-                
-                self.total_queries += 1
-                self.adj_queries += 1
-                
-                result = abs(self.pos_map[x] - self.pos_map[y]) == 1
-                return yes_res if result else no_res
-                
-            except Exception:
-                return error_format
-
-        else:
-            return error_format
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        返回一组精选的查询集合，覆盖关键推理路径，
-        而非枚举所有可能的查询组合（避免查询数量爆炸）。
+        is_zh = self.config.language == "zh"
         
-        策略：对于目标元素，返回与其他所有元素的 BEFORE 查询，
-        以及目标与其他所有元素的 ADJ 查询。这足以确定目标位置及其邻居。
-        """
-        queries = []
-        elements = sorted(list(self.pos_map.keys()))
+        if "add" in parsed_info:
+            try:
+                type_idx = int(parsed_info["add"].strip())
+                if type_idx < 1 or type_idx > 4:
+                    return "错误：类型必须是 1、2、3 或 4。" if is_zh else "Error: Type must be 1, 2, 3, or 4."
+                
+                self.counts[type_idx - 1] += 1
+                
+                score = self._compute_score()
+                
+                counts_str = f"({self.counts[0]}, {self.counts[1]}, {self.counts[2]}, {self.counts[3]})"
+                if is_zh:
+                    return f"已添加类型 {type_idx}。\n当前计数：{counts_str}\n当前评分：{score}"
+                else:
+                    return f"Added type {type_idx}.\nCurrent counts: {counts_str}\nCurrent score: {score}"
+                    
+            except ValueError:
+                return "错误：无效的类型格式。" if is_zh else "Error: Invalid type format."
         
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
+        elif "query" in parsed_info:
+            score = self._compute_score()
+            counts_str = f"({self.counts[0]}, {self.counts[1]}, {self.counts[2]}, {self.counts[3]})"
+            if is_zh:
+                return f"当前计数：{counts_str}\n当前评分：{score}"
+            else:
+                return f"Current counts: {counts_str}\nCurrent score: {score}"
+        
+        elif "reset" in parsed_info:
+            self.counts = [0, 0, 0, 0]
+            if is_zh:
+                return "已重置集合。\n当前计数：(0, 0, 0, 0)\n当前评分：0"
+            else:
+                return "Set has been reset.\nCurrent counts: (0, 0, 0, 0)\nCurrent score: 0"
+        
         else:
-            yes_res, no_res = "Yes", "No"
-
-        # BEFORE 查询：目标与所有其他元素的比较（确定目标位置）
-        for other in elements:
-            if other == self.target:
-                continue
-            query_str = f"<query_before>{self.target},{other}</query_before>"
-            result = self.pos_map[self.target] < self.pos_map[other]
-            queries.append({
-                "query": query_str,
-                "answer": yes_res if result else no_res
-            })
-
-        # ADJ 查询：目标与其他元素的相邻关系
-        for other in elements:
-            if other == self.target:
-                continue
-            query_str = f"<query_adj>{self.target},{other}</query_adj>"
-            result = abs(self.pos_map[self.target] - self.pos_map[other]) == 1
-            queries.append({
-                "query": query_str,
-                "answer": yes_res if result else no_res
-            })
-
-        return queries
+            raise ValueError("No valid operation tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个明显不同的错误答案"""
-        if correct.isdigit():
-            return str(int(correct) + 1)
+        score_pattern_en = r'(Current score:\s*)(-?\d+)'
+        score_pattern_zh = r'(当前评分：)(-?\d+)'
         
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            elif "否" in correct:
-                return correct.replace("否", "是")
+        match_en = re.search(score_pattern_en, correct)
+        match_zh = re.search(score_pattern_zh, correct)
+        
+        if match_en:
+            original_score = int(match_en.group(2))
+            offset = random.choice([i for i in range(-5, 6) if i != 0])
+            wrong_score = original_score + offset
+            return correct[:match_en.start(2)] + str(wrong_score) + correct[match_en.end(2):]
+        elif match_zh:
+            original_score = int(match_zh.group(2))
+            offset = random.choice([i for i in range(-5, 6) if i != 0])
+            wrong_score = original_score + offset
+            return correct[:match_zh.start(2)] + str(wrong_score) + correct[match_zh.end(2):]
         else:
-            # 忽略大小写进行判断，但替换时尽量保持原格式
-            correct_lower = correct.lower()
-            if "yes" in correct_lower:
-                return correct.replace("Yes", "No").replace("yes", "no").replace("YES", "NO")
-            elif "no" in correct_lower:
-                return correct.replace("No", "Yes").replace("no", "yes").replace("NO", "YES")
+            return correct + " [ERROR: unexpected value]"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
         
-        return correct + "_WRONG"
+        original_counts = list(self.counts)
+        
+        self.counts = [0, 0, 0, 0]
+        
+        parsed_info_query = {"query": ""}
+        resp_query = self._cf_core_produce(parsed_info_query)
+        results.append({
+            "query": "<query></query>",
+            "answer": resp_query
+        })
+        
+        for i in range(1, 5):
+            parsed_info_add = {"add": str(i)}
+            resp_add = self._cf_core_produce(parsed_info_add)
+            results.append({
+                "query": f"<add>{i}</add>",
+                "answer": resp_add
+            })
+        
+        parsed_info_add1 = {"add": "1"}
+        resp_add1 = self._cf_core_produce(parsed_info_add1)
+        results.append({
+            "query": "<add>1</add>",
+            "answer": resp_add1
+        })
+        
+        parsed_info_add1b = {"add": "1"}
+        resp_add1b = self._cf_core_produce(parsed_info_add1b)
+        results.append({
+            "query": "<add>1</add>",
+            "answer": resp_add1b
+        })
+        
+        parsed_info_reset = {"reset": ""}
+        resp_reset = self._cf_core_produce(parsed_info_reset)
+        results.append({
+            "query": "<reset></reset>",
+            "answer": resp_reset
+        })
+        
+        for _ in range(2):
+            parsed_info_add2 = {"add": "2"}
+            resp_add2 = self._cf_core_produce(parsed_info_add2)
+            results.append({
+                "query": "<add>2</add>",
+                "answer": resp_add2
+            })
+        
+        self.counts = list(original_counts)
+        
+        return results

@@ -1,365 +1,600 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   排序结果：序列排序后第k位的元素是什么
-# ============================================================
-
+from typing import List, Dict
 from .base import Game
-import random
-import re
+import json
 
-
-class KthElementFindingGame(Game):
+class GraphConnectivityGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"寻找第 k 位元素"的推理游戏，规则如下：
+我们现在来玩一个"删点连通性推理"游戏，规则如下：
 
-游戏设定了一个标签集合 {{1, 2, ..., {n}}}，这些标签存在一个未知但固定的严格全序关系。你的目标是找出按照这个全序关系从小到大排列后，位于第 {k} 位的标签是哪一个。
+游戏设定了一个固定但未知的简单无向连通图 G，顶点集为 {{A, B, C, D, E, F, G, H, I}}，共 9 个顶点。初始图是连通的（连通分量数为 1）。边的连接关系对你不可见。
 
-你可以反复向我提出比较查询，每次查询两个不同的标签 i 和 j，我会告诉你在这个全序关系中谁排在前面。请尽可能用较少的查询次数找到答案。
+你的目标是通过查询推断出图的连通性结构，并最终提交以下两项信息：
+1. 列出所有"关键顶点"（即删除后连通分量数大于 1 的顶点），并给出每个关键顶点对应的分量数。
+2. 指出删除后产生连通分量数最多的顶点（若有多个并列，需全部列出）。
 
-## 查询与提交答案的格式（必须严格遵守）
+每轮你只能提出以下三种查询之一（可重复查询）：
 
-每次只能包含一个标签。请使用以下 XML 格式：
+1. **删点分量数查询**：询问删除某个顶点 X 后，剩余图有多少个连通分量。
+2. **删点分量详情查询**：询问删除某个顶点 X 后，剩余图的连通分量数及各分量规模（按升序排列）。
+3. **分量数比较查询**：询问删除顶点 X 与删除顶点 Y，哪个产生的连通分量数更多。
 
-- 比较查询（例如比较标签 3 和 5）：
-<query_compare>3,5</query_compare>
+注意：你不能直接询问边、度数、邻接关系、路径等结构信息。
 
-- 提交最终答案（例如认为第 {k} 位是标签 7）：
-<answer>7</answer>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-注意事项：
-1. 比较查询中的两个标签必须不同，且都在 1 到 {n} 范围内
-2. 你可以进行任意多次比较查询，但应尽量减少查询次数
-3. 当你确定答案后，使用 answer 标签提交
-4. 如果答案错误，游戏失败
+- 删点分量数查询（例如询问顶点 A）：
+<query_count>A</query_count>
+
+- 删点分量详情查询（例如询问顶点 B）：
+<query_detail>B</query_detail>
+
+- 分量数比较查询（例如比较顶点 C 和 D）：
+<query_compare>C,D</query_compare>
+
+当你收集足够信息后，请一次性提交最终答案，格式如下：
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+其中：
+- critical 是一个字典，键为关键顶点，值为删除该顶点后的连通分量数
+- max_vertices 是一个集合，包含所有使连通分量数达到最大的顶点
+
+示例说明：上述答案表示删除 A 后产生 2 个分量，删除 B 后产生 3 个分量，而 B 是产生最多分量的顶点。
+
+请尽可能少地使用查询次数来推断出正确答案。
 """
 
     game_rule_en = """\
-Let's play a "Find the k-th Element" deduction game. Here are the rules:
+Let's play a "Vertex Deletion Connectivity Inference" game. Here are the rules:
 
-There is a set of labels {{1, 2, ..., {n}}}. These labels have an unknown but fixed strict total order. Your goal is to identify which label is at position {k} when all labels are sorted according to this total order (in ascending order).
+The game has set up a fixed but unknown simple undirected connected graph G with vertex set {{A, B, C, D, E, F, G, H, I}}, containing 9 vertices. Initially, the graph is connected (number of connected components equals 1). The edge connections are not visible to you.
 
-You can repeatedly ask me comparison queries. Each query compares two different labels i and j, and I will tell you which one comes first in the total order. Try to find the answer with as few queries as possible.
+Your goal is to infer the connectivity structure of the graph through queries and ultimately submit the following two pieces of information:
+1. List all "critical vertices" (vertices whose deletion results in more than 1 connected component) and provide the number of components for each critical vertex.
+2. Identify the vertex (or vertices) whose deletion produces the maximum number of connected components (if there are ties, list all of them).
 
-## Query and Answer Format (strictly required)
+Each round you can only make one of the following three types of queries (queries can be repeated):
+
+1. **Component Count Query**: Ask how many connected components remain after deleting a vertex X.
+2. **Component Detail Query**: Ask for the number of connected components and the size of each component (in ascending order) after deleting a vertex X.
+3. **Component Count Comparison Query**: Ask which deletion produces more connected components: deleting vertex X or deleting vertex Y.
+
+Note: You cannot directly ask about edges, degrees, adjacency relationships, paths, or other structural information.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Comparison Query (e.g., comparing labels 3 and 5):
-<query_compare>3,5</query_compare>
+- Component Count Query (e.g., asking about vertex A):
+<query_count>A</query_count>
 
-- Submit Final Answer (e.g., if you think position {k} is label 7):
-<answer>7</answer>
+- Component Detail Query (e.g., asking about vertex B):
+<query_detail>B</query_detail>
 
-Notes:
-1. The two labels in a comparison query must be different and within range 1 to {n}
-2. You can make any number of comparison queries, but should minimize the count
-3. When you are confident, submit your answer using the answer tag
-4. If the answer is incorrect, the game fails
+- Component Count Comparison Query (e.g., comparing vertices C and D):
+<query_compare>C,D</query_compare>
+
+When you have gathered enough information, submit your final answer in the following format:
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+Where:
+- critical is a dictionary with keys as critical vertices and values as the number of connected components after deleting that vertex
+- max_vertices is a set containing all vertices that produce the maximum number of components
+
+Example explanation: The above answer indicates that deleting A produces 2 components, deleting B produces 3 components, and B is the vertex that produces the most components.
+
+Please use as few queries as possible to infer the correct answer.
 """
 
     contextualized_rule_zh_1 = """\
-智能路口通行调度系统初始化。当前有 {n} 辆自动驾驶测试车（编号标签集合为 {{1, 2, ..., {n}}}）正在等待通过特殊测试路口。
-这些车辆标签存在一个未知但固定的严格通行优先级关系（全序关系）。你的目标是推断出按照通行优先级从先到后排列时，排在第 {k} 位的车辆标签是哪一个。
+为应对极端天气对城市路网的冲击，我们现在进行一场“交通枢纽封锁推演”，规则如下：
 
-你可以反复向调度系统提出比较查询，每次输入两个不同的车辆标签 i 和 j，系统会反馈在这两个标签中谁的优先级更高（在全序中排在前面）。请尽可能用较少的查询次数找出目标标签。
+推演设定了一个固定但未知的高速交通网络 G，包含 9 个交通枢纽，代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有枢纽都在同一个互通的路网内（连通分量数为 1）。各枢纽之间的直连路线对你不可见。
 
-## 查询与提交答案的格式（必须严格遵守）
+你的目标是通过模拟查询推断路网的脆弱点，并最终提交以下两项信息：
+1. 列出所有“关键枢纽”（即封锁该枢纽后，路网会瘫痪并分裂成 1 个以上互不相通的独立路网区域的枢纽），并给出每个关键枢纽封锁后产生的独立区域数。
+2. 指出封锁后导致路网分裂程度最严重（产生最多独立区域）的枢纽（若有多个并列，需全部列出）。
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+每轮你只能提出以下三种查询之一（可重复查询）：
 
-- 比较查询（例如比较标签 3 和 5）：
-<query_compare>3,5</query_compare>
+1. **封锁区域数查询**：询问封锁某枢纽 X 后，剩余路网有多少个独立的互通区域。
+2. **封锁区域详情查询**：询问封锁某枢纽 X 后，剩余路网的独立区域数及各区域包含的枢纽数量（按升序排列）。
+3. **分裂程度比较查询**：询问封锁枢纽 X 与封锁枢纽 Y，哪个产生的独立路网区域更多。
 
-- 提交最终答案（例如认为第 {k} 位通行的是标签 7）：
-<answer>7</answer>
+注意：你不能直接询问路线、连接度、相邻关系、路径等结构信息。
 
-注意事项：
-1. 比较查询中的两个车辆标签必须不同，且都在 1 到 {n} 范围内
-2. 你可以进行任意多次比较查询，但应尽量减少查询次数提高调度效率
-3. 当你确定目标车辆标签后，使用 answer 标签提交
-4. 如果答案错误，调度失败
+每次查询只能包含一个标签。请使用以下 XML 格式：
+
+- 封锁区域数查询（例如询问枢纽 A）：
+<query_count>A</query_count>
+
+- 封锁区域详情查询（例如询问枢纽 B）：
+<query_detail>B</query_detail>
+
+- 分裂程度比较查询（例如比较枢纽 C 和 D）：
+<query_compare>C,D</query_compare>
+
+当你收集足够信息后，请一次性提交最终答案，格式如下：
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+其中：
+- critical 是一个字典，键为关键枢纽，值为封锁该枢纽后的独立路网区域数
+- max_vertices 是一个集合，包含所有使独立区域数达到最大的枢纽
+
+示例说明：上述答案表示封锁 A 后产生 2 个区域，封锁 B 后产生 3 个区域，而 B 是产生最多区域的枢纽。
+
+请尽可能少地使用查询次数来推断出正确答案。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Autonomous Intersection Scheduling System initialized. There are currently {n} autonomous test vehicles (with ID label set {{1, 2, ..., {n}}}) waiting to pass through a special test intersection.
-These vehicle labels have an unknown but fixed strict priority order (total order) for passing. Your goal is to deduce which vehicle label will be at the {k}-th position when they are sorted from highest to lowest priority.
+[Transportation Scenario]
+To respond to the impact of extreme weather on the urban road network, let's conduct a "Transport Hub Closure Simulation". Here are the rules:
 
-You can repeatedly submit comparison queries to the scheduling system. Each query compares two different vehicle labels i and j, and the system will tell you which label comes first in the total order (i.e., has a higher priority). Try to find the target label with as few queries as possible.
+The simulation is set on a fixed but unknown transit network G, containing 9 transport hubs designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all hubs are interconnected within a single functioning network (number of connected components equals 1). The direct routes between hubs are not visible to you.
 
-## Query and Answer Format (strictly required)
+Your goal is to infer the vulnerabilities of the transit network through queries and ultimately submit the following two pieces of information:
+1. List all "critical hubs" (hubs whose closure results in the network splitting into more than 1 isolated transit zone) and provide the number of isolated zones for each critical hub.
+2. Identify the hub (or hubs) whose closure produces the maximum number of isolated transit zones (if there are ties, list all of them).
 
-Each query must contain only one XML tag. Use the following format:
+Each round you can only make one of the following three types of queries (queries can be repeated):
 
-- Comparison Query (e.g., comparing labels 3 and 5):
-<query_compare>3,5</query_compare>
+1. **Closure Zone Count Query**: Ask how many isolated transit zones remain after closing hub X.
+2. **Closure Zone Detail Query**: Ask for the number of isolated transit zones and the number of hubs in each zone (in ascending order) after closing hub X.
+3. **Fragmentation Comparison Query**: Ask which closure produces more isolated transit zones: closing hub X or closing hub Y.
 
-- Submit Final Answer (e.g., if you determine the {k}-th vehicle to pass is label 7):
-<answer>7</answer>
+Note: You cannot directly ask about specific routes, connectivity degrees, adjacent relationships, paths, or other structural information.
 
-Notes:
-1. The two vehicle labels in a comparison query must be different and within the range 1 to {n}.
-2. You can make any number of comparison queries, but should minimize the count to ensure scheduling efficiency.
-3. When you are confident about the target vehicle label, submit your answer using the answer tag.
-4. If the answer is incorrect, the scheduling fails.
+Each query must contain only one tag. Use the following XML format:
+
+- Closure Zone Count Query (e.g., asking about hub A):
+<query_count>A</query_count>
+
+- Closure Zone Detail Query (e.g., asking about hub B):
+<query_detail>B</query_detail>
+
+- Fragmentation Comparison Query (e.g., comparing hubs C and D):
+<query_compare>C,D</query_compare>
+
+When you have gathered enough information, submit your final answer in the following format:
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+Where:
+- critical is a dictionary with keys as critical hubs and values as the number of isolated transit zones after closing that hub
+- max_vertices is a set containing all hubs that produce the maximum number of isolated zones
+
+Example explanation: The above answer indicates that closing A produces 2 zones, closing B produces 3 zones, and B is the hub that produces the most zones.
+
+Please use as few queries as possible to infer the correct answer.
 """
 
     contextualized_rule_zh_2 = """\
-急诊分诊排号系统启动。急诊室目前接收了 {n} 名患者（就诊手环标签集合为 {{1, 2, ..., {n}}}），系统已根据病情严重程度生成了一个严格的就诊优先级排序（全序关系），但具体顺序对你隐藏。
-你的任务是找出按照医疗紧急度从高到低排列后，将被安排在第 {k} 位就诊的患者标签。
+在应对高传染性疾病时，我们需要进行“医疗站点隔离与网络调配分析”，规则如下：
 
-你可以反复向分诊系统提出比较查询，每次输入两个不同的手环标签 i 和 j，系统会告知你这两个标签中谁在全序中排在前面（即谁先就诊）。请尽可能用较少的查询次数锁定目标标签。
+系统设定了一个固定但未知的区域医疗协同网络 G，包含 9 个医疗站点，代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有站点均可通过安全转诊通道互相连通（连通分量数为 1）。通道的分布对你不可见。
 
-## 查询与提交答案的格式（必须严格遵守）
+你的目标是通过调配查询推断医疗网络的抗风险结构，并最终提交以下两项信息：
+1. 列出所有“核心医疗枢纽”（即隔离关停该站点后，协同网络会被切断成 1 个以上互不相通的独立救助区的站点），并给出每个核心枢纽关停后产生的独立救助区数量。
+2. 指出关停后导致协同网络割裂最严重（产生最多独立救助区）的医疗站点（若有多个并列，需全部列出）。
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+每轮你只能提出以下三种查询之一（可重复查询）：
 
-- 比较查询（例如比较标签 3 和 5）：
-<query_compare>3,5</query_compare>
+1. **隔离区域数查询**：询问关停某站点 X 后，剩余协同网络有多少个独立的救助区。
+2. **隔离区域详情查询**：询问关停某站点 X 后，剩余协同网络的独立救助区数量及各区域包含的站点规模（按升序排列）。
+3. **割裂程度比较查询**：询问关停站点 X 与关停站点 Y，哪个产生的独立救助区更多。
 
-- 提交最终答案（例如认为第 {k} 位就诊的是标签 7）：
-<answer>7</answer>
+注意：你不能直接询问转诊通道、连接度、相邻关系、转移路径等结构信息。
 
-注意事项：
-1. 比较查询中的两个手环标签必须不同，且都在 1 到 {n} 范围内
-2. 你可以进行任意多次比较查询，但应尽量减少查询次数以免耽误救治
-3. 当你确定答案后，使用 answer 标签提交
-4. 如果答案错误，系统报错退出
+每次查询只能包含一个标签。请使用以下 XML format：
+
+- 隔离区域数查询（例如询问站点 A）：
+<query_count>A</query_count>
+
+- 隔离区域详情查询（例如询问站点 B）：
+<query_detail>B</query_detail>
+
+- 割裂程度比较查询（例如比较站点 C 和 D）：
+<query_compare>C,D</query_compare>
+
+当你收集足够信息后，请一次性提交最终答案，格式如下：
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+其中：
+- critical 是一个字典，键为核心医疗枢纽，值为关停该站点后的独立救助区数量
+- max_vertices 是一个集合，包含所有使独立救助区数量达到最大的医疗站点
+
+示例说明：上述答案表示关停 A 后产生 2 个救助区，关停 B 后产生 3 个救助区，而 B 是产生最多救助区的站点。
+
+请尽可能少地使用查询次数来推断出正确答案。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Emergency Triage System activated. The emergency room has received {n} patients (with wristband label set {{1, 2, ..., {n}}}). The system has internally generated a strict medical urgency order (total order) based on their conditions, but the exact sequence is hidden from you.
-Your task is to identify the patient label who is ranked exactly {k}-th in urgency.
+[Healthcare Scenario]
+To respond to highly contagious diseases, we need to conduct a "Medical Center Quarantine and Network Allocation Analysis". Here are the rules:
 
-You can repeatedly ask the triage system comparison queries. Each query compares two different wristband labels i and j, and the system will tell you which label comes first in the total order (i.e., treated earlier). Try to find the target label with as few queries as possible.
+The system involves a fixed but unknown regional medical coordination network G, containing 9 medical centers designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all centers are interconnected through secure transfer channels (number of connected components equals 1). The distribution of these channels is not visible to you.
 
-## Query and Answer Format (strictly required)
+Your goal is to infer the risk-resistance structure of the medical network through queries and ultimately submit the following two pieces of information:
+1. List all "critical medical hubs" (centers whose quarantine/shutdown results in the coordination network splitting into more than 1 isolated medical zone) and provide the number of isolated zones for each critical hub.
+2. Identify the center (or centers) whose shutdown produces the maximum number of isolated medical zones (if there are ties, list all of them).
 
-Each query must contain only one XML tag. Use the following format:
+Each round you can only make one of the following three types of queries (queries can be repeated):
 
-- Comparison Query (e.g., comparing labels 3 and 5):
-<query_compare>3,5</query_compare>
+1. **Quarantine Zone Count Query**: Ask how many isolated medical zones remain after shutting down center X.
+2. **Quarantine Zone Detail Query**: Ask for the number of isolated medical zones and the size of each zone (in ascending order) after shutting down center X.
+3. **Fragmentation Comparison Query**: Ask which shutdown produces more isolated medical zones: shutting down center X or shutting down center Y.
 
-- Submit Final Answer (e.g., if you conclude the {k}-th patient to be treated is label 7):
-<answer>7</answer>
+Note: You cannot directly ask about specific transfer channels, connectivity degrees, adjacent relationships, patient transfer paths, or other structural information.
 
-Notes:
-1. The two wristband labels in a comparison query must be different and within the range 1 to {n}.
-2. You can make any number of comparison queries, but should minimize the count to avoid delaying medical care.
-3. When you are confident about the target patient label, submit your answer using the answer tag.
-4. If the answer is incorrect, the system reports an error and fails.
+Each query must contain only one tag. Use the following XML format:
+
+- Quarantine Zone Count Query (e.g., asking about center A):
+<query_count>A</query_count>
+
+- Quarantine Zone Detail Query (e.g., asking about center B):
+<query_detail>B</query_detail>
+
+- Fragmentation Comparison Query (e.g., comparing centers C and D):
+<query_compare>C,D</query_compare>
+
+When you have gathered enough information, submit your final answer in the following format:
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+Where:
+- critical is a dictionary with keys as critical medical hubs and values as the number of isolated medical zones after shutting down that center
+- max_vertices is a set containing all centers that produce the maximum number of isolated zones
+
+Example explanation: The above answer indicates that shutting down A produces 2 zones, shutting down B produces 3 zones, and B is the center that produces the most zones.
+
+Please use as few queries as possible to infer the correct answer.
 """
 
     contextualized_rule_zh_3 = """\
-特等奖学金综合评审系统就绪。本年度有 {n} 名候选学生（申请编号标签集合为 {{1, 2, ..., {n}}}）。评委会根据各项指标确定了他们之间的一个未知但固定的严格综合排名（全序关系）。
-你的目标是找出在这个排名体系中，综合成绩排在第 {k} 位的候选人标签。
+为优化区域教育资源共享机制，我们正在开展“教研中心退出影响评估”，规则如下：
 
-你可以反复向评审数据库提出比较查询，每次输入两个不同的候选人标签 i 和 j，系统会反馈在全序关系中谁排在前面。请尽可能用较少的查询次数找出答案。
+评估框架内有一个固定但未知的学术交流网络 G，包含 9 个教研中心，代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有中心通过资源共享协议互联互通（连通分量数为 1）。具体的合作连接关系对你不可见。
 
-## 查询与提交答案的格式（必须严格遵守）
+你的目标是通过系统查询推断出学术网络的连通架构，并最终提交以下两项信息：
+1. 列出所有“核心教研枢纽”（即该中心退出共享网络后，整体网络会分裂成 1 个以上互不相连的学术孤岛的中心），并给出每个核心枢纽退出后产生的孤岛数。
+2. 指出退出后导致网络分裂最严重（产生最多学术孤岛）的教研中心（若有多个并列，需全部列出）。
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+每轮你只能提出以下三种查询之一（可重复查询）：
 
-- 比较查询（例如比较标签 3 和 5）：
-<query_compare>3,5</query_compare>
+1. **退出后孤岛数查询**：询问某中心 X 退出后，剩余网络形成多少个独立的学术孤岛。
+2. **退出后孤岛详情查询**：询问某中心 X 退出后，剩余网络的独立孤岛数及各孤岛包含的中心数量（按升序排列）。
+3. **分裂程度比较查询**：询问中心 X 退出与中心 Y 退出，哪个产生的独立学术孤岛更多。
 
-- 提交最终答案（例如认为排在第 {k} 位的是标签 7）：
-<answer>7</answer>
+注意：你不能直接询问合作协议、连接度、相邻关系、交流路径等结构信息。
 
-注意事项：
-1. 比较查询中的两个候选人标签必须不同，且都在 1 到 {n} 范围内
-2. 你可以进行任意多次比较查询，但应尽量减少查询次数
-3. 当你确定候选人标签后，使用 answer 标签提交
-4. 如果答案错误，评审检索失败
+每次查询只能包含一个标签。请使用以下 XML 格式：
+
+- 退出后孤岛数查询（例如询问中心 A）：
+<query_count>A</query_count>
+
+- 退出后孤岛详情查询（例如询问中心 B）：
+<query_detail>B</query_detail>
+
+- 分裂程度比较查询（例如比较中心 C 和 D）：
+<query_compare>C,D</query_compare>
+
+当你收集足够信息后，请一次性提交最终答案，格式如下：
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+其中：
+- critical 是一个字典，键为核心教研枢纽，值为该中心退出后的独立学术孤岛数
+- max_vertices 是一个集合，包含所有使独立孤岛数达到最大的中心
+
+示例说明：上述答案表示 A 退出后产生 2 个孤岛， B 退出后产生 3 个孤岛，而 B 是产生最多孤岛的中心。
+
+请尽可能少地使用查询次数来推断出正确答案。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Top Scholarship Comprehensive Review System ready. There are {n} candidate students this year (application ID label set {{1, 2, ..., {n}}}). The committee has established a strict comprehensive ranking (total order) among them based on academic metrics, which remains hidden from you.
-Your goal is to identify the candidate label who ranks exactly {k}-th in this system.
+To optimize the regional mechanism for sharing educational resources, we are conducting a "Research Center Withdrawal Impact Assessment". Here are the rules:
 
-You can repeatedly query the review database with comparison requests. Each query compares two different candidate labels i and j, and the system will tell you which label comes first in the total order. Try to find the answer with as few queries as possible.
+The assessment framework includes a fixed but unknown academic exchange network G, containing 9 research centers designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all centers are interconnected through resource-sharing agreements (number of connected components equals 1). The specific collaborative connections are not visible to you.
 
-## Query and Answer Format (strictly required)
+Your goal is to infer the connectivity architecture of the academic network through system queries and ultimately submit the following two pieces of information:
+1. List all "key academic hubs" (centers whose withdrawal from the sharing network results in the overall network splitting into more than 1 isolated academic cluster) and provide the number of isolated clusters for each key hub.
+2. Identify the center (or centers) whose withdrawal produces the maximum number of isolated academic clusters (if there are ties, list all of them).
 
-Each query must contain only one XML tag. Use the following format:
+Each round you can only make one of the following three types of queries (queries can be repeated):
 
-- Comparison Query (e.g., comparing labels 3 and 5):
-<query_compare>3,5</query_compare>
+1. **Withdrawal Cluster Count Query**: Ask how many isolated academic clusters remain after center X withdraws.
+2. **Withdrawal Cluster Detail Query**: Ask for the number of isolated academic clusters and the number of centers in each cluster (in ascending order) after center X withdraws.
+3. **Fragmentation Comparison Query**: Ask which withdrawal produces more isolated academic clusters: center X withdrawing or center Y withdrawing.
 
-- Submit Final Answer (e.g., if you believe the {k}-th ranked candidate is label 7):
-<answer>7</answer>
+Note: You cannot directly ask about specific sharing agreements, connectivity degrees, adjacent relationships, exchange paths, or other structural information.
 
-Notes:
-1. The two candidate labels in a comparison query must be different and within the range 1 to {n}.
-2. You can make any number of comparison queries, but should minimize the count.
-3. When you are confident about the candidate label, submit your answer using the answer tag.
-4. If the answer is incorrect, the review retrieval fails.
+Each query must contain only one tag. Use the following XML format:
+
+- Withdrawal Cluster Count Query (e.g., asking about center A):
+<query_count>A</query_count>
+
+- Withdrawal Cluster Detail Query (e.g., asking about center B):
+<query_detail>B</query_detail>
+
+- Fragmentation Comparison Query (e.g., comparing centers C and D):
+<query_compare>C,D</query_compare>
+
+When you have gathered enough information, submit your final answer in the following format:
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+Where:
+- critical is a dictionary with keys as key academic hubs and values as the number of isolated academic clusters after that center withdraws
+- max_vertices is a set containing all centers that produce the maximum number of isolated clusters
+
+Example explanation: The above answer indicates that A withdrawing produces 2 clusters, B withdrawing produces 3 clusters, and B is the center that produces the most clusters.
+
+Please use as few queries as possible to infer the correct answer.
 """
 
     contextualized_rule_zh_4 = """\
-智能车间生产排程系统启动。当前产线上有 {n} 个待加工的生产批次（批次标签集合为 {{1, 2, ..., {n}}}）。系统已根据交货期和工艺要求，生成了严格的加工顺序（全序关系）。
-你需要推断出按照这一加工顺序，被安排在第 {k} 位进行加工的批次标签是哪一个。
+为了评估供应链的抗风险能力，我们启动了“生产节点断链压力测试”，规则如下：
 
-你可以反复向排程系统提出比较查询，每次输入两个不同的批次标签 i 和 j，系统会反馈这两个标签中谁在全序中排在前面（优先加工）。请尽可能用较少的查询次数找出目标标签。
+测试设定了一个固定但未知的生产流转网络 G，包含 9 个核心车间节点，代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有节点构成一个完整的物流互通系统（连通分量数为 1）。车间之间的具体物流线路对你不可见。
 
-## 查询与提交答案的格式（必须严格遵守）
+你的目标是通过断链模拟查询推断出供应链的拓扑瓶颈，并最终提交以下两项信息：
+1. 列出所有“关键生产枢纽”（即停工该节点后，整个供应链会断裂成 1 个以上互不相连的独立生产子系统的节点），并给出每个关键节点停工后产生的子系统数。
+2. 指出停工后导致供应链碎裂最严重（产生最多独立生产子系统）的车间节点（若有多个并列，需全部列出）。
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+每轮你只能提出以下三种查询之一（可重复查询）：
 
-- 比较查询（例如比较标签 3 和 5）：
-<query_compare>3,5</query_compare>
+1. **停工后子系统数查询**：询问某车间节点 X 停工阻断后，剩余系统拆分为多少个独立的生产子系统。
+2. **停工后子系统详情查询**：询问某车间节点 X 停工阻断后，剩余系统的独立子系统数及各子系统的车间数量（按升序排列）。
+3. **断链程度比较查询**：询问节点 X 停工与节点 Y 停工，哪个产生的独立生产子系统更多。
 
-- 提交最终答案（例如认为第 {k} 个加工的是标签 7）：
-<answer>7</answer>
+注意：你不能直接询问物流线路、连接度、相邻关系、运输路径等结构信息。
 
-注意事项：
-1. 比较查询中的两个批次标签必须不同，且都在 1 到 {n} 范围内
-2. 你可以进行任意多次比较查询，但应尽量减少系统负载
-3. 当你确定目标批次标签后，使用 answer 标签提交
-4. 如果答案错误，排程调度失败
+每次查询只能包含一个标签。请使用以下 XML 格式：
+
+- 停工后子系统数查询（例如询问节点 A）：
+<query_count>A</query_count>
+
+- 停工后子系统详情查询（例如询问节点 B）：
+<query_detail>B</query_detail>
+
+- 断链程度比较查询（例如比较节点 C 和 D）：
+<query_compare>C,D</query_compare>
+
+当你收集足够信息后，请一次性提交最终答案，格式如下：
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+其中：
+- critical 是一个字典，键为关键生产枢纽，值为停工该节点后的独立生产子系统数
+- max_vertices 是一个集合，包含所有使独立子系统数达到最大的车间节点
+
+示例说明：上述答案表示 A 停工后产生 2 个子系统， B 停工后产生 3 个子系统，而 B 是产生最多子系统的节点。
+
+请尽可能少地使用查询次数来推断出正确答案。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Smart Factory Production Scheduling System activated. There are {n} pending production batches on the line (batch label set {{1, 2, ..., {n}}}). The system has generated a strict processing sequence (total order) based on delivery deadlines.
-You need to deduce which batch label is scheduled to be processed at the {k}-th position in this sequence.
+[Manufacturing Scenario]
+To evaluate the risk-resistance capacity of the supply chain, we have launched a "Production Node Disruption Stress Test". Here are the rules:
 
-You can repeatedly submit comparison queries to the scheduling system. Each query compares two different batch labels i and j, and the system will tell you which label comes first in the total order (i.e., processed earlier). Try to find the target label with as few queries as possible.
+The test is set on a fixed but unknown production flow network G, containing 9 core production nodes (workshops), designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all nodes form a complete, interconnected logistics system (number of connected components equals 1). The specific logistics routes between workshops are not visible to you.
 
-## Query and Answer Format (strictly required)
+Your goal is to infer the topological bottlenecks of the supply chain through disruption simulation queries and ultimately submit the following two pieces of information:
+1. List all "critical production hubs" (nodes whose shutdown results in the entire supply chain breaking into more than 1 isolated production subsystem) and provide the number of isolated subsystems for each critical node.
+2. Identify the node (or nodes) whose shutdown produces the maximum number of isolated production subsystems (if there are ties, list all of them).
 
-Each query must contain only one XML tag. Use the following format:
+Each round you can only make one of the following three types of queries (queries can be repeated):
 
-- Comparison Query (e.g., comparing labels 3 and 5):
-<query_compare>3,5</query_compare>
+1. **Disruption Subsystem Count Query**: Ask how many isolated production subsystems remain after shutting down node X.
+2. **Disruption Subsystem Detail Query**: Ask for the number of isolated production subsystems and the number of workshops in each subsystem (in ascending order) after shutting down node X.
+3. **Fragmentation Comparison Query**: Ask which shutdown produces more isolated production subsystems: shutting down node X or shutting down node Y.
 
-- Submit Final Answer (e.g., if you deduce the {k}-th processed batch is label 7):
-<answer>7</answer>
+Note: You cannot directly ask about specific logistics routes, connectivity degrees, adjacent relationships, transport paths, or other structural information.
 
-Notes:
-1. The two batch labels in a comparison query must be different and within the range 1 to {n}.
-2. You can make any number of comparison queries, but should minimize the system load.
-3. When you are confident about the target batch label, submit your answer using the answer tag.
-4. If the answer is incorrect, the scheduling fails.
+Each query must contain only one tag. Use the following XML format:
+
+- Disruption Subsystem Count Query (e.g., asking about node A):
+<query_count>A</query_count>
+
+- Disruption Subsystem Detail Query (e.g., asking about node B):
+<query_detail>B</query_detail>
+
+- Fragmentation Comparison Query (e.g., comparing nodes C and D):
+<query_compare>C,D</query_compare>
+
+When you have gathered enough information, submit your final answer in the following format:
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+Where:
+- critical is a dictionary with keys as critical production hubs and values as the number of isolated production subsystems after shutting down that node
+- max_vertices is a set containing all nodes that produce the maximum number of isolated subsystems
+
+Example explanation: The above answer indicates that shutting down A produces 2 subsystems, shutting down B produces 3 subsystems, and B is the node that produces the most subsystems.
+
+Please use as few queries as possible to infer the correct answer.
 """
 
     contextualized_rule_zh_5 = """\
-核心物证审查排序系统登入。本次案件涉及 {n} 件关键物证（证据编号标签集合为 {{1, 2, ..., {n}}}）。为了保证证据链的严密性，法务团队设定了严格的审查先后顺序（全序关系），该顺序当前属于保密状态。
-你的任务是查明在这个审查序列中，被安排在第 {k} 位出示并审查的物证标签是什么。
+在打击跨国经济犯罪的行动中，我们正在进行“利益关联实体查封推演”，规则如下：
 
-你可以反复向系统提出比较查询，每次输入两个不同的证据标签 i 和 j，系统会告诉你在这两个标签中哪一个在全序中排在前面（更早被审查）。请尽可能用较少的查询次数得出结论。
+卷宗中锁定了一个固定但未知的资金往来网络 G，涉及 9 个法律实体（公司/个人），代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有实体均通过隐秘的资金链路互相关联（连通分量数为 1）。具体的资金往来链路对你不可见。
 
-## 查询与提交答案的格式（必须严格遵守）
+你的目标是通过查封模拟查询推断出该利益网络的结构弱点，并最终提交以下两项信息：
+1. 列出所有“关键洗钱枢纽”（即查封冻结该实体后，整个资金网络会被切断成 1 个以上互不往来的独立利益孤岛的实体），并给出每个关键实体查封后产生的孤岛数。
+2. 指出查封后导致利益网络分化最严重（产生最多利益孤岛）的实体（若有多个并列，需全部列出）。
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+每轮你只能提出以下三种查询之一（可重复查询）：
 
-- 比较查询（例如比较标签 3 和 5）：
-<query_compare>3,5</query_compare>
+1. **查封后孤岛数查询**：询问查封某实体 X 后，剩余资金网络形成多少个独立的利益孤岛。
+2. **查封后孤岛详情查询**：询问查封某实体 X 后，剩余网络的独立孤岛数及各孤岛包含的实体数量（按升序排列）。
+3. **分化程度比较查询**：询问查封实体 X 与查封实体 Y，哪个产生的独立利益孤岛更多。
 
-- 提交最终答案（例如认为第 {k} 个审查的是标签 7）：
-<answer>7</answer>
+注意：你不能直接询问资金往来链路、连接度、相邻关系、资金转移路径等结构信息。
 
-注意事项：
-1. 比较查询中的两个证据标签必须不同，且都在 1 到 {n} 范围内
-2. 你可以进行任意多次比较查询，但应尽量减少查询次数
-3. 当你确定目标物证标签后，使用 answer 标签提交
-4. 如果答案错误，审查模拟失败
+每次查询只能包含一个标签。请使用以下 XML 格式：
+
+- 查封后孤岛数查询（例如询问实体 A）：
+<query_count>A</query_count>
+
+- 查封后孤岛详情查询（例如询问实体 B）：
+<query_detail>B</query_detail>
+
+- 分化程度比较查询（例如比较实体 C 和 D）：
+<query_compare>C,D</query_compare>
+
+当你收集足够信息后，请一次性提交最终答案，格式如下：
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+其中：
+- critical 是一个字典，键为关键洗钱枢纽，值为查封该实体后的独立利益孤岛数
+- max_vertices 是一个集合，包含所有使独立孤岛数达到最大的实体
+
+示例说明：上述答案表示查封 A 后产生 2 个孤岛，查封 B 后产生 3 个孤岛，而 B 是产生最多孤岛的实体。
+
+请尽可能少地使用查询次数来推断出正确答案。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Core Evidence Review Sequencing System logged in. This case involves {n} key pieces of physical evidence (exhibit label set {{1, 2, ..., {n}}}). To ensure the rigor of the chain of custody, the legal team has established a strict chronological order for review (total order), which is currently classified.
-Your task is to determine which exhibit label is scheduled to be presented and reviewed at the {k}-th position in this sequence.
+In the operation to combat transnational economic crimes, we are conducting an "Associated Entity Asset Freezing Simulation". Here are the rules:
 
-You can repeatedly query the system with comparison requests. Each query compares two different exhibit labels i and j, and the system will tell you which label comes first in the total order (i.e., reviewed earlier). Try to reach a conclusion with as few queries as possible.
+The case files have targeted a fixed but unknown financial transaction network G, involving 9 legal entities (companies/individuals) designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all entities are interconnected through hidden financial links (number of connected components equals 1). The specific transaction links are not visible to you.
 
-## Query and Answer Format (strictly required)
+Your goal is to infer the structural weaknesses of this interest network through asset freezing simulation queries and ultimately submit the following two pieces of information:
+1. List all "critical financial hubs" (entities whose freezing/seizure results in the entire financial network being cut off into more than 1 isolated interest cluster) and provide the number of isolated clusters for each critical entity.
+2. Identify the entity (or entities) whose seizure produces the maximum number of isolated interest clusters (if there are ties, list all of them).
 
-Each query must contain only one XML tag. Use the following format:
+Each round you can only make one of the following three types of queries (queries can be repeated):
 
-- Comparison Query (e.g., comparing labels 3 and 5):
-<query_compare>3,5</query_compare>
+1. **Freezing Cluster Count Query**: Ask how many isolated interest clusters remain after freezing entity X.
+2. **Freezing Cluster Detail Query**: Ask for the number of isolated interest clusters and the number of entities in each cluster (in ascending order) after freezing entity X.
+3. **Fragmentation Comparison Query**: Ask which seizure produces more isolated interest clusters: freezing entity X or freezing entity Y.
 
-- Submit Final Answer (e.g., if you determine the {k}-th exhibit to be reviewed is label 7):
-<answer>7</answer>
+Note: You cannot directly ask about specific transaction links, connectivity degrees, adjacent relationships, fund transfer paths, or other structural information.
 
-Notes:
-1. The two exhibit labels in a comparison query must be different and within the range 1 to {n}.
-2. You can make any number of comparison queries, but should minimize the count.
-3. When you are confident about the target exhibit label, submit your answer using the answer tag.
-4. If the answer is incorrect, the review simulation fails.
+Each query must contain only one tag. Use the following XML format:
+
+- Freezing Cluster Count Query (e.g., asking about entity A):
+<query_count>A</query_count>
+
+- Freezing Cluster Detail Query (e.g., asking about entity B):
+<query_detail>B</query_detail>
+
+- Fragmentation Comparison Query (e.g., comparing entities C and D):
+<query_compare>C,D</query_compare>
+
+When you have gathered enough information, submit your final answer in the following format:
+
+<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
+
+Where:
+- critical is a dictionary with keys as critical financial hubs and values as the number of isolated interest clusters after freezing that entity
+- max_vertices is a set containing all entities that produce the maximum number of isolated clusters
+
+Example explanation: The above answer indicates that freezing A produces 2 clusters, freezing B produces 3 clusters, and B is the entity that produces the most clusters.
+
+Please use as few queries as possible to infer the correct answer.
 """
 
-    tags = ["answer", "query_compare"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
+    tags = ["answer", "query_count", "query_detail", "query_compare"]
 
-    # 难度配置：
-    # 1 (简单)       - N=5,  k=3 (中位数)
-    # 2 (中等偏下)   - N=7,  k=2 (较小位置)
-    # 3 (中等偏上)   - N=10, k=7 (较大位置)
-    # 4 (较难)       - N=12, k=5 (偏前位置)
-    # 5 (难)         - N=15, k=10 (偏后位置)
+    reasoning_type = "演绎推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 5,
-                "k": 3,
-                "order": [3, 1, 5, 2, 4],  # 全序：3 < 1 < 5 < 2 < 4，第3位是5
+                "edges": [
+                    ("E", "A"), ("E", "B"), ("E", "C"), ("E", "D"),
+                    ("E", "F"), ("E", "G"), ("E", "H"), ("E", "I")
+                ],
+                "critical": {"E": 8},
+                "max_vertices": {"E"}
             },
             2: {
-                "n": 7,
-                "k": 2,
-                "order": [2, 5, 1, 7, 3, 6, 4],  # 第2位是5
+                "edges": [
+                    ("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"),
+                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "I")
+                ],
+                "critical": {"B": 2, "C": 2, "D": 2, "E": 2, "F": 2, "G": 2, "H": 2},
+                "max_vertices": {"B", "C", "D", "E", "F", "G", "H"}
             },
             3: {
-                "n": 10,
-                "k": 7,
-                "order": [5, 2, 8, 1, 9, 4, 7, 3, 10, 6],  # 第7位是7
+                "edges": [
+                    ("A", "B"), ("B", "C"), ("C", "A"), 
+                    ("A", "D"), ("D", "E"), ("E", "F"), 
+                    ("F", "G"), ("G", "H"), ("H", "I"), ("I", "G") 
+                ],
+                "critical": {"A": 2, "D": 2, "E": 2, "F": 2},
+                "max_vertices": {"A", "D", "E", "F"}
             },
             4: {
-                "n": 12,
-                "k": 5,
-                "order": [7, 3, 11, 2, 9, 1, 5, 12, 4, 8, 6, 10],  # 第5位是9
+                "edges": [
+                    ("A", "B"), ("B", "C"), ("C", "A"), 
+                    ("A", "E"), ("D", "E"),  
+                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "I"), ("I", "F") 
+                ],
+                "critical": {"E": 3, "A": 2, "F": 2},
+                "max_vertices": {"E"}
             },
             5: {
-                "n": 15,
-                "k": 10,
-                "order": [8, 3, 12, 5, 14, 1, 9, 11, 4, 15, 7, 2, 13, 6, 10],  # 第10位是15
+                "edges": [
+                    ("A", "B"), ("B", "C"), ("C", "D"), ("D", "A"),
+                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "E"),
+                    ("A", "I"), ("I", "E"),
+                ],
+                "critical": {"I": 2, "A": 2, "E": 2},
+                "max_vertices": {"I", "A", "E"}
             },
         },
         "en": {
             1: {
-                "n": 5,
-                "k": 3,
-                "order": [3, 1, 5, 2, 4],
+                "edges": [
+                    ("E", "A"), ("E", "B"), ("E", "C"), ("E", "D"),
+                    ("E", "F"), ("E", "G"), ("E", "H"), ("E", "I")
+                ],
+                "critical": {"E": 8},
+                "max_vertices": {"E"}
             },
             2: {
-                "n": 7,
-                "k": 2,
-                "order": [2, 5, 1, 7, 3, 6, 4],
+                "edges": [
+                    ("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"),
+                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "I")
+                ],
+                "critical": {"B": 2, "C": 2, "D": 2, "E": 2, "F": 2, "G": 2, "H": 2},
+                "max_vertices": {"B", "C", "D", "E", "F", "G", "H"}
             },
             3: {
-                "n": 10,
-                "k": 7,
-                "order": [5, 2, 8, 1, 9, 4, 7, 3, 10, 6],
+                "edges": [
+                    ("A", "B"), ("B", "C"), ("C", "A"),
+                    ("A", "D"), ("D", "E"), ("E", "F"),
+                    ("F", "G"), ("G", "H"), ("H", "I"), ("I", "G")
+                ],
+                "critical": {"A": 2, "D": 2, "E": 2, "F": 2},
+                "max_vertices": {"A", "D", "E", "F"}
             },
             4: {
-                "n": 12,
-                "k": 5,
-                "order": [7, 3, 11, 2, 9, 1, 5, 12, 4, 8, 6, 10],
+                "edges": [
+                    ("A", "B"), ("B", "C"), ("C", "A"),
+                    ("A", "E"), ("D", "E"),
+                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "I"), ("I", "F")
+                ],
+                "critical": {"E": 3, "A": 2, "F": 2},
+                "max_vertices": {"E"}
             },
             5: {
-                "n": 15,
-                "k": 10,
-                "order": [8, 3, 12, 5, 14, 1, 9, 11, 4, 15, 7, 2, 13, 6, 10],
+                "edges": [
+                    ("A", "B"), ("B", "C"), ("C", "D"), ("D", "A"),
+                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "E"),
+                    ("A", "I"), ("I", "E"),
+                ],
+                "critical": {"I": 2, "A": 2, "E": 2},
+                "max_vertices": {"I", "A", "E"}
             },
         },
     }
@@ -368,9 +603,8 @@ Notes:
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：加载对应难度的配置"""
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -378,164 +612,188 @@ Notes:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["k"] = cfg["k"]
         
-        # order[i] 表示排在第 i+1 位的标签
-        self.order = cfg["order"]
+        self.vertices = {"A", "B", "C", "D", "E", "F", "G", "H", "I"}
+        self.adj = {v: set() for v in self.vertices}
         
-        # 构建位置映射：position_map[label] = 该标签在全序中的位置（1-indexed）
-        self.position_map = {}
-        for pos, label in enumerate(self.order, start=1):
-            self.position_map[label] = pos
+        for u, v in cfg["edges"]:
+            self.adj[u].add(v)
+            self.adj[v].add(u)
         
-        # 正确答案：第 k 位的标签
-        self.correct_answer = self.order[cfg["k"] - 1]
+        self.ground_truth_critical = cfg["critical"]
+        self.ground_truth_max = cfg["max_vertices"]
         
-        # 统计查询次数
-        self.query_count = 0
+        self._game_info["n"] = 9
+
+    def _count_components_after_deletion(self, vertex):
+        if vertex not in self.vertices:
+            return None, None
+        
+        remaining = self.vertices - {vertex}
+        visited = set()
+        components = []
+        
+        def dfs(v, component):
+            visited.add(v)
+            component.add(v)
+            for neighbor in self.adj[v]:
+                if neighbor in remaining and neighbor not in visited:
+                    dfs(neighbor, component)
+        
+        for v in remaining:
+            if v not in visited:
+                component = set()
+                dfs(v, component)
+                components.append(len(component))
+        
+        components.sort()
+        return len(components), components
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
         try:
-            answer = int(parsed_info["answer"].strip())
-            return answer == self.correct_answer
-        except:
+            raw_ans = parsed_info["answer"]
+            
+            critical_start = raw_ans.find("critical=") + 9
+            critical_end = raw_ans.find("}", critical_start) + 1
+            max_start = raw_ans.find("max_vertices=") + 13
+            max_end = raw_ans.find("}", max_start) + 1
+            
+            critical_str = raw_ans[critical_start:critical_end].strip()
+            max_str = raw_ans[max_start:max_end].strip()
+            
+            critical_dict = {}
+            if critical_str and critical_str != "{}":
+                critical_str = critical_str.strip("{}")
+                for pair in critical_str.split(","):
+                    pair = pair.strip()
+                    if ":" in pair:
+                        k, v = pair.split(":")
+                        k = k.strip().strip("'\"")
+                        v = v.strip()
+                        critical_dict[k] = int(v)
+            
+            max_set = set()
+            if max_str and max_str != "{}":
+                max_str = max_str.strip("{}")
+                for item in max_str.split(","):
+                    item = item.strip().strip("'\"")
+                    if item:
+                        max_set.add(item)
+            
+            if critical_dict != self.ground_truth_critical:
+                return False
+            
+            if max_set != self.ground_truth_max:
+                return False
+            
+            return True
+            
+        except Exception as e:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的查询处理逻辑"""
-        if "query_compare" not in parsed_info:
-            if self.config.language == "zh":
-                return "错误：无效的查询类型。"
-            else:
-                return "Error: Invalid query type."
-        
-        try:
-            raw = parsed_info["query_compare"]
-            parts = [x.strip() for x in raw.split(",")]
-            
-            if len(parts) != 2:
-                raise ValueError("Must compare exactly two labels")
-            
-            i, j = int(parts[0]), int(parts[1])
-            
-            # 验证标签范围
-            n = self._game_info["n"]
-            if i < 1 or i > n or j < 1 or j > n:
-                if self.config.language == "zh":
-                    return f"错误：标签必须在 1 到 {n} 范围内。"
-                else:
-                    return f"Error: Labels must be within range 1 to {n}."
-            
-            # 验证标签不同
-            if i == j:
-                if self.config.language == "zh":
-                    return "错误：比较的两个标签必须不同。"
-                else:
-                    return "Error: The two labels must be different."
-            
-            # 统计查询次数
-            self.query_count += 1
-            
-            # 根据全序关系返回比较结果
-            pos_i = self.position_map[i]
-            pos_j = self.position_map[j]
-            
-            if self.config.language == "zh":
-                if pos_i < pos_j:
-                    return f"标签 {i} 在全序中先于标签 {j}。"
-                else:
-                    return f"标签 {j} 在全序中先于标签 {i}。"
-            else:
-                if pos_i < pos_j:
-                    return f"Label {i} comes before label {j} in the total order."
-                else:
-                    return f"Label {j} comes before label {i} in the total order."
-                    
-        except ValueError as ve:
-            if self.config.language == "zh":
-                return f"错误：查询格式无效。请使用格式 <query_compare>i,j</query_compare>，其中 i 和 j 是不同的整数。"
-            else:
-                return f"Error: Invalid query format. Use format <query_compare>i,j</query_compare> where i and j are different integers."
-        except Exception as e:
-            if self.config.language == "zh":
-                return f"错误：处理查询时发生异常 - {str(e)}"
-            else:
-                return f"Error: Exception occurred while processing query - {str(e)}"
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """生成错误答案：将比较结果中的先后关系反转"""
         if self.config.language == "zh":
-            m = re.search(r'标签\s*(\d+)\s*在全序中先于标签\s*(\d+)', correct)
-            if m:
-                a, b = m.group(1), m.group(2)
-                return f"标签 {b} 在全序中先于标签 {a}。"
+            yes_res, no_res = "是", "否"
+            err_format = "错误：查询格式无效或顶点不存在。"
+            err_invalid = "错误：无效的查询标签。"
         else:
-            m = re.search(r'Label\s*(\d+)\s*comes before label\s*(\d+)', correct)
-            if m:
-                a, b = m.group(1), m.group(2)
-                return f"Label {b} comes before label {a} in the total order."
+            yes_res, no_res = "Yes", "No"
+            err_format = "Error: Invalid query format or vertex does not exist."
+            err_invalid = "Error: Invalid query tag."
 
-        # 纯整数字符串
-        if correct.isdigit():
+        if "query_count" in parsed_info:
+            vertex = parsed_info["query_count"].strip()
+            if vertex not in self.vertices:
+                return err_format
+            
+            count, _ = self._count_components_after_deletion(vertex)
+            return str(count)
+        
+        elif "query_detail" in parsed_info:
+            vertex = parsed_info["query_detail"].strip()
+            if vertex not in self.vertices:
+                return err_format
+            
+            count, components = self._count_components_after_deletion(vertex)
+            if self.config.language == "zh":
+                return f"分量数={count}, 规模={components}"
+            else:
+                return f"count={count}, sizes={components}"
+        
+        elif "query_compare" in parsed_info:
+            try:
+                raw = parsed_info["query_compare"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return err_format
+                
+                v1, v2 = parts
+                if v1 not in self.vertices or v2 not in self.vertices:
+                    return err_format
+                
+                count1, _ = self._count_components_after_deletion(v1)
+                count2, _ = self._count_components_after_deletion(v2)
+                
+                if count1 > count2:
+                    return f"{v1}>{v2}"
+                elif count1 == count2:
+                    return f"{v1}={v2}"
+                else:
+                    return f"{v1}<{v2}"
+            except:
+                return err_format
+        
+        else:
+            return err_invalid
+
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
             return str(int(correct) + 1)
         
-        # 关键词替换
-        if self.config.language == "zh":
-            if "是" in correct or "否" in correct:
-                return correct.replace("是", "TEMP").replace("否", "是").replace("TEMP", "否")
-        else:
-            # 英文 Yes/No 替换（保留大小写风格）
-            lower_correct = correct.lower()
-            if "yes" in lower_correct or "no" in lower_correct:
-                # 简单的大小写敏感替换逻辑
-                ret = correct
-                # Replace Yes -> TEMP, No -> Yes, TEMP -> No
-                # Handing Case variants: Yes/yes, No/no
-                ret = ret.replace("Yes", "TEMP_YES").replace("yes", "TEMP_yes")
-                ret = ret.replace("No", "Yes").replace("no", "yes")
-                ret = ret.replace("TEMP_YES", "No").replace("TEMP_yes", "no")
-                return ret
-
-        # 都不匹配，追加 _WRONG
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
+        
+        lower_c = correct.lower()
+        if lower_c == "yes":
+            if correct.isupper(): return "NO"
+            if correct[0].isupper(): return "No"
+            return "no"
+        if lower_c == "no":
+            if correct.isupper(): return "YES"
+            if correct[0].isupper(): return "Yes"
+            return "yes"
+            
         return correct + "_WRONG"
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        只枚举 i < j 的组合以避免重复。
-        """
+    def get_all_possible_queries(self) -> List[Dict]:
         queries = []
-        n = self._game_info["n"]
-        lang = self.config.language
+        vertices = sorted(list(self.vertices))
         
-        # 遍历所有可能的 i, j 组合 (i < j 以避免重复)
-        for i in range(1, n + 1):
-            for j in range(i + 1, n + 1):
-                # 直接复用内部逻辑，避免调用 produce_response 影响 query_count 或触发反事实
-                # 这里不需要解析 parsed_info，直接使用 i, j 进行计算
-                pos_i = self.position_map[i]
-                pos_j = self.position_map[j]
-                
-                answer = ""
-                if lang == "zh":
-                    if pos_i < pos_j:
-                        answer = f"标签 {i} 在全序中先于标签 {j}。"
-                    else:
-                        answer = f"标签 {j} 在全序中先于标签 {i}。"
-                else:
-                    if pos_i < pos_j:
-                        answer = f"Label {i} comes before label {j} in the total order."
-                    else:
-                        answer = f"Label {j} comes before label {i} in the total order."
-                
-                # 构造符合格式的 query 字符串 (必须是合法的 XML 标签字符串)
-                query_str = f"<query_compare>{i},{j}</query_compare>"
-                
+        for v in vertices:
+            payload = {"query_count": v}
+            ans = self._cf_core_produce(payload)
+            queries.append({
+                "query": f"<query_count>{v}</query_count>",
+                "answer": ans
+            })
+            
+        for v in vertices:
+            payload = {"query_detail": v}
+            ans = self._cf_core_produce(payload)
+            queries.append({
+                "query": f"<query_detail>{v}</query_detail>",
+                "answer": ans
+            })
+            
+        for i, v1 in enumerate(vertices):
+            for v2 in vertices[i+1:]:
+                payload = {"query_compare": f"{v1},{v2}"}
+                ans = self._cf_core_produce(payload)
                 queries.append({
-                    "query": query_str,
-                    "answer": answer
+                    "query": f"<query_compare>{v1},{v2}</query_compare>",
+                    "answer": ans
                 })
-        
+                
         return queries

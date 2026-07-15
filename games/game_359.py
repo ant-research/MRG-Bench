@@ -1,886 +1,786 @@
 from .base import Game
 import re
-import itertools
 
+class GraphWeightDeductionGame(Game):
 
-class SetCoverMinimizationGame(Game):
+    reasoning_type = "演绎推理"
+    data_structure = "图"
 
     game_rule_zh = """\
-我们来玩一个"最小集合覆盖"推理游戏，规则如下：
+我们来玩一个"图边权推理"游戏，规则如下：
 
-游戏设定了一个基础元素集合 E = {{e1, e2, e3, e4, e5, e6, e7, e8}}，以及一个子集族 S = {{S1, S2, S3, S4, S5, S6, S7}}，其中每个 Si 都是 E 的子集。这些子集的具体成员构成是隐藏的，你需要通过查询来推断。
+游戏设定了一个无向简单图，顶点为 A、B、C、D，共有 6 条边：AB、BC、CD、DA、AC、BD。
+每条边有一个固定的非负整数权重（可以为 0），在整个游戏过程中不会改变。
 
-游戏约束：
-1. 每个元素至少被一个子集包含，且至多被三个子集包含
-2. 每个子集 Si 的大小在 2 到 5 个元素之间
-3. 存在一个由子集索引组成的集合，能够覆盖所有元素 E
-4. 最小覆盖规模 K 满足：2 小于等于 K 小于等于 4
+你可以查询以下 5 个预设的加权和：
+1. 外环：外环的周长，即边 AB、BC、CD、DA 的权重之和
+2. 三角1：由边 AB、BC、AC 构成的三角形的周长
+3. 三角2：由边 AC、CD、DA 构成的三角形的周长
+4. 三角3：由边 BC、CD、BD 构成的三角形的周长
+5. 三角4：由边 AB、BD、DA 构成的三角形的周长
 
-你的目标：
-找出最小覆盖规模 K，并给出一个大小为 K 的索引集合 H，使得这些子集的并集恰好等于 E。
+你的目标是推断出目标和式 T 的确切数值。
+目标和式 T 定义为：边 AC、BD 这两条边的权重之和。
 
-你可以使用以下三种查询方式（每次查询计入总次数）：
+你可以反复提出以下类型的问题（每次仅限一个问题）：
+- 查询上述 5 个预设和式中的任意一个
+- 提出与游戏设定相关的澄清问题（例如："边是否无向？"、"权重是否为整数？"等）
 
-1. **成员关系查询**：询问某个子集 Si 是否包含元素 ej
-   - 格式：<query_member>Si,ej</query_member>
-   - 示例：<query_member>S1,e3</query_member>
-   - 返回：是 或 否
+注意：你不能查询除上述 5 个预设和式之外的任何其他路径或和式。
 
-2. **覆盖检验查询**：给定一组子集索引，查询哪些元素未被覆盖
-   - 格式：<query_coverage>S1,S2,S3</query_coverage>
-   - 示例：<query_coverage>S1,S3</query_coverage>
-   - 返回：未覆盖元素列表（按升序），若全部覆盖则返回"无"
+当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-3. **不可或缺性查询**：询问某个子集 Si 是否不可或缺（即是否存在仅由它覆盖的元素）
-   - 格式：<query_essential>Si</query_essential>
-   - 示例：<query_essential>S5</query_essential>
-   - 返回：若不可或缺，返回"是：{...}"（括号内列出至少一个仅由该子集覆盖的元素）；否则返回"否"
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，需要说明最小覆盖规模 K 和具体的子集索引集合 H（用逗号分隔），格式如下：
+- 查询外环：
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- 查询三角1：
+<query_triangle1></query_triangle1>
 
-注意：
-- 请尽可能少地使用查询次数
-- 查询格式必须严格遵守上述 XML 格式
-- 答案必须是真正的最小覆盖（不存在更小的覆盖方案）
+- 查询三角2：
+<query_triangle2></query_triangle2>
+
+- 查询三角3：
+<query_triangle3></query_triangle3>
+
+- 查询三角4：
+<query_triangle4></query_triangle4>
+
+- 澄清问题（例如询问边是否无向）：
+<query_clarify>边是否无向？</query_clarify>
+
+提交最终答案时，必须说明目标和式 T 的数值，格式如下：
+
+<answer>T=37</answer>
 """
 
     game_rule_en = """\
-Let's play a "Minimum Set Cover" deduction game. Here are the rules:
+Let's play a "Graph Weight Deduction" game. Here are the rules:
 
-The game has a base element set E = {{e1, e2, e3, e4, e5, e6, e7, e8}}, and a family of subsets S = {{S1, S2, S3, S4, S5, S6, S7}}, where each Si is a subset of E. The specific membership of these subsets is hidden, and you need to infer through queries.
+The game features an undirected simple graph with vertices A, B, C, D and 6 edges: AB, BC, CD, DA, AC, BD.
+Each edge has a fixed non-negative integer weight (can be 0) that remains constant throughout the game.
 
-Game constraints:
-1. Each element is covered by at least one subset and at most three subsets
-2. Each subset Si has a size between 2 and 5 elements
-3. There exists a set of subset indices that can cover all elements in E
-4. The minimum coverage size K satisfies: 2 less than or equal to K less than or equal to 4
+You can query the following 5 preset weighted sums:
+1. Loop: The perimeter of the outer loop, i.e., sum of weights of edges AB, BC, CD, DA
+2. Triangle1: The perimeter of the triangle formed by edges AB, BC, AC
+3. Triangle2: The perimeter of the triangle formed by edges AC, CD, DA
+4. Triangle3: The perimeter of the triangle formed by edges BC, CD, BD
+5. Triangle4: The perimeter of the triangle formed by edges AB, BD, DA
 
-Your goal:
-Find the minimum coverage size K and provide an index set H of size K, such that the union of these subsets equals E.
+Your goal is to determine the exact value of the target sum T.
+The target sum T is defined as: the sum of weights of edges AC, BD.
 
-You can use the following three types of queries (each query counts toward the total):
+You can repeatedly ask the following types of questions (one per turn):
+- Query any of the 5 preset sums listed above
+- Ask clarification questions about the game setup (e.g., "Are edges undirected?", "Are weights integers?", etc.)
 
-1. **Membership Query**: Ask if a subset Si contains element ej
-   - Format: <query_member>Si,ej</query_member>
-   - Example: <query_member>S1,e3</query_member>
-   - Returns: Yes or No
+Note: You cannot query any paths or sums other than the 5 preset sums listed above.
 
-2. **Coverage Check Query**: Given a set of subset indices, query which elements are not covered
-   - Format: <query_coverage>S1,S2,S3</query_coverage>
-   - Example: <query_coverage>S1,S3</query_coverage>
-   - Returns: List of uncovered elements (in ascending order), or "None" if all covered
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-3. **Essentiality Query**: Ask if a subset Si is essential (i.e., whether there exists an element covered only by it)
-   - Format: <query_essential>Si</query_essential>
-   - Example: <query_essential>S5</query_essential>
-   - Returns: If essential, return "Yes: {...}" (with at least one witness element); otherwise return "No"
+Each query must contain only one tag. Use the following XML format:
 
-When submitting the final answer, specify the minimum coverage size K and the specific subset index set H (comma-separated), using this format:
+- Query Loop:
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- Query Triangle1:
+<query_triangle1></query_triangle1>
 
-Notes:
-- Try to minimize the number of queries used
-- Query format must strictly follow the XML format above
-- The answer must be a true minimum cover (no smaller coverage solution exists)
+- Query Triangle2:
+<query_triangle2></query_triangle2>
+
+- Query Triangle3:
+<query_triangle3></query_triangle3>
+
+- Query Triangle4:
+<query_triangle4></query_triangle4>
+
+- Clarification question (e.g., asking if edges are undirected):
+<query_clarify>Are edges undirected?</query_clarify>
+
+When submitting the final answer, specify the value of target sum T using this format:
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_zh_1 = """\
-为了优化城市公共交通，我们来进行一项"公交线路最小覆盖"规划任务，规则如下：
+我们来玩一个"物流枢纽路径耗时推理"游戏，规则如下：
 
-任务设定了一个核心居民区集合 E = {{e1, e2, e3, e4, e5, e6, e7, e8}}，以及一个候选公交线路集合 S = {{S1, S2, S3, S4, S5, S6, S7}}，其中每条线路 Si 覆盖 E 中的部分居民区。这些线路的具体停靠站点是隐藏的，你需要通过查询来推断。
+游戏设定了一个区域物流网络，顶点为四大核心物流枢纽 A、B、C、D，共有 6 条直达运输线：AB、BC、CD、DA、AC、BD。
+每条线路有一个固定的非负整数运输耗时（单位：小时，可以为 0），在整个游戏过程中不会改变。
 
-规划约束：
-1. 每个居民区至少被一条线路包含，且至多被三条线路包含
-2. 每条公交线路 Si 的覆盖范围在 2 到 5 个居民区之间
-3. 存在一个由线路索引组成的集合，能够覆盖所有居民区 E
-4. 最少公交线路数 K 满足：2 小于等于 K 小于等于 4（注：即 K 介于 2 到 4 之间）
+你可以查询以下 5 个预设的复合线路总耗时：
+1. 外环：完整巡回运输线的总耗时，即线路 AB、BC、CD、DA 的耗时之和
+2. 三角1：由线路 AB、BC、AC 构成的区域闭环1的总耗时
+3. 三角2：由线路 AC、CD、DA 构成的区域闭环2的总耗时
+4. 三角3：由线路 BC、CD、BD 构成的区域闭环3的总耗时
+5. 三角4：由线路 AB、BD、DA 构成的区域闭环4的总耗时
 
-你的目标：
-找出最少公交线路数 K，并给出一个大小为 K 的线路索引集合 H，使得这些线路的停靠站点并集恰好涵盖所有居民区 E。
+你的目标是推断出目标复合线路 T 的确切总耗时。
+目标和式 T 定义为：线路 AC、BD 这两条线路的耗时之和。
 
-你可以使用以下三种查询方式（每次查询计入总次数）：
+你可以反复提出以下类型的问题（每次仅限一个问题）：
+- 查询上述 5 个预设总耗时中的任意一个
+- 提出与游戏设定相关的澄清问题（例如："线路是否双向？"、"耗时是否为整数？"等）
 
-1. **停靠关系查询**：询问某条线路 Si 是否停靠居民区 ej
-   - 格式：<query_member>Si,ej</query_member>
-   - 示例：<query_member>S1,e3</query_member>
-   - 返回：是 或 否
+注意：你不能查询除上述 5 个预设复合线路之外的任何其他路径或总耗时。
 
-2. **覆盖检验查询**：给定一组线路索引，查询哪些居民区未被覆盖
-   - 格式：<query_coverage>S1,S2,S3</query_coverage>
-   - 示例：<query_coverage>S1,S3</query_coverage>
-   - 返回：未覆盖居民区列表（按升序），若全部覆盖则返回"无"
+当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-3. **不可或缺性查询**：询问某条线路 Si 是否不可或缺（即是否存在仅由它覆盖的居民区）
-   - 格式：<query_essential>Si</query_essential>
-   - 示例：<query_essential>S5</query_essential>
-   - 返回：若不可或缺，返回"是：{...}"（括号内列出至少一个仅由该线路覆盖的居民区）；否则返回"否"
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，需要说明最少公交线路数 K 和具体的线路索引集合 H（用逗号分隔），格式如下：
+- 查询外环：
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- 查询三角1：
+<query_triangle1></query_triangle1>
 
-注意：
-- 请尽可能少地使用查询次数
-- 查询格式必须严格遵守上述 XML 格式
-- 答案必须是真正的最小覆盖（不存在更少线路的规划方案）
+- 查询三角2：
+<query_triangle2></query_triangle2>
+
+- 查询三角3：
+<query_triangle3></query_triangle3>
+
+- 查询三角4：
+<query_triangle4></query_triangle4>
+
+- 澄清问题（例如询问线路是否双向）：
+<query_clarify>线路是否双向？</query_clarify>
+
+提交最终答案时，必须说明目标复合线路 T 的总耗时，格式如下：
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Urban Transportation Scenario]
-To optimize urban public transit, let's conduct a "Minimum Bus Route Coverage" planning task. Here are the rules:
+[Transportation Scenario]
+Let's play a "Logistics Hub Route Time Deduction" game. Here are the rules:
 
-The task involves a set of core residential areas E = {{e1, e2, e3, e4, e5, e6, e7, e8}}, and a set of candidate bus routes S = {{S1, S2, S3, S4, S5, S6, S7}}, where each route Si covers a subset of E. The specific stops of these routes are hidden, and you need to infer them through queries.
+The game features a regional logistics network with core hubs A, B, C, D and 6 direct transit routes: AB, BC, CD, DA, AC, BD.
+Each route has a fixed non-negative integer transit time in hours (can be 0) that remains constant throughout the game.
 
-Planning constraints:
-1. Each residential area is covered by at least one route and at most three routes
-2. Each bus route Si covers between 2 and 5 residential areas
-3. There exists a set of route indices that can cover all areas in E
-4. The minimum number of routes K satisfies: 2 less than or equal to K less than or equal to 4
+You can query the following 5 preset compound route times:
+1. Loop: The total time of the outer transit circuit, i.e., sum of times for routes AB, BC, CD, DA
+2. Triangle1: The total time of regional loop 1 formed by routes AB, BC, AC
+3. Triangle2: The total time of regional loop 2 formed by routes AC, CD, DA
+4. Triangle3: The total time of regional loop 3 formed by routes BC, CD, BD
+5. Triangle4: The total time of regional loop 4 formed by routes AB, BD, DA
 
-Your goal:
-Find the minimum number of routes K and provide an index set H of size K, such that the union of their stops covers E completely.
+Your goal is to determine the exact total transit time of the target compound route T.
+The target sum T is defined as: the sum of transit times of routes AC, BD.
 
-You can use the following three types of queries (each query counts toward the total):
+You can repeatedly ask the following types of questions (one per turn):
+- Query any of the 5 preset times listed above
+- Ask clarification questions about the game setup (e.g., "Are routes bidirectional?", "Are times integers?", etc.)
 
-1. **Stop Query**: Ask if a route Si stops at residential area ej
-   - Format: <query_member>Si,ej</query_member>
-   - Example: <query_member>S1,e3</query_member>
-   - Returns: Yes or No
+Note: You cannot query any paths or times other than the 5 preset sums listed above.
 
-2. **Coverage Check Query**: Given a set of route indices, query which areas are not covered
-   - Format: <query_coverage>S1,S2,S3</query_coverage>
-   - Example: <query_coverage>S1,S3</query_coverage>
-   - Returns: List of uncovered areas (in ascending order), or "None" if all covered
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-3. **Essentiality Query**: Ask if a route Si is essential (i.e., whether there exists an area covered only by it)
-   - Format: <query_essential>Si</query_essential>
-   - Example: <query_essential>S5</query_essential>
-   - Returns: If essential, return "Yes: {...}" (with at least one witness area); otherwise return "No"
+Each query must contain only one tag. Use the following XML format:
 
-When submitting the final answer, specify the minimum number of routes K and the specific route index set H (comma-separated), using this format:
+- Query Loop:
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- Query Triangle1:
+<query_triangle1></query_triangle1>
 
-Notes:
-- Try to minimize the number of queries used
-- Query format must strictly follow the XML format above
-- The answer must be a true minimum cover (no smaller route plan exists)
+- Query Triangle2:
+<query_triangle2></query_triangle2>
+
+- Query Triangle3:
+<query_triangle3></query_triangle3>
+
+- Query Triangle4:
+<query_triangle4></query_triangle4>
+
+- Clarification question (e.g., asking if routes are bidirectional):
+<query_clarify>Are routes bidirectional?</query_clarify>
+
+When submitting the final answer, specify the value of target route time T using this format:
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_zh_2 = """\
-为了制定精准的联合用药方案，我们来进行一项"最小药物覆盖"的医学推理任务，规则如下：
+我们来玩一个"医疗科室资源消耗推理"游戏，规则如下：
 
-系统设定了一个病原体/症状集合 E = {{e1, e2, e3, e4, e5, e6, e7, e8}}，以及一个候选药物集合 S = {{S1, S2, S3, S4, S5, S6, S7}}，其中每种药物 Si 都能抑制 E 中的部分靶点。这些药物的具体抗菌谱是隐藏的，你需要通过查询来推断。
+游戏设定了一个医疗协同网络，顶点为四大核心科室 A、B、C、D，共有 6 条跨科室协同流转路径：AB、BC、CD、DA、AC、BD。
+每条路径有一个固定的非负整数资源消耗指数（可以为 0），在整个游戏过程中不会改变。
 
-用药约束：
-1. 每种病原体至少被一种药物覆盖，且至多被三种药物覆盖
-2. 每种药物 Si 的有效覆盖范围在 2 到 5 种病原体之间
-3. 存在一个由药物索引组成的集合，能够覆盖所有病原体 E
-4. 最少联合药物数 K 满足：2 小于等于 K 小于等于 4（注：即 K 介于 2 到 4 之间）
+你可以查询以下 5 个预设的综合诊疗流转消耗：
+1. 外环：完整多学科会诊周期的总消耗，即路径 AB、BC、CD、DA 的消耗之和
+2. 三角1：由路径 AB、BC、AC 构成的特定诊疗回路1的总消耗
+3. 三角2：由路径 AC、CD、DA 构成的特定诊疗回路2的总消耗
+4. 三角3：由路径 BC、CD、BD 构成的特定诊疗回路3的总消耗
+5. 三角4：由路径 AB、BD、DA 构成的特定诊疗回路4的总消耗
 
-你的目标：
-找出最少联合药物数 K，并给出一个大小为 K 的药物索引集合 H，使得这些药物的抗菌谱并集恰好覆盖所有病原体 E。
+你的目标是推断出复杂综合治疗方案 T 的确切资源消耗指数。
+目标和式 T 定义为：路径 AC、BD 这两条路径的消耗之和。
 
-你可以使用以下三种查询方式（每次查询计入总次数）：
+你可以反复提出以下类型的问题（每次仅限一个问题）：
+- 查询上述 5 个预设消耗中的任意一个
+- 提出与游戏设定相关的澄清问题（例如："流转路径是否双向？"、"消耗指数是否为整数？"等）
 
-1. **抑制效用查询**：询问某药物 Si 是否能有效抑制病原体 ej
-   - 格式：<query_member>Si,ej</query_member>
-   - 示例：<query_member>S1,e3</query_member>
-   - 返回：是 或 否
+注意：你不能查询除上述 5 个预设回路之外的任何其他路径或总消耗。
 
-2. **覆盖检验查询**：给定一组药物组合，查询哪些病原体仍未被抑制
-   - 格式：<query_coverage>S1,S2,S3</query_coverage>
-   - 示例：<query_coverage>S1,S3</query_coverage>
-   - 返回：未覆盖病原体列表（按升序），若全部抑制则返回"无"
+当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-3. **不可或缺性查询**：询问某药物 Si 是否不可或缺（即是否存在仅能由它抑制的病原体）
-   - 格式：<query_essential>Si</query_essential>
-   - 示例：<query_essential>S5</query_essential>
-   - 返回：若不可或缺，返回"是：{...}"（括号内列出至少一个仅由该药物抑制的病原体）；否则返回"否"
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，需要说明最少联合药物数 K 和具体的药物索引集合 H（用逗号分隔），格式如下：
+- 查询外环：
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- 查询三角1：
+<query_triangle1></query_triangle1>
 
-注意：
-- 请尽可能少地使用查询次数
-- 查询格式必须严格遵守上述 XML 格式
-- 答案必须是真正的最小覆盖（不存在更少药物的联合方案）
+- 查询三角2：
+<query_triangle2></query_triangle2>
+
+- 查询三角3：
+<query_triangle3></query_triangle3>
+
+- 查询三角4：
+<query_triangle4></query_triangle4>
+
+- 澄清问题（例如询问流转路径是否双向）：
+<query_clarify>流转路径是否双向？</query_clarify>
+
+提交最终答案时，必须说明目标方案 T 的资源消耗指数，格式如下：
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-To design a precise combination therapy, let's conduct a "Minimum Drug Coverage" deduction task. Here are the rules:
+[Healthcare Scenario]
+Let's play a "Medical Department Resource Deduction" game. Here are the rules:
 
-The system has a set of pathogens/symptoms E = {{e1, e2, e3, e4, e5, e6, e7, e8}}, and a set of candidate drugs S = {{S1, S2, S3, S4, S5, S6, S7}}, where each drug Si can inhibit a subset of targets in E. The specific antimicrobial spectrum of these drugs is hidden, and you need to infer it through queries.
+The game features a medical collaboration network with core departments A, B, C, D and 6 cross-department collaborative pathways: AB, BC, CD, DA, AC, BD.
+Each pathway has a fixed non-negative integer resource consumption index (can be 0) that remains constant throughout the game.
 
-Prescription constraints:
-1. Each pathogen is covered by at least one drug and at most three drugs
-2. Each drug Si covers between 2 and 5 pathogens
-3. There exists a set of drug indices that can cover all pathogens in E
-4. The minimum number of combined drugs K satisfies: 2 less than or equal to K less than or equal to 4
+You can query the following 5 preset collaborative resource consumptions:
+1. Loop: The total consumption of a full multidisciplinary consultation cycle, i.e., sum of resource consumptions of pathways AB, BC, CD, DA
+2. Triangle1: The total consumption of treatment pathway 1 formed by pathways AB, BC, AC
+3. Triangle2: The total consumption of treatment pathway 2 formed by pathways AC, CD, DA
+4. Triangle3: The total consumption of treatment pathway 3 formed by pathways BC, CD, BD
+5. Triangle4: The total consumption of treatment pathway 4 formed by pathways AB, BD, DA
 
-Your goal:
-Find the minimum number of combined drugs K and provide an index set H of size K, such that the union of their antimicrobial spectra covers E completely.
+Your goal is to determine the exact resource consumption index of the target complex treatment plan T.
+The target sum T is defined as: the sum of resource consumptions of pathways AC, BD.
 
-You can use the following three types of queries (each query counts toward the total):
+You can repeatedly ask the following types of questions (one per turn):
+- Query any of the 5 preset consumptions listed above
+- Ask clarification questions about the game setup (e.g., "Are pathways bidirectional?", "Are indices integers?", etc.)
 
-1. **Inhibition Query**: Ask if a drug Si can effectively inhibit pathogen ej
-   - Format: <query_member>Si,ej</query_member>
-   - Example: <query_member>S1,e3</query_member>
-   - Returns: Yes or No
+Note: You cannot query any paths or consumptions other than the 5 preset sums listed above.
 
-2. **Coverage Check Query**: Given a set of combined drugs, query which pathogens are still not inhibited
-   - Format: <query_coverage>S1,S2,S3</query_coverage>
-   - Example: <query_coverage>S1,S3</query_coverage>
-   - Returns: List of uncovered pathogens (in ascending order), or "None" if all inhibited
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-3. **Essentiality Query**: Ask if a drug Si is essential (i.e., whether there exists a pathogen that can only be inhibited by it)
-   - Format: <query_essential>Si</query_essential>
-   - Example: <query_essential>S5</query_essential>
-   - Returns: If essential, return "Yes: {...}" (with at least one witness pathogen); otherwise return "No"
+Each query must contain only one tag. Use the following XML format:
 
-When submitting the final answer, specify the minimum number of drugs K and the specific drug index set H (comma-separated), using this format:
+- Query Loop:
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- Query Triangle1:
+<query_triangle1></query_triangle1>
 
-Notes:
-- Try to minimize the number of queries used
-- Query format must strictly follow the XML format above
-- The answer must be a true minimum cover (no combination with fewer drugs exists)
+- Query Triangle2:
+<query_triangle2></query_triangle2>
+
+- Query Triangle3:
+<query_triangle3></query_triangle3>
+
+- Query Triangle4:
+<query_triangle4></query_triangle4>
+
+- Clarification question (e.g., asking if pathways are bidirectional):
+<query_clarify>Are pathways bidirectional?</query_clarify>
+
+When submitting the final answer, specify the value of target plan consumption T using this format:
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_zh_3 = """\
-为了组建高效的跨学科教研团队，我们来进行一项"最少师资覆盖"的规划任务，规则如下：
+我们来玩一个"核心课程学时推理"游戏，规则如下：
 
-本次教研涉及一个核心教学模块集合 E = {{e1, e2, e3, e4, e5, e6, e7, e8}}，以及一个候选复合型教师集合 S = {{S1, S2, S3, S4, S5, S6, S7}}，其中每位教师 Si 都能胜任 E 中的部分教学模块。这些教师的具体专业领域是隐藏的，你需要通过查询来推断。
+游戏设定了一个专业知识图谱，顶点为四大核心模块 A、B、C、D，共有 6 种模块间衔接关系：AB、BC、CD、DA、AC、BD。
+每种衔接关系有一个固定的非负整数先导学习学时（可以为 0），在整个游戏过程中不会改变。
 
-排课约束：
-1. 每个教学模块至少被一位教师覆盖，且至多被三位教师覆盖
-2. 每位教师 Si 的胜任范围在 2 到 5 个教学模块之间
-3. 存在一个由教师索引组成的集合，能够覆盖所有教学模块 E
-4. 最少教师人数 K 满足：2 小于等于 K 小于等于 4（注：即 K 介于 2 到 4 之间）
+你可以查询以下 5 个预设的学习路径总学时：
+1. 外环：完整进阶学习闭环的总学时，即衔接 AB、BC、CD、DA 的学时之和
+2. 三角1：由衔接 AB、BC、AC 构成的微基建课程群1的总学时
+3. 三角2：由衔接 AC、CD、DA 构成的微基建课程群2的总学时
+4. 三角3：由衔接 BC、CD、BD 构成的微基建课程群3的总学时
+5. 三角4：由衔接 AB、BD、DA 构成的微基建课程群4的总学时
 
-你的目标：
-找出所需的最少教师人数 K，并给出一个大小为 K 的教师索引集合 H，使得这些教师的专业领域并集恰好覆盖所有教学模块 E。
+你的目标是推断出高级专业认证体系 T 的确切总学时。
+目标和式 T 定义为：衔接 AC、BD 这两项关系的学时之和。
 
-你可以使用以下三种查询方式（每次查询计入总次数）：
+你可以反复提出以下类型的问题（每次仅限一个问题）：
+- 查询上述 5 个预设总学时中的任意一个
+- 提出与游戏设定相关的澄清问题（例如："衔接关系是否双向？"、"学时是否为整数？"等）
 
-1. **胜任力查询**：询问某位教师 Si 是否能胜任教学模块 ej
-   - 格式：<query_member>Si,ej</query_member>
-   - 示例：<query_member>S1,e3</query_member>
-   - 返回：是 或 否
+注意：你不能查询除上述 5 个预设路径之外的任何其他路径或总学时。
 
-2. **师资检验查询**：给定一组候选教师组合，查询哪些教学模块仍存在师资空白
-   - 格式：<query_coverage>S1,S2,S3</query_coverage>
-   - 示例：<query_coverage>S1,S3</query_coverage>
-   - 返回：空白教学模块列表（按升序），若全部覆盖则返回"无"
+当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-3. **不可或缺性查询**：询问某位教师 Si 是否不可或缺（即是否存在仅能由他胜任的教学模块）
-   - 格式：<query_essential>Si</query_essential>
-   - 示例：<query_essential>S5</query_essential>
-   - 返回：若不可或缺，返回"是：{...}"（括号内列出至少一个仅由该教师胜任的模块）；否则返回"否"
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，需要说明最少教师人数 K 和具体的教师索引集合 H（用逗号分隔），格式如下：
+- 查询外环：
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- 查询三角1：
+<query_triangle1></query_triangle1>
 
-注意：
-- 请尽可能少地使用查询次数
-- 查询格式必须严格遵守上述 XML 格式
-- 答案必须是真正的最小覆盖（不存在聘用更少教师的方案）
+- 查询三角2：
+<query_triangle2></query_triangle2>
+
+- 查询三角3：
+<query_triangle3></query_triangle3>
+
+- 查询三角4：
+<query_triangle4></query_triangle4>
+
+- 澄清问题（例如询问衔接关系是否双向）：
+<query_clarify>衔接关系是否双向？</query_clarify>
+
+提交最终答案时，必须说明目标认证体系 T 的总学时，格式如下：
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-To form an efficient cross-disciplinary teaching team, let's conduct a "Minimum Faculty Coverage" planning task. Here are the rules:
+Let's play a "Core Curriculum Study Hours Deduction" game. Here are the rules:
 
-The curriculum involves a set of core teaching modules E = {{e1, e2, e3, e4, e5, e6, e7, e8}}, and a set of candidate versatile teachers S = {{S1, S2, S3, S4, S5, S6, S7}}, where each teacher Si can handle a subset of modules in E. Their specific areas of expertise are hidden, and you need to infer them through queries.
+The game features a professional knowledge graph with core modules A, B, C, D and 6 module transition relations: AB, BC, CD, DA, AC, BD.
+Each transition has a fixed non-negative integer required prerequisite study hours (can be 0) that remains constant throughout the game.
 
-Scheduling constraints:
-1. Each teaching module is covered by at least one teacher and at most three teachers
-2. Each teacher Si is competent in between 2 and 5 teaching modules
-3. There exists a set of teacher indices that can cover all teaching modules in E
-4. The minimum number of teachers K satisfies: 2 less than or equal to K less than or equal to 4
+You can query the following 5 preset learning path study hours:
+1. Loop: The total study hours of a complete advanced learning cycle, i.e., sum of required study hours for transitions AB, BC, CD, DA
+2. Triangle1: The total study hours of specialization track 1 formed by transitions AB, BC, AC
+3. Triangle2: The total study hours of specialization track 2 formed by transitions AC, CD, DA
+4. Triangle3: The total study hours of specialization track 3 formed by transitions BC, CD, BD
+5. Triangle4: The total study hours of specialization track 4 formed by transitions AB, BD, DA
 
-Your goal:
-Find the minimum number of teachers K and provide an index set H of size K, such that the union of their expertise covers E completely.
+Your goal is to determine the exact total study hours of the advanced certification track T.
+The target sum T is defined as: the sum of required study hours for transitions AC, BD.
 
-You can use the following three types of queries (each query counts toward the total):
+You can repeatedly ask the following types of questions (one per turn):
+- Query any of the 5 preset study hour sums listed above
+- Ask clarification questions about the game setup (e.g., "Are transitions bidirectional?", "Are hours integers?", etc.)
 
-1. **Competency Query**: Ask if a teacher Si can handle teaching module ej
-   - Format: <query_member>Si,ej</query_member>
-   - Example: <query_member>S1,e3</query_member>
-   - Returns: Yes or No
+Note: You cannot query any paths or hours other than the 5 preset sums listed above.
 
-2. **Faculty Check Query**: Given a set of teachers, query which teaching modules still lack instructors
-   - Format: <query_coverage>S1,S2,S3</query_coverage>
-   - Example: <query_coverage>S1,S3</query_coverage>
-   - Returns: List of uncovered teaching modules (in ascending order), or "None" if all covered
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-3. **Essentiality Query**: Ask if a teacher Si is essential (i.e., whether there exists a module that can only be taught by them)
-   - Format: <query_essential>Si</query_essential>
-   - Example: <query_essential>S5</query_essential>
-   - Returns: If essential, return "Yes: {...}" (with at least one witness module); otherwise return "No"
+Each query must contain only one tag. Use the following XML format:
 
-When submitting the final answer, specify the minimum number of teachers K and the specific teacher index set H (comma-separated), using this format:
+- Query Loop:
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- Query Triangle1:
+<query_triangle1></query_triangle1>
 
-Notes:
-- Try to minimize the number of queries used
-- Query format must strictly follow the XML format above
-- The answer must be a true minimum cover (no plan with fewer teachers exists)
+- Query Triangle2:
+<query_triangle2></query_triangle2>
+
+- Query Triangle3:
+<query_triangle3></query_triangle3>
+
+- Query Triangle4:
+<query_triangle4></query_triangle4>
+
+- Clarification question (e.g., asking if transitions are bidirectional):
+<query_clarify>Are transitions bidirectional?</query_clarify>
+
+When submitting the final answer, specify the value of target track hours T using this format:
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_zh_4 = """\
-为了优化柔性生产线配置，我们来进行一项"最小加工刀具覆盖"的排产推演任务，规则如下：
+我们来玩一个"工业产线能耗推理"游戏，规则如下：
 
-生产任务要求完成一组复杂加工工序 E = {{e1, e2, e3, e4, e5, e6, e7, e8}}，我们有一批候选的多功能复合刀具 S = {{S1, S2, S3, S4, S5, S6, S7}}，其中每把刀具 Si 能执行 E 中的部分工序。这些刀具的具体适用范围是隐藏的，你需要通过查询来排查。
+游戏设定了一个自动化生产车间，顶点为四大核心工站 A、B、C、D，共有 6 条物料流转轨道：AB、BC、CD、DA、AC、BD。
+每条轨道在流转时有一个固定的非负整数能耗值（单位：千瓦时，可以为 0），在整个游戏过程中不会改变。
 
-生产约束：
-1. 每道工序至少可由一把刀具完成，且至多可由三把刀具完成
-2. 每把多功能刀具 Si 可执行的工序在 2 到 5 道之间
-3. 存在一种刀具配置方案，能够完成所有加工工序 E
-4. 最少需要的刀具种类数 K 满足：2 小于等于 K 小于等于 4（注：即 K 介于 2 到 4 之间）
+你可以查询以下 5 个预设的产线回路总能耗：
+1. 外环：主装配线完整流转周期的总能耗，即轨道 AB、BC、CD、DA 的能耗之和
+2. 三角1：由轨道 AB、BC、AC 构成的加工测试回路1的总能耗
+3. 三角2：由轨道 AC、CD、DA 构成的加工测试回路2的总能耗
+4. 三角3：由轨道 BC、CD、BD 构成的加工测试回路3的总能耗
+5. 三角4：由轨道 AB、BD、DA 构成的加工测试回路4的总能耗
 
-你的目标：
-找出最少需要的刀具种类数 K，并给出一个包含 K 把刀具的索引集合 H，使得这些刀具的功能总和恰好覆盖全部工序 E。
+你的目标是推断出定制加工批次 T 的确切总能耗。
+目标和式 T 定义为：轨道 AC、BD 这两条轨道的能耗之和。
 
-你可以使用以下三种查询方式（每次查询计入总次数）：
+你可以反复提出以下类型的问题（每次仅限一个问题）：
+- 查询上述 5 个预设总能耗中的任意一个
+- 提出与游戏设定相关的澄清问题（例如："轨道是否双向？"、"能耗是否为整数？"等）
 
-1. **加工能力查询**：询问刀具 Si 是否能执行工序 ej
-   - 格式：<query_member>Si,ej</query_member>
-   - 示例：<query_member>S1,e3</query_member>
-   - 返回：是 或 否
+注意：你不能查询除上述 5 个预设回路之外的任何其他流转路径或总能耗。
 
-2. **工序检验查询**：给定一组刀具组合，查询哪些工序仍无法完成
-   - 格式：<query_coverage>S1,S2,S3</query_coverage>
-   - 示例：<query_coverage>S1,S3</query_coverage>
-   - 返回：无法完成的工序列表（按升序），若全部覆盖则返回"无"
+当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-3. **不可或缺性查询**：询问某把刀具 Si 是否不可或缺（即是否存在只能由它执行的工序）
-   - 格式：<query_essential>Si</query_essential>
-   - 示例：<query_essential>S5</query_essential>
-   - 返回：若不可或缺，返回"是：{...}"（括号内列出至少一道仅由该刀具执行的工序）；否则返回"否"
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，需要说明最少刀具种类数 K 和具体的刀具索引集合 H（用逗号分隔），格式如下：
+- 查询外环：
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- 查询三角1：
+<query_triangle1></query_triangle1>
 
-注意：
-- 请尽可能少地使用查询次数
-- 查询格式必须严格遵守上述 XML 格式
-- 答案必须是真正的最小覆盖（不存在使用更少刀具的配置方案）
+- 查询三角2：
+<query_triangle2></query_triangle2>
+
+- 查询三角3：
+<query_triangle3></query_triangle3>
+
+- 查询三角4：
+<query_triangle4></query_triangle4>
+
+- 澄清问题（例如询问轨道是否双向）：
+<query_clarify>轨道是否双向？</query_clarify>
+
+提交最终答案时，必须说明目标批次 T 的总能耗，格式如下：
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-To optimize a flexible production line, let's conduct a "Minimum Tool Coverage" scheduling task. Here are the rules:
+[Manufacturing/Industry Scenario]
+Let's play an "Industrial Production Line Energy Consumption Deduction" game. Here are the rules:
 
-The production task requires completing a set of complex machining operations E = {{e1, e2, e3, e4, e5, e6, e7, e8}}, and we have a batch of candidate multi-functional cutting tools S = {{S1, S2, S3, S4, S5, S6, S7}}, where each tool Si can perform a subset of operations in E. The specific capabilities of these tools are hidden, and you need to investigate through queries.
+The game features an automated production workshop with core workstations A, B, C, D and 6 material transfer tracks: AB, BC, CD, DA, AC, BD.
+Each track has a fixed non-negative integer energy consumption in kWh (can be 0) that remains constant throughout the game.
 
-Production constraints:
-1. Each operation can be performed by at least one tool and at most three tools
-2. Each multi-functional tool Si can perform between 2 and 5 operations
-3. There exists a tool configuration that can complete all machining operations in E
-4. The minimum number of tool types K satisfies: 2 less than or equal to K less than or equal to 4
+You can query the following 5 preset production loop energy consumptions:
+1. Loop: The total energy consumption of the main assembly line cycle, i.e., sum of energy consumptions for tracks AB, BC, CD, DA
+2. Triangle1: The total energy consumption of sub-assembly loop 1 formed by tracks AB, BC, AC
+3. Triangle2: The total energy consumption of sub-assembly loop 2 formed by tracks AC, CD, DA
+4. Triangle3: The total energy consumption of sub-assembly loop 3 formed by tracks BC, CD, BD
+5. Triangle4: The total energy consumption of sub-assembly loop 4 formed by tracks AB, BD, DA
 
-Your goal:
-Find the minimum number of tool types K and provide an index set H of size K, such that the sum of their capabilities covers all operations E.
+Your goal is to determine the exact total energy consumption of the custom processing batch T.
+The target sum T is defined as: the sum of energy consumptions of tracks AC, BD.
 
-You can use the following three types of queries (each query counts toward the total):
+You can repeatedly ask the following types of questions (one per turn):
+- Query any of the 5 preset energy consumptions listed above
+- Ask clarification questions about the game setup (e.g., "Are tracks bidirectional?", "Are energy values integers?", etc.)
 
-1. **Machining Capability Query**: Ask if a tool Si can perform operation ej
-   - Format: <query_member>Si,ej</query_member>
-   - Example: <query_member>S1,e3</query_member>
-   - Returns: Yes or No
+Note: You cannot query any paths or consumptions other than the 5 preset sums listed above.
 
-2. **Operation Check Query**: Given a set of tool combinations, query which operations are still unable to be completed
-   - Format: <query_coverage>S1,S2,S3</query_coverage>
-   - Example: <query_coverage>S1,S3</query_coverage>
-   - Returns: List of incomplete operations (in ascending order), or "None" if all covered
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-3. **Essentiality Query**: Ask if a tool Si is essential (i.e., whether there exists an operation that can only be performed by it)
-   - Format: <query_essential>Si</query_essential>
-   - Example: <query_essential>S5</query_essential>
-   - Returns: If essential, return "Yes: {...}" (with at least one witness operation); otherwise return "No"
+Each query must contain only one tag. Use the following XML format:
 
-When submitting the final answer, specify the minimum number of tool types K and the specific tool index set H (comma-separated), using this format:
+- Query Loop:
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- Query Triangle1:
+<query_triangle1></query_triangle1>
 
-Notes:
-- Try to minimize the number of queries used
-- Query format must strictly follow the XML format above
-- The answer must be a true minimum cover (no configuration using fewer tools exists)
+- Query Triangle2:
+<query_triangle2></query_triangle2>
+
+- Query Triangle3:
+<query_triangle3></query_triangle3>
+
+- Query Triangle4:
+<query_triangle4></query_triangle4>
+
+- Clarification question (e.g., asking if tracks are bidirectional):
+<query_clarify>Are tracks bidirectional?</query_clarify>
+
+When submitting the final answer, specify the value of target batch consumption T using this format:
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_zh_5 = """\
-为保障企业合规并控制法务预算，我们来进行一项"最小外部审计团队覆盖"的排查规划，规则如下：
+我们来玩一个"法律案件计费工时推理"游戏，规则如下：
 
-公司梳理了一个核心法律风险点集合 E = {{e1, e2, e3, e4, e5, e6, e7, e8}}，以及一组专业的第三方候选审计团队 S = {{S1, S2, S3, S4, S5, S6, S7}}，其中每个团队 Si 具备排查 E 中部分风险点的资质。各团队擅长的确切排查领域是隐藏的，你需要通过查询来确认。
+游戏设定了一个合规审查流程，顶点为四大关键审查阶段 A、B、C、D，共有 6 种阶段间的流转程序：AB、BC、CD、DA、AC、BD。
+每种程序有一个固定的非负整数计费工时（可以为 0），在整个游戏过程中不会改变。
 
-合规约束：
-1. 每个风险点至少被一个团队排查，且至多被三个团队排查
-2. 每个团队 Si 的专业排查范围在 2 到 5 个风险点之间
-3. 存在一种由部分审计团队组成的方案，能够覆盖所有风险点 E
-4. 最少需要雇佣的团队数量 K 满足：2 小于等于 K 小于等于 4（注：即 K 介于 2 到 4 之间）
+你可以查询以下 5 个预设的阶段协同总工时：
+1. 外环：完整合规审计周期的总工时，即程序 AB、BC、CD、DA 的工时之和
+2. 三角1：由程序 AB、BC、AC 构成的标准诉讼闭环1的总工时
+3. 三角2：由程序 AC、CD、DA 构成的标准诉讼闭环2的总工时
+4. 三角3：由程序 BC、CD、BD 构成的标准诉讼闭环3的总工时
+5. 三角4：由程序 AB、BD、DA 构成的标准诉讼闭环4的总工时
 
-你的目标：
-找出最少雇佣团队数 K，并给出一个包含 K 个团队的索引集合 H，使得这些团队排查资质的并集恰好覆盖全部风险点 E。
+你的目标是推断出复杂争议解决策略 T 的确切总计费工时。
+目标和式 T 定义为：程序 AC、BD 这两个程序的工时之和。
 
-你可以使用以下三种查询方式（每次查询计入总次数）：
+你可以反复提出以下类型的问题（每次仅限一个问题）：
+- 查询上述 5 个预设总工时中的任意一个
+- 提出与游戏设定相关的澄清问题（例如："程序是否双向适用？"、"工时是否为整数？"等）
 
-1. **资质核查查询**：询问团队 Si 是否具备排查风险点 ej 的资质
-   - 格式：<query_member>Si,ej</query_member>
-   - 示例：<query_member>S1,e3</query_member>
-   - 返回：是 或 否
+注意：你不能查询除上述 5 个预设闭环之外的任何其他程序或总工时。
 
-2. **风险盲区检验**：给定一组候选团队，查询哪些风险点仍处于无人排查的盲区
-   - 格式：<query_coverage>S1,S2,S3</query_coverage>
-   - 示例：<query_coverage>S1,S3</query_coverage>
-   - 返回：盲区风险点列表（按升序），若全部覆盖则返回"无"
+当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-3. **不可替代性查询**：询问某个团队 Si 是否不可替代（即是否存在只能由它负责排查的风险点）
-   - 格式：<query_essential>Si</query_essential>
-   - 示例：<query_essential>S5</query_essential>
-   - 返回：若不可替代，返回"是：{...}"（括号内列出至少一个仅由该团队排查的风险点）；否则返回"否"
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，需要说明最少雇佣团队数 K 和具体的团队索引集合 H（用逗号分隔），格式如下：
+- 查询外环：
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- 查询三角1：
+<query_triangle1></query_triangle1>
 
-注意：
-- 请尽可能少地使用查询次数
-- 查询格式必须严格遵守上述 XML 格式
-- 答案必须是真正的最小覆盖（不存在雇佣更少团队的方案）
+- 查询三角2：
+<query_triangle2></query_triangle2>
+
+- 查询三角3：
+<query_triangle3></query_triangle3>
+
+- 查询三角4：
+<query_triangle4></query_triangle4>
+
+- 澄清问题（例如询问程序是否双向适用）：
+<query_clarify>程序是否双向适用？</query_clarify>
+
+提交最终答案时，必须说明目标策略 T 的总计费工时，格式如下：
+
+<answer>T=37</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-To ensure corporate compliance and control the legal budget, let's conduct a "Minimum Audit Team Coverage" planning task. Here are the rules:
+[Law Scenario]
+Let's play a "Legal Case Billable Hours Deduction" game. Here are the rules:
 
-The company has identified a set of core legal risk points E = {{e1, e2, e3, e4, e5, e6, e7, e8}}, and a set of professional third-party candidate audit teams S = {{S1, S2, S3, S4, S5, S6, S7}}, where each team Si is qualified to review a subset of risks in E. The exact areas of expertise for each team are hidden, and you need to confirm them through queries.
+The game features a compliance review process with key stages A, B, C, D and 6 transition procedures between stages: AB, BC, CD, DA, AC, BD.
+Each procedure has a fixed non-negative integer billable hours requirement (can be 0) that remains constant throughout the game.
 
-Compliance constraints:
-1. Each risk point is covered by at least one team and at most three teams
-2. Each team Si is qualified to review between 2 and 5 risk points
-3. There exists a plan using a subset of audit teams that can cover all risk points in E
-4. The minimum number of hired teams K satisfies: 2 less than or equal to K less than or equal to 4
+You can query the following 5 preset stage collaboration billable hours:
+1. Loop: The total billable hours of a complete compliance audit cycle, i.e., sum of billable hours for procedures AB, BC, CD, DA
+2. Triangle1: The total billable hours of standard litigation phase 1 formed by procedures AB, BC, AC
+3. Triangle2: The total billable hours of standard litigation phase 2 formed by procedures AC, CD, DA
+4. Triangle3: The total billable hours of standard litigation phase 3 formed by procedures BC, CD, BD
+5. Triangle4: The total billable hours of standard litigation phase 4 formed by procedures AB, BD, DA
 
-Your goal:
-Find the minimum number of hired teams K and provide an index set H of size K, such that the union of their review qualifications covers all risk points E perfectly.
+Your goal is to determine the exact total billable hours of the complex dispute resolution strategy T.
+The target sum T is defined as: the sum of billable hours for procedures AC, BD.
 
-You can use the following three types of queries (each query counts toward the total):
+You can repeatedly ask the following types of questions (one per turn):
+- Query any of the 5 preset billable hours listed above
+- Ask clarification questions about the game setup (e.g., "Are procedures bidirectional?", "Are hours integers?", etc.)
 
-1. **Qualification Query**: Ask if team Si is qualified to review risk point ej
-   - Format: <query_member>Si,ej</query_member>
-   - Example: <query_member>S1,e3</query_member>
-   - Returns: Yes or No
+Note: You cannot query any paths or hours other than the 5 preset sums listed above.
 
-2. **Blind Spot Check Query**: Given a set of candidate teams, query which risk points remain in unreviewed blind spots
-   - Format: <query_coverage>S1,S2,S3</query_coverage>
-   - Example: <query_coverage>S1,S3</query_coverage>
-   - Returns: List of unreviewed risk points (in ascending order), or "None" if all covered
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-3. **Irreplaceability Query**: Ask if a team Si is irreplaceable (i.e., whether there exists a risk point that can only be reviewed by them)
-   - Format: <query_essential>Si</query_essential>
-   - Example: <query_essential>S5</query_essential>
-   - Returns: If irreplaceable, return "Yes: {...}" (with at least one witness risk point); otherwise return "No"
+Each query must contain only one tag. Use the following XML format:
 
-When submitting the final answer, specify the minimum number of hired teams K and the specific team index set H (comma-separated), using this format:
+- Query Loop:
+<query_loop></query_loop>
 
-<answer>K=3, H=S1,S4,S6</answer>
+- Query Triangle1:
+<query_triangle1></query_triangle1>
 
-Notes:
-- Try to minimize the number of queries used
-- Query format must strictly follow the XML format above
-- The answer must be a true minimum cover (no plan hiring fewer teams exists)
+- Query Triangle2:
+<query_triangle2></query_triangle2>
+
+- Query Triangle3:
+<query_triangle3></query_triangle3>
+
+- Query Triangle4:
+<query_triangle4></query_triangle4>
+
+- Clarification question (e.g., asking if procedures are bidirectional):
+<query_clarify>Are procedures bidirectional?</query_clarify>
+
+When submitting the final answer, specify the value of target strategy billable hours T using this format:
+
+<answer>T=37</answer>
 """
 
-    tags = ["answer", "query_member", "query_coverage", "query_essential"]
-    
-    # 新增类属性
-    reasoning_type = "演绎推理"
-    data_structure = "集合"
+    tags = ["answer", "query_loop", "query_triangle1", "query_triangle2", 
+            "query_triangle3", "query_triangle4", "query_clarify"]
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "subsets": {
-                "S1": ["e1", "e2", "e3", "e4"],
-                "S2": ["e5", "e6", "e7", "e8"],
-                "S3": ["e1", "e5"],
-                "S4": ["e2", "e6"],
-                "S5": ["e3", "e7"],
-                "S6": ["e4", "e8"],
-                "S7": ["e1", "e2"],
+        "zh": {
+            1: {
+                "weights": {"AB": 2, "BC": 3, "CD": 2, "DA": 3, "AC": 4, "BD": 5},
             },
-            "min_k": 2,
-            "min_solutions": [["S1", "S2"]],
+            2: {
+                "weights": {"AB": 1, "BC": 0, "CD": 4, "DA": 5, "AC": 6, "BD": 3},
+            },
+            3: {
+                "weights": {"AB": 0, "BC": 7, "CD": 0, "DA": 8, "AC": 10, "BD": 12},
+            },
+            4: {
+                "weights": {"AB": 15, "BC": 8, "CD": 12, "DA": 6, "AC": 20, "BD": 18},
+            },
+            5: {
+                "weights": {"AB": 25, "BC": 30, "CD": 22, "DA": 28, "AC": 35, "BD": 40},
+            },
         },
-        2: {
-            "subsets": {
-                "S1": ["e1", "e2", "e3", "e4", "e5"],
-                "S2": ["e1", "e2", "e6"],
-                "S3": ["e6", "e7", "e8"],
-                "S4": ["e3", "e4", "e7"],
-                "S5": ["e1", "e5", "e8"],
-                "S6": ["e2", "e3"],
-                "S7": ["e4", "e5"],
+        "en": {
+            1: {
+                "weights": {"AB": 2, "BC": 3, "CD": 2, "DA": 3, "AC": 4, "BD": 5},
             },
-            "min_k": 2,
-            "min_solutions": [["S1", "S3"]],
-        },
-        3: {
-            "subsets": {
-                "S1": ["e1", "e2", "e3"],
-                "S2": ["e1", "e4", "e7"],
-                "S3": ["e2", "e5", "e8"],
-                "S4": ["e4", "e5", "e6"],
-                "S5": ["e3", "e6", "e7"],
-                "S6": ["e7", "e8"],
-                "S7": ["e1", "e2", "e4", "e5"],
+            2: {
+                "weights": {"AB": 1, "BC": 0, "CD": 4, "DA": 5, "AC": 6, "BD": 3},
             },
-            "min_k": 3,
-            "min_solutions": [["S1", "S4", "S6"]],
-        },
-        4: {
-            "subsets": {
-                "S1": ["e1", "e2", "e5"],
-                "S2": ["e1", "e2", "e3", "e4"],
-                "S3": ["e3", "e6", "e7"],
-                "S4": ["e4", "e5", "e8"],
-                "S5": ["e5", "e6"],
-                "S6": ["e1", "e7", "e8"],
-                "S7": ["e7", "e8"],
+            3: {
+                "weights": {"AB": 0, "BC": 7, "CD": 0, "DA": 8, "AC": 10, "BD": 12},
             },
-            "min_k": 3,
-            "min_solutions": [["S2", "S5", "S7"]],
-        },
-        5: {
-            "subsets": {
-                "S1": ["e1", "e2", "e3"],
-                "S2": ["e2", "e4", "e5"],
-                "S3": ["e3", "e5", "e6"],
-                "S4": ["e1", "e7"],
-                "S5": ["e4", "e8"],
-                "S6": ["e6", "e7"],
-                "S7": ["e1", "e8"],
+            4: {
+                "weights": {"AB": 15, "BC": 8, "CD": 12, "DA": 6, "AC": 20, "BD": 18},
             },
-            "min_k": 4,
-            "min_solutions": [["S1", "S2", "S6", "S7"], ["S1", "S3", "S4", "S5"]],
+            5: {
+                "weights": {"AB": 25, "BC": 30, "CD": 22, "DA": 28, "AC": 35, "BD": 40},
+            },
         },
     }
 
     def __init__(self, config):
-        # 查询计数器
-        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，根据难度选择配置"""
+        lang = self.config.language
         diff = self.config.difficulty
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.weights = cfg["weights"]
         
-        # 存储子集配置
-        self.subsets = cfg["subsets"]
-        self.min_k = cfg["min_k"]
-        self.min_solutions = cfg["min_solutions"]
+        self.target_value = self.weights["AC"] + self.weights["BD"]
         
-        # 所有元素
-        self.all_elements = {"e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"}
+        self.precomputed = {
+            "loop": self.weights["AB"] + self.weights["BC"] + 
+                   self.weights["CD"] + self.weights["DA"],
+            "triangle1": self.weights["AB"] + self.weights["BC"] + self.weights["AC"],
+            "triangle2": self.weights["AC"] + self.weights["CD"] + self.weights["DA"],
+            "triangle3": self.weights["BC"] + self.weights["CD"] + self.weights["BD"],
+            "triangle4": self.weights["AB"] + self.weights["BD"] + self.weights["DA"],
+        }
         
-        # 初始化游戏信息（用于格式化规则文本，这里不需要）
         self._game_info = {}
 
-    def _compute_coverage(self, subset_indices):
-        """计算给定子集索引列表的覆盖情况，返回未覆盖元素集合"""
-        covered = set()
-        for idx in subset_indices:
-            if idx in self.subsets:
-                covered.update(self.subsets[idx])
-        uncovered = self.all_elements - covered
-        return uncovered
-
-    def _is_essential(self, subset_idx):
-        """
-        判断子集是否不可或缺
-        返回 (bool, list): (是否不可或缺, 见证元素列表)
-        """
-        if subset_idx not in self.subsets:
-            return False, []
-        
-        elements_in_si = set(self.subsets[subset_idx])
-        witness_elements = []
-        
-        # 检查每个元素是否仅被该子集覆盖
-        for elem in elements_in_si:
-            covered_by = [s for s, members in self.subsets.items() if elem in members]
-            if len(covered_by) == 1:  # 仅被当前子集覆盖
-                witness_elements.append(elem)
-        
-        return len(witness_elements) > 0, witness_elements
-
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"]
+        raw_ans = parsed_info["answer"].strip()
         
-        # 解析答案: K=X, H=S1,S2,...
+        match = re.match(r'T\s*=\s*(\d+)', raw_ans, re.IGNORECASE)
+        if not match:
+            return False
+        
         try:
-            parts = [x.strip() for x in raw_ans.split(",")]
-            k_part = None
-            h_parts = None
-            
-            for part in parts:
-                if "=" in part:
-                    key, val = part.split("=", 1)
-                    key = key.strip()
-                    val = val.strip()
-                    if key == "K":
-                        k_part = int(val)
-                    elif key == "H":
-                        h_parts = [x.strip() for x in val.split(",") if x.strip()]
-                else:
-                    # 可能是 H 的后续部分
-                    if h_parts is not None:
-                        h_parts.append(part.strip())
-            
-            if k_part is None or not h_parts:
-                return False
-            
-            # 检查 K 是否等于 H 的大小
-            if k_part != len(h_parts):
-                return False
-            
-            # 检查 K 是否是最小值
-            if k_part != self.min_k:
-                return False
-            
-            # 检查 H 是否能覆盖所有元素
-            uncovered = self._compute_coverage(h_parts)
-            if len(uncovered) > 0:
-                return False
-            
-            # 检查 H 是否是有效的最小覆盖解之一
-            h_set = set(h_parts)
-            for solution in self.min_solutions:
-                if h_set == set(solution):
-                    return True
-            
-            # 如果不在预定义解中，但满足最小性和覆盖性，也算正确
-            # （这里已经检查过 k_part == min_k 和 uncovered 为空）
-            return True
-            
-        except Exception as e:
+            submitted_value = int(match.group(1))
+            return submitted_value == self.target_value
+        except:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的查询处理逻辑"""
-        lang = self.config.language
-        yes_word = "是" if lang == "zh" else "Yes"
-        no_word = "否" if lang == "zh" else "No"
-        none_word = "无" if lang == "zh" else "None"
-        
-        # 增加查询计数
-        self.query_count += 1
-        
-        # Q1: 成员关系查询
-        if "query_member" in parsed_info:
-            try:
-                raw = parsed_info["query_member"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    raise ValueError("Invalid format")
-                
-                subset_idx, element = parts[0], parts[1]
-                
-                if subset_idx not in self.subsets:
-                    error_msg = "错误：子集索引无效。" if lang == "zh" else "Error: Invalid subset index."
-                    return error_msg
-                
-                if element not in self.all_elements:
-                    error_msg = "错误：元素标签无效。" if lang == "zh" else "Error: Invalid element label."
-                    return error_msg
-                
-                if element in self.subsets[subset_idx]:
-                    return yes_word
+        if "query_clarify" in parsed_info:
+            question = parsed_info["query_clarify"].strip().lower()
+            
+            if self.config.language == "zh":
+                if "无向" in question or "双向" in question:
+                    return "是，所有边都是无向的，即 AB 和 BA 是同一条边且权重相同。"
+                elif "整数" in question:
+                    return "是，所有边的权重都是非负整数。"
+                elif "固定" in question or "改变" in question:
+                    return "是，所有边的权重在游戏过程中保持固定不变。"
+                elif "零" in question or "0" in question:
+                    return "边的权重可以为 0。"
                 else:
-                    return no_word
-                    
-            except Exception as e:
-                error_msg = "错误：查询格式无效。" if lang == "zh" else "Error: Invalid query format."
-                return error_msg
-        
-        # Q2: 覆盖检验查询
-        elif "query_coverage" in parsed_info:
-            try:
-                raw = parsed_info["query_coverage"].strip()
-                subset_indices = [x.strip() for x in raw.split(",") if x.strip()]
-                
-                if not subset_indices:
-                    error_msg = "错误：必须提供至少一个子集索引。" if lang == "zh" else "Error: Must provide at least one subset index."
-                    return error_msg
-                
-                # 检查所有索引是否有效
-                for idx in subset_indices:
-                    if idx not in self.subsets:
-                        error_msg = f"错误：子集索引 {idx} 无效。" if lang == "zh" else f"Error: Invalid subset index {idx}."
-                        return error_msg
-                
-                uncovered = self._compute_coverage(subset_indices)
-                
-                if not uncovered:
-                    return none_word
+                    return "请明确你的问题，我只能回答与游戏设定直接相关的是非问题。"
+            else:
+                if "undirected" in question or "bidirectional" in question:
+                    return "Yes, all edges are undirected, meaning AB and BA are the same edge with the same weight."
+                elif "integer" in question:
+                    return "Yes, all edge weights are non-negative integers."
+                elif "fixed" in question or "change" in question:
+                    return "Yes, all edge weights remain fixed and constant throughout the game."
+                elif "zero" in question or "0" in question:
+                    return "Edge weights can be 0."
                 else:
-                    # 按升序排列
-                    sorted_uncovered = sorted(list(uncovered), key=lambda x: int(x[1:]))
-                    return ", ".join(sorted_uncovered)
-                    
-            except Exception as e:
-                error_msg = "错误：查询格式无效。" if lang == "zh" else "Error: Invalid query format."
-                return error_msg
+                    return "Please clarify your question. I can only answer yes/no questions directly related to the game setup."
         
-        # Q3: 不可或缺性查询
-        elif "query_essential" in parsed_info:
-            try:
-                subset_idx = parsed_info["query_essential"].strip()
-                
-                if subset_idx not in self.subsets:
-                    error_msg = "错误：子集索引无效。" if lang == "zh" else "Error: Invalid subset index."
-                    return error_msg
-                
-                is_essential, witnesses = self._is_essential(subset_idx)
-                
-                if is_essential:
-                    # 返回至少一个见证元素
-                    witness_str = ", ".join(sorted(witnesses, key=lambda x: int(x[1:])))
-                    return f"{yes_word}: {{{witness_str}}}"
-                else:
-                    return no_word
-                    
-            except Exception as e:
-                error_msg = "错误：查询格式无效。" if lang == "zh" else "Error: Invalid query format."
-                return error_msg
+        query_map = {
+            "query_loop": "loop",
+            "query_triangle1": "triangle1",
+            "query_triangle2": "triangle2",
+            "query_triangle3": "triangle3",
+            "query_triangle4": "triangle4",
+        }
         
+        for tag, key in query_map.items():
+            if tag in parsed_info:
+                return str(self.precomputed[key])
+        
+        if self.config.language == "zh":
+            return "错误：无效的查询类型。"
         else:
-            error_msg = "错误：未识别的查询类型。请使用 query_member、query_coverage 或 query_essential。" \
-                if lang == "zh" else "Error: Unrecognized query type. Please use query_member, query_coverage, or query_essential."
-            raise ValueError(error_msg)
+            return "Error: Invalid query type."
 
     def _cf_make_wrong(self, correct):
-        """生成错误答案"""
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        lang = self.config.language
-        yes_word = "是" if lang == "zh" else "Yes"
-        no_word = "否" if lang == "zh" else "No"
-        none_word = "无" if lang == "zh" else "None"
-        
-        if lang == "zh":
-            if correct == "是":
-                return "否"
-            if correct == "否":
-                return "是"
+        if self.config.language == "zh":
+            if correct.startswith("是，"):
+                return correct.replace("是，", "否，", 1)
+            elif correct.startswith("否，"):
+                return correct.replace("否，", "是，", 1)
+            elif "可以为 0" in correct:
+                return correct.replace("可以为 0", "不可以为 0")
         else:
-            if correct == "Yes":
-                return "No"
-            if correct == "No":
-                return "Yes"
-            if correct.lower() == "yes":
-                return "No" if correct[0].isupper() else "no"
-            if correct.lower() == "no":
-                return "Yes" if correct[0].isupper() else "yes"
+            if correct.startswith("Yes,"):
+                return correct.replace("Yes,", "No,", 1)
+            elif correct.startswith("No,"):
+                return correct.replace("No,", "Yes,", 1)
+            elif "can be 0" in correct:
+                return correct.replace("can be 0", "cannot be 0")
         
-        # 覆盖查询返回 "None"/"无" 时，伪造一个未覆盖元素
-        if correct == none_word:
-            return "e1"
-            
-        # 如果是不可或缺性查询返回的 "是: {xxx}" 或 "Yes: {xxx}"
-        if correct.startswith(f"{yes_word}:"):
-            return no_word
-            
-        # 对于覆盖查询返回的未覆盖元素列表，或者其他，末尾追加 _WRONG
-        return f"{correct}_WRONG"
-    
+        return correct + "_WRONG"
+
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
         results = []
-        lang = self.config.language
         
-        # 定义回答模板
-        yes_word = "是" if lang == "zh" else "Yes"
-        no_word = "否" if lang == "zh" else "No"
-        none_word = "无" if lang == "zh" else "None"
-
-        # 获取排序后的键列表，确保顺序确定性
-        subset_keys = sorted(self.subsets.keys(), key=lambda x: int(x[1:]))
-        element_keys = sorted(list(self.all_elements), key=lambda x: int(x[1:]))
-
-        # 1. 成员关系查询 (query_member)
-        for s_idx in subset_keys:
-            for e_idx in element_keys:
-                # 构造查询 XML
-                query_content = f"{s_idx},{e_idx}"
-                query_xml = f"<query_member>{query_content}</query_member>"
-                
-                # 计算逻辑
-                if e_idx in self.subsets[s_idx]:
-                    ans = yes_word
-                else:
-                    ans = no_word
-                
-                results.append({"query": query_xml, "answer": ans})
-
-        # 2. 覆盖检验查询 (query_coverage)
-        # 枚举所有非空子集组合 (S1..S7 的非空子集)
-        # 因为 |S|=7，组合总数 2^7-1=127，可以直接全量枚举
-        for r in range(1, len(subset_keys) + 1):
-            for combo in itertools.combinations(subset_keys, r):
-                # combo 是如 ('S1', 'S3') 的元组
-                query_content = ",".join(combo)
-                query_xml = f"<query_coverage>{query_content}</query_coverage>"
-                
-                # 计算逻辑
-                uncovered = self._compute_coverage(combo)
-                if not uncovered:
-                    ans = none_word
-                else:
-                    sorted_uncovered = sorted(list(uncovered), key=lambda x: int(x[1:]))
-                    ans = ", ".join(sorted_uncovered)
-                
-                results.append({"query": query_xml, "answer": ans})
-
-        # 3. 不可或缺性查询 (query_essential)
-        for s_idx in subset_keys:
-            query_content = s_idx
-            query_xml = f"<query_essential>{query_content}</query_essential>"
+        queries_info = []
+        
+        for tag in ["query_loop", "query_triangle1", "query_triangle2", "query_triangle3", "query_triangle4"]:
+            queries_info.append({tag: ""})
             
-            # 计算逻辑
-            is_essential, witnesses = self._is_essential(s_idx)
-            if is_essential:
-                witness_str = ", ".join(sorted(witnesses, key=lambda x: int(x[1:])))
-                ans = f"{yes_word}: {{{witness_str}}}"
-            else:
-                ans = no_word
-                
-            results.append({"query": query_xml, "answer": ans})
-
+        if self.config.language == "zh":
+            clarify_texts = [
+                "边是否无向？", 
+                "权重是否为整数？", 
+                "权重是否固定？", 
+                "权重可以是0吗？"
+            ]
+        else:
+            clarify_texts = [
+                "Are edges undirected?", 
+                "Are weights integers?", 
+                "Are weights fixed?", 
+                "Can weights be zero?"
+            ]
+            
+        for text in clarify_texts:
+            queries_info.append({"query_clarify": text})
+            
+        for parsed_info in queries_info:
+            tag = list(parsed_info.keys())[0]
+            content = parsed_info[tag]
+            query_str = f"<{tag}>{content}</{tag}>"
+            
+            answer = self._cf_core_produce(parsed_info)
+            
+            results.append({
+                "query": query_str,
+                "answer": answer
+            })
+            
         return results

@@ -1,933 +1,505 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   条件计数：满足某给定条件的元素共有多少个
-# ============================================================
-
 from .base import Game
 import re
-import itertools
 
-
-class ParityRuleGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "集合"
-
-    game_rule_zh = """\
-我们现在来玩一个"奇偶规则推理"游戏，规则如下：
-
-## 游戏设定
-
-有一个包含16个对象的集合，每个对象由4个二元特征 A1, A2, A3, A4 描述，每个特征的取值为0或1。集合中恰好包含所有可能的特征组合（从 0000 到 1111）各一个。
-
-我已秘密设定了一个"标记规则"，该规则由以下两部分组成：
-1. **关键特征集合 H**：从4个特征中选择若干个（可能为空集、单个特征、多个特征或全部特征）
-2. **目标奇偶性 p**：为"奇"或"偶"
-
-标记规则的工作方式：对于集合中的任意一个对象，如果该对象在关键特征集合 H 中的特征取值为1的个数的奇偶性等于目标奇偶性 p，则该对象被标记为1；否则标记为0。
-
-例如：若 H = {{A1, A3}}，p = "奇"，则对象 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而对象 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
-
-## 你的目标
-
-通过尽可能少的查询次数，推断出关键特征集合 H 和目标奇偶性 p。
-
-## 查询规则
-
-你可以进行"条件计数查询"。每次查询时，你需要对4个特征给出部分约束条件，每个特征可以指定为：
-- **0**：该特征必须为0
-- **1**：该特征必须为1  
-- **?**：该特征可以为0或1（不限制）
-
-**重要限制**：每次查询必须至少有一个特征为 ?（即不允许将所有特征都固定）。
-
-我会返回两个数字：
-- **k**：在你的约束条件下，被标记为1的对象数量
-- **m**：在你的约束条件下，符合约束的对象总数
-
-## 查询与提交答案的格式（必须严格遵守）
-
-每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
-
-查询示例（查询 A1=1, A2=?, A3=0, A4=? 的情况）：
-<query>1,?,0,?</query>
-
-提交最终答案时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
-
-- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
-- p 为"奇"或"偶"
-
-答案示例1（H = {{A1, A3}}，p = 奇）：
-<answer>H=A1,A3, p=奇</answer>
-
-答案示例2（H 为空集，p = 偶）：
-<answer>H=empty, p=偶</answer>
-
-答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
-<answer>H=A1,A2,A3,A4, p=偶</answer>
-"""
-
-    game_rule_en = """\
-Let's play a "Parity Rule Deduction" game. Here are the rules:
-
-## Game Setup
-
-There is a set of 16 objects, each described by 4 binary features A1, A2, A3, A4, where each feature takes value 0 or 1. The set contains exactly one object for each possible feature combination (from 0000 to 1111).
-
-I have secretly set up a "marking rule" consisting of two components:
-1. **Key Feature Set H**: A subset of the 4 features (may be empty, single feature, multiple features, or all features)
-2. **Target Parity p**: Either "odd" or "even"
-
-How the marking rule works: For any object in the set, if the count of features in the key feature set H that have value 1 matches the target parity p, then the object is marked as 1; otherwise marked as 0.
-
-For example: If H = {{A1, A3}}, p = "odd", then object (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy odd requirement, marked as 0; while object (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies requirement, marked as 1.
-
-## Your Goal
-
-Through as few queries as possible, deduce the key feature set H and target parity p.
-
-## Query Rules
-
-You can perform "conditional count queries". For each query, you specify partial constraints on the 4 features, where each feature can be:
-- **0**: The feature must be 0
-- **1**: The feature must be 1
-- **?**: The feature can be 0 or 1 (unrestricted)
-
-**Important Restriction**: Each query must have at least one feature as ? (i.e., you cannot fix all features).
-
-I will return two numbers:
-- **k**: The count of objects marked as 1 under your constraints
-- **m**: The total count of objects satisfying your constraints
-
-## Query and Answer Format (must strictly follow)
-
-Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
-
-Query example (querying A1=1, A2=?, A3=0, A4=?):
-<query>1,?,0,?</query>
-
-When submitting final answer, specify the key feature set H and target parity p. Format:
-
-- H is a list of feature names, comma-separated (if empty set, write empty)
-- p is "odd" or "even"
-
-Answer example 1 (H = {{A1, A3}}, p = odd):
-<answer>H=A1,A3, p=odd</answer>
-
-Answer example 2 (H is empty set, p = even):
-<answer>H=empty, p=even</answer>
-
-Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
-<answer>H=A1,A2,A3,A4, p=even</answer>
-"""
-
-    # =========================================================================
-    # 场景化规则扩展
-    # =========================================================================
+class DirectedGraphReachabilityGame(Game):
 
     contextualized_rule_zh_1 = """\
-智能交通系统正在进行“事故风险归纳”风控测试。
+欢迎使用城市路网导向分析系统。本市有7个核心交通枢纽（编号 1 至 7），由11条潜在的道路连接：
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## 业务设定
+出于交通管制需要，指挥中心秘密选用了一种“单行道网络配置方案”，为上述每条道路设定了恰好一个唯一的通行方向，形成了一个有向路网。可选的方案有四种：Alpha、Beta、Gamma、Delta。该方案在整个分析过程中保持不变，但对你不可见。
 
-在交通流量分析数据库中，包含16种典型的“路口状态画像”，每种画像由4个二元特征 A1, A2, A3, A4 描述（例如：A1代表是否为主干道，A2代表是否为早晚高峰等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
+你的目标是通过查询推断出：
+1. 实际采用的单行道网络配置方案是哪一种（Alpha、Beta、Gamma 或 Delta）
+2. 在该有向路网中，车辆能否从枢纽 1 顺着单行道最终抵达枢纽 7（即是否存在有向路径）
 
-交通指挥中心秘密设定了一项“风险标记规则”，该规则由以下两部分组成：
-1. **关键特征集合 H**：从4个特征中选择若干个（可能为空集、单个特征、多个特征或全部特征）
-2. **目标奇偶性 p**：为"奇"或"偶"
+你可以反复向系统提出可达性查询（每次一个）：给定有序枢纽对 (X, Y)，其中 X 不等于 Y，且都在 {{1, 2, 3, 4, 5, 6, 7}} 中，询问在当前配置下是否存在从 X 到 Y 的合法行驶路径。
+我会对每个查询如实回答“是”或“否”，但不会提供路径、具体道路方向或其他附加信息。
 
-风控判定方式：对于任意一个路口状态，如果该状态在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则该状态被标记为高风险（记为1）；否则标记为正常（记为0）。
+收集足够信息后，请提交最终评估。若答案错误或格式不符，分析失败。
 
-例如：若 H = {{A1, A3}}，p = "奇"，则状态 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而状态 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
+每次查询使用以下 XML 格式（例如查询能否从枢纽 1 抵达枢纽 3）：
+<query_reachability>1,3</query_reachability>
 
-## 你的目标
-
-通过尽可能少的数据查询次数，推断出控制中心的“关键特征集合 H”和“目标奇偶性 p”。
-
-## 查询规则
-
-你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
-- **0**：该特征必须为0
-- **1**：该特征必须为1  
-- **?**：该特征可以为0或1（不限制）
-
-**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
-
-系统会返回两个统计数字：
-- **k**：在你的检索条件下，被标记为高风险(1)的状态数量
-- **m**：在你的检索条件下，符合检索条件的状态总数
-
-## 查询与提交答案的格式（必须严格遵守）
-
-每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
-
-查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
-<query>1,?,0,?</query>
-
-提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
-
-- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
-- p 为"奇"或"偶"
-
-答案示例1（H = {{A1, A3}}，p = 奇）：
-<answer>H=A1,A3, p=奇</answer>
-
-答案示例2（H 为空集，p = 偶）：
-<answer>H=empty, p=偶</answer>
-
-答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
-<answer>H=A1,A2,A3,A4, p=偶</answer>
+提交最终答案时，必须同时说明配置方案和从枢纽 1 到枢纽 7 的可达性结论，格式如下：
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+（scheme 的值必须是 Alpha、Beta、Gamma 或 Delta，reachable_1_to_7 的值必须是 yes 或 no）
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-The Intelligent Traffic System is running an "Accident Risk Deduction" risk control test.
+Welcome to the Urban Road Network Routing Analysis System. The city has 7 key traffic hubs (numbered 1 to 7) connected by 11 potential roads:
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## Business Setup
+For traffic control purposes, the command center has secretly selected a "one-way network configuration scheme," assigning exactly one direction to each road above, forming a directed road network. There are four possible schemes: Alpha, Beta, Gamma, Delta. This scheme remains fixed but is hidden from you.
 
-The traffic flow database contains 16 typical "intersection state profiles". Each profile is described by 4 binary features A1, A2, A3, A4 (e.g., A1 for main road, A2 for rush hour, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
+Your goal is to infer through system queries:
+1. Which configuration scheme was actually applied (Alpha, Beta, Gamma, or Delta)
+2. Whether a vehicle can travel from hub 1 to hub 7 following the one-way rules (i.e., if a directed path exists)
 
-The traffic control center has secretly established a "Risk Marking Rule" consisting of two components:
-1. **Key Feature Set H**: A subset of the 4 features (may be empty, single, multiple, or all features)
-2. **Target Parity p**: Either "odd" or "even"
+You can repeatedly ask reachability queries (one per turn): given an ordered hub pair (X, Y) where X is not equal to Y, and both are in {{1, 2, 3, 4, 5, 6, 7}}, ask whether there is a valid driving path from X to Y.
+I will truthfully answer "Yes" or "No", but will not provide specific paths or directions.
 
-Risk assessment logic: For any intersection state, if the count of features in the key feature set H that have value 1 matches the target parity p, the state is flagged as high-risk (marked 1); otherwise normal (marked 0).
+When you have enough information, submit your final assessment. If the answer is wrong or the format is invalid, the analysis fails.
 
-For example: If H = {{A1, A3}}, p = "odd", then profile (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Profile (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
+For each query, use this XML format (e.g., query if hub 3 is reachable from hub 1):
+<query_reachability>1,3</query_reachability>
 
-## Your Goal
-
-Through as few data queries as possible, deduce the "Key Feature Set H" and "Target Parity p".
-
-## Query Rules
-
-You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
-- **0**: The feature must be 0
-- **1**: The feature must be 1
-- **?**: The feature can be 0 or 1 (unrestricted)
-
-**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
-
-The system will return two metrics:
-- **k**: The count of high-risk (1) profiles under your constraints
-- **m**: The total count of matching profiles satisfying your constraints
-
-## Query and Answer Format (must strictly follow)
-
-Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
-
-Query example (querying A1=1, A2=?, A3=0, A4=?):
-<query>1,?,0,?</query>
-
-When submitting your final deduction, specify the key feature set H and target parity p. Format:
-
-- H is a list of feature names, comma-separated (if empty set, write empty)
-- p is "odd" or "even"
-
-Answer example 1 (H = {{A1, A3}}, p = odd):
-<answer>H=A1,A3, p=odd</answer>
-
-Answer example 2 (H is empty set, p = even):
-<answer>H=empty, p=even</answer>
-
-Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
-<answer>H=A1,A2,A3,A4, p=even</answer>
+Submit the final answer specifying both the scheme and the 1-to-7 reachability conclusion:
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+(scheme must be Alpha, Beta, Gamma, or Delta; reachable_1_to_7 must be yes or no)
 """
 
     contextualized_rule_zh_2 = """\
-临床医学研究中心正在进行“生物标记物反应归纳”测试。
+欢迎进入医疗转诊路径评估系统。我们院区共有7个核心诊疗科室（编号 1 至 7），科室间存在11条固定的物理转诊通道：
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## 业务设定
+为控制院内交叉感染，医务处秘密启动了一套“单向转诊控制协议”，所有通道只能单向通行，从而形成了一个有向转诊网络。可选的控制协议有四种：Alpha、Beta、Gamma、Delta。该协议在整个评估过程中保持不变，但对你不可见。
 
-在患者临床实验数据库中，包含16种典型的“患者症状画像”，每种画像由4个二元临床特征 A1, A2, A3, A4 描述（例如：A1代表是否发热，A2代表是否有基础病等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
+你的目标是通过查询推断出：
+1. 当前生效的单向转诊控制协议是哪一种（Alpha、Beta、Gamma 或 Delta）
+2. 在该协议下，患者能否从科室 1 被顺利转诊至科室 7（即是否存在合规转诊路径）
 
-医学系统秘密设定了一项基于复杂生物学通路的“阳性反应标记规则”，该规则由以下两部分组成：
-1. **关键特征集合 H**：从4个特征中选择若干个核心表征（可能为空集、单个特征、多个特征或全部特征）
-2. **目标奇偶性 p**：为"奇"或"偶"
+你可以反复向系统提出转诊可达性查询（每次一个）：给定有序科室对 (X, Y)，其中 X 不等于 Y，且都在 {{1, 2, 3, 4, 5, 6, 7}} 中，询问在当前协议下是否允许将患者从 X 逐步转诊至 Y。
+我会对每个查询如实回答“是”或“否”，但不会提供路径、通道通行方向或其他附加信息。
 
-临床判定方式：对于任意一个患者画像，如果该画像在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则认为该患者对新药呈阳性反应（记为1）；否则为阴性反应（记为0）。
+收集足够信息后，请提交最终结论。若答案错误或格式不符，评估失败。
 
-例如：若 H = {{A1, A3}}，p = "奇"，则画像 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而画像 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
+每次查询使用以下 XML 格式（例如查询能否从科室 1 转诊至科室 3）：
+<query_reachability>1,3</query_reachability>
 
-## 你的目标
-
-通过尽可能少的数据查询次数，推断出核心的“关键特征集合 H”和“目标奇偶性 p”。
-
-## 查询规则
-
-你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
-- **0**：该特征必须为0
-- **1**：该特征必须为1  
-- **?**：该特征可以为0或1（不限制）
-
-**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
-
-系统会返回两个统计数字：
-- **k**：在你的检索条件下，呈阳性反应(1)的画像数量
-- **m**：在你的检索条件下，符合检索条件的画像总数
-
-## 查询与提交答案的格式（必须严格遵守）
-
-每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
-
-查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
-<query>1,?,0,?</query>
-
-提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
-
-- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
-- p 为"奇"或"偶"
-
-答案示例1（H = {{A1, A3}}，p = 奇）：
-<answer>H=A1,A3, p=奇</answer>
-
-答案示例2（H 为空集，p = 偶）：
-<answer>H=empty, p=偶</answer>
-
-答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
-<answer>H=A1,A2,A3,A4, p=偶</answer>
+提交最终答案时，必须同时说明控制协议和从科室 1 到科室 7 的可达性结论，格式如下：
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+（scheme 的值必须是 Alpha、Beta、Gamma 或 Delta，reachable_1_to_7 的值必须是 yes 或 no）
 """
 
     contextualized_rule_en_2 = """\
 [Healthcare Scenario]
-The clinical medical research center is running a "Biomarker Reaction Deduction" test.
+Welcome to the Medical Referral Pathway Assessment System. Our hospital campus comprises 7 core clinical departments (numbered 1 to 7), with 11 fixed physical referral channels between them:
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## Business Setup
+To control cross-infection, the medical administration has secretly activated a "one-way referral control protocol," restricting all channels to one-way traffic and forming a directed referral network. There are four possible protocols: Alpha, Beta, Gamma, Delta. This protocol remains fixed but is hidden from you.
 
-The clinical trial database contains 16 typical "patient symptom profiles". Each profile is described by 4 binary clinical features A1, A2, A3, A4 (e.g., A1 for fever, A2 for underlying disease, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
+Your goal is to infer through system queries:
+1. Which referral control protocol was actually activated (Alpha, Beta, Gamma, or Delta)
+2. Whether a patient can be successfully referred from department 1 to department 7 under this protocol
 
-The medical system has secretly established a "Positive Reaction Marking Rule" based on a complex biological pathway, consisting of two components:
-1. **Key Feature Set H**: A subset of the 4 core clinical features (may be empty, single, multiple, or all features)
-2. **Target Parity p**: Either "odd" or "even"
+You can repeatedly ask referral reachability queries (one per turn): given an ordered department pair (X, Y) where X is not equal to Y, and both are in {{1, 2, 3, 4, 5, 6, 7}}, ask whether a patient transfer from X to Y is permitted.
+I will truthfully answer "Yes" or "No", but will not provide pathways or channel direction data.
 
-Clinical assessment logic: For any patient profile, if the count of features in the key feature set H that have value 1 matches the target parity p, the patient is considered to have a positive reaction to the new drug (marked 1); otherwise a negative reaction (marked 0).
+When you have enough information, submit your final conclusion. If the answer is wrong or the format is invalid, the assessment fails.
 
-For example: If H = {{A1, A3}}, p = "odd", then profile (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Profile (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
+For each query, use this XML format (e.g., query if department 3 is reachable from department 1):
+<query_reachability>1,3</query_reachability>
 
-## Your Goal
-
-Through as few data queries as possible, deduce the core "Key Feature Set H" and "Target Parity p".
-
-## Query Rules
-
-You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
-- **0**: The feature must be 0
-- **1**: The feature must be 1
-- **?**: The feature can be 0 or 1 (unrestricted)
-
-**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
-
-The system will return two metrics:
-- **k**: The count of positive reaction (1) profiles under your constraints
-- **m**: The total count of matching profiles satisfying your constraints
-
-## Query and Answer Format (must strictly follow)
-
-Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
-
-Query example (querying A1=1, A2=?, A3=0, A4=?):
-<query>1,?,0,?</query>
-
-When submitting your final deduction, specify the key feature set H and target parity p. Format:
-
-- H is a list of feature names, comma-separated (if empty set, write empty)
-- p is "odd" or "even"
-
-Answer example 1 (H = {{A1, A3}}, p = odd):
-<answer>H=A1,A3, p=odd</answer>
-
-Answer example 2 (H is empty set, p = even):
-<answer>H=empty, p=even</answer>
-
-Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
-<answer>H=A1,A2,A3,A4, p=even</answer>
+Submit the final answer specifying both the protocol and the 1-to-7 reachability conclusion:
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+(scheme must be Alpha, Beta, Gamma, or Delta; reachable_1_to_7 must be yes or no)
 """
 
     contextualized_rule_zh_3 = """\
-智能教育平台正在进行“学习轨迹归纳”分析。
+欢迎使用自适应学习路径规划器。本课程包含7个核心知识模块（编号 1 至 7），模块间有11条关联脉络：
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## 业务设定
+教学委员会预设了一套隐藏的“先决条件定向方案”，为每条脉络设定了严格的单向学习依赖，决定了知识点之间必须的先后掌握顺序。可能的方案有四种：Alpha、Beta、Gamma、Delta。该方案在整个规划过程中保持不变，但对你不可见。
 
-在学生行为跟踪数据库中，包含16种典型的“学习行为画像”，每种画像由4个二元行为特征 A1, A2, A3, A4 描述（例如：A1代表是否完成预习，A2代表是否参与讨论等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
+你的目标是通过测试推断出：
+1. 课程底层采用的先决条件定向方案是哪一种（Alpha、Beta、Gamma 或 Delta）
+2. 学生在掌握模块 1 后，能否顺着依赖路径最终解锁并学习模块 7（即是否存在先决条件路径）
 
-教学跟踪系统秘密设定了一项“高潜力推荐规则”，该规则由以下两部分组成：
-1. **关键特征集合 H**：从4个行为特征中选择若干个（可能为空集、单个特征、多个特征或全部特征）
-2. **目标奇偶性 p**：为"奇"或"偶"
+你可以反复向系统提出解锁查询（每次一个）：给定有序模块对 (X, Y)，其中 X 不等于 Y，且都在 {{1, 2, 3, 4, 5, 6, 7}} 中，询问在当前方案下，掌握 X 是否足以（直接或间接）解锁 Y。
+我会对每个查询如实回答“是”或“否”，但不会提供具体的学习路径或依赖方向等附加信息。
 
-推荐判定方式：对于任意一个学习行为画像，如果该画像在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则该画像被标记为推荐进入培优库（记为1）；否则标记为普通（记为0）。
+收集足够信息后，请提交规划结论。若答案错误或格式不符，规划失败。
 
-例如：若 H = {{A1, A3}}，p = "奇"，则画像 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而画像 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
+每次查询使用以下 XML 格式（例如查询模块 1 能否解锁模块 3）：
+<query_reachability>1,3</query_reachability>
 
-## 你的目标
-
-通过尽可能少的数据查询次数，推断出系统的“关键特征集合 H”和“目标奇偶性 p”。
-
-## 查询规则
-
-你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
-- **0**：该特征必须为0
-- **1**：该特征必须为1  
-- **?**：该特征可以为0或1（不限制）
-
-**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
-
-系统会返回两个统计数字：
-- **k**：在你的检索条件下，被标记为推荐(1)的画像数量
-- **m**：在你的检索条件下，符合检索条件的画像总数
-
-## 查询与提交答案的格式（必须严格遵守）
-
-每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
-
-查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
-<query>1,?,0,?</query>
-
-提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
-
-- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
-- p 为"奇"或"偶"
-
-答案示例1（H = {{A1, A3}}，p = 奇）：
-<answer>H=A1,A3, p=奇</answer>
-
-答案示例2（H 为空集，p = 偶）：
-<answer>H=empty, p=偶</answer>
-
-答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
-<answer>H=A1,A2,A3,A4, p=偶</answer>
+提交最终答案时，必须同时说明先决条件方案和从模块 1 到模块 7 的解锁结论，格式如下：
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+（scheme 的值必须是 Alpha、Beta、Gamma 或 Delta，reachable_1_to_7 的值必须是 yes 或 no）
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-The intelligent education platform is running a "Learning Trajectory Deduction" analysis.
+Welcome to the Adaptive Learning Path Planner. This course consists of 7 core knowledge modules (numbered 1 to 7) with 11 pedagogical links between them:
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## Business Setup
+The curriculum committee has predefined a hidden "prerequisite orientation scheme," establishing a strict one-way learning dependency for each link. There are four possible schemes: Alpha, Beta, Gamma, Delta. This scheme remains fixed but is hidden from you.
 
-The student behavior tracking database contains 16 typical "learning behavior profiles". Each profile is described by 4 binary behavioral features A1, A2, A3, A4 (e.g., A1 for pre-class study, A2 for discussion participation, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
+Your goal is to infer through testing:
+1. Which prerequisite orientation scheme is underlying the course (Alpha, Beta, Gamma, or Delta)
+2. Whether a student who has mastered module 1 can eventually unlock module 7 following the dependencies
 
-The tracking system has secretly established a "High-Potential Recommendation Rule" consisting of two components:
-1. **Key Feature Set H**: A subset of the 4 behavioral features (may be empty, single, multiple, or all features)
-2. **Target Parity p**: Either "odd" or "even"
+You can repeatedly ask unlock queries (one per turn): given an ordered module pair (X, Y) where X is not equal to Y, and both are in {{1, 2, 3, 4, 5, 6, 7}}, ask whether mastering X allows (directly or indirectly) the unlocking of Y.
+I will truthfully answer "Yes" or "No", but will not provide specific learning paths or dependency directions.
 
-Recommendation logic: For any learning behavior profile, if the count of features in the key feature set H that have value 1 matches the target parity p, the profile is flagged for recommendation to the advanced track (marked 1); otherwise standard (marked 0).
+When you have enough information, submit your final planning conclusion. If the answer is wrong or the format is invalid, the planning fails.
 
-For example: If H = {{A1, A3}}, p = "odd", then profile (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Profile (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
+For each query, use this XML format (e.g., query if module 3 is unlockable from module 1):
+<query_reachability>1,3</query_reachability>
 
-## Your Goal
-
-Through as few data queries as possible, deduce the system's "Key Feature Set H" and "Target Parity p".
-
-## Query Rules
-
-You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
-- **0**: The feature must be 0
-- **1**: The feature must be 1
-- **?**: The feature can be 0 or 1 (unrestricted)
-
-**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
-
-The system will return two metrics:
-- **k**: The count of recommended (1) profiles under your constraints
-- **m**: The total count of matching profiles satisfying your constraints
-
-## Query and Answer Format (must strictly follow)
-
-Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
-
-Query example (querying A1=1, A2=?, A3=0, A4=?):
-<query>1,?,0,?</query>
-
-When submitting your final deduction, specify the key feature set H and target parity p. Format:
-
-- H is a list of feature names, comma-separated (if empty set, write empty)
-- p is "odd" or "even"
-
-Answer example 1 (H = {{A1, A3}}, p = odd):
-<answer>H=A1,A3, p=odd</answer>
-
-Answer example 2 (H is empty set, p = even):
-<answer>H=empty, p=even</answer>
-
-Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
-<answer>H=A1,A2,A3,A4, p=even</answer>
+Submit the final answer specifying both the prerequisite scheme and the 1-to-7 unlockability conclusion:
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+(scheme must be Alpha, Beta, Gamma, or Delta; reachable_1_to_7 must be yes or no)
 """
 
     contextualized_rule_zh_4 = """\
-自动化质检系统正在执行“缺陷复检逻辑推导”任务。
+欢迎登录智能工厂物流调度系统。车间内布置了7个关键加工工站（编号 1 至 7），工站间铺设了11条传送带：
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## 业务设定
+为优化产能，主控中心隐蔽地下发了一套“物料流向控制策略”，将所有传送带设定为单向运转，构成了一个有向物流网络。可选的控制策略有四种：Alpha、Beta、Gamma、Delta。该策略在整个排查过程中保持不变，但对你不可见。
 
-在生产工艺数据库中，包含16批典型的“工艺组合批次”，每个批次由4个二元工艺特征 A1, A2, A3, A4 描述（例如：A1代表是否经过高温处理，A2代表是否有化学涂层等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
+你的目标是通过系统查询，排查出：
+1. 当前正在运转的物料流向控制策略是哪一种（Alpha、Beta、Gamma 或 Delta）
+2. 在该策略下，加工组件能否从工站 1 自动流转至工站 7（即是否存在物料流通路径）
 
-质量保证(QA)模块秘密设定了一项“异常拦截规则”，该规则由以下两部分组成：
-1. **关键特征集合 H**：从4个工艺特征中选择若干个重点工艺（可能为空集、单个特征、多个特征或全部特征）
-2. **目标奇偶性 p**：为"奇"或"偶"
+你可以反复向系统提出物流可达性查询（每次一个）：给定有序工站对 (X, Y)，其中 X 不等于 Y，且都在 {{1, 2, 3, 4, 5, 6, 7}} 中，询问在当前控制策略下，组件能否从 X 传送到 Y。
+我会对每个查询如实回答“是”或“否”，但不会提供具体的传送路径、运转方向或其他附加信息。
 
-拦截判定方式：对于任意一个生产批次，如果该批次在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则触发质检警报，该批次被标记为需复检（记为1）；否则标记为直接放行（记为0）。
+收集足够信息后，请提交排查报告。若答案错误或格式不符，调度系统将被锁死。
 
-例如：若 H = {{A1, A3}}，p = "奇"，则批次 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而批次 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
+每次查询使用以下 XML 格式（例如查询组件能否从工站 1 传送到工站 3）：
+<query_reachability>1,3</query_reachability>
 
-## 你的目标
-
-通过尽可能少的数据查询次数，推断出QA模块内部的“关键特征集合 H”和“目标奇偶性 p”。
-
-## 查询规则
-
-你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
-- **0**：该特征必须为0
-- **1**：该特征必须为1  
-- **?**：该特征可以为0或1（不限制）
-
-**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
-
-系统会返回两个统计数字：
-- **k**：在你的检索条件下，被标记为需复检(1)的批次数量
-- **m**：在你的检索条件下，符合检索条件的批次总数
-
-## 查询与提交答案的格式（必须严格遵守）
-
-每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
-
-查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
-<query>1,?,0,?</query>
-
-提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
-
-- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
-- p 为"奇"或"偶"
-
-答案示例1（H = {{A1, A3}}，p = 奇）：
-<answer>H=A1,A3, p=奇</answer>
-
-答案示例2（H 为空集，p = 偶）：
-<answer>H=empty, p=偶</answer>
-
-答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
-<answer>H=A1,A2,A3,A4, p=偶</answer>
+提交最终答案时，必须同时说明流向控制策略和从工站 1 到工站 7 的物流流转结论，格式如下：
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+（scheme 的值必须是 Alpha、Beta、Gamma 或 Delta，reachable_1_to_7 的值必须是 yes 或 no）
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-The automated quality inspection system is performing a "Defect Re-inspection Logic Deduction" task.
+[Manufacturing Scenario]
+Welcome to the Smart Factory Logistics Dispatch System. The workshop contains 7 key processing stations (numbered 1 to 7), with 11 conveyor belts installed between them:
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## Business Setup
+To optimize production capacity, the main control center has covertly deployed a "material flow routing strategy," setting all conveyor belts to run in a single direction. There are four possible strategies: Alpha, Beta, Gamma, Delta. This strategy remains fixed but is hidden from you.
 
-The production process database contains 16 typical "process combination batches". Each batch is described by 4 binary process features A1, A2, A3, A4 (e.g., A1 for high-temp treatment, A2 for chemical coating, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
+Your goal is to troubleshoot via system queries:
+1. Which material flow routing strategy is currently in operation (Alpha, Beta, Gamma, or Delta)
+2. Whether a component can automatically flow from station 1 to station 7 under this strategy
 
-The Quality Assurance (QA) module has secretly established an "Anomaly Interception Rule" consisting of two components:
-1. **Key Feature Set H**: A subset of the 4 core process features (may be empty, single, multiple, or all features)
-2. **Target Parity p**: Either "odd" or "even"
+You can repeatedly ask logistics reachability queries (one per turn): given an ordered station pair (X, Y) where X is not equal to Y, and both are in {{1, 2, 3, 4, 5, 6, 7}}, ask whether a component can be transported from X to Y.
+I will truthfully answer "Yes" or "No", but will not provide specific routing paths or operational directions.
 
-Interception logic: For any production batch, if the count of features in the key feature set H that have value 1 matches the target parity p, it triggers a quality alert, and the batch is flagged for re-inspection (marked 1); otherwise it passes directly (marked 0).
+When you have enough information, submit your troubleshooting report. If the answer is wrong or the format is invalid, the dispatch system will lock down.
 
-For example: If H = {{A1, A3}}, p = "odd", then batch (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Batch (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
+For each query, use this XML format (e.g., query if station 3 is reachable from station 1):
+<query_reachability>1,3</query_reachability>
 
-## Your Goal
-
-Through as few data queries as possible, deduce the QA module's internal "Key Feature Set H" and "Target Parity p".
-
-## Query Rules
-
-You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
-- **0**: The feature must be 0
-- **1**: The feature must be 1
-- **?**: The feature can be 0 or 1 (unrestricted)
-
-**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
-
-The system will return two metrics:
-- **k**: The count of batches flagged for re-inspection (1) under your constraints
-- **m**: The total count of matching batches satisfying your constraints
-
-## Query and Answer Format (must strictly follow)
-
-Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
-
-Query example (querying A1=1, A2=?, A3=0, A4=?):
-<query>1,?,0,?</query>
-
-When submitting your final deduction, specify the key feature set H and target parity p. Format:
-
-- H is a list of feature names, comma-separated (if empty set, write empty)
-- p is "odd" or "even"
-
-Answer example 1 (H = {{A1, A3}}, p = odd):
-<answer>H=A1,A3, p=odd</answer>
-
-Answer example 2 (H is empty set, p = even):
-<answer>H=empty, p=even</answer>
-
-Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
-<answer>H=A1,A2,A3,A4, p=even</answer>
+Submit the final answer specifying both the routing strategy and the 1-to-7 component flow conclusion:
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+(scheme must be Alpha, Beta, Gamma, or Delta; reachable_1_to_7 must be yes or no)
 """
 
     contextualized_rule_zh_5 = """\
-合规审查系统正在进行“反垄断审查触发机制”推演。
+欢迎使用司法程序流转推演系统。本辖区有7个核心司法审批环节（编号 1 至 7），环节间存在11条合法的卷宗移送通道：
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## 业务设定
+根据最新的机密级司法解释，最高法院在此指定了一种“卷宗单向移交流程方案”，赋予所有移送通道严格的单一移交方向。可选的流程方案有四种：Alpha、Beta、Gamma、Delta。该方案在整个推演过程中保持不变，但对你不可见。
 
-在企业尽职调查数据库中，包含16宗典型的“企业并购案画像”，每宗画像由4个二元法律特征 A1, A2, A3, A4 描述（例如：A1代表是否含外资背景，A2代表是否涉及数据出境等），每个特征取值为0或1。数据库中恰好涵盖了所有可能的特征组合（从 0000 到 1111）各一个。
+你的目标是通过询问合规性推断出：
+1. 实际执行的卷宗移交流程方案是哪一种（Alpha、Beta、Gamma 或 Delta）
+2. 在该方案下，案件卷宗能否从环节 1 合法流转移交至环节 7（即是否存在合法的程序路径）
 
-监管框架内秘密设定了一项“重点审查触发规则”，该规则由以下两部分组成：
-1. **关键特征集合 H**：从4个法律特征中选择若干个（可能为空集、单个特征、多个特征或全部特征）
-2. **目标奇偶性 p**：为"奇"或"偶"
+你可以反复向系统提出流转合规性查询（每次一个）：给定有序环节对 (X, Y)，其中 X 不等于 Y，且都在 {{1, 2, 3, 4, 5, 6, 7}} 中，询问在当前方案下，卷宗是否允许从审批环节 X 逐步移交到环节 Y。
+我会对每个查询如实回答“是”或“否”，但不会提供具体的移交路径、法定方向或其他附加指导。
 
-触发判定方式：对于任意一宗并购案，如果该案件在关键特征集合 H 中取值为1的特征个数的奇偶性等于目标奇偶性 p，则触发红线，案件被标记为需审查（记为1）；否则标记为合规（记为0）。
+收集足够信息后，请提交最终判定。若判定错误或格式不符，推演中止。
 
-例如：若 H = {{A1, A3}}，p = "奇"，则案件 (1,0,1,0) 在 H 中有2个特征为1（偶数），不满足奇数要求，标记为0；而案件 (1,0,0,0) 在 H 中有1个特征为1（奇数），满足要求，标记为1。
+每次查询使用以下 XML 格式（例如查询卷宗能否从环节 1 移交至环节 3）：
+<query_reachability>1,3</query_reachability>
 
-## 你的目标
-
-通过尽可能少的数据查询次数，推断出监管框架设定的“关键特征集合 H”和“目标奇偶性 p”。
-
-## 查询规则
-
-你可以进行“条件计数查询”。每次查询时，你需要对4个特征给出部分检索条件，每个特征可以指定为：
-- **0**：该特征必须为0
-- **1**：该特征必须为1  
-- **?**：该特征可以为0或1（不限制）
-
-**重要限制**：每次查询必须至少包含一个 ?（即不允许将所有特征都固定检索）。
-
-系统会返回两个统计数字：
-- **k**：在你的检索条件下，被标记为需审查(1)的案件数量
-- **m**：在你的检索条件下，符合检索条件的案件总数
-
-## 查询与提交答案的格式（必须严格遵守）
-
-每次查询使用以下 XML 格式（四个特征的取值用逗号分隔，顺序为 A1, A2, A3, A4）：
-
-查询示例（检索 A1=1, A2=?, A3=0, A4=? 的情况）：
-<query>1,?,0,?</query>
-
-提交最终推断时，需要明确说明关键特征集合 H 和目标奇偶性 p。格式如下：
-
-- H 为特征名称列表，用逗号分隔（若为空集则写 empty）
-- p 为"奇"或"偶"
-
-答案示例1（H = {{A1, A3}}，p = 奇）：
-<answer>H=A1,A3, p=奇</answer>
-
-答案示例2（H 为空集，p = 偶）：
-<answer>H=empty, p=偶</answer>
-
-答案示例3（H = {{A1, A2, A3, A4}}，p = 偶）：
-<answer>H=A1,A2,A3,A4, p=偶</answer>
+提交最终答案时，必须同时说明流程方案和从环节 1 到环节 7 的合法移交结论，格式如下：
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+（scheme 的值必须是 Alpha、Beta、Gamma 或 Delta，reachable_1_to_7 的值必须是 yes 或 no）
 """
 
     contextualized_rule_en_5 = """\
 [Law Scenario]
-The compliance review system is running an "Antitrust Review Trigger Deduction" exercise.
+Welcome to the Judicial Procedure Flow Simulation System. Our jurisdiction has 7 core legal approval phases (numbered 1 to 7), with 11 lawful case file transfer channels between them:
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
 
-## Business Setup
+According to the latest classified judicial interpretation, the Supreme Court has mandated a "one-way case transfer procedural scheme," imposing a strict single direction on all transfer channels. There are four possible schemes: Alpha, Beta, Gamma, Delta. This scheme remains fixed but is hidden from you.
 
-The corporate due diligence database contains 16 typical "corporate M&A case profiles". Each profile is described by 4 binary legal features A1, A2, A3, A4 (e.g., A1 for foreign capital involvement, A2 for cross-border data transfer, etc.), taking values 0 or 1. The database exactly contains all possible feature combinations (from 0000 to 1111) once.
+Your goal is to infer through compliance queries:
+1. Which procedural scheme for case transfer is actually being enforced (Alpha, Beta, Gamma, or Delta)
+2. Whether a case file can be lawfully escalated/transferred from phase 1 to phase 7 under this scheme
 
-The regulatory framework has secretly established a "Priority Review Trigger Rule" consisting of two components:
-1. **Key Feature Set H**: A subset of the 4 legal features (may be empty, single, multiple, or all features)
-2. **Target Parity p**: Either "odd" or "even"
+You can repeatedly ask flow compliance queries (one per turn): given an ordered phase pair (X, Y) where X is not equal to Y, and both are in {{1, 2, 3, 4, 5, 6, 7}}, ask whether it is legally permissible to transfer a case file from phase X to phase Y.
+I will truthfully answer "Yes" or "No", but will not provide specific transfer paths or statutory directions.
 
-Trigger logic: For any M&A case, if the count of features in the key feature set H that have value 1 matches the target parity p, the red line is triggered and the case is flagged for review (marked 1); otherwise compliant (marked 0).
+When you have enough information, submit your final ruling. If the ruling is wrong or the format is invalid, the simulation aborts.
 
-For example: If H = {{A1, A3}}, p = "odd", then case (1,0,1,0) has 2 features in H with value 1 (even count), doesn't satisfy the odd requirement, and is marked 0. Case (1,0,0,0) has 1 feature in H with value 1 (odd count), satisfies the requirement, and is marked 1.
+For each query, use this XML format (e.g., query if a case can be transferred from phase 1 to phase 3):
+<query_reachability>1,3</query_reachability>
 
-## Your Goal
-
-Through as few data queries as possible, deduce the regulatory framework's "Key Feature Set H" and "Target Parity p".
-
-## Query Rules
-
-You can perform "conditional count queries". For each query, specify partial search constraints on the 4 features, where each feature can be:
-- **0**: The feature must be 0
-- **1**: The feature must be 1
-- **?**: The feature can be 0 or 1 (unrestricted)
-
-**Important Restriction**: Each query must have at least one feature as ? (cannot fix all features).
-
-The system will return two metrics:
-- **k**: The count of cases flagged for review (1) under your constraints
-- **m**: The total count of matching cases satisfying your constraints
-
-## Query and Answer Format (must strictly follow)
-
-Each query uses the following XML format (four feature values separated by commas, in order A1, A2, A3, A4):
-
-Query example (querying A1=1, A2=?, A3=0, A4=?):
-<query>1,?,0,?</query>
-
-When submitting your final deduction, specify the key feature set H and target parity p. Format:
-
-- H is a list of feature names, comma-separated (if empty set, write empty)
-- p is "odd" or "even"
-
-Answer example 1 (H = {{A1, A3}}, p = odd):
-<answer>H=A1,A3, p=odd</answer>
-
-Answer example 2 (H is empty set, p = even):
-<answer>H=empty, p=even</answer>
-
-Answer example 3 (H = {{A1, A2, A3, A4}}, p = even):
-<answer>H=A1,A2,A3,A4, p=even</answer>
+Submit the final answer specifying both the procedural scheme and the 1-to-7 lawful transfer conclusion:
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+(scheme must be Alpha, Beta, Gamma, or Delta; reachable_1_to_7 must be yes or no)
 """
 
-    tags = ["answer", "query"]
+    game_rule_zh = """\
+我们来玩一个"有向图可达性推理"游戏，规则如下：
 
-    # 难度配置说明：
-    # 1 (简单)      - H 为单个特征，p = 偶
-    # 2 (中等偏下)  - H 为空集，p = 偶
-    # 3 (中等偏上)  - H 为两个特征，p = 奇
-    # 4 (较难)      - H 为三个特征，p = 偶
-    # 5 (难)        - H 为所有特征，p = 奇
+游戏设定了一个固定的无向图 G，顶点集 V = {{1, 2, 3, 4, 5, 6, 7}}，边集 E 包含以下边：
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
+
+在游戏开始前，我已经秘密地选择了一种"全局定向方案"，并对上述边集中的每条边赋予了恰好一个方向，从而形成了一个有向图 D。可能的定向方案有四种：Alpha、Beta、Gamma、Delta。这个方案在整个游戏过程中保持不变，但对你不可见。
+
+你的目标是通过查询推断出：
+1. 实际采用的全局定向方案是哪一种（Alpha、Beta、Gamma 或 Delta）
+2. 在该有向图中，顶点 1 到顶点 7 是否可达（存在有向路径）
+
+你可以反复向我提出可达性查询（每次一个查询）：给定有序顶点对 (X, Y)，其中 X 不等于 Y，X 和 Y 都在 {{1, 2, 3, 4, 5, 6, 7}} 中，询问在当前有向图 D 中是否存在从 X 到 Y 的有向路径。
+
+我会对每个查询如实回答"是"或"否"，但不会提供路径、边方向、邻接信息或其他任何附加信息。
+
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+
+每次查询使用以下 XML 格式（例如查询从顶点 1 到顶点 3 是否可达）：
+<query_reachability>1,3</query_reachability>
+
+提交最终答案时，必须同时说明定向方案和从顶点 1 到顶点 7 的可达性结论，格式如下：
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+
+其中 scheme 的值必须是 Alpha、Beta、Gamma 或 Delta 之一，reachable_1_to_7 的值必须是 yes 或 no。
+"""
+
+    game_rule_en = """\
+Let's play a "Directed Graph Reachability Inference" game. Here are the rules:
+
+The game is based on a fixed undirected graph G with vertex set V = {{1, 2, 3, 4, 5, 6, 7}} and edge set E containing the following edges:
+(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (2,5), (3,6), (1,4), (1,3), (4,6)
+
+Before the game starts, I have secretly selected a "global orientation scheme" and assigned exactly one direction to each edge in the edge set above, forming a directed graph D. There are four possible orientation schemes: Alpha, Beta, Gamma, Delta. This scheme remains fixed throughout the game but is hidden from you.
+
+Your goal is to infer through queries:
+1. Which global orientation scheme was actually used (Alpha, Beta, Gamma, or Delta)
+2. Whether vertex 7 is reachable from vertex 1 in this directed graph (i.e., there exists a directed path)
+
+You can repeatedly ask reachability queries (one per turn): given an ordered vertex pair (X, Y) where X is not equal to Y, and both X and Y are in {{1, 2, 3, 4, 5, 6, 7}}, ask whether there exists a directed path from X to Y in the current directed graph D.
+
+I will truthfully answer "Yes" or "No" to each query, but will not provide paths, edge directions, adjacency information, or any other additional information.
+
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+
+For each query, use the following XML format (e.g., to query if vertex 3 is reachable from vertex 1):
+<query_reachability>1,3</query_reachability>
+
+When submitting the final answer, you must specify both the orientation scheme and the reachability conclusion from vertex 1 to vertex 7, using this format:
+<answer>scheme=Alpha, reachable_1_to_7=yes</answer>
+
+The value of scheme must be one of Alpha, Beta, Gamma, or Delta, and the value of reachable_1_to_7 must be yes or no.
+"""
+
+    tags = ["answer", "query_reachability"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "图"
+
+    EDGES = [
+        (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7),
+        (2, 5), (3, 6), (1, 4), (1, 3), (4, 6)
+    ]
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "H": ["A1"],
-                "p": "偶",
-            },
-            2: {
-                "H": [],
-                "p": "偶",
-            },
-            3: {
-                "H": ["A1", "A3"],
-                "p": "奇",
-            },
-            4: {
-                "H": ["A2", "A3", "A4"],
-                "p": "偶",
-            },
-            5: {
-                "H": ["A1", "A2", "A3", "A4"],
-                "p": "奇",
-            },
-        },
-        "en": {
-            1: {
-                "H": ["A1"],
-                "p": "even",
-            },
-            2: {
-                "H": [],
-                "p": "even",
-            },
-            3: {
-                "H": ["A1", "A3"],
-                "p": "odd",
-            },
-            4: {
-                "H": ["A2", "A3", "A4"],
-                "p": "even",
-            },
-            5: {
-                "H": ["A1", "A2", "A3", "A4"],
-                "p": "odd",
-            },
-        },
+        1: {"scheme": "Alpha"},
+        2: {"scheme": "Gamma"},
+        3: {"scheme": "Beta"},
+        4: {"scheme": "Delta"},
+        5: {"scheme": "Gamma"},
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        lang = self.config.language
-        diff = self.config.difficulty
-
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        diff = int(self.config.difficulty)
+        
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
-
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 设置关键特征集合和目标奇偶性
-        self.H = set(cfg["H"])  # 关键特征集合
-        self.p = cfg["p"]  # 目标奇偶性
+        self.scheme = self.DIFFICULTY_CONFIG[diff]["scheme"]
+        self._game_info["scheme"] = self.scheme
         
-        # 生成所有16个对象及其标记
-        self.objects = []
-        self.markings = []
+        self.directed_graph = {i: [] for i in range(1, 8)}
         
-        for i in range(16):
-            # 将数字i转换为4位二进制表示
-            obj = [
-                (i >> 3) & 1,  # A1
-                (i >> 2) & 1,  # A2
-                (i >> 1) & 1,  # A3
-                i & 1          # A4
-            ]
-            self.objects.append(obj)
-            
-            # 计算该对象在H中特征值为1的个数
-            count_in_H = sum(
-                obj[j] for j, feature in enumerate(["A1", "A2", "A3", "A4"])
-                if feature in self.H
-            )
-            
-            # 判断奇偶性是否匹配
-            if lang == "zh":
-                target_is_odd = (self.p == "奇")
+        for u, v in self.EDGES:
+            direction = self._get_edge_direction(u, v, self.scheme)
+            if direction == 1:
+                self.directed_graph[u].append(v)
             else:
-                target_is_odd = (self.p == "odd")
-            
-            actual_is_odd = (count_in_H % 2 == 1)
-            
-            # 标记：奇偶性匹配则为1，否则为0
-            marking = 1 if (actual_is_odd == target_is_odd) else 0
-            self.markings.append(marking)
+                self.directed_graph[v].append(u)
         
-        self._game_info = {}
+        self.correct_reachable_1_to_7 = self._is_reachable(1, 7)
+        
+        self.query_count = 0
+
+    def _get_edge_direction(self, u, v, scheme):
+        if scheme == "Alpha":
+            return 1 if u < v else -1
+        
+        elif scheme == "Beta":
+            return -1 if u < v else 1
+        
+        elif scheme == "Gamma":
+            u_odd = u % 2 == 1
+            v_odd = v % 2 == 1
+            
+            if u_odd != v_odd:
+                return 1 if u_odd else -1
+            else:
+                return 1 if u > v else -1
+        
+        elif scheme == "Delta":
+            u_odd = u % 2 == 1
+            v_odd = v % 2 == 1
+            
+            if u_odd != v_odd:
+                return -1 if u_odd else 1
+            else:
+                return -1 if u > v else 1
+        
+        else:
+            raise ValueError(f"Unknown scheme: {scheme}")
+
+    def _is_reachable(self, start, end):
+        if start == end:
+            return True
+        
+        visited = set()
+        queue = [start]
+        visited.add(start)
+        
+        while queue:
+            current = queue.pop(0)
+            for neighbor in self.directed_graph[current]:
+                if neighbor == end:
+                    return True
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        
+        return False
 
     def evaluate(self, parsed_info):
-        """
-        评估答案是否正确
-        答案格式：H=A1,A3, p=奇 或 H=empty, p=偶
-        """
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"]
         
         try:
-            # 使用正则提取 H 和 p 的值
-            h_match = re.search(r'H\s*=\s*(.*?)\s*,\s*p\s*=', raw_ans, re.IGNORECASE)
-            p_match = re.search(r'p\s*=\s*(\S+)', raw_ans, re.IGNORECASE)
+            parts = [x.strip() for x in raw_ans.split(",")]
+            ans_dict = {}
+            for part in parts:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    ans_dict[k.strip()] = v.strip()
             
-            if not h_match or not p_match:
+            if "scheme" not in ans_dict or "reachable_1_to_7" not in ans_dict:
                 return False
             
-            h_str = h_match.group(1).strip()
-            model_p = p_match.group(1).strip().rstrip('.,;:!?。，；：！？')
-            
-            if h_str.lower() == "empty":
-                model_H = set()
-            else:
-                model_H = set(x.strip().upper() for x in h_str.split(",") if x.strip())
-            
-            # self.H 中的元素已经是大写，但做防御性处理
-            expected_H = set(x.upper() for x in self.H)
-            
-            if model_H != expected_H:
+            submitted_scheme = ans_dict["scheme"]
+            if submitted_scheme != self.scheme:
                 return False
             
-            # 检查 p 是否相同（忽略大小写以增强鲁棒性）
-            if model_p.lower() != self.p.lower():
+            submitted_reachable = ans_dict["reachable_1_to_7"].lower()
+            if submitted_reachable not in ["yes", "no"]:
                 return False
             
-            return True
+            expected_reachable = "yes" if self.correct_reachable_1_to_7 else "no"
+            
+            return submitted_reachable == expected_reachable
             
         except Exception:
             return False
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        results = []
-        options = ["0", "1", "?"]
-        
-        # 枚举 4 个特征的所有可能组合 (3^4 = 81 种)
-        for p in itertools.product(options, repeat=4):
-            # 规则约束：必须至少有一个特征为 ?
-            if "?" not in p:
-                continue
-            
-            # 构造查询字符串
-            query_str = ",".join(p)
-            
-            # 调用核心逻辑获取正确答案
-            # _cf_core_produce 是无状态的计算逻辑，可以直接复用
-            answer = self._cf_core_produce({"query": query_str})
-            
-            results.append({
-                "query": f"<query>{query_str}</query>",
-                "answer": answer
-            })
-            
-        return results
-
     def _cf_core_produce(self, parsed_info):
-        if "query" not in parsed_info:
-            raise ValueError("No valid query tag found.")
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_format = "错误：查询格式无效，应为两个不同的顶点编号，用逗号分隔。"
+            error_range = "错误：顶点编号超出范围，应在 1 到 7 之间。"
+            error_same = "错误：查询的两个顶点不能相同。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid query format. Should be two different vertex numbers separated by comma."
+            error_range = "Error: Vertex number out of range. Should be between 1 and 7."
+            error_same = "Error: The two vertices in the query cannot be the same."
         
-        query_str = parsed_info["query"].strip()
-        
-        try:
-            # 解析查询
-            constraints = [x.strip() for x in query_str.split(",")]
+        if "query_reachability" in parsed_info:
+            self.query_count += 1
             
-            if len(constraints) != 4:
-                if self.config.language == "zh":
-                    return "错误：查询必须包含4个特征的约束（用逗号分隔）。"
-                else:
-                    return "Error: Query must contain constraints for 4 features (comma-separated)."
-            
-            # 检查是否至少有一个 ?
-            if "?" not in constraints:
-                if self.config.language == "zh":
-                    return "错误：查询必须至少有一个特征为 ?（不能将所有特征都固定）。"
-                else:
-                    return "Error: Query must have at least one feature as ? (cannot fix all features)."
-            
-            # 检查每个约束是否合法
-            for c in constraints:
-                if c not in ["0", "1", "?"]:
-                    if self.config.language == "zh":
-                        return "错误：每个特征的约束必须是 0、1 或 ?。"
-                    else:
-                        return "Error: Each feature constraint must be 0, 1, or ?."
-            
-            # 统计满足条件的对象
-            k = 0  # 被标记为1的数量
-            m = 0  # 符合约束的总数量
-            
-            for obj, marking in zip(self.objects, self.markings):
-                # 检查该对象是否满足约束
-                satisfies = True
-                for i, constraint in enumerate(constraints):
-                    if constraint != "?":
-                        if obj[i] != int(constraint):
-                            satisfies = False
-                            break
+            try:
+                raw = parsed_info["query_reachability"].strip()
+                parts = [x.strip() for x in raw.split(",")]
                 
-                if satisfies:
-                    m += 1
-                    if marking == 1:
-                        k += 1
-            
-            # 返回结果
-            if self.config.language == "zh":
-                return f"满足条件且被标记为1的对象数量 k = {k}，符合条件的对象总数 m = {m}。"
-            else:
-                return f"Count of marked objects k = {k}, total count of matching objects m = {m}."
-            
-        except Exception as e:
-            if self.config.language == "zh":
-                return f"错误：查询格式无效。{str(e)}"
-            else:
-                return f"Error: Invalid query format. {str(e)}"
+                if len(parts) != 2:
+                    return error_format
+                
+                start = int(parts[0])
+                end = int(parts[1])
+                
+                if start < 1 or start > 7 or end < 1 or end > 7:
+                    return error_range
+                
+                if start == end:
+                    return error_same
+                
+                is_reachable = self._is_reachable(start, end)
+                return yes_res if is_reachable else no_res
+                
+            except ValueError:
+                return error_format
+        
+        else:
+            raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """
-        将正确的查询响应中的 k 值篡改为错误值。
-        correct 格式示例:
-          中文: "满足条件且被标记为1的对象数量 k = 3，符合条件的对象总数 m = 8。"
-          英文: "Count of marked objects k = 3, total count of matching objects m = 8."
-        """
-        import re as _re
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        # 尝试匹配 k = <数字> 并将其篡改
-        def _modify_k(match):
-            k_val = int(match.group(1))
-            m_match = _re.search(r'm\s*=\s*(\d+)', correct)
-            m_val = int(m_match.group(1)) if m_match else 16
-            # 确保新值不同且在合理范围内
-            wrong_k = k_val + 1 if k_val < m_val else k_val - 1
-            return match.group(0).replace(match.group(1), str(wrong_k))
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
         
-        modified = _re.sub(r'k\s*=\s*(\d+)', _modify_k, correct, count=1)
+        lower_correct = correct.lower()
+        if lower_correct == "yes":
+            if correct.isupper():
+                return "NO"
+            elif correct.islower():
+                return "no"
+            else:
+                return "No"
         
-        if modified != correct:
-            return modified
+        if lower_correct == "no":
+            if correct.isupper():
+                return "YES"
+            elif correct.islower():
+                return "yes"
+            else:
+                return "Yes"
         
-        # fallback
         return correct + "_WRONG"
+
+    def get_all_possible_queries(self):
+        queries = []
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+            
+        for start in range(1, 8):
+            for end in range(1, 8):
+                if start == end:
+                    continue
+                
+                is_reachable = self._is_reachable(start, end)
+                ans = yes_res if is_reachable else no_res
+                
+                query_content = f"<query_reachability>{start},{end}</query_reachability>"
+                
+                queries.append({
+                    "query": query_content,
+                    "answer": ans
+                })
+                
+        return queries

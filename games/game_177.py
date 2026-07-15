@@ -1,714 +1,821 @@
-# -*- coding: utf-8 -*-
-# 推理类型: 归纳推理（完全自主总结规律）
-# 数据结构: 树
-# 知识点:   叶节点数量：树中叶子节点的总数是多少
-# ============================================================
-
 from .base import Game
-import random
+import re
 
-
-class SymbolDecodingGame(Game):
-
+class MaxSubtreeSumGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"符号解码"推理游戏，规则如下：
+我们现在来玩一个"最大子树和推理"的游戏，规则如下：
 
-游戏设定了一个未知的非负整数 V（目标值），以及一个固定但未知的双射编码映射 σ，它将十个十进制数字 0,1,2,3,4,5,6,7,8,9 分别对应到十个大写字母 A,B,C,D,E,F,G,H,I,J（一一对应，整个游戏过程中不变）。
+游戏设定了一棵有根树，节点编号为 1 到 {n}，根节点为 {root}。每个节点都有一个整数权值（可能为负数）。对于任意节点 u，定义其子树和为：该节点的权值加上其所有直接子节点的子树和之和。
 
-游戏中有三种"数据源"可供你选择切换：
+树的结构如下：
+{tree_structure}
 
-1. Star(t)：输出值为 t（t 为你指定的任意正整数）。
-2. Path(t)：输出值为 1（当 t=1 时）或 2（当 t 大于等于 2 时），t 为你指定的任意正整数。
-3. Target：输出值为未知的目标值 V。
+根节点的子树和为：{root_sum}
 
-当你选择某个数据源后，可以请求"报告"当前源的编码表示：系统会将该源的输出值按十进制表示，逐位数字通过 σ 映射为字母，并返回结果字符串（无前导零）。
+题目保证：在所有节点中，存在且仅存在一个节点的子树和严格大于其他所有节点（即唯一最大）。
 
-你的目标是：
+你的目标是找到这个子树和最大的节点及其子树和的值。你可以使用以下两种查询方式，但查询次数有限：
 
-- 通过多轮切换数据源并观察编码结果，推断出完整的映射 σ；
-- 解码 Target 的编码得到真实值 V；
-- 最终提交你对 σ 的猜测以及 V 的猜测。
+1. 分支和查询：查询某个节点的子树和
+2. 单点值查询：查询某个节点自身的权值
 
-你需要尽可能少地进行询问。
+你有 {budget_b} 次分支和查询机会和 {budget_m} 次单点值查询机会。
 
-## 询问与提交答案的格式（必须严格遵守）
+重要约束：
+- 根节点可以直接查询
+- 对于非根节点 u，只有当其父节点已经被执行过分支和查询后，才能对 u 进行任何查询
+- 重复查询同一项仍会消耗相应预算
+- 你需要尽可能少地使用查询次数
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+每次只能进行一个操作。请使用以下 XML 格式：
 
-- 切换到 Star(t) 数据源（例如 t=123）：
-<build_star>123</build_star>
+- 分支和查询（例如查询节点 3 的子树和）：
+<query_sum>3</query_sum>
 
-- 切换到 Path(t) 数据源（例如 t=5）：
-<build_path>5</build_path>
+- 单点值查询（例如查询节点 5 的权值）：
+<query_val>5</query_val>
 
-- 切换到 Target 数据源：
-<reset_target></reset_target>
+- 提交最终答案（例如断言节点 7 的子树和为 42）：
+<answer>node=7, sum=42</answer>
 
-- 请求当前数据源的编码报告：
-<report></report>
+- 主动放弃：
+<give_up></give_up>
 
-提交最终答案时，必须同时给出映射 σ 和目标值 V。格式如下：
-
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-其中 mapping 部分列出所有十个数字到字母的对应关系（用逗号隔开，顺序不限），value 部分给出你猜测的 V 的十进制表示。
+注意：提交答案时必须同时指定节点编号和该节点的子树和值。
 """
 
     game_rule_en = """\
-Let's play a "Symbol Decoding" deduction game. Here are the rules:
+Let's play a "Maximum Subtree Sum Inference" game. Here are the rules:
 
-The game has set up an unknown non-negative integer V (the target value), and a fixed but unknown bijection encoding σ that maps the ten decimal digits 0,1,2,3,4,5,6,7,8,9 to ten uppercase letters A,B,C,D,E,F,G,H,I,J (one-to-one correspondence, unchanged throughout the game).
+The game involves a rooted tree with nodes numbered from 1 to {n}, with root node {root}. Each node has an integer weight (which may be negative). For any node u, its subtree sum is defined as: the node's own weight plus the sum of all its direct children's subtree sums.
 
-There are three "data sources" you can switch between:
+The tree structure is:
+{tree_structure}
 
-1. Star(t): outputs the value t (t is any positive integer you specify).
-2. Path(t): outputs 1 (when t=1) or 2 (when t is greater than or equal to 2), where t is any positive integer you specify.
-3. Target: outputs the unknown target value V.
+The root's subtree sum is: {root_sum}
 
-After selecting a data source, you can request a "report" of the current source's encoded representation: the system will take the source's output value in decimal notation, map each digit through σ to a letter, and return the result string (without leading zeros).
+It is guaranteed that there exists exactly one node whose subtree sum is strictly greater than all other nodes (i.e., uniquely maximum).
 
-Your goal is:
+Your goal is to find this node with the maximum subtree sum and determine its subtree sum value. You can use two types of queries, but the number of queries is limited:
 
-- Infer the complete mapping σ by switching data sources and observing encoded results through multiple rounds;
-- Decode Target's encoding to obtain the real value V;
-- Finally submit your guess of σ and V.
+1. Branch sum query: Query a node's subtree sum
+2. Single value query: Query a node's own weight
 
-You should try to minimize the number of queries.
+You have {budget_b} branch sum queries and {budget_m} single value queries available.
 
-## Query and Answer Format (strictly required)
+Important constraints:
+- The root node can be queried directly
+- For any non-root node u, it can only be queried after its parent has been queried with a branch sum query
+- Repeated queries to the same item still consume the corresponding budget
+- You should try to minimize the number of queries used
 
-Each query must contain only one tag. Use the following XML format:
+Each turn allows only one operation. Use the following XML format:
 
-- Switch to Star(t) data source (e.g., t=123):
-<build_star>123</build_star>
+- Branch sum query (e.g., query subtree sum of node 3):
+<query_sum>3</query_sum>
 
-- Switch to Path(t) data source (e.g., t=5):
-<build_path>5</build_path>
+- Single value query (e.g., query weight of node 5):
+<query_val>5</query_val>
 
-- Switch to Target data source:
-<reset_target></reset_target>
+- Submit final answer (e.g., assert node 7 has subtree sum 42):
+<answer>node=7, sum=42</answer>
 
-- Request the encoded report of the current data source:
-<report></report>
+- Give up voluntarily:
+<give_up></give_up>
 
-When submitting the final answer, you must provide both the mapping σ and the target value V. Format as follows:
-
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-Where the mapping part lists all ten digit-to-letter correspondences (comma-separated, order does not matter), and the value part gives your guessed decimal representation of V.
+Note: When submitting an answer, you must specify both the node number and its subtree sum value.
 """
 
     contextualized_rule_zh_1 = """\
-【智慧交通系统排查】我们现在来玩一个"符号解码"推理游戏，规则如下：
+【交通网络枢纽负荷排查系统】
 
-交通管理部门正在追踪一辆肇事逃逸的车辆。系统设定了一个未知的非负整数 V（逃逸车辆的核心识别码），以及一个固定但未知的双射编码映射 σ，它将十个十进制数字 0,1,2,3,4,5,6,7,8,9 分别对应到十个大写字母 A,B,C,D,E,F,G,H,I,J（一一对应，作为加密传输协议，整个排查过程中不变）。
+调度员，您好。我们正在分析一个呈树状分布的区域交通网络，节点编号为 1 到 {n}，总枢纽为 {root}。
+每个节点枢纽都有一个本地车流净增量（可能为负数，表示车流疏散）。对于任意节点 u，定义其“区域总负荷”为：该节点的本地车流净增量加上其所有直接下级分支节点的“区域总负荷”之和。
 
-交管系统中有三种"数据源"可供你选择切换：
+当前路网结构如下：
+{tree_structure}
 
-1. Star(t) [模拟车牌生成器]：输出值为 t（t 为你指定的任意正整数测试序列）。
-2. Path(t) [车道状态探测器]：输出值为 1（当指定车道 t=1 时）或 2（当车道 t 大于等于 2 时），t 为你指定的任意正整数。
-3. Target [嫌疑车辆追踪器]：输出值为未知的目标识别码 V。
+总枢纽的区域总负荷为：{root_sum}
 
-当你选择某个数据源后，可以请求"报告"当前源的加密表示：系统会将该源的输出值按十进制表示，逐位数字通过 σ 映射为字母，并返回结果字符串（无前导零）。
+系统警报：在所有节点中，存在且仅存在一个节点的区域总负荷严格大于其他所有节点，它是引发全网拥堵的核心源头。
 
-你的目标是：
-- 通过多轮切换数据源并观察加密结果，推推断出完整的映射 σ；
-- 解码 Target 的加密数据得到真实识别码 V；
-- 最终提交你对 σ 的猜测以及 V 的猜测。
+你的目标是找到这个最大负荷枢纽及其区域总负荷值。你可以使用以下两种查询指令，但系统算力有限：
 
-你需要尽可能少地进行询问。
+1. 分支负荷查询：查询某个节点及其下级的区域总负荷
+2. 单点增量查询：查询某个节点自身的本地车流净增量
 
-## 询问与提交答案的格式（必须严格遵守）
+你拥有 {budget_b} 次分支负荷查询权限和 {budget_m} 次单点增量查询权限。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+重要约束：
+- 总枢纽节点可以直接查询
+- 对于非总枢纽节点 u，只有当其上级节点已经被执行过“分支负荷查询”后，才能对 u 进行任何查询
+- 重复查询同一项仍会消耗相应权限
+- 你需要尽可能少地消耗查询次数
 
-- 切换到 Star(t) 数据源（例如 t=123）：
-<build_star>123</build_star>
+每次只能进行一个操作。请使用以下 XML 格式：
 
-- 切换到 Path(t) 数据源（例如 t=5）：
-<build_path>5</build_path>
+- 分支负荷查询（例如查询节点 3 的区域总负荷）：
+<query_sum>3</query_sum>
 
-- 切换到 Target 数据源：
-<reset_target></reset_target>
+- 单点增量查询（例如查询节点 5 的自身净增量）：
+<query_val>5</query_val>
 
-- 请求当前数据源的编码报告：
-<report></report>
+- 提交最终答案（例如断言节点 7 的区域总负荷为 42）：
+<answer>node=7, sum=42</answer>
 
-提交最终答案时，必须同时给出映射 σ 和目标值 V。格式如下：
+- 主动放弃：
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-其中 mapping 部分列出所有十个数字到字母的对应关系（用逗号隔开，顺序不限），value 部分给出你猜测的 V 的十进制表示。
+注意：提交答案时必须同时指定节点编号和该节点的区域总负荷值。
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Let's play a "Symbol Decoding" deduction game under the context of smart traffic management. Here are the rules:
+[Transportation Scenario] Traffic Network Throughput Analysis
 
-The traffic authority is tracking a hit-and-run vehicle. The system has set up an unknown non-negative integer V (the target vehicle's core ID), and a fixed but unknown bijection encoding σ that maps the ten decimal digits 0,1,2,3,4,5,6,7,8,9 to ten uppercase letters A,B,C,D,E,F,G,H,I,J (one-to-one correspondence, serving as an encrypted communication protocol, unchanged throughout the game).
+Hello, Dispatcher. We are analyzing a regional traffic network distributed in a tree structure. The nodes are numbered from 1 to {n}, with the main hub at {root}.
+Each hub node has a local net traffic increment (which may be negative, indicating traffic dispersion). For any node u, its "regional total load" (subtree sum) is defined as: the node's local net traffic increment plus the sum of the regional total loads of all its direct downstream branches.
 
-There are three "data sources" in the traffic system you can switch between:
+The current network topology is:
+{tree_structure}
 
-1. Star(t) [Simulated ID Generator]: outputs the value t (t is any positive integer test sequence you specify).
-2. Path(t) [Lane Status Detector]: outputs 1 (when lane t=1) or 2 (when lane t is greater than or equal to 2), where t is any positive integer you specify.
-3. Target [Suspect Tracker]: outputs the unknown target ID V.
+The regional total load of the main hub is: {root_sum}
 
-After selecting a data source, you can request a "report" of the current source's encrypted representation: the system will take the source's output value in decimal notation, map each digit through σ to a letter, and return the result string (without leading zeros).
+System Alert: It is guaranteed that exactly one node has a regional total load strictly greater than all other nodes. This node is the core bottleneck causing network congestion.
 
-Your goal is:
-- Infer the complete mapping σ by switching data sources and observing encrypted results through multiple rounds;
-- Decode the Target's encrypted data to obtain the real ID V;
-- Finally submit your guess of σ and V.
+Your goal is to pinpoint this maximum load hub and its regional total load value. You can use two types of query commands, but system processing power is limited:
 
-You should try to minimize the number of queries.
+1. Branch load query: Query the regional total load of a node and its downstream branches.
+2. Single increment query: Query a node's own local net traffic increment.
 
-## Query and Answer Format (strictly required)
+You are granted {budget_b} branch load queries and {budget_m} single increment queries.
 
-Each query must contain only one tag. Use the following XML format:
+Important constraints:
+- The main hub can be queried directly.
+- For any non-main hub node u, it can only be queried after its parent hub has been subjected to a "branch load query".
+- Repeated queries to the same node still consume the respective budget.
+- You must minimize the number of queries used.
 
-- Switch to Star(t) data source (e.g., t=123):
-<build_star>123</build_star>
+Each turn allows only one operation. Use the following XML format:
 
-- Switch to Path(t) data source (e.g., t=5):
-<build_path>5</build_path>
+- Branch load query (e.g., query regional total load of node 3):
+<query_sum>3</query_sum>
 
-- Switch to Target data source:
-<reset_target></reset_target>
+- Single increment query (e.g., query local net traffic increment of node 5):
+<query_val>5</query_val>
 
-- Request the encrypted report of the current data source:
-<report></report>
+- Submit final answer (e.g., assert node 7 has a regional total load of 42):
+<answer>node=7, sum=42</answer>
 
-When submitting the final answer, you must provide both the mapping σ and the target value V. Format as follows:
+- Give up voluntarily:
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-Where the mapping part lists all ten digit-to-letter correspondences (comma-separated, order does not matter), and the value part gives your guessed decimal representation of V.
+Note: When submitting an answer, you must specify both the node number and its regional total load value.
 """
 
     contextualized_rule_zh_2 = """\
-【传染病溯源排查】我们现在来玩一个"符号解码"推理游戏，规则如下：
+【医疗病患接触史排查系统】
 
-疾控中心正在追踪一种未知病毒的"零号病人"。系统设定了一个未知的非负整数 V（零号病人的核心基因序列编号），以及一个固定但未知的双射编码映射 σ，它将十个十进制数字 0,1,2,3,4,5,6,7,8,9 分别对应到十个大写字母 A,B,C,D,E,F,G,H,I,J（一一对应，作为基因组脱敏算法，整个排查过程中不变）。
+流行病学专家，您好。我们正在分析一场突发传染病的区域传播网络。防控站点呈树状结构分布，编号为 1 到 {n}，总疾控中心为 {root}。
+每个站点都有一个本地新增病患指标（可能为负数，表示治愈溢出）。对于任意站点 u，定义其“区域累计感染总数”为：该站点的本地新增指标加上其所有直接下级站点的“区域累计感染总数”之和。
 
-医疗数据库中有三种"数据源"可供你选择切换：
+当前防控网络拓扑如下：
+{tree_structure}
 
-1. Star(t) [合成对照组]：输出值为 t（t 为你指定的任意正整数人工序列号）。
-2. Path(t) [靶向药效测试]：输出值为 1（当药物剂量 t=1 时）或 2（当剂量 t 大于等于 2 时），t 为你指定的任意正整数。
-3. Target [零号病人样本]：输出值为未知的目标序列编号 V。
+总疾控中心的区域累计感染总数为：{root_sum}
 
-当你选择某个数据源后，可以请求"报告"当前源的脱敏测序结果：系统会将该源的输出值按十进制表示，逐位数字通过 σ 映射为字母，并返回结果字符串（无前导零）。
+疫情警报：在所有站点中，存在且仅存在一个站点的区域累计感染总数严格大于其他所有站点，该区域是本次疫情的超级传播源。
 
-你的目标是：
-- 通过多轮切换数据源并观察测序结果，推断出完整的映射 σ；
-- 解码 Target 的脱敏数据得到真实的序列编号 V；
-- 最终提交你对 σ 的猜测以及 V 的猜测。
+你的目标是找到这个最大感染总数的站点及其具体数值。你可以使用以下两种检测手段，但检测试剂有限：
 
-你需要尽可能少地进行询问。
+1. 区域流行病学筛查（分支和查询）：查询某个站点及其下辖区域的累计感染总数
+2. 本地临床抽检（单点值查询）：查询某个站点自身的本地新增病患指标
 
-## 询问与提交答案的格式（必须严格遵守）
+你拥有 {budget_b} 次区域流行病学筛查权限和 {budget_m} 次本地临床抽检权限。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+重要排查约束：
+- 总疾控中心可以直接查询
+- 对于非总中心站点 u，只有当其上级站点已经被执行过“区域流行病学筛查”后，才能对 u 进行任何查询
+- 重复查询同一项仍会消耗相应试剂
+- 你需要尽可能少地消耗检测次数
 
-- 切换到 Star(t) 数据源（例如 t=123）：
-<build_star>123</build_star>
+每次只能进行一个操作。请使用以下 XML 格式：
 
-- 切换到 Path(t) 数据源（例如 t=5）：
-<build_path>5</build_path>
+- 区域流行病学筛查（例如查询站点 3 的区域累计感染总数）：
+<query_sum>3</query_sum>
 
-- 切换到 Target 数据源：
-<reset_target></reset_target>
+- 本地临床抽检（例如查询站点 5 的本地新增指标）：
+<query_val>5</query_val>
 
-- 请求当前数据源的编码报告：
-<report></report>
+- 提交最终排查结果（例如断言站点 7 的区域累计感染总数为 42）：
+<answer>node=7, sum=42</answer>
 
-提交最终答案时，必须同时给出映射 σ 和目标值 V。格式如下：
+- 主动放弃：
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-其中 mapping 部分列出所有十个数字到字母的对应关系（用逗号隔开，顺序不限），value 部分给出你猜测的 V 的十进制表示。
+注意：提交答案时必须同时指定站点编号和该站点的区域累计感染总数值。
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Let's play a "Symbol Decoding" deduction game under the context of infectious disease tracing. Here are the rules:
+[Healthcare Scenario] Epidemic Control Network Analysis
 
-The CDC is tracking the "Patient Zero" of an unknown virus. The system has set up an unknown non-negative integer V (the core genetic sequence ID of Patient Zero), and a fixed but unknown bijection encoding σ that maps the ten decimal digits 0,1,2,3,4,5,6,7,8,9 to ten uppercase letters A,B,C,D,E,F,G,H,I,J (one-to-one correspondence, serving as a genomic desensitization algorithm, unchanged throughout the tracing process).
+Hello, Epidemiologist. We are analyzing the regional transmission network of a sudden infectious disease. The control stations form a tree structure, numbered from 1 to {n}, with the central CDC at {root}.
+Each station has a local new patient index (which may be negative, indicating a surplus of recoveries). For any station u, its "regional cumulative infection count" (subtree sum) is defined as: the station's local new patient index plus the sum of the regional cumulative infection counts of all its direct subordinate stations.
 
-There are three "data sources" in the medical database you can switch between:
+The current control network topology is:
+{tree_structure}
 
-1. Star(t) [Synthetic Control Group]: outputs the value t (t is any positive integer artificial sequence ID you specify).
-2. Path(t) [Targeted Drug Efficacy Test]: outputs 1 (when drug dose t=1) or 2 (when dose t is greater than or equal to 2), where t is any positive integer you specify.
-3. Target [Patient Zero Sample]: outputs the unknown target sequence ID V.
+The regional cumulative infection count of the central CDC is: {root_sum}
 
-After selecting a data source, you can request a "report" of the current source's desensitized sequencing result: the system will take the source's output value in decimal notation, map each digit through σ to a letter, and return the result string (without leading zeros).
+Epidemic Alert: It is guaranteed that exactly one station has a regional cumulative infection count strictly greater than all other stations. This area is the super-spreader source of the current outbreak.
 
-Your goal is:
-- Infer the complete mapping σ by switching data sources and observing sequencing results through multiple rounds;
-- Decode the Target's desensitized data to obtain the real sequence ID V;
-- Finally submit your guess of σ and V.
+Your goal is to pinpoint this maximum infection station and its exact count. You can use two types of testing methods, but test kits are limited:
 
-You should try to minimize the number of queries.
+1. Regional epidemiological screening (Branch sum query): Query the cumulative infection count of a station and its jurisdiction.
+2. Local clinical sampling (Single value query): Query a station's own local new patient index.
 
-## Query and Answer Format (strictly required)
+You have {budget_b} regional epidemiological screenings and {budget_m} local clinical samplings available.
 
-Each query must contain only one tag. Use the following XML format:
+Important constraints:
+- The central CDC can be queried directly.
+- For any non-central station u, it can only be queried after its parent station has been subjected to a "regional epidemiological screening".
+- Repeated queries to the same station still consume the respective test kits.
+- You must minimize the number of test kits used.
 
-- Switch to Star(t) data source (e.g., t=123):
-<build_star>123</build_star>
+Each turn allows only one operation. Use the following XML format:
 
-- Switch to Path(t) data source (e.g., t=5):
-<build_path>5</build_path>
+- Regional epidemiological screening (e.g., query cumulative infection count of station 3):
+<query_sum>3</query_sum>
 
-- Switch to Target data source:
-<reset_target></reset_target>
+- Local clinical sampling (e.g., query local new patient index of station 5):
+<query_val>5</query_val>
 
-- Request the encoded report of the current data source:
-<report></report>
+- Submit final result (e.g., assert station 7 has a cumulative infection count of 42):
+<answer>node=7, sum=42</answer>
 
-When submitting the final answer, you must provide both the mapping σ and the target value V. Format as follows:
+- Give up voluntarily:
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-Where the mapping part lists all ten digit-to-letter correspondences (comma-separated, order does not matter), and the value part gives your guessed decimal representation of V.
+Note: When submitting an answer, you must specify both the station number and its regional cumulative infection count.
 """
 
     contextualized_rule_zh_3 = """\
-【考试泄密调查】我们现在来玩一个"符号解码"推理游戏，规则如下：
+【教育质量评估追踪系统】
 
-教育局正在调查一份严重泄露的绝密考卷。系统设定了一个未知的非负整数 V（泄密考卷的防伪特征码），以及一个固定但未知的双射编码映射 σ，它将十个十进制数字 0,1,2,3,4,5,6,7,8,9 分别对应到十个大写字母 A,B,C,D,E,F,G,H,I,J（一一对应，作为阅卷系统的盲评加密映射，整个调查过程中不变）。
+督导员，您好。我们正在对一套呈树状层级分布的教育行政体系进行质量评估。机构节点编号为 1 到 {n}，最高教育局为 {root}。
+每个机构都有一个独立的基准测评得分（可能为负数，表示不达标扣分）。对于任意机构 u，定义其“分支综合教育指数”为：该机构自身的测评得分加上其所有直接下属机构的“分支综合教育指数”之和。
 
-阅卷系统中有三种"数据源"可供你选择切换：
+当前教育体系组织架构如下：
+{tree_structure}
 
-1. Star(t) [提交模拟测试卷]：输出值为 t（t 为你指定的任意正整数分值）。
-2. Path(t) [难度评级引擎]：输出值为 1（当题目层级 t=1 时）或 2（当题目层级 t 大于等于 2 时），t 为你指定的任意正整数。
-3. Target [定位泄密考卷]：输出值为未知的防伪特征码 V。
+最高教育局的分支综合教育指数为：{root_sum}
 
-当你选择某个数据源后，可以请求"报告"当前源的盲评加密结果：系统会将该源的输出值按十进制表示，逐位数字通过 σ 映射为字母，并返回结果字符串（无前导零）。
+评估目标：在所有机构中，存在且仅存在一个机构的分支综合教育指数严格大于其他所有机构，该节点是本年度的模范教育分支。
 
-你的目标是：
-- 通过多轮切换数据源并观察加密结果，推断出完整的映射 σ；
-- 解码 Target 的盲评数据得到真实的防伪特征码 V；
-- 最终提交你对 σ 的猜测以及 V 的猜测。
+你的任务是找出这个综合指数最大的机构及其具体得分。你可以使用以下两种调研手段，但调研经费有限：
 
-你需要尽可能少地进行询问。
+1. 综合分管调研（分支和查询）：查询某个机构及其所有下属机构的分支综合教育指数
+2. 独立建制调研（单点值查询）：查询某个机构自身的基准测评得分
 
-## 询问与提交答案的格式（必须严格遵守）
+你拥有 {budget_b} 次综合分管调研经费和 {budget_m} 次独立建制调研经费。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+重要评估约束：
+- 最高教育局可以直接被调研
+- 对于非最高机构 u，只有当其直属上级机构已经被执行过“综合分管调研”后，才能对 u 进行任何下沉调研
+- 重复调研同一机构仍会消耗相应经费
+- 你需要尽可能少地消耗调研次数
 
-- 切换到 Star(t) 数据源（例如 t=123）：
-<build_star>123</build_star>
+每次只能进行一个操作。请使用以下 XML 格式：
 
-- 切换到 Path(t) 数据源（例如 t=5）：
-<build_path>5</build_path>
+- 综合分管调研（例如查询机构 3 的分支综合教育指数）：
+<query_sum>3</query_sum>
 
-- 切换到 Target 数据源：
-<reset_target></reset_target>
+- 独立建制调研（例如查询机构 5 的基准测评得分）：
+<query_val>5</query_val>
 
-- 请求当前数据源的编码报告：
-<report></report>
+- 提交最终评估结果（例如断言机构 7 的分支综合教育指数为 42）：
+<answer>node=7, sum=42</answer>
 
-提交最终答案时，必须同时给出映射 σ 和目标值 V。格式如下：
+- 主动放弃：
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-其中 mapping 部分列出所有十个数字到字母的对应关系（用逗号隔开，顺序不限），value 部分给出你猜测的 V 的十进制表示。
+注意：提交答案时必须同时指定机构编号和该机构的分支综合教育指数。
 """
 
     contextualized_rule_en_3 = """\
-[Education Scenario]
-Let's play a "Symbol Decoding" deduction game under the context of an exam leak investigation. Here are the rules:
+[Education Scenario] Education Quality Assessment Tracking System
 
-The Education Bureau is investigating a highly confidential leaked exam paper. The system has set up an unknown non-negative integer V (the anti-counterfeiting characteristic code of the leaked paper), and a fixed but unknown bijection encoding σ that maps the ten decimal digits 0,1,2,3,4,5,6,7,8,9 to ten uppercase letters A,B,C,D,E,F,G,H,I,J (one-to-one correspondence, serving as a blind-grading encryption mapping in the exam system, unchanged throughout the investigation).
+Hello, Inspector. We are conducting a quality assessment on a hierarchically distributed educational administrative system. The institutional nodes are numbered from 1 to {n}, with the Supreme Education Bureau at {root}.
+Each institution has an independent baseline evaluation score (which may be negative, indicating a penalty for underperformance). For any institution u, its "branch comprehensive education index" (subtree sum) is defined as: the institution's own evaluation score plus the sum of the branch comprehensive education indices of all its direct subordinate institutions.
 
-There are three "data sources" in the grading system you can switch between:
+The current organizational structure is:
+{tree_structure}
 
-1. Star(t) [Submit Mock Exam]: outputs the value t (t is any positive integer score you specify).
-2. Path(t) [Difficulty Rating Engine]: outputs 1 (when question level t=1) or 2 (when question level t is greater than or equal to 2), where t is any positive integer you specify.
-3. Target [Locate Leaked Exam]: outputs the unknown characteristic code V.
+The branch comprehensive education index of the Supreme Education Bureau is: {root_sum}
 
-After selecting a data source, you can request a "report" of the current source's blind-grading encrypted result: the system will take the source's output value in decimal notation, map each digit through σ to a letter, and return the result string (without leading zeros).
+Assessment Objective: It is guaranteed that exactly one institution has a branch comprehensive education index strictly greater than all other institutions. This node represents the model educational branch of the year.
 
-Your goal is:
-- Infer the complete mapping σ by switching data sources and observing encrypted results through multiple rounds;
-- Decode the Target's encrypted data to obtain the real characteristic code V;
-- Finally submit your guess of σ and V.
+Your task is to identify this institution with the maximum comprehensive index and its exact score. You can use two types of investigative methods, but funding is limited:
 
-You should try to minimize the number of queries.
+1. Comprehensive branch investigation (Branch sum query): Query the comprehensive education index of an institution and all its subordinates.
+2. Independent unit investigation (Single value query): Query an institution's own baseline evaluation score.
 
-## Query and Answer Format (strictly required)
+You have {budget_b} comprehensive branch investigations and {budget_m} independent unit investigations available.
 
-Each query must contain only one tag. Use the following XML format:
+Important constraints:
+- The Supreme Education Bureau can be investigated directly.
+- For any non-supreme institution u, it can only be subjected to downward investigation after its direct superior institution has undergone a "comprehensive branch investigation".
+- Repeated investigations of the same institution still consume the respective funding.
+- You must minimize the number of investigation queries used.
 
-- Switch to Star(t) data source (e.g., t=123):
-<build_star>123</build_star>
+Each turn allows only one operation. Use the following XML format:
 
-- Switch to Path(t) data source (e.g., t=5):
-<build_path>5</build_path>
+- Comprehensive branch investigation (e.g., query comprehensive index of institution 3):
+<query_sum>3</query_sum>
 
-- Switch to Target data source:
-<reset_target></reset_target>
+- Independent unit investigation (e.g., query evaluation score of institution 5):
+<query_val>5</query_val>
 
-- Request the encoded report of the current data source:
-<report></report>
+- Submit final assessment result (e.g., assert institution 7 has a comprehensive index of 42):
+<answer>node=7, sum=42</answer>
 
-When submitting the final answer, you must provide both the mapping σ and the target value V. Format as follows:
+- Give up voluntarily:
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-Where the mapping part lists all ten digit-to-letter correspondences (comma-separated, order does not matter), and the value part gives your guessed decimal representation of V.
+Note: When submitting an answer, you must specify both the institution number and its branch comprehensive education index.
 """
 
     contextualized_rule_zh_4 = """\
-【工控设备故障诊断】我们现在来玩一个"符号解码"推理游戏，规则如下：
+【工业组件供应链利润分析系统】
 
-智能制造车间的核心工业控制器发生异常。系统设定了一个未知的非负整数 V（故障设备的内部指令序列号），以及一个固定但未知的双射编码映射 σ，它将十个十进制数字 0,1,2,3,4,5,6,7,8,9 分别对应到十个大写字母 A,B,C,D,E,F,G,H,I,J（一一对应，作为工控机串行通信的掩码协议，整个诊断过程中不变）。
+分析师，您好。我们正在审计一个复杂工业产品的装配供应链（呈树状依赖结构）。组件编号为 1 到 {n}，最终成品节点为 {root}。
+每个生产组件都有一个直接利润贡献值（可能为负数，表示加工成本高于附加值）。对于任意组件 u，定义其“累计装配净利润”为：该组件自身的直接利润贡献加上其所有直接下级依赖组件的“累计装配净利润”之和。
 
-诊断总线中有三种"数据源"可供你选择切换：
+当前供应链的BOM（物料清单）结构如下：
+{tree_structure}
 
-1. Star(t) [诊断指令注入器]：输出值为 t（t 为你指定的任意正整数测试指令）。
-2. Path(t) [传动轴状态传感器]：输出值为 1（当转速档位 t=1 时）或 2（当转速档位 t 大于等于 2 时），t 为你指定的任意正整数。
-3. Target [故障设备捕获]：输出值为未知的故障序列号 V。
+最终成品的累计装配净利润为：{root_sum}
 
-当你选择某个数据源后，可以请求"报告"当前源的掩码输出结果：系统会将该源的输出值按十进制表示，逐位数字通过 σ 映射为字母，并返回结果字符串（无前导零）。
+审计目标：在所有节点中，存在且仅存在一个组件及其依赖链条的累计装配净利润严格大于其他所有节点，这是全供应链中最核心的利润增长极。
 
-你的目标是：
-- 通过多轮切换数据源并观察示波器上的掩码输出，推断出完整的映射 σ；
-- 解码 Target 的掩码数据得到真实的指令序列号 V；
-- 最终提交你对 σ 的猜测以及 V 的猜测。
+你的任务是找出这个最大净利润的组件总成及其利润值。你可以使用以下两种审计指令，但系统调用配额有限：
 
-你需要尽可能少地进行询问。
+1. 总成累计利润审计（分支和查询）：查询某个组件及其所有底层依赖件的累计装配净利润
+2. 零件直接利润审计（单点值查询）：查询某个组件自身的直接利润贡献值
 
-## 询问与提交答案的格式（必须严格遵守）
+你拥有 {budget_b} 次总成累计利润审计配额和 {budget_m} 次零件直接利润审计配额。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+重要审计约束：
+- 最终成品节点可以直接查询
+- 对于非最终组件 u，只有当其父级装配节点已经被执行过“总成累计利润审计”后，才能对 u 进行任何查询
+- 重复查询同一项仍会消耗相应配额
+- 你需要尽可能少地消耗调用次数
 
-- 切换到 Star(t) 数据源（例如 t=123）：
-<build_star>123</build_star>
+每次只能进行一个操作。请使用以下 XML 格式：
 
-- 切换到 Path(t) 数据源（例如 t=5）：
-<build_path>5</build_path>
+- 总成累计利润审计（例如查询组件 3 的累计装配净利润）：
+<query_sum>3</query_sum>
 
-- 切换到 Target 数据源：
-<reset_target></reset_target>
+- 零件直接利润审计（例如查询组件 5 的直接利润贡献）：
+<query_val>5</query_val>
 
-- 请求当前数据源的编码报告：
-<report></report>
+- 提交最终审计报告（例如断言组件 7 的累计装配净利润为 42）：
+<answer>node=7, sum=42</answer>
 
-提交最终答案时，必须同时给出映射 σ 和目标值 V。格式如下：
+- 主动放弃：
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-其中 mapping 部分列出所有十个数字到字母的对应关系（用逗号隔开，顺序不限），value 部分给出你猜测的 V 的十进制表示。
+注意：提交答案时必须同时指定组件编号和该组件的累计装配净利润值。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Let's play a "Symbol Decoding" deduction game under the context of industrial control equipment troubleshooting. Here are the rules:
+[Manufacturing Scenario] Industrial Component Supply Chain Profit Analysis
 
-The core industrial controller in a smart manufacturing workshop is malfunctioning. The system has set up an unknown non-negative integer V (the internal instruction sequence number of the faulty device), and a fixed but unknown bijection encoding σ that maps the ten decimal digits 0,1,2,3,4,5,6,7,8,9 to ten uppercase letters A,B,C,D,E,F,G,H,I,J (one-to-one correspondence, serving as the mask protocol for serial communication in the IPC, unchanged throughout the diagnosis).
+Hello, Analyst. We are auditing the assembly supply chain of a complex industrial product, structured as a dependency tree. The components are numbered from 1 to {n}, with the final product node at {root}.
+Each component has a direct profit contribution value (which may be negative, indicating processing costs exceed value-added). For any component u, its "cumulative assembly net profit" (subtree sum) is defined as: the component's own direct profit contribution plus the sum of the cumulative assembly net profits of all its direct downstream dependencies.
 
-There are three "data sources" on the diagnostic bus you can switch between:
+The current BOM (Bill of Materials) structure is:
+{tree_structure}
 
-1. Star(t) [Diagnostic Instruction Injector]: outputs the value t (t is any positive integer test instruction you specify).
-2. Path(t) [Drive Shaft Status Sensor]: outputs 1 (when speed gear t=1) or 2 (when speed gear t is greater than or equal to 2), where t is any positive integer you specify.
-3. Target [Faulty Device Capture]: outputs the unknown fault sequence number V.
+The cumulative assembly net profit of the final product is: {root_sum}
 
-After selecting a data source, you can request a "report" of the current source's masked output result: the system will take the source's output value in decimal notation, map each digit through σ to a letter, and return the result string (without leading zeros).
+Audit Objective: It is guaranteed that exactly one component and its dependency chain have a cumulative assembly net profit strictly greater than all other nodes. This is the core profit growth pole of the entire supply chain.
 
-Your goal is:
-- Infer the complete mapping σ by switching data sources and observing the masked output on the oscilloscope through multiple rounds;
-- Decode the Target's masked data to obtain the real instruction sequence number V;
-- Finally submit your guess of σ and V.
+Your task is to identify this maximum net profit assembly and its exact profit value. You can use two types of audit commands, but system quotas are limited:
 
-You should try to minimize the number of queries.
+1. Assembly cumulative profit audit (Branch sum query): Query the cumulative assembly net profit of a component and all its dependencies.
+2. Component direct profit audit (Single value query): Query a component's own direct profit contribution.
 
-## Query and Answer Format (strictly required)
+You are allocated {budget_b} assembly cumulative profit audits and {budget_m} component direct profit audits.
 
-Each query must contain only one tag. Use the following XML format:
+Important constraints:
+- The final product node can be queried directly.
+- For any non-final component u, it can only be queried after its parent assembly node has undergone an "assembly cumulative profit audit".
+- Repeated queries to the same component still consume the respective quota.
+- You must minimize the number of command quotas used.
 
-- Switch to Star(t) data source (e.g., t=123):
-<build_star>123</build_star>
+Each turn allows only one operation. Use the following XML format:
 
-- Switch to Path(t) data source (e.g., t=5):
-<build_path>5</build_path>
+- Assembly cumulative profit audit (e.g., query cumulative net profit of component 3):
+<query_sum>3</query_sum>
 
-- Switch to Target data source:
-<reset_target></reset_target>
+- Component direct profit audit (e.g., query direct profit contribution of component 5):
+<query_val>5</query_val>
 
-- Request the encoded report of the current data source:
-<report></report>
+- Submit final audit report (e.g., assert component 7 has a cumulative net profit of 42):
+<answer>node=7, sum=42</answer>
 
-When submitting the final answer, you must provide both the mapping σ and the target value V. Format as follows:
+- Give up voluntarily:
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-Where the mapping part lists all ten digit-to-letter correspondences (comma-separated, order does not matter), and the value part gives your guessed decimal representation of V.
+Note: When submitting an answer, you must specify both the component number and its cumulative assembly net profit value.
 """
 
     contextualized_rule_zh_5 = """\
-【跨国洗钱网络追踪】我们现在来玩一个"符号解码"推理游戏，规则如下：
+【商业犯罪涉案资金追踪系统】
 
-司法部正在调查一个复杂的跨国洗钱网络。系统设定了一个未知的非负整数 V（涉案离岸账户的隐藏资金流水号），以及一个固定但未知的双射编码映射 σ，它将十个十进制数字 0,1,2,3,4,5,6,7,8,9 分别对应到十个大写字母 A,B,C,D,E,F,G,H,I,J（一一对应，作为暗网账本的加密代换表，整个调查过程中不变）。
+调查员，您好。我们正在侦办一起跨国洗钱案，涉案的空壳企业网络呈树状控股结构。企业节点编号为 1 到 {n}，最终控股集团为 {root}。
+每个企业账户都有一个直接截留的非法资金额（可能为负数，表示资金亏空或转移流失）。对于任意企业 u，定义其“涉案总资金池”为：该企业自身的直接截留金额加上其所有直接控股子公司的“涉案总资金池”之和。
 
-金融追踪系统中有三种"数据源"可供你选择切换：
+当前查明的企业股权控制结构如下：
+{tree_structure}
 
-1. Star(t) [设立诱饵交易]：输出值为 t（t 为你指定的任意正整数虚构金额）。
-2. Path(t) [司法管辖区探针]：输出值为 1（当管辖层级 t=1 时）或 2（当管辖层级 t 大于等于 2 时），t 为你指定的任意正整数。
-3. Target [涉案账户追踪]：输出值为未知的资金流水号 V。
+最终控股集团的涉案总资金池为：{root_sum}
 
-当你选择某个数据源后，可以请求"报告"当前源的加密账本记录：系统会将该源的输出值按十进制表示，逐位数字通过 σ 映射为字母，并返回结果字符串（无前导零）。
+侦查目标：在所有关联企业中，存在且仅存在一个控股分支的涉案总资金池严格大于其他所有分支，该节点是整个洗钱网络的核心蓄水池。
 
-你的目标是：
-- 通过多轮切换数据源并观察暗网账本记录，推断出完整的映射 σ；
-- 解码 Target 的账本数据得到真实的资金流水号 V；
-- 最终提交你对 σ 的猜测以及 V 的猜测。
+你的任务是揪出这个最大资金池的企业及其具体涉案金额。你可以使用以下两种搜查令，但司法审批额度有限：
 
-你需要尽可能少地进行询问。
+1. 连带资产清查（分支和查询）：查询某个企业及其所有子公司的涉案总资金池
+2. 独立账户穿透（单点值查询）：查询某个企业账户的直接截留金额
 
-## 询问与提交答案的格式（必须严格遵守）
+你拥有 {budget_b} 次连带资产清查审批额度和 {budget_m} 次独立账户穿透审批额度。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+重要侦查约束：
+- 最终控股集团可以直接被清查
+- 对于非顶层企业 u，只有当其直接母公司已经被执行过“连带资产清查”后，才能对 u 申请任何搜查令
+- 重复清查同一企业仍会消耗相应审批额度
+- 你需要尽可能少地消耗审批次数
 
-- 切换到 Star(t) 数据源（例如 t=123）：
-<build_star>123</build_star>
+每次只能进行一个操作。请使用以下 XML 格式：
 
-- 切换到 Path(t) 数据源（例如 t=5）：
-<build_path>5</build_path>
+- 连带资产清查（例如查询企业 3 的涉案总资金池）：
+<query_sum>3</query_sum>
 
-- 切换到 Target 数据源：
-<reset_target></reset_target>
+- 独立账户穿透（例如查询企业 5 的直接截留金额）：
+<query_val>5</query_val>
 
-- 请求当前数据源的编码报告：
-<report></report>
+- 提交最终结案报告（例如断言企业 7 的涉案总资金池为 42）：
+<answer>node=7, sum=42</answer>
 
-提交最终答案时，必须同时给出映射 σ 和目标值 V。格式如下：
+- 主动放弃调查：
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-其中 mapping 部分列出所有十个数字到字母的对应关系（用逗号隔开，顺序不限），value 部分给出你猜测的 V 的十进制表示。
+注意：提交答案时必须同时指定企业编号和该企业的涉案总资金池金额。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's play a "Symbol Decoding" deduction game under the context of tracking a transnational money laundering network. Here are the rules:
+[Law Scenario] Commercial Crime Illicit Fund Tracing System
 
-The Department of Justice is investigating a complex transnational money laundering network. The system has set up an unknown non-negative integer V (the hidden transaction flow number of the offshore account involved), and a fixed but unknown bijection encoding σ that maps the ten decimal digits 0,1,2,3,4,5,6,7,8,9 to ten uppercase letters A,B,C,D,E,F,G,H,I,J (one-to-one correspondence, serving as a cryptographic substitution table for the dark web ledger, unchanged throughout the investigation).
+Hello, Investigator. We are investigating a transnational money laundering case involving a network of shell companies structured as a holding tree. The enterprise nodes are numbered from 1 to {n}, with the Ultimate Holding Group at {root}.
+Each enterprise account has directly retained illicit funds (which may be negative, indicating fund deficits or outbound transfers). For any enterprise u, its "total illicit fund pool" (subtree sum) is defined as: the enterprise's directly retained funds plus the sum of the total illicit fund pools of all its direct subsidiaries.
 
-There are three "data sources" in the financial tracking system you can switch between:
+The current corporate ownership structure is:
+{tree_structure}
 
-1. Star(t) [Set up Decoy Transaction]: outputs the value t (t is any positive integer fictitious amount you specify).
-2. Path(t) [Jurisdiction Probe]: outputs 1 (when jurisdiction level t=1) or 2 (when jurisdiction level t is greater than or equal to 2), where t is any positive integer you specify.
-3. Target [Target Account Tracking]: outputs the unknown transaction flow number V.
+The total illicit fund pool of the Ultimate Holding Group is: {root_sum}
 
-After selecting a data source, you can request a "report" of the current source's encrypted ledger record: the system will take the source's output value in decimal notation, map each digit through σ to a letter, and return the result string (without leading zeros).
+Investigation Objective: It is guaranteed that exactly one holding branch has a total illicit fund pool strictly greater than all other branches. This node serves as the core reservoir of the entire money laundering network.
 
-Your goal is:
-- Infer the complete mapping σ by switching data sources and observing the dark web ledger records through multiple rounds;
-- Decode the Target's ledger data to obtain the real transaction flow number V;
-- Finally submit your guess of σ and V.
+Your task is to identify this maximum fund pool enterprise and its exact involved amount. You can use two types of search warrants, but judicial approval quotas are limited:
 
-You should try to minimize the number of queries.
+1. Comprehensive asset clearance (Branch sum query): Query the total illicit fund pool of an enterprise and all its subsidiaries.
+2. Independent account penetration (Single value query): Query an enterprise account's directly retained illicit funds.
 
-## Query and Answer Format (strictly required)
+You are granted {budget_b} comprehensive asset clearance approvals and {budget_m} independent account penetration approvals.
 
-Each query must contain only one tag. Use the following XML format:
+Important investigation constraints:
+- The Ultimate Holding Group can be cleared directly.
+- For any non-top-level enterprise u, a warrant can only be requested for u after its direct parent company has been subjected to a "comprehensive asset clearance".
+- Repeated clearances of the same enterprise still consume the respective approval quota.
+- You must minimize the number of warrant approvals used.
 
-- Switch to Star(t) data source (e.g., t=123):
-<build_star>123</build_star>
+Each turn allows only one operation. Use the following XML format:
 
-- Switch to Path(t) data source (e.g., t=5):
-<build_path>5</build_path>
+- Comprehensive asset clearance (e.g., query total illicit fund pool of enterprise 3):
+<query_sum>3</query_sum>
 
-- Switch to Target data source:
-<reset_target></reset_target>
+- Independent account penetration (e.g., query directly retained funds of enterprise 5):
+<query_val>5</query_val>
 
-- Request the encoded report of the current data source:
-<report></report>
+- Submit final case report (e.g., assert enterprise 7 has a total illicit fund pool of 42):
+<answer>node=7, sum=42</answer>
 
-When submitting the final answer, you must provide both the mapping σ and the target value V. Format as follows:
+- Give up voluntarily:
+<give_up></give_up>
 
-<answer>mapping=0:A,1:B,2:C,3:D,4:E,5:F,6:G,7:H,8:I,9:J; value=12345</answer>
-
-Where the mapping part lists all ten digit-to-letter correspondences (comma-separated, order does not matter), and the value part gives your guessed decimal representation of V.
+Note: When submitting an answer, you must specify both the enterprise number and its total illicit fund pool amount.
 """
 
-    tags = ["answer", "build_star", "build_path", "reset_target", "report"]
-    reasoning_type = "归纳推理"
+    tags = ["answer", "query_sum", "query_val", "give_up"]
+    
+    reasoning_type = "演绎推理"
     data_structure = "树"
+    
 
     DIFFICULTY_CONFIG = {
-        1: {"target_value": 7, "seed": 42},
-        2: {"target_value": 34, "seed": 123},
-        3: {"target_value": 582, "seed": 456},
-        4: {"target_value": 4096, "seed": 789},
-        5: {"target_value": 73821, "seed": 1024},
+        "zh": {
+            1: {
+                "n": 3,
+                "root": 1,
+                "tree": {1: [2, 3], 2: [], 3: []},
+                "weights": {1: -5, 2: 10, 3: -2},
+                "budget_b": 3,
+                "budget_m": 2,
+                "max_node": 2,
+            },
+            2: {
+                "n": 5,
+                "root": 1,
+                "tree": {1: [2], 2: [3, 4], 3: [5], 4: [], 5: []},
+                "weights": {1: -10, 2: 5, 3: 8, 4: -3, 5: 12},
+                "budget_b": 6,
+                "budget_m": 3,
+                "max_node": 2,
+            },
+            3: {
+                "n": 7,
+                "root": 1,
+                "tree": {1: [2, 3], 2: [4, 5], 3: [6, 7], 4: [], 5: [], 6: [], 7: []},
+                "weights": {1: -10, 2: 10, 3: -5, 4: 15, 5: 8, 6: 3, 7: 2},
+                "budget_b": 8,
+                "budget_m": 4,
+                "max_node": 2,
+            },
+            4: {
+                "n": 10,
+                "root": 1,
+                "tree": {1: [2, 3, 4], 2: [5, 6], 3: [7], 4: [8, 9, 10], 5: [], 6: [], 7: [], 8: [], 9: [], 10: []},
+                "weights": {1: -50, 2: 20, 3: 10, 4: -8, 5: 25, 6: -10, 7: 18, 8: 5, 9: 3, 10: 4},
+                "budget_b": 12,
+                "budget_m": 6,
+                "max_node": 2,
+            },
+            5: {
+                "n": 12,
+                "root": 1,
+                "tree": {1: [2, 3], 2: [4, 5, 6], 3: [7, 8], 4: [], 5: [9, 10], 6: [], 7: [11, 12], 8: [], 9: [], 10: [], 11: [], 12: []},
+                "weights": {1: -20, 2: -15, 3: 8, 4: 30, 5: 40, 6: -20, 7: 25, 8: -5, 9: -8, 10: -12, 11: 15, 12: 10},
+                "budget_b": 15,
+                "budget_m": 8,
+                "max_node": 3,
+            },
+        },
+        "en": {
+            1: {
+                "n": 3,
+                "root": 1,
+                "tree": {1: [2, 3], 2: [], 3: []},
+                "weights": {1: -5, 2: 10, 3: -2},
+                "budget_b": 3,
+                "budget_m": 2,
+                "max_node": 2,
+            },
+            2: {
+                "n": 5,
+                "root": 1,
+                "tree": {1: [2], 2: [3, 4], 3: [5], 4: [], 5: []},
+                "weights": {1: -10, 2: 5, 3: 8, 4: -3, 5: 12},
+                "budget_b": 6,
+                "budget_m": 3,
+                "max_node": 2,
+            },
+            3: {
+                "n": 7,
+                "root": 1,
+                "tree": {1: [2, 3], 2: [4, 5], 3: [6, 7], 4: [], 5: [], 6: [], 7: []},
+                "weights": {1: -10, 2: 10, 3: -5, 4: 15, 5: 8, 6: 3, 7: 2},
+                "budget_b": 8,
+                "budget_m": 4,
+                "max_node": 2,
+            },
+            4: {
+                "n": 10,
+                "root": 1,
+                "tree": {1: [2, 3, 4], 2: [5, 6], 3: [7], 4: [8, 9, 10], 5: [], 6: [], 7: [], 8: [], 9: [], 10: []},
+                "weights": {1: -50, 2: 20, 3: 10, 4: -8, 5: 25, 6: -10, 7: 18, 8: 5, 9: 3, 10: 4},
+                "budget_b": 12,
+                "budget_m": 6,
+                "max_node": 2,
+            },
+            5: {
+                "n": 12,
+                "root": 1,
+                "tree": {1: [2, 3], 2: [4, 5, 6], 3: [7, 8], 4: [], 5: [9, 10], 6: [], 7: [11, 12], 8: [], 9: [], 10: [], 11: [], 12: []},
+                "weights": {1: -20, 2: -15, 3: 8, 4: 30, 5: 40, 6: -20, 7: 25, 8: -5, 9: -8, 10: -12, 11: 15, 12: 10},
+                "budget_b": 15,
+                "budget_m": 8,
+                "max_node": 3,
+            },
+        },
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        diff = int(self.config.difficulty)
-        if diff not in self.DIFFICULTY_CONFIG:
+        lang = self.config.language
+        diff = self.config.difficulty
+
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
-        cfg = self.DIFFICULTY_CONFIG[diff]
-        self.target_value = cfg["target_value"]
-        rng = random.Random(cfg["seed"])
-        digits = list("0123456789")
-        letters = list("ABCDEFGHIJ")
-        rng.shuffle(letters)
-        self.sigma = {digits[i]: letters[i] for i in range(10)}
-        self.sigma_inv = {letters[i]: digits[i] for i in range(10)}
-        self.current_source = None
-        self.current_value = None
-        self._game_info = {}
 
-    def _encode_value(self, value):
-        decimal_str = str(value)
-        encoded = "".join(self.sigma[d] for d in decimal_str)
-        return encoded
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        
+        self._game_info["n"] = cfg["n"]
+        self._game_info["root"] = cfg["root"]
+        self._game_info["budget_b"] = cfg["budget_b"]
+        self._game_info["budget_m"] = cfg["budget_m"]
+        
+        self.tree = cfg["tree"]
+        self.weights = cfg["weights"]
+        self.root = cfg["root"]
+        
+        self.budget_b_remaining = cfg["budget_b"]
+        self.budget_m_remaining = cfg["budget_m"]
+        
+        self.unlocked_nodes = set()
+        
+        self.parent = {}
+        for node, children in self.tree.items():
+            for child in children:
+                self.parent[child] = node
+        
+        self.subtree_sums = {}
+        self._compute_subtree_sum(self.root)
+        
+        self.max_node = cfg["max_node"]
+        self.max_sum = self.subtree_sums[self.max_node]
+        
+        tree_str = self._format_tree_structure()
+        self._game_info["tree_structure"] = tree_str
+        self._game_info["root_sum"] = self.subtree_sums[self.root]
 
-    def _parse_mapping(self, mapping_str):
-        try:
-            pairs = [x.strip() for x in mapping_str.split(",")]
-            mapping = {}
-            for pair in pairs:
-                digit, letter = pair.split(":")
-                mapping[digit.strip()] = letter.strip()
-            return mapping
-        except:
-            return None
+    def _compute_subtree_sum(self, node):
+        if node in self.subtree_sums:
+            return self.subtree_sums[node]
+        
+        children = self.tree.get(node, [])
+        children_sum = sum(self._compute_subtree_sum(child) for child in children)
+        self.subtree_sums[node] = self.weights[node] + children_sum
+        return self.subtree_sums[node]
+
+    def _format_tree_structure(self):
+        lines = []
+        for node in sorted(self.tree.keys()):
+            children = self.tree[node]
+            if children:
+                children_str = ", ".join(map(str, children))
+                lines.append(f"节点 {node} 的子节点: [{children_str}]" if self.config.language == "zh" 
+                           else f"Node {node}'s children: [{children_str}]")
+            else:
+                lines.append(f"节点 {node} 是叶节点" if self.config.language == "zh" 
+                           else f"Node {node} is a leaf")
+        return "\n".join(lines)
+
+    def _is_unlocked(self, node):
+        if node == self.root:
+            return True
+        parent_node = self.parent.get(node)
+        return parent_node in self.unlocked_nodes
 
     def evaluate(self, parsed_info):
         raw_ans = parsed_info["answer"]
+        
         try:
-            parts = raw_ans.split(";")
-            if len(parts) != 2:
+            kv_pairs = [x.strip() for x in raw_ans.split(",")]
+            ans_dict = {}
+            for kv in kv_pairs:
+                k, v = kv.split("=", 1)
+                ans_dict[k.strip()] = v.strip()
+            
+            if "node" not in ans_dict or "sum" not in ans_dict:
                 return False
-            mapping_part = parts[0].strip()
-            value_part = parts[1].strip()
-            if not mapping_part.startswith("mapping="):
-                return False
-            mapping_str = mapping_part[8:]
-            user_mapping = self._parse_mapping(mapping_str)
-            if user_mapping is None or len(user_mapping) != 10:
-                return False
-            if user_mapping != self.sigma:
-                return False
-            if not value_part.startswith("value="):
-                return False
-            value_str = value_part[6:]
-            user_value = int(value_str)
-            if user_value != self.target_value:
-                return False
-            return True
+            
+            node = int(ans_dict["node"])
+            claimed_sum = int(ans_dict["sum"])
+            
+            return node == self.max_node and claimed_sum == self.max_sum
+            
         except:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        if self.config.language == "zh":
-            ok_msg = "确认"
-            error_msg = "错误：无效的参数或格式。"
-        else:
-            ok_msg = "OK"
-            error_msg = "Error: Invalid parameter or format."
-
-        if "build_star" in parsed_info:
+        lang = self.config.language
+        
+        if "give_up" in parsed_info:
+            msg = "游戏结束，你选择了放弃。" if lang == "zh" else "Game over, you chose to give up."
+            self.state.set_state("failed", "give up")
+            return msg
+        
+        if "query_sum" in parsed_info:
             try:
-                t = int(parsed_info["build_star"].strip())
-                if t <= 0:
-                    return error_msg
-                self.current_source = "star"
-                self.current_value = t
-                return ok_msg
-            except:
-                return error_msg
-        elif "build_path" in parsed_info:
+                node = int(parsed_info["query_sum"].strip())
+                
+                if node not in self.tree:
+                    return "错误：节点不存在。" if lang == "zh" else "Error: Node does not exist."
+                
+                if self.budget_b_remaining <= 0:
+                    return "错误：分支和查询预算已用尽。" if lang == "zh" else "Error: No remaining branch sum query budget."
+                
+                if not self._is_unlocked(node):
+                    return "错误：该节点的父节点尚未解锁（父节点需先执行分支和查询）。" if lang == "zh" \
+                        else "Error: Parent node not unlocked (parent must be queried with branch sum first)."
+                
+                self.budget_b_remaining -= 1
+                self.unlocked_nodes.add(node)
+                result = self.subtree_sums[node]
+                
+                if lang == "zh":
+                    return f"节点 {node} 的子树和为 {result}。剩余分支和查询次数：{self.budget_b_remaining}，剩余单点值查询次数：{self.budget_m_remaining}。"
+                else:
+                    return f"Subtree sum of node {node} is {result}. Remaining branch queries: {self.budget_b_remaining}, remaining value queries: {self.budget_m_remaining}."
+                    
+            except ValueError:
+                return "错误：无效的节点编号。" if lang == "zh" else "Error: Invalid node number."
+        
+        if "query_val" in parsed_info:
             try:
-                t = int(parsed_info["build_path"].strip())
-                if t <= 0:
-                    return error_msg
-                self.current_source = "path"
-                if t == 1:
-                    self.current_value = 1
+                node = int(parsed_info["query_val"].strip())
+                
+                if node not in self.tree:
+                    return "错误：节点不存在。" if lang == "zh" else "Error: Node does not exist."
+                
+                if self.budget_m_remaining <= 0:
+                    return "错误：单点值查询预算已用尽。" if lang == "zh" else "Error: No remaining single value query budget."
+                
+                if not self._is_unlocked(node):
+                    return "错误：该节点的父节点尚未解锁（父节点需先执行分支和查询）。" if lang == "zh" \
+                        else "Error: Parent node not unlocked (parent must be queried with branch sum first)."
+                
+                self.budget_m_remaining -= 1
+                result = self.weights[node]
+                
+                if lang == "zh":
+                    return f"节点 {node} 的权值为 {result}。剩余分支和查询次数：{self.budget_b_remaining}，剩余单点值查询次数：{self.budget_m_remaining}。"
                 else:
-                    self.current_value = 2
-                return ok_msg
-            except:
-                return error_msg
-        elif "reset_target" in parsed_info:
-            self.current_source = "target"
-            self.current_value = self.target_value
-            return ok_msg
-        elif "report" in parsed_info:
-            if self.current_source is None:
-                if self.config.language == "zh":
-                    return "错误：尚未选择数据源。"
-                else:
-                    return "Error: No data source selected."
-            encoded = self._encode_value(self.current_value)
-            return encoded
-        else:
-            raise ValueError("No valid query tag found.")
+                    return f"Weight of node {node} is {result}. Remaining branch queries: {self.budget_b_remaining}, remaining value queries: {self.budget_m_remaining}."
+                    
+            except ValueError:
+                return "错误：无效的节点编号。" if lang == "zh" else "Error: Invalid node number."
+        
+        return "错误：无效的查询格式。" if lang == "zh" else "Error: Invalid query format."
 
-    def _cf_make_wrong(self, correct):
-        if correct in ("OK", "确认"):
-            if self.config.language == "zh":
-                return "错误：无效的参数或格式。"
-            else:
-                return "Error: Invalid parameter or format."
-        if correct and all(c in "ABCDEFGHIJ" for c in correct):
-            letters = list(correct)
-            idx = random.randint(0, len(letters) - 1)
-            available = [ch for ch in "ABCDEFGHIJ" if ch != letters[idx]]
-            letters[idx] = random.choice(available)
-            return "".join(letters)
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        if "是" in correct:
-            return correct.replace("是", "否")
-        if "否" in correct:
-            return correct.replace("否", "是")
-        if "Yes" in correct:
-            return correct.replace("Yes", "No")
-        if "yes" in correct:
-            return correct.replace("yes", "no")
-        if "No" in correct:
-            return correct.replace("No", "Yes")
-        if "no" in correct:
-            return correct.replace("no", "yes")
+    def _cf_make_wrong(self, correct: str) -> str:
+        import re as _re
+        
+        
+        pattern = _re.compile(r'(?:is|为)\s*(-?\d+)')
+        match = pattern.search(correct)
+        if match:
+            original_val = int(match.group(1))
+            wrong_val = original_val + 7 if original_val >= 0 else original_val - 7
+            return correct[:match.start(1)] + str(wrong_val) + correct[match.end(1):]
+        
+        stripped = correct.strip()
+        if stripped.lstrip('-').isdigit():
+            return str(int(stripped) + 1)
+        
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
         queries = []
-        if self.config.language == "zh":
-            ok_msg = "确认"
-        else:
-            ok_msg = "OK"
-
-        sample_numbers = list(range(1, 11))
-        for t in sample_numbers:
-            encoded = self._encode_value(t)
+        lang = self.config.language
+        all_nodes = sorted(self.tree.keys())
+        
+        for node in all_nodes:
+            result_sum = self.subtree_sums[node]
+            if lang == "zh":
+                resp_sum = f"节点 {node} 的子树和为 {result_sum}。"
+            else:
+                resp_sum = f"Subtree sum of node {node} is {result_sum}."
+            
             queries.append({
-                "query": f"<build_star>{t}</build_star>",
-                "answer": f"{ok_msg}\n<report></report> → {encoded}"
+                "query": f"<query_sum>{node}</query_sum>",
+                "answer": resp_sum
             })
-
-        path_samples = [1, 5]
-        for t in path_samples:
-            val = 1 if t == 1 else 2
-            encoded = self._encode_value(val)
+            
+            result_val = self.weights[node]
+            if lang == "zh":
+                resp_val = f"节点 {node} 的权值为 {result_val}。"
+            else:
+                resp_val = f"Weight of node {node} is {result_val}."
+            
             queries.append({
-                "query": f"<build_path>{t}</build_path>",
-                "answer": f"{ok_msg}\n<report></report> → {encoded}"
+                "query": f"<query_val>{node}</query_val>",
+                "answer": resp_val
             })
-
-        target_encoded = self._encode_value(self.target_value)
-        queries.append({
-            "query": "<reset_target></reset_target>",
-            "answer": f"{ok_msg}\n<report></report> → {target_encoded}"
-        })
-
+        
         return queries

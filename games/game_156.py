@@ -1,720 +1,761 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   元素排名：某元素在排序后处于第几位
-# ============================================================
-
 from .base import Game
 import random
-import re
 
+class TransportationGraphMappingDeductionGame(Game):
 
-class CircularOrderRankingGame(Game):
-
-    game_rule_zh = """\
-我们来玩一个"循环顺序推理"游戏，规则如下：
-
-游戏设定了一个正整数 N = {n}，以及一个目标元素 T = {target}。所有元素的取值范围均为 {{0, 1, ..., N-1}}。
-
-在这 N 个元素上存在一个隐藏的全局线性顺序，该顺序由某个未知的偏移量决定。你的目标是推断出目标元素 T 在该全局顺序中的名次（名次从 1 到 N）。
-
-你可以通过以下两种方式向我提问，我会根据隐藏的全局顺序如实回答：
-
-1. **集合排序询问**：给出 2 到 6 个不同的元素，我会告诉你这些元素在全局顺序中的排列顺序。
-   - 格式：<query_order>a1,a2,...,ak</query_order>
-   - 约束：元素个数 k 在 2 到 6 之间；所有元素互不相同且在 [0, N-1] 范围内
-   - 返回：这些元素按全局顺序排列的结果
-
-2. **成对比较询问**：询问两个元素谁在全局顺序中更靠前。
-   - 格式：<query_compare>a,b</query_compare>
-   - 约束：a 和 b 不同，且均在 [0, N-1] 范围内
-   - 返回：a-before-b 或 b-before-a
-
-请尽可能少地提问。当你确定答案后，请提交目标元素的名次。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次提问只能包含一个标签。
-
-- 集合排序询问（例如询问元素 0, 3, 5 的顺序）：
-<query_order>0,3,5</query_order>
-
-- 成对比较询问（例如比较元素 1 和 4）：
-<query_compare>1,4</query_compare>
-
-提交最终答案时，必须说明目标元素 T 的名次（1 到 N 之间的整数），格式如下：
-<answer>{target} is at position R</answer>
-
-其中 R 是你推断的名次数字。
-"""
-
-    game_rule_en = """\
-Let's play a "Circular Order Ranking" game. Here are the rules:
-
-The game has a positive integer N = {n} and a target element T = {target}. All elements are in the range {{0, 1, ..., N-1}}.
-
-There exists a hidden global linear order over these N elements, determined by an unknown offset. Your goal is to infer the rank of target element T in this global order (ranks range from 1 to N).
-
-You can ask me questions in two ways, and I will answer truthfully based on the hidden global order:
-
-1. **Set Ordering Query**: Provide 2 to 6 distinct elements, and I will tell you their ordering in the global sequence.
-   - Format: <query_order>a1,a2,...,ak</query_order>
-   - Constraints: k is between 2 and 6; all elements are distinct and in [0, N-1]
-   - Returns: These elements arranged in the global order
-
-2. **Pairwise Comparison Query**: Ask which of two elements comes first in the global order.
-   - Format: <query_compare>a,b</query_compare>
-   - Constraints: a and b are different and both in [0, N-1]
-   - Returns: a-before-b or b-before-a
-
-Please ask as few questions as possible. When you are confident, submit the rank of the target element.
-
-## Query and Answer Format (strictly required)
-
-Each query must contain only one tag.
-
-- Set Ordering Query (e.g., asking about elements 0, 3, 5):
-<query_order>0,3,5</query_order>
-
-- Pairwise Comparison Query (e.g., comparing elements 1 and 4):
-<query_compare>1,4</query_compare>
-
-When submitting the final answer, specify the rank of target element T (an integer from 1 to N) in this format:
-<answer>{target} is at position R</answer>
-
-where R is the rank number you inferred.
-"""
-
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-交通调度系统正在运行"环线班车推演"测试。
+欢迎使用“交通路网路由排查系统”。
 
-目前有一条由 N = {n} 个站点组成的环线公交，站点编号依次为 0 到 N-1。
-受临时交通管制影响，该环线公交的首发站（即隐藏的偏移量）发生了改变，但车辆依然按站点编号的循环顺序行驶。
-你的任务是推断出目标站点 T = {target} 在新的行驶周期中，是第几个到达的站点（名次从 1 到 N）。
+本系统监控着一个核心无向简单路网图 G，包含 6 个交通枢纽：A、B、C、D、E、F，枢纽间直达路线为：
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-你可以通过以下两种指令向调度中心查询，调度中心将根据实际的行驶顺序如实反馈：
+在路网中，任意两枢纽间的“通行距离”定义为最短路径所经过的路线数。对于每个枢纽 v，其单源距离和 S(v) 为该枢纽到所有其他枢纽的距离之和。
+已知各枢纽真实的 S 值如下：
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **多站顺序查询**：输入 2 到 6 个不同的站点编号，调度中心会返回这些站点的实际到达先后顺序。
-   - 格式：<query_order>a1,a2,...,ak</query_order>
-   - 约束：站点数 k 在 2 到 6 之间；站点编号互不相同且在 [0, N-1] 范围内
-   - 返回：这些站点按实际到达先后排序的结果
+目前，由于系统更新，路网节点标签发生了一次未知的路由重定向 f，该映射是以下三种预设模式之一：
+- W1：恒等映射（A→A, B→B, C→C, D→D, E→E, F→F）
+- W2：交换映射（A↔B, C↔D, E↔F）
+- W3：交换映射（A↔D, B↔E, C↔F）
 
-2. **双站对比查询**：询问两个站点哪一个先到达。
-   - 格式：<query_compare>a,b</query_compare>
-   - 约束：a 和 b 不同，且均在 [0, N-1] 范围内
-   - 返回：a-before-b 或 b-before-a
+你的目标是：
+1. 通过查询推断出现网实际使用的是 W1、W2 还是 W3 路由模式
+2. 在提交排查报告时，给出一个枢纽标签 L，使得它重定向后的实际枢纽是路网中“通行距离和最小”的核心枢纽之一
 
-请以最少的查询次数完成推演。确认答案后，请提交目标站点的到达顺位。
+系统排查规则：
+- 第一个回合，必须对枢纽 A 进行一次基准数值查询 QueryValue(A)
+- 之后每回合可以选择以下诊断指令之一：
 
-## 查询与提交格式（必须严格遵守）
+1. 数值查询 QueryValue(X)：询问某个枢纽标签 X 经过重定向后的真实距离和，系统返回 S(f(X))
+2. 比较查询 QueryCompare(X,Y)：询问两个枢纽标签 X 和 Y 重定向后的距离和大小关系，系统返回比较结果（小于、等于、大于）
+3. 提交答案 Submit(W,L)：提交你推断的路由模式 W 和最优枢纽标签 L
 
-每次提问只能包含一个标签。
+注意：
+- 提交答案时，累计的查询次数（数值和比较查询总数）若少于 2 次，提交无效
+- 提交后，若模式推理正确且核心枢纽选择达标，则排查成功；否则系统将判定失败
+- 请尽可能用最少的指令完成排查任务
 
-- 多站顺序查询（例如查询站点 0, 3, 5 的先后）：
-<query_order>0,3,5</query_order>
+每次只能包含一个操作标签，使用以下 XML 格式：
 
-- 双站对比查询（例如对比站点 1 和 4）：
-<query_compare>1,4</query_compare>
+- 数值查询（例如查询枢纽 A）：
+<query_value>A</query_value>
 
-提交最终答案时，必须说明目标站点 T 的顺位名次（1 到 N 之间的整数），格式如下：
-<answer>{target} is at position R</answer>
+- 比较查询（例如比较枢纽 A 和 B）：
+<query_compare>A,B</query_compare>
 
-其中 R 是你推演出的顺位数字。
+- 提交答案（例如提交路由模式 W1 和枢纽 A）：
+<answer>W1,A</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-The traffic dispatch system is running a "Circular Shuttle Deduction" test.
+[Transportation Scenario]
+Welcome to the "Traffic Network Routing Inspection System".
 
-There is currently a circular bus route consisting of N = {n} stations, numbered sequentially from 0 to N-1.
-Due to temporary traffic control, the starting station (the hidden offset) for this circular route has been altered, but the bus still operates in the cyclic order of the station numbers. 
-Your task is to deduce the rank of the target station T = {target} in the new driving cycle (ranks range from 1 to N).
+This system monitors a core undirected simple network graph G, containing 6 traffic hubs: A, B, C, D, E, F. The direct routes between them are:
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-You can query the dispatch center using the following two commands, and the center will provide truthful feedback based on the actual arrival sequence:
+In this network, the "transit distance" between any two hubs is defined as the number of routes on the shortest path. For each hub v, its single-source distance sum S(v) is the sum of distances from that hub to all other hubs.
+The true S values for each hub are known as:
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **Multi-Station Sequence Query**: Provide 2 to 6 distinct station numbers, and the dispatch center will return the actual chronological order of arrival for these stations.
-   - Format: <query_order>a1,a2,...,ak</query_order>
-   - Constraints: The number of stations k is between 2 and 6; station numbers are distinct and in [0, N-1]
-   - Returns: These stations ordered by their actual arrival sequence
+Currently, due to a system update, the network node labels have undergone an unknown routing remapping f. This mapping is one of the following three preset modes:
+- W1: Identity mapping (A→A, B→B, C→C, D→D, E→E, F→F)
+- W2: Swap mapping (A↔B, C↔D, E↔F)
+- W3: Swap mapping (A↔D, B↔E, C↔F)
 
-2. **Pairwise Station Comparison**: Ask which of two stations arrives first.
-   - Format: <query_compare>a,b</query_compare>
-   - Constraints: a and b are different and both in [0, N-1]
-   - Returns: a-before-b or b-before-a
+Your objectives are:
+1. Deduce whether the actual routing mode in the live network is W1, W2, or W3 through queries.
+2. When submitting your inspection report, provide a hub label L such that its actual hub after remapping is one of the core hubs with the minimum distance sum in the network.
 
-Please complete the deduction with as few queries as possible. Once you are confident, submit the arrival rank of the target station.
+System Inspection Rules:
+- In the first round, you must perform a baseline value query on hub A: QueryValue(A).
+- After that, in each round you can choose one of the following diagnostic commands:
 
-## Query and Answer Format (strictly required)
+1. Value Query QueryValue(X): Ask for the actual distance sum of hub label X after remapping; the system returns S(f(X)).
+2. Comparison Query QueryCompare(X,Y): Ask for the comparison relationship between the distance sums of hub labels X and Y after remapping; the system returns the comparison result (less than, equal to, greater than).
+3. Submit Answer Submit(W,L): Submit your deduced routing mode W and the optimal hub label L.
 
-Each query must contain only one tag.
+Notes:
+- When submitting, if the total number of queries (value and comparison combined) is less than 2, the submission is invalid.
+- After submission, if the mode deduction is correct and the core hub selection meets the criteria, the inspection succeeds; otherwise, it fails.
+- Please complete the inspection with the fewest possible commands.
 
-- Multi-Station Sequence Query (e.g., asking about stations 0, 3, 5):
-<query_order>0,3,5</query_order>
+Each operation must contain only one tag, using the following XML format:
 
-- Pairwise Station Comparison (e.g., comparing stations 1 and 4):
-<query_compare>1,4</query_compare>
+- Value Query (e.g., querying hub A):
+<query_value>A</query_value>
 
-When submitting the final answer, specify the arrival rank of target station T (an integer from 1 to N) in this format:
-<answer>{target} is at position R</answer>
+- Comparison Query (e.g., comparing hubs A and B):
+<query_compare>A,B</query_compare>
 
-where R is the rank number you deduced.
+- Submit Answer (e.g., submitting routing mode W1 and hub A):
+<answer>W1,A</answer>
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-医疗排班系统正在运行"环形查房推演"。
+欢迎进入“医疗物资流转网络排查系统”。
 
-医院有一个由 N = {n} 个病房组成的环形查房路线，病房编号依次为 0 到 N-1。
-由于突发急诊，今日查房的起始病房（即隐藏的偏移量）发生了改变，但医生仍按病房编号的循环顺序进行查房。
-你的任务是推断出目标病房 T = {target} 是今天第几个被查房的（名次从 1 到 N）。
+该系统监控着医院内一个固定的无向简单物资流转网络图 G，包含 6 个科室站点：A、B、C、D、E、F，科室间的直达传送带路线为：
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-你可以通过以下两种指令向排班系统查询，系统将根据实际的查房顺序如实反馈：
+在流转网络中，任意两科室站点间的“传送距离”定义为最短路径经过的路线段数。对于每个科室站点 v，其“物资传送路径总长度” S(v) 为该站点到所有其他站点的距离之和。
+已知各科室站点的真实 S 值如下：
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **多病房顺序查询**：输入 2 到 6 个不同的病房编号，系统会返回这些病房实际的查房先后顺序。
-   - 格式：<query_order>a1,a2,...,ak</query_order>
-   - 约束：病房数 k 在 2 到 6 之间；病房编号互不相同且在 [0, N-1] 范围内
-   - 返回：这些病房按实际查房先后排序的结果
+目前，由于系统故障，科室站点的标识发生了未知的标签混淆 f，该混淆是以下三种模式之一：
+- W1：恒等模式（A→A, B→B, C→C, D→D, E→E, F→F）
+- W2：交换模式（A↔B, C↔D, E↔F）
+- W3：交换模式（A↔D, B↔E, C↔F）
 
-2. **双病房对比查询**：询问两个病房哪一个先被查房。
-   - 格式：<query_compare>a,b</query_compare>
-   - 约束：a 和 b 不同，且均在 [0, N-1] 范围内
-   - 返回：a-before-b 或 b-before-a
+你的目标是：
+1. 通过查询推断出实际发生的标签混淆模式是 W1、W2 还是 W3
+2. 在提交修复方案时，给出一个科室标签 L，使得它对应真实的科室是流转网络中“传送路径总长度”最小的物流中心站点之一
 
-请以最少的查询次数完成推演。确认答案后，请提交目标病房的查房顺位。
+系统排查规则：
+- 第一个回合，你必须先进行一次针对科室 A 的基准查询 QueryValue(A)
+- 之后每回合可以选择以下操作之一：
 
-## 查询与提交格式（必须严格遵守）
+1. 数值查询 QueryValue(X)：询问某个科室标签 X 经过混淆后的实际传送路径总长度，系统会返回 S(f(X))
+2. 比较查询 QueryCompare(X,Y)：询问两个科室标签 X 和 Y 混淆后的路径总长度大小关系，系统会返回比较结果（小于、等于、大于）
+3. 提交答案 Submit(W,L)：提交你推断的混淆模式 W 和最优科室标签 L
 
-每次提问只能包含一个标签。
+注意：
+- 提交答案时，如果累计的查询次数（数值和比较查询的总次数）少于 2 次，提交无效
+- 提交答案后，如果模式推断正确且选择的科室站点满足要求，则排查成功；否则排查失败
+- 请尽可能用最少的查询指令完成排查
 
-- 多病房顺序查询（例如查询病房 0, 3, 5 的先后）：
-<query_order>0,3,5</query_order>
+每次只能包含一个操作标签，使用以下 XML 格式：
 
-- 双病房对比查询（例如对比病房 1 和 4）：
-<query_compare>1,4</query_compare>
+- 数值查询（例如查询科室 A）：
+<query_value>A</query_value>
 
-提交最终答案时，必须说明目标病房 T 的顺位名次（1 到 N 之间的整数），格式如下：
-<answer>{target} is at position R</answer>
+- 比较查询（例如比较科室 A 和 B）：
+<query_compare>A,B</query_compare>
 
-其中 R 是你推演出的顺位数字。
+- 提交答案（例如提交混淆模式 W1 和科室 A）：
+<answer>W1,A</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-The medical scheduling system is running a "Circular Ward Rounds" deduction scenario.
+[Healthcare Scenario]
+Welcome to the "Medical Supplies Transit Network Inspection System".
 
-The hospital has a circular ward round route consisting of N = {n} wards, numbered sequentially from 0 to N-1.
-Due to an emergency, the starting ward for today's rounds (the hidden offset) has shifted, but the doctors continue to conduct rounds following the cyclic order of the ward numbers.
-Your task is to infer the rank of the target ward T = {target} in today's rounds (ranks range from 1 to N).
+The system monitors a fixed undirected simple transit network graph G within the hospital, containing 6 department stations: A, B, C, D, E, F. The direct conveyor routes between departments are:
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-You can query the scheduling system using the following two commands, and the system will provide truthful feedback based on the actual rounds sequence:
+In this transit network, the "transit distance" between any two department stations is defined as the number of route segments on the shortest path. For each department station v, its "total transfer path length" S(v) is the sum of distances from that station to all other stations.
+The true S values for each department station are known as:
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **Multi-Ward Sequence Query**: Provide 2 to 6 distinct ward numbers, and the system will return the actual chronological order of rounds for these wards.
-   - Format: <query_order>a1,a2,...,ak</query_order>
-   - Constraints: The number of wards k is between 2 and 6; ward numbers are distinct and in [0, N-1]
-   - Returns: These wards ordered by their actual round sequence
+Currently, due to a system malfunction, the identifiers of the department stations have undergone an unknown label confusion f. This confusion is one of the following three modes:
+- W1: Identity mode (A→A, B→B, C→C, D→D, E→E, F→F)
+- W2: Swap mode (A↔B, C↔D, E↔F)
+- W3: Swap mode (A↔D, B↔E, C↔F)
 
-2. **Pairwise Ward Comparison**: Ask which of two wards is visited first.
-   - Format: <query_compare>a,b</query_compare>
-   - Constraints: a and b are different and both in [0, N-1]
-   - Returns: a-before-b or b-before-a
+Your objectives are:
+1. Deduce whether the actual label confusion mode is W1, W2, or W3 through queries.
+2. When submitting the repair plan, provide a department label L such that its corresponding actual station is one of the logistics center stations with the minimum "total transfer path length" in the network.
 
-Please complete the deduction with as few queries as possible. Once you are confident, submit the round rank of the target ward.
+System Inspection Rules:
+- In the first round, you must perform a baseline query on department A: QueryValue(A).
+- After that, in each round you can choose one of the following operations:
 
-## Query and Answer Format (strictly required)
+1. Value Query QueryValue(X): Ask for the actual total transfer path length of department label X after confusion; the system returns S(f(X)).
+2. Comparison Query QueryCompare(X,Y): Ask for the comparison relationship between the total path lengths of department labels X and Y after confusion; the system returns the comparison result (less than, equal to, greater than).
+3. Submit Answer Submit(W,L): Submit your deduced confusion mode W and the optimal department label L.
 
-Each query must contain only one tag.
+Notes:
+- When submitting, if the total number of queries (value and comparison combined) is less than 2, the submission is invalid.
+- After submission, if the mode deduction is correct and the chosen department station meets the requirement, the inspection succeeds; otherwise, it fails.
+- Please complete the inspection with the fewest possible queries.
 
-- Multi-Ward Sequence Query (e.g., asking about wards 0, 3, 5):
-<query_order>0,3,5</query_order>
+Each operation must contain only one tag, using the following XML format:
 
-- Pairwise Ward Comparison (e.g., comparing wards 1 and 4):
-<query_compare>1,4</query_compare>
+- Value Query (e.g., querying department A):
+<query_value>A</query_value>
 
-When submitting the final answer, specify the visitation rank of target ward T (an integer from 1 to N) in this format:
-<answer>{target} is at position R</answer>
+- Comparison Query (e.g., comparing departments A and B):
+<query_compare>A,B</query_compare>
 
-where R is the rank number you deduced.
+- Submit Answer (e.g., submitting confusion mode W1 and department A):
+<answer>W1,A</answer>
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-班级管理系统正在进行"环形值日推演"。
+欢迎使用“学科知识图谱导航排查系统”。
 
-班级有 N = {n} 名学生组成值日循环圈，学号依次从 0 到 N-1。
-受节假日调休影响，本周期的起始值日生（即隐藏的偏移量）发生了变动，但依然严格按学号的循环顺序轮替。
-你的任务是推断出目标学生 T = {target} 是本周期内第几个值日的（名次从 1 到 N）。
+该系统维护着一个基础的无向简单知识图谱 G，包含 6 个核心知识模块：A、B、C、D、E、F，模块间的直接前置/关联关系为：
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-你可以通过以下两种指令向管理系统查询，系统将根据实际的值日轮替顺序如实反馈：
+在知识图谱中，任意两个模块之间的“学习跨度”定义为最短关联路径上的跳数。对于每个知识模块 v，其“学习路径总距离” S(v) 为该模块到所有其他模块的学习跨度之和。
+已知各知识模块的真实 S 值如下：
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **多学生顺序查询**：输入 2 到 6 个不同的学生学号，系统会返回这些学生实际的值日先后顺序。
-   - 格式：<query_order>a1,a2,...,ak</query_order>
-   - 约束：学生数 k 在 2 到 6 之间；学号互不相同且在 [0, N-1] 范围内
-   - 返回：这些学生按实际值日先后排序的结果
+目前，由于跨年级教材版本的差异，模块代号发生了一种未知的教材编排映射 f，该映射属于以下三种之一：
+- W1：原版恒等映射（A→A, B→B, C→C, D→D, E→E, F→F）
+- W2：修订版交换映射（A↔B, C↔D, E↔F）
+- W3：重构版交换映射（A↔D, B↔E, C↔F）
 
-2. **双学生对比查询**：询问两名学生哪一个先值日。
-   - 格式：<query_compare>a,b</query_compare>
-   - 约束：a 和 b 不同，且均在 [0, N-1] 范围内
-   - 返回：a-before-b 或 b-before-a
+你的目标是：
+1. 通过查询推断出当前图谱实际使用的是 W1、W2 还是 W3 编排映射
+2. 在提交定案时，给出一个知识模块代号 L，使得该代号在真实图谱中代表的是“学习路径总距离”最小的核心入门基石之一
 
-请以最少的查询次数完成推演。确认答案后，请提交目标学生的值日顺位。
+系统排查规则：
+- 第一个回合，你必须先进行一次针对模块 A 的基准查询 QueryValue(A)
+- 之后每回合可以选择以下操作之一：
 
-## 查询与提交格式（必须严格遵守）
+1. 数值查询 QueryValue(X)：询问某个模块代号 X 经过映射后的实际学习路径总距离，系统会返回 S(f(X))
+2. 比较查询 QueryCompare(X,Y)：询问两个模块代号 X 和 Y 映射后的学习路径总距离大小关系，系统会返回比较结果（小于、等于、大于）
+3. 提交答案 Submit(W,L)：提交你推断的编排映射 W 和最优模块代号 L
 
-每次提问只能包含一个标签。
+注意：
+- 提交答案时，如果累计的查询次数（数值和比较查询的总数）少于 2 次，提交无效
+- 提交答案后，如果映射推断正确且选择的模块符合基石要求，则排查成功；否则排查失败
+- 请尽可能用最少的查询指令完成排查
 
-- 多学生顺序查询（例如查询学号 0, 3, 5 的先后）：
-<query_order>0,3,5</query_order>
+每次只能包含一个操作标签，使用以下 XML 格式：
 
-- 双学生对比查询（例如对比学号 1 和 4）：
-<query_compare>1,4</query_compare>
+- 数值查询（例如查询模块 A）：
+<query_value>A</query_value>
 
-提交最终答案时，必须说明目标学生 T 的顺位名次（1 到 N 之间的整数），格式如下：
-<answer>{target} is at position R</answer>
+- 比较查询（例如比较模块 A 和 B）：
+<query_compare>A,B</query_compare>
 
-其中 R 是你推演出的顺位数字。
+- 提交答案（例如提交映射 W1 和模块 A）：
+<answer>W1,A</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-The class management system is conducting a "Circular Duty Roster" deduction.
+Welcome to the "Subject Knowledge Graph Navigation Inspection System".
 
-The class has a duty roster loop consisting of N = {n} students, with student IDs sequentially from 0 to N-1.
-Due to holiday rescheduling, the starting student on duty for this cycle (the hidden offset) has changed, but the rotation still strictly follows the cyclic order of the student IDs.
-Your task is to infer the rank of the target student T = {target} in this duty cycle (ranks range from 1 to N).
+The system maintains a fundamental undirected simple knowledge graph G, containing 6 core knowledge modules: A, B, C, D, E, F. The direct prerequisite/associative relationships between modules are:
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-You can query the management system using the following two commands, and the system will provide truthful feedback based on the actual duty rotation sequence:
+In the knowledge graph, the "learning span" between any two modules is defined as the number of hops on the shortest associative path. For each knowledge module v, its "total learning path distance" S(v) is the sum of learning spans from that module to all other modules.
+The true S values for each knowledge module are known as:
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **Multi-Student Sequence Query**: Provide 2 to 6 distinct student IDs, and the system will return the actual chronological order of duty for these students.
-   - Format: <query_order>a1,a2,...,ak</query_order>
-   - Constraints: The number of students k is between 2 and 6; IDs are distinct and in [0, N-1]
-   - Returns: These students ordered by their actual duty sequence
+Currently, due to version differences in cross-grade textbooks, the module codes have undergone an unknown syllabus mapping f. This mapping is one of the following three:
+- W1: Original identity mapping (A→A, B→B, C→C, D→D, E→E, F→F)
+- W2: Revised swap mapping (A↔B, C↔D, E↔F)
+- W3: Restructured swap mapping (A↔D, B↔E, C↔F)
 
-2. **Pairwise Student Comparison**: Ask which of two students is on duty first.
-   - Format: <query_compare>a,b</query_compare>
-   - Constraints: a and b are different and both in [0, N-1]
-   - Returns: a-before-b or b-before-a
+Your objectives are:
+1. Deduce whether the syllabus mapping currently in use is W1, W2, or W3 through queries.
+2. When finalizing the case, provide a knowledge module code L such that it represents one of the core foundational keystones with the minimum "total learning path distance" in the true graph.
 
-Please complete the deduction with as few queries as possible. Once you are confident, submit the duty rank of the target student.
+System Inspection Rules:
+- In the first round, you must perform a baseline query on module A: QueryValue(A).
+- After that, in each round you can choose one of the following operations:
 
-## Query and Answer Format (strictly required)
+1. Value Query QueryValue(X): Ask for the actual total learning path distance of module code X after mapping; the system returns S(f(X)).
+2. Comparison Query QueryCompare(X,Y): Ask for the comparison relationship between the total learning path distances of module codes X and Y after mapping; the system returns the comparison result (less than, equal to, greater than).
+3. Submit Answer Submit(W,L): Submit your deduced syllabus mapping W and the optimal module code L.
 
-Each query must contain only one tag.
+Notes:
+- When submitting, if the total number of queries (value and comparison combined) is less than 2, the submission is invalid.
+- After submission, if the mapping deduction is correct and the chosen module meets the keystone requirement, the inspection succeeds; otherwise, it fails.
+- Please try to complete the inspection with the fewest possible queries.
 
-- Multi-Student Sequence Query (e.g., asking about IDs 0, 3, 5):
-<query_order>0,3,5</query_order>
+Each operation must contain only one tag, using the following XML format:
 
-- Pairwise Student Comparison (e.g., comparing IDs 1 and 4):
-<query_compare>1,4</query_compare>
+- Value Query (e.g., querying module A):
+<query_value>A</query_value>
 
-When submitting the final answer, specify the duty rank of target student T (an integer from 1 to N) in this format:
-<answer>{target} is at position R</answer>
+- Comparison Query (e.g., comparing modules A and B):
+<query_compare>A,B</query_compare>
 
-where R is the rank number you deduced.
+- Submit Answer (e.g., submitting mapping W1 and module A):
+<answer>W1,A</answer>
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-工业控制系统正在执行"环形流水线推演"。
+欢迎进入“智能车间AGV寻址测试系统”。
 
-一条自动化装配线上有 N = {n} 个环形排列的工位，编号依次为 0 到 N-1。
-由于产线维护重启，首个被激活的工位（即隐藏的偏移量）发生了改变，但激活信号仍严格按工位编号的循环顺序传递。
-你的任务是确定目标工位 T = {target} 是系统重启后第几个被激活的（名次从 1 到 N）。
+该系统管理着一个固定的无向简单车间布局图 G，包含 6 个加工工作站：A、B、C、D、E、F，工作站间的物理相邻（AGV直达）路线为：
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-你可以通过以下两种指令向控制系统查询，系统将根据实际的激活顺序如实反馈：
+在车间布局中，任意两个工作站之间的“搬运距离”定义为最短路径的路线段数。对于每个工作站 v，其单源距离和 S(v) 为该站点到所有其他工作站的“总搬运距离”。
+已知各工作站真实的 S 值（总搬运距离）如下：
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **多工位顺序查询**：输入 2 到 6 个不同的工位编号，系统会返回这些工位实际的激活先后顺序。
-   - 格式：<query_order>a1,a2,...,ak</query_order>
-   - 约束：工位数 k 在 2 到 6 之间；工位编号互不相同且在 [0, N-1] 范围内
-   - 返回：这些工位按实际激活先后排序的结果
+近期，由于工控系统升级，工作站的寻址地址表被重新分配，发生了未知的映射 f，该地址分配方案是以下三种之一：
+- W1：默认保持方案（A→A, B→B, C→C, D→D, E→E, F→F）
+- W2：水平镜像方案（A↔B, C↔D, E↔F）
+- W3：对角置换方案（A↔D, B↔E, C↔F）
 
-2. **双工位对比查询**：询问两个工位哪一个先被激活。
-   - 格式：<query_compare>a,b</query_compare>
-   - 约束：a 和 b 不同，且均在 [0, N-1] 范围内
-   - 返回：a-before-b 或 b-before-a
+你的目标是：
+1. 通过测试查询推断出当前生效的是 W1、W2 还是 W3 地址分配方案
+2. 在提交部署决策时，给出一个工作站标签 L，使得它所对应的实际物理站点是全车间“总搬运距离”最小的枢纽级工位之一（以便在此部署总控服务器）
 
-请以最少的查询次数完成推演。确认答案后，请提交目标工位的激活顺位。
+系统测试规则：
+- 第一个回合，你必须先进行一次针对工作站 A 的数值查询 QueryValue(A)
+- 之后每回合可以选择以下调试指令之一：
 
-## 查询与提交格式（必须严格遵守）
+1. 数值查询 QueryValue(X)：询问某个工作站标签 X 经过映射后的真实总搬运距离，系统会返回 S(f(X))
+2. 比较查询 QueryCompare(X,Y)：询问两个工作站标签 X 和 Y 经过映射后的总搬运距离大小关系，系统会返回比较结果（小于、等于、大于）
+3. 提交答案 Submit(W,L)：提交你推断的分配方案 W 和最优工作站标签 L
 
-每次提问只能包含一个标签。
+注意：
+- 提交答案时，如果累计的查询次数（数值和比较查询的总次数）少于 2 次，提交无效
+- 提交答案后，如果方案推断正确且选择的工作站满足枢纽要求，则测试成功；否则失败
+- 请尽可能用最少的指令完成推断
 
-- 多工位顺序查询（例如查询工位 0, 3, 5 的先后）：
-<query_order>0,3,5</query_order>
+每次只能包含一个操作标签，使用以下 XML 格式：
 
-- 双工位对比查询（例如对比工位 1 和 4）：
-<query_compare>1,4</query_compare>
+- 数值查询（例如查询工作站 A）：
+<query_value>A</query_value>
 
-提交最终答案时，必须说明目标工位 T 的顺位名次（1 到 N 之间的整数），格式如下：
-<answer>{target} is at position R</answer>
+- 比较查询（例如比较工作站 A 和 B）：
+<query_compare>A,B</query_compare>
 
-其中 R 是你推演出的顺位数字。
+- 提交答案（例如提交方案 W1 和工作站 A）：
+<answer>W1,A</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industrial Scenario]
-The industrial control system is executing a "Circular Assembly Line" deduction scenario.
+Welcome to the "Smart Workshop AGV Addressing Test System".
 
-An automated assembly line consists of N = {n} cyclically arranged workstations, numbered sequentially from 0 to N-1.
-Due to a production line restart after maintenance, the initially activated workstation (the hidden offset) has changed, but the activation signal still propagates strictly following the cyclic order of the workstation numbers.
-Your task is to determine the rank of the target workstation T = {target} in this activation sequence following the restart (ranks range from 1 to N).
+The system manages a fixed undirected simple workshop layout graph G, containing 6 processing workstations: A, B, C, D, E, F. The physically adjacent (direct AGV) routes between workstations are:
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-You can query the control system using the following two commands, and the system will provide truthful feedback based on the actual activation sequence:
+In the workshop layout, the "transport distance" between any two workstations is defined as the number of route segments on the shortest path. For each workstation v, its single-source distance sum S(v) is the "total AGV transport distance" from that station to all other workstations.
+The true S values (total transport distances) for each workstation are known as:
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **Multi-Workstation Sequence Query**: Provide 2 to 6 distinct workstation numbers, and the system will return the actual chronological order of activation for these workstations.
-   - Format: <query_order>a1,a2,...,ak</query_order>
-   - Constraints: The number of workstations k is between 2 and 6; workstation numbers are distinct and in [0, N-1]
-   - Returns: These workstations ordered by their actual activation sequence
+Recently, due to an industrial control system upgrade, the workstation addressing table has been reallocated, resulting in an unknown mapping f. This address allocation scheme is one of the following three:
+- W1: Default retention scheme (A→A, B→B, C→C, D→D, E→E, F→F)
+- W2: Horizontal mirror scheme (A↔B, C↔D, E↔F)
+- W3: Diagonal permutation scheme (A↔D, B↔E, C↔F)
 
-2. **Pairwise Workstation Comparison**: Ask which of two workstations is activated first.
-   - Format: <query_compare>a,b</query_compare>
-   - Constraints: a and b are different and both in [0, N-1]
-   - Returns: a-before-b or b-before-a
+Your objectives are:
+1. Deduce whether the currently active address allocation scheme is W1, W2, or W3 through test queries.
+2. When submitting the deployment decision, provide a workstation label L such that its corresponding actual physical station is one of the hub-level stations with the minimum "total AGV transport distance" in the workshop (ideal for deploying the master control server).
 
-Please complete the deduction with as few queries as possible. Once you are confident, submit the activation rank of the target workstation.
+System Test Rules:
+- In the first round, you must perform a value query on workstation A: QueryValue(A).
+- After that, in each round you can choose one of the following debugging commands:
 
-## Query and Answer Format (strictly required)
+1. Value Query QueryValue(X): Ask for the true total transport distance of workstation label X after mapping; the system returns S(f(X)).
+2. Comparison Query QueryCompare(X,Y): Ask for the comparison relationship between the total transport distances of workstation labels X and Y after mapping; the system returns the comparison result (less than, equal to, greater than).
+3. Submit Answer Submit(W,L): Submit your deduced allocation scheme W and the optimal workstation label L.
 
-Each query must contain only one tag.
+Notes:
+- When submitting, if the total number of queries (value and comparison combined) is less than 2, the submission is invalid.
+- After submission, if the scheme deduction is correct and the chosen workstation meets the hub requirement, the test succeeds; otherwise, it fails.
+- Please try to complete the deduction with the fewest possible commands.
 
-- Multi-Workstation Sequence Query (e.g., asking about workstations 0, 3, 5):
-<query_order>0,3,5</query_order>
+Each operation must contain only one tag, using the following XML format:
 
-- Pairwise Workstation Comparison (e.g., comparing workstations 1 and 4):
-<query_compare>1,4</query_compare>
+- Value Query (e.g., querying workstation A):
+<query_value>A</query_value>
 
-When submitting the final answer, specify the activation rank of target workstation T (an integer from 1 to N) in this format:
-<answer>{target} is at position R</answer>
+- Comparison Query (e.g., comparing workstations A and B):
+<query_compare>A,B</query_compare>
 
-where R is the rank number you deduced.
+- Submit Answer (e.g., submitting scheme W1 and workstation A):
+<answer>W1,A</answer>
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-法庭程序系统正在进行"圆桌听证推演"。
+欢迎使用“案卷证据链加密破译系统”。
 
-在一场圆桌听证会上，共有 N = {n} 位发言人参与，发言编号依次为 0 到 N-1。
-按照特殊程序规则，全场首位发言人（即隐藏的偏移量）由抽签随机决定，随后严格按编号的循环顺序依次进行发言。
-你的任务是推断出目标发言人 T = {target} 是全场第几个发言的（名次从 1 到 N）。
+系统正在分析一个核心案件的无向简单证据关联图 G，包含 6 个关键证据节点：A、B、C、D、E、F，证据节点间的直接逻辑印证关系为：
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-你可以通过以下两种指令向庭审系统查询，系统将根据实际的发言顺序如实反馈：
+在证据关联网络中，任意两个节点之间的“逻辑跨度”定义为最短印证路径的层级数。对于每个证据节点 v，其“核查关联总深度” S(v) 为该证据到所有其他证据的逻辑跨度之和。
+已知各证据节点真实的 S 值如下：
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **多发言人顺序查询**：输入 2 到 6 个不同的发言人编号，系统会返回这些人员实际的发言先后顺序。
-   - 格式：<query_order>a1,a2,...,ak</query_order>
-   - 约束：人员数 k 在 2 到 6 之间；编号互不相同且在 [0, N-1] 范围内
-   - 返回：这些发言人按实际发言先后排序的结果
+为了满足案卷保密要求，证据代号进行了一次未知的协议加密映射 f，该代号加密协议属于以下三种之一：
+- W1：明文伪装协议（A→A, B→B, C→C, D→D, E→E, F→F）
+- W2：对称移位协议（A↔B, C↔D, E↔F）
+- W3：交叉置换协议（A↔D, B↔E, C↔F）
 
-2. **双发言人对比查询**：询问两位发言人哪一位先发言。
-   - 格式：<query_compare>a,b</query_compare>
-   - 约束：a 和 b 不同，且均在 [0, N-1] 范围内
-   - 返回：a-before-b 或 b-before-a
+你的目标是：
+1. 通过查询推断出当前卷宗使用的是 W1、W2 还是 W3 加密协议
+2. 在提交破译结论时，给出一个证据代号 L，使得该代号指向的真实证据是“核查关联总深度”最小的核心突破口之一
 
-请以最少的查询次数完成推演。确认答案后，请提交目标发言人的发言顺位。
+系统破译规则：
+- 第一个回合，你必须先进行一次针对证据代号 A 的数值查询 QueryValue(A)
+- 之后每回合可以选择以下操作之一：
 
-## 查询与提交格式（必须严格遵守）
+1. 数值查询 QueryValue(X)：询问某个证据代号 X 解密后的真实核查关联总深度，系统会返回 S(f(X))
+2. 比较查询 QueryCompare(X,Y)：询问两个证据代号 X 和 Y 解密后的总深度大小关系，系统会返回比较结果（小于、等于、大于）
+3. 提交答案 Submit(W,L)：提交你推断的加密协议 W 和核心证据代号 L
 
-每次提问只能包含一个标签。
+注意：
+- 提交答案时，如果累计的查询次数（数值和比较查询总数）少于 2 次，提交无效
+- 提交答案后，如果协议推断正确且选中的证据符合核心突破口要求，则破译成功；否则系统锁定
+- 请尽可能用最少的查询完成破译
 
-- 多发言人顺序查询（例如查询发言人 0, 3, 5 的先后）：
-<query_order>0,3,5</query_order>
+每次只能包含一个操作标签，使用以下 XML 格式：
 
-- 双发言人对比查询（例如对比发言人 1 和 4）：
-<query_compare>1,4</query_compare>
+- 数值查询（例如查询证据 A）：
+<query_value>A</query_value>
 
-提交最终答案时，必须说明目标发言人 T 的顺位名次（1 到 N 之间的整数），格式如下：
-<answer>{target} is at position R</answer>
+- 比较查询（例如比较证据 A 和 B）：
+<query_compare>A,B</query_compare>
 
-其中 R 是你推演出的顺位数字。
+- 提交答案（例如提交协议 W1 和证据 A）：
+<answer>W1,A</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-The court procedural system is conducting a "Roundtable Hearing" deduction.
+Welcome to the "Case Evidence Chain Encryption Deciphering System".
 
-In a roundtable hearing, there are N = {n} speakers participating, with speaker IDs numbered sequentially from 0 to N-1.
-According to special procedural rules, the very first speaker of the session (the hidden offset) is randomly determined by drawing lots, after which the floor strictly follows the cyclic order of the speaker IDs.
-Your task is to infer the rank of the target speaker T = {target} in the overall speaking session (ranks range from 1 to N).
+The system is analyzing an undirected simple evidence correlation graph G of a core case, containing 6 key evidence nodes: A, B, C, D, E, F. The direct logical corroboration relationships between evidence nodes are:
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
 
-You can query the hearing system using the following two commands, and the system will provide truthful feedback based on the actual speaking sequence:
+In the evidence correlation network, the "logical span" between any two nodes is defined as the number of tiers on the shortest corroboration path. For each evidence node v, its "total verification link depth" S(v) is the sum of logical spans from that evidence to all other evidence.
+The true S values for each evidence node are known as:
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
 
-1. **Multi-Speaker Sequence Query**: Provide 2 to 6 distinct speaker IDs, and the system will return the actual chronological order of their speeches.
-   - Format: <query_order>a1,a2,...,ak</query_order>
-   - Constraints: The number of speakers k is between 2 and 6; IDs are distinct and in [0, N-1]
-   - Returns: These speakers ordered by their actual speaking sequence
+To meet case confidentiality requirements, the evidence codes have undergone an unknown protocol encryption mapping f. This code encryption protocol is one of the following three:
+- W1: Plaintext disguise protocol (A→A, B→B, C→C, D→D, E→E, F→F)
+- W2: Symmetric shift protocol (A↔B, C↔D, E↔F)
+- W3: Cross permutation protocol (A↔D, B↔E, C↔F)
 
-2. **Pairwise Speaker Comparison**: Ask which of two speakers takes the floor first.
-   - Format: <query_compare>a,b</query_compare>
-   - Constraints: a and b are different and both in [0, N-1]
-   - Returns: a-before-b or b-before-a
+Your objectives are:
+1. Deduce whether the case file is currently using the W1, W2, or W3 encryption protocol through queries.
+2. When submitting the deciphering conclusion, provide an evidence code L such that the true evidence it points to is one of the core breakthroughs with the minimum "total verification link depth".
 
-Please complete the deduction with as few queries as possible. Once you are confident, submit the speaking rank of the target speaker.
+System Deciphering Rules:
+- In the first round, you must perform a value query on evidence code A: QueryValue(A).
+- After that, in each round you can choose one of the following operations:
 
-## Query and Answer Format (strictly required)
+1. Value Query QueryValue(X): Ask for the true total verification link depth of evidence code X after decryption; the system returns S(f(X)).
+2. Comparison Query QueryCompare(X,Y): Ask for the comparison relationship between the total depths of evidence codes X and Y after decryption; the system returns the comparison result (less than, equal to, greater than).
+3. Submit Answer Submit(W,L): Submit your deduced encryption protocol W and the core evidence code L.
 
-Each query must contain only one tag.
+Notes:
+- When submitting, if the total number of queries (value and comparison combined) is less than 2, the submission is invalid.
+- After submission, if the protocol deduction is correct and the chosen evidence meets the core breakthrough requirement, the deciphering succeeds; otherwise, the system locks up.
+- Please complete the deciphering with the fewest possible queries.
 
-- Multi-Speaker Sequence Query (e.g., asking about speakers 0, 3, 5):
-<query_order>0,3,5</query_order>
+Each operation must contain only one tag, using the following XML format:
 
-- Pairwise Speaker Comparison (e.g., comparing speakers 1 and 4):
-<query_compare>1,4</query_compare>
+- Value Query (e.g., querying evidence A):
+<query_value>A</query_value>
 
-When submitting the final answer, specify the speaking rank of target speaker T (an integer from 1 to N) in this format:
-<answer>{target} is at position R</answer>
+- Comparison Query (e.g., comparing evidence A and B):
+<query_compare>A,B</query_compare>
 
-where R is the rank number you deduced.
+- Submit Answer (e.g., submitting protocol W1 and evidence A):
+<answer>W1,A</answer>
 """
 
-    tags = ["answer", "query_order", "query_compare"]
-    
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
+    game_rule_zh = """\
+我们来玩一个"图映射推理"游戏，规则如下：
 
-    # 难度配置说明：
-    # 1 (简单)       - N=5, 较小的搜索空间
-    # 2 (中等偏下)   - N=8, 中小规模
-    # 3 (中等偏上)   - N=12, 中等规模
-    # 4 (较难)       - N=16, 较大规模
-    # 5 (难)         - N=20, 大规模
-    
+游戏设定了一个固定的无向简单图 G，顶点集合 V 包含 6 个顶点：A、B、C、D、E、F，边的连接关系为：
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
+
+在这个图中，任意两个顶点之间的距离定义为无权最短路径的长度（即经过的边数）。对于每个顶点 v，定义它的单源距离和 S(v) 为该顶点到所有其他顶点的距离之和（到自己的距离为 0）。
+
+已知各顶点的真实 S 值如下：
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
+
+现在，我秘密地选择了一个顶点标签的重映射方式 f，该映射是以下三种方式之一：
+- W1：恒等映射（A→A, B→B, C→C, D→D, E→E, F→F）
+- W2：交换映射（A↔B, C↔D, E↔F）
+- W3：交换映射（A↔D, B↔E, C↔F）
+
+你的目标是：
+1. 通过查询推断出真实的映射方式是 W1、W2 还是 W3
+2. 在提交答案时，给出一个顶点标签 L，使得 f(L) 是图中距离和最小的顶点之一
+
+游戏规则：
+- 第一个回合，你必须先进行一次 QueryValue(A) 查询
+- 之后每回合可以选择以下操作之一：
+
+1. 数值查询 QueryValue(X)：询问某个顶点 X 经过映射后的距离和是多少，系统会返回 S(f(X)) 的值
+2. 比较查询 QueryCompare(X,Y)：询问两个顶点 X 和 Y 经过映射后的距离和大小关系，系统会返回比较结果（小于、等于、大于）
+3. 提交答案 Submit(W,L)：提交你推断的映射方式 W 和一个顶点标签 L
+
+注意：
+- 提交答案时，如果累计的查询次数（QueryValue 和 QueryCompare 的总次数）少于 2 次，提交无效
+- 提交答案后，如果映射方式正确且选择的顶点满足要求，则游戏胜利；否则游戏失败
+- 请尽可能用最少的查询次数完成推理
+
+每次只能包含一个操作标签，使用以下 XML 格式：
+
+- 数值查询（例如查询顶点 A）：
+<query_value>A</query_value>
+
+- 比较查询（例如比较顶点 A 和 B）：
+<query_compare>A,B</query_compare>
+
+- 提交答案（例如提交映射 W1 和顶点 A）：
+<answer>W1,A</answer>
+"""
+
+    game_rule_en = """\
+Let's play a "Graph Mapping Deduction" game. Here are the rules:
+
+The game is based on a fixed undirected simple graph G with vertex set V containing 6 vertices: A, B, C, D, E, F, and edges:
+A-B, B-C, C-D, D-E, E-F, F-A, A-D, B-E
+
+In this graph, the distance between any two vertices is defined as the length of the shortest path (number of edges). For each vertex v, define its single-source distance sum S(v) as the sum of distances from that vertex to all other vertices (distance to itself is 0).
+
+The true S values for each vertex are:
+S(A)=7, S(B)=7, S(C)=9, S(D)=7, S(E)=7, S(F)=9
+
+Now, I have secretly chosen a vertex label remapping f, which is one of the following three mappings:
+- W1: Identity mapping (A→A, B→B, C→C, D→D, E→E, F→F)
+- W2: Swap mapping (A↔B, C↔D, E↔F)
+- W3: Swap mapping (A↔D, B↔E, C↔F)
+
+Your goals are:
+1. Deduce which mapping (W1, W2, or W3) is the true one through queries
+2. When submitting, provide a vertex label L such that f(L) is one of the vertices with minimum distance sum
+
+Game rules:
+- In the first round, you must perform a QueryValue(A) query
+- After that, in each round you can choose one of the following operations:
+
+1. Value Query QueryValue(X): Ask for the distance sum of vertex X after mapping, and the system returns S(f(X))
+2. Comparison Query QueryCompare(X,Y): Ask for the comparison relationship between the distance sums of vertices X and Y after mapping, and the system returns the comparison result (less than, equal to, greater than)
+3. Submit Answer Submit(W,L): Submit your deduced mapping W and a vertex label L
+
+Notes:
+- When submitting, if the total number of queries (QueryValue and QueryCompare combined) is less than 2, the submission is invalid
+- After submission, if the mapping is correct and the chosen vertex meets the requirement, the game is won; otherwise, the game is lost
+- Try to complete the deduction with the fewest queries possible
+
+Each operation must contain only one tag, using the following XML format:
+
+- Value Query (e.g., querying vertex A):
+<query_value>A</query_value>
+
+- Comparison Query (e.g., comparing vertices A and B):
+<query_compare>A,B</query_compare>
+
+- Submit Answer (e.g., submitting mapping W1 and vertex A):
+<answer>W1,A</answer>
+"""
+
+    tags = ["answer", "query_value", "query_compare"]
+    reasoning_type = "溯因推理"
+    data_structure = "图"
+
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {"n": 5, "offset": 2, "target": 3},   # π = [2,3,4,0,1], target=3 rank=2
-            2: {"n": 8, "offset": 3, "target": 5},   # π = [3,4,5,6,7,0,1,2], target=5 rank=3
-            3: {"n": 12, "offset": 7, "target": 10}, # π = [7,8,9,10,11,0,1,2,3,4,5,6], target=10 rank=4
-            4: {"n": 16, "offset": 9, "target": 3},  # π = [9,10,...,15,0,1,2,3,...,8], target=3 rank=11
-            5: {"n": 20, "offset": 13, "target": 7}, # target=7 rank=15
+            1: {"true_mapping": "W1"},
+            2: {"true_mapping": "W2"},
+            3: {"true_mapping": "W3"},
+            4: {"true_mapping": "W2"},
+            5: {"true_mapping": "W3"},
         },
         "en": {
-            1: {"n": 5, "offset": 2, "target": 3},
-            2: {"n": 8, "offset": 3, "target": 5},
-            3: {"n": 12, "offset": 7, "target": 10},
-            4: {"n": 16, "offset": 9, "target": 3},
-            5: {"n": 20, "offset": 13, "target": 7},
+            1: {"true_mapping": "W1"},
+            2: {"true_mapping": "W2"},
+            3: {"true_mapping": "W3"},
+            4: {"true_mapping": "W2"},
+            5: {"true_mapping": "W3"},
         },
     }
 
     def __init__(self, config):
+        self.S_values = {
+            'A': 7, 'B': 7, 'C': 9, 'D': 7, 'E': 7, 'F': 9
+        }
+        self.mappings = {
+            'W1': {'A': 'A', 'B': 'B', 'C': 'C', 'D': 'D', 'E': 'E', 'F': 'F'},
+            'W2': {'A': 'B', 'B': 'A', 'C': 'D', 'D': 'C', 'E': 'F', 'F': 'E'},
+            'W3': {'A': 'D', 'B': 'E', 'C': 'F', 'D': 'A', 'E': 'B', 'F': 'C'},
+        }
+        self.min_sum_vertices = {'A', 'B', 'D', 'E'}
+        self.query_count = 0
+        self.first_query_done = False
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏参数，包括 N、offset K 和目标元素 T"""
         lang = self.config.language
         diff = self.config.difficulty
-        
-        # 防御性类型转换，确保 difficulty 为整数
-        if isinstance(diff, str):
-            diff = int(diff)
 
-        # 根据难度确定 N
-        N_MAP = {1: 5, 2: 8, 3: 12, 4: 16, 5: 20}
-        if diff not in N_MAP:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        self.n = N_MAP[diff]
-        
-        # 使用确定性种子生成 offset 和 target，避免硬编码
-        rng = random.Random(42 + diff * 1000)
-        self.offset = rng.randint(0, self.n - 1)
-        self.target = rng.randint(0, self.n - 1)
-        
-        # 构建全局顺序 π: [K, K+1, ..., N-1, 0, 1, ..., K-1]
-        self.global_order = [(i + self.offset) % self.n for i in range(self.n)]
-        
-        # 构建元素到名次的映射
-        self.element_to_rank = {}
-        for rank, element in enumerate(self.global_order, start=1):
-            self.element_to_rank[element] = rank
-        
-        # 目标元素的真实名次
-        self.correct_rank = self.element_to_rank[self.target]
-        
-        # 用于格式化规则文本
-        self._game_info["n"] = self.n
-        self._game_info["target"] = self.target
-        
-        # 查询计数
-        self.query_count = 0
-        self.max_queries = 10
-
-    def _compare_elements(self, a, b):
-        """比较两个元素在全局顺序中的先后关系"""
-        rank_a = self.element_to_rank[a]
-        rank_b = self.element_to_rank[b]
-        return "a-before-b" if rank_a < rank_b else "b-before-a"
-
-    def _sort_elements(self, elements):
-        """将给定的元素列表按全局顺序排序"""
-        return sorted(elements, key=lambda x: self.element_to_rank[x])
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.true_mapping_name = cfg["true_mapping"]
+        self.true_mapping = self.mappings[self.true_mapping_name]
+        self._game_info = {}
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
-        
-        # 解析答案格式: "T is at position R"
-        # 提取目标元素和名次
         try:
-            # 期望格式: "{target} is at position R"
-            parts = raw_ans.split()
-            if len(parts) < 5:
+            raw_ans = parsed_info["answer"].strip()
+            parts = [x.strip() for x in raw_ans.split(",")]
+            
+            if len(parts) != 2:
                 return False
             
-            # 查找 "position" 关键字
-            if "position" not in raw_ans.lower():
+            submitted_mapping, submitted_vertex = parts[0], parts[1]
+            
+            if submitted_mapping not in self.mappings:
+                return False
+            if submitted_vertex not in self.S_values:
                 return False
             
-            # 提取最后一个数字作为名次
-            rank_str = parts[-1].strip()
-            submitted_rank = int(rank_str)
-            
-            # 检查名次是否在有效范围内
-            if submitted_rank < 1 or submitted_rank > self.n:
+            if self.query_count < 2:
                 return False
             
-            # 验证是否与正确答案匹配
-            return submitted_rank == self.correct_rank
+            if submitted_mapping != self.true_mapping_name:
+                return False
             
-        except (ValueError, IndexError):
+            mapped_vertex = self.true_mapping[submitted_vertex]
+            if mapped_vertex not in self.min_sum_vertices:
+                return False
+            
+            return True
+            
+        except Exception:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑"""
         if self.config.language == "zh":
-            error_invalid = "错误：无效的查询。"
-            error_format = "错误：格式错误或元素超出范围。"
-            error_constraint = "错误：集合排序询问需要 2 到 6 个不同的元素。"
-            error_max_queries = f"错误：已达到最大查询次数 {self.max_queries}，请直接提交答案。"
+            error_first_query = "错误：第一个回合必须进行 QueryValue(A) 查询。"
+            error_invalid_vertex = "错误：顶点标签无效，必须是 A、B、C、D、E、F 之一。"
+            error_invalid_format = "错误：查询格式无效。"
+            less_than = "小于"
+            equal_to = "等于"
+            greater_than = "大于"
         else:
-            error_invalid = "Error: invalid query."
-            error_format = "Error: invalid format or element out of range."
-            error_constraint = "Error: set ordering query requires 2 to 6 distinct elements."
-            error_max_queries = f"Error: maximum query limit ({self.max_queries}) reached. Please submit your answer."
+            error_first_query = "Error: The first round must perform QueryValue(A)."
+            error_invalid_vertex = "Error: Invalid vertex label, must be one of A, B, C, D, E, F."
+            error_invalid_format = "Error: Invalid query format."
+            less_than = "less than"
+            equal_to = "equal to"
+            greater_than = "greater than"
 
-        # 检查是否超出查询限制
-        if self.query_count >= self.max_queries:
-            return error_max_queries
-
-        # 优先处理 query_order
-        if "query_order" in parsed_info:
+        if "query_value" in parsed_info:
+            vertex = parsed_info["query_value"].strip().upper()
+            
+            if not self.first_query_done:
+                if vertex != 'A':
+                    return error_first_query
+                self.first_query_done = True
+            
+            if vertex not in self.S_values:
+                return error_invalid_vertex
+            
             self.query_count += 1
-            try:
-                raw = parsed_info["query_order"].strip()
-                if not raw:
-                    return error_format
-                
-                elements = [int(x.strip()) for x in raw.split(",")]
-                
-                # 检查约束
-                if len(elements) < 2 or len(elements) > 6:
-                    return error_constraint
-                
-                if len(elements) != len(set(elements)):
-                    return error_format
-                
-                for elem in elements:
-                    if elem < 0 or elem >= self.n:
-                        return error_format
-                
-                # 按全局顺序排序
-                sorted_elements = self._sort_elements(elements)
-                result = ",".join(map(str, sorted_elements))
-                
-                if self.config.language == "zh":
-                    return f"排序结果：[{result}]"
-                else:
-                    return f"Ordered: [{result}]"
-                    
-            except (ValueError, AttributeError):
-                return error_format
+            mapped_vertex = self.true_mapping[vertex]
+            result = self.S_values[mapped_vertex]
+            return str(result)
 
-        # 处理 query_compare
         elif "query_compare" in parsed_info:
-            self.query_count += 1
+            if not self.first_query_done:
+                return error_first_query
+            
             try:
                 raw = parsed_info["query_compare"].strip()
-                parts = [x.strip() for x in raw.split(",")]
+                parts = [x.strip().upper() for x in raw.split(",")]
                 
                 if len(parts) != 2:
-                    return error_format
+                    return error_invalid_format
                 
-                a, b = int(parts[0]), int(parts[1])
+                vertex1, vertex2 = parts[0], parts[1]
                 
-                if a == b:
-                    return error_format
+                if vertex1 not in self.S_values or vertex2 not in self.S_values:
+                    return error_invalid_vertex
                 
-                if a < 0 or a >= self.n or b < 0 or b >= self.n:
-                    return error_format
+                self.query_count += 1
+                mapped_vertex1 = self.true_mapping[vertex1]
+                mapped_vertex2 = self.true_mapping[vertex2]
+                value1 = self.S_values[mapped_vertex1]
+                value2 = self.S_values[mapped_vertex2]
                 
-                return self._compare_elements(a, b)
-                
-            except (ValueError, IndexError):
-                return error_format
+                if value1 < value2:
+                    return less_than
+                elif value1 == value2:
+                    return equal_to
+                else:
+                    return greater_than
+                    
+            except Exception:
+                return error_invalid_format
 
         else:
-            return error_invalid
+            raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成一个错误的响应，用于反事实干预"""
-        # 处理成对比较结果：翻转 a-before-b <-> b-before-a
-        if "a-before-b" in correct:
-            return correct.replace("a-before-b", "b-before-a")
-        if "b-before-a" in correct:
-            return correct.replace("b-before-a", "a-before-b")
+        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
+            return str(int(correct) + 1)
         
-        # 处理排序结果：反转排序列表
-        # 中文格式: "排序结果：[x,y,z]"  英文格式: "Ordered: [x,y,z]"
-        bracket_match = re.search(r'\[([^\]]+)\]', correct)
-        if bracket_match:
-            elements = bracket_match.group(1).split(",")
-            reversed_elements = list(reversed(elements))
-            wrong = correct.replace(bracket_match.group(1), ",".join(reversed_elements))
-            # 确保翻转后确实不同（元素数>=2时一定不同）
-            if wrong != correct:
-                return wrong
+        zh_comparisons = {"小于": "大于", "大于": "小于", "等于": "大于"}
+        if correct in zh_comparisons:
+            return zh_comparisons[correct]
         
-        # 若 correct 是纯整数字符串
-        if correct.strip().isdigit():
-            return str(int(correct.strip()) + 1)
+        en_comparisons = {"less than": "greater than", "greater than": "less than", "equal to": "greater than"}
+        if correct in en_comparisons:
+            return en_comparisons[correct]
         
-        # 兜底
-        return correct + "_WRONG"
+        if self.config.language == "zh":
+            if "是" in correct:
+                return correct.replace("是", "否")
+            if "否" in correct:
+                return correct.replace("否", "是")
+        else:
+            lower_correct = correct.lower()
+            if "yes" in lower_correct:
+                if "Yes" in correct: return correct.replace("Yes", "No")
+                if "yes" in correct: return correct.replace("yes", "no")
+                if "YES" in correct: return correct.replace("YES", "NO")
+                return correct.replace("Yes", "No").replace("yes", "no")
+            if "no" in lower_correct:
+                if "No" in correct: return correct.replace("No", "Yes")
+                if "no" in correct: return correct.replace("no", "yes")
+                if "NO" in correct: return correct.replace("NO", "YES")
+                return correct.replace("No", "Yes").replace("no", "yes")
+
+        return f"{correct}_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
         queries = []
+        vertices = ['A', 'B', 'C', 'D', 'E', 'F']
         
-        # 仅枚举成对比较查询 (Pairwise Comparison Query)。
-        # 原因：
-        # 1. 集合排序查询 (Set Ordering Query) 的组合空间过大（N=20时约为6万种组合），
-        #    不适合在单次 API 调用中全部返回。
-        # 2. 成对比较是确定线性顺序的原子信息，足以推断全局顺序。
-        # 3. 遍历所有 i, j (i!=j) 能覆盖所有基础关系。
-        
-        for a in range(self.n):
-            for b in range(self.n):
-                if a == b:
+        if self.config.language == "zh":
+            less_than = "小于"
+            equal_to = "等于"
+            greater_than = "大于"
+        else:
+            less_than = "less than"
+            equal_to = "equal to"
+            greater_than = "greater than"
+
+        for v in vertices:
+            mapped_v = self.true_mapping[v]
+            ans = str(self.S_values[mapped_v])
+            queries.append({
+                "query": f"<query_value>{v}</query_value>",
+                "answer": ans
+            })
+
+        for v1 in vertices:
+            for v2 in vertices:
+                if v1 == v2:
                     continue
+                mapped_v1 = self.true_mapping[v1]
+                mapped_v2 = self.true_mapping[v2]
+                val1 = self.S_values[mapped_v1]
+                val2 = self.S_values[mapped_v2]
                 
-                # 构造查询字符串
-                query_content = f"{a},{b}"
-                query_full = f"<query_compare>{query_content}</query_compare>"
-                
-                # 获取正确答案 (直接复用内部逻辑，避免增加游戏内的 query_count)
-                ans = self._compare_elements(a, b)
+                if val1 < val2:
+                    ans = less_than
+                elif val1 == val2:
+                    ans = equal_to
+                else:
+                    ans = greater_than
                 
                 queries.append({
-                    "query": query_full,
+                    "query": f"<query_compare>{v1},{v2}</query_compare>",
                     "answer": ans
                 })
-        
+                
         return queries

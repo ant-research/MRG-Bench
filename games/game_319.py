@@ -1,603 +1,497 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   三角形计数：图中包含某节点的三角形结构有多少个
-# ============================================================
-
 from .base import Game
 import re
+import itertools
 
-
-class GraphTriangleEncodingGame(Game):
+class SetDisjointnessGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"图编码推理"游戏，规则如下：
+我们现在来玩一个"集合互斥判定"的推理游戏，规则如下：
 
-游戏设定了一个无向图 G，包含以下节点与边：
-- 节点：{nodes}
-- 边（无向）：{edges}
+游戏设定了一个编号集合 U = {{1, 2, ..., {n}}}。我已秘密确定了两个隐藏子集 R 和 B，它们都是 U 的子集。每个元素可能处于以下四种状态之一：
+1. 仅在 R 中
+2. 仅在 B 中
+3. 同时在 R 和 B 中
+4. 两者都不在
 
-已知每个节点 v 都有一个三角计数 T(v)，表示该节点参与的三角形个数（即存在与 v 相邻的两个节点 u 和 w，使得边 vu、vw、uw 三者同时存在）。
+你的目标是判断 R 与 B 是否互斥（即两个集合没有共同元素）。你可以反复进行以下查询（每次一个查询），我会如实回答：
 
-各节点的三角计数如下：
-{triangle_counts}
+**计数查询**：给定一个测试子集 T（用编号列表表示），我会返回两个数字 (r, b)，其中：
+- r = T 与 R 的交集元素个数
+- b = T 与 B 的交集元素个数
 
-存在一个未知的映射规则 f: {{0,1,2,3,4}} 到 {{0,1,2}}，从以下四个候选规则之一选取：
-- 规则A：0到0, 1到1, 2到2, 3到0, 4到1
-- 规则B：0到0, 1到2, 2到0, 3到1, 4到2
-- 规则C：0到1, 1到1, 2到2, 3到0, 4到1
-- 规则D：0到1, 1到2, 2到0, 3到1, 4到2
-
-每个节点 v 的编码定义为 C(v) = f(T(v))。
-
-你可以反复进行查询，每次选择一个节点并请求其编码。我会根据真实的映射规则如实回答。
-
-你的目标是：
-1. 识别当前采用的映射规则（A、B、C 或 D）
-2. 给出在该规则下所有满足 C(v)=2 的节点集合
+例如，如果你查询 {{1, 2, 3}}，我可能返回 (2, 1)，表示这三个元素中有 2 个在 R 中，1 个在 B 中。
 
 当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次查询时，使用以下 XML 格式，列出要查询的元素编号（用逗号分隔）：
 
-查询节点编码（例如查询节点 A）：
-<query>A</query>
+<query>1,2,3</query>
 
-提交最终答案时，必须说明规则类型（A、B、C 或 D）并列出所有 C(v)=2 的节点（用逗号隔开，顺序不限），格式如下：
-<answer>rule=A, nodes=B,C</answer>
+提交最终答案时，必须指明判定结果：
 
-如果没有节点的编码为 2，则节点列表写 NONE：
-<answer>rule=B, nodes=NONE</answer>
+**如果判定两集合互斥**（没有共同元素），使用：
+<answer>Disjoint</answer>
+
+**如果判定两集合不互斥**（有共同元素），必须提供一个见证元素（同时在 R 和 B 中的元素编号）：
+<answer>Witness=5</answer>
+
+注意：你需要用尽可能少的查询次数完成推理。
 """
 
     game_rule_en = """\
-Let's play a "Graph Encoding Inference" game. Here are the rules:
+Let's play a "Set Disjointness Deduction" game. Here are the rules:
 
-The game has an undirected graph G with the following nodes and edges:
-- Nodes: {nodes}
-- Edges (undirected): {edges}
+There is a set of numbers U = {{1, 2, ..., {n}}}. I have secretly determined two hidden subsets R and B, both subsets of U. Each element may be in one of four states:
+1. Only in R
+2. Only in B
+3. In both R and B
+4. In neither
 
-Each node v has a triangle count T(v), which represents the number of triangles the node participates in (i.e., there exist two neighbors u and w of v such that edges vu, vw, and uw all exist).
+Your goal is to determine whether R and B are disjoint (i.e., they have no common elements). You can repeatedly make the following query (one per turn), and I will answer truthfully:
 
-The triangle counts for each node are:
-{triangle_counts}
+**Count Query**: Given a test subset T (represented as a list of IDs), I will return two numbers (r, b), where:
+- r = the number of elements in the intersection of T and R
+- b = the number of elements in the intersection of T and B
 
-There exists an unknown mapping rule f: {{0,1,2,3,4}} to {{0,1,2}}, selected from one of these four candidates:
-- Rule A: 0 to 0, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule B: 0 to 0, 1 to 2, 2 to 0, 3 to 1, 4 to 2
-- Rule C: 0 to 1, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule D: 0 to 1, 1 to 2, 2 to 0, 3 to 1, 4 to 2
-
-The encoding of each node v is defined as C(v) = f(T(v)).
-
-You can repeatedly query nodes to request their encodings. I will answer truthfully based on the actual mapping rule.
-
-Your goal is to:
-1. Identify the current mapping rule (A, B, C, or D)
-2. Provide the complete set of nodes where C(v)=2 under that rule
+For example, if you query {{1, 2, 3}}, I might return (2, 1), meaning among these three elements, 2 are in R and 1 is in B.
 
 When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-## Query and Answer Format (strictly required)
+For each query, use the following XML format, listing the element IDs to query (comma-separated):
 
-To query a node's encoding (e.g., querying node A):
-<query>A</query>
+<query>1,2,3</query>
 
-When submitting the final answer, specify the rule type (A, B, C, or D) and list all nodes with C(v)=2 (comma-separated, order does not matter):
-<answer>rule=A, nodes=B,C</answer>
+When submitting the final answer, you must specify your conclusion:
 
-If no nodes have encoding 2, write NONE for the node list:
-<answer>rule=B, nodes=NONE</answer>
+**If you determine the sets are disjoint** (no common elements), use:
+<answer>Disjoint</answer>
+
+**If you determine the sets are not disjoint** (have common elements), you must provide a witness element (an ID that is in both R and B):
+<answer>Witness=5</answer>
+
+Note: You should complete the reasoning with as few queries as possible.
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-【交通场景】
-我们来进入“交通微循环拥堵评估系统”，规则如下：
+智能交通系统故障排查：
 
-当前路网 G 包含以下交通路口与连接道路：
-- 路口节点：{nodes}
-- 道路（双向）：{edges}
+在我们的城市轨道交通网络中，存在一个由 N 个核心站点组成的集合 U = {{1, 2, ..., {n}}}。最近系统检测到两类隐蔽的风险状况：R（轨道结构受损）和 B（排水系统失效），它们分别影响了 U 的某两个未知子集。每个站点可能处于以下四种状态之一：
+1. 仅存在轨道受损（仅在 R 中）
+2. 仅存在排水失效（仅在 B 中）
+3. 同时存在轨道受损与排水失效（同时在 R 和 B 中）
+4. 运行正常（两者都不在）
 
-已知每个路口 v 都有一个微循环计数 T(v)，表示该路口参与的“交通微循环”个数（即存在与 v 相连的两个路口 u 和 w，使得道路 vu、vw、uw 三者同时存在，形成闭环）。
+你的目标是判断 R 与 B 是否互斥（即排查是否存在同时面临两类风险的高危崩溃站点）。你可以反复派遣无人机小队进行以下“区域扫描”（每次一个查询），我会如实返回传感器的读数：
 
-各路口的微循环计数如下：
-{triangle_counts}
+**计数查询**：给定一个测试站点集合 T（用编号列表表示），我会返回两个数字 (r, b)，其中：
+- r = T 中存在轨道受损的站点个数
+- b = T 中存在排水失效的站点个数
 
-系统内置了一个未知的拥堵评估规则 f: {{0,1,2,3,4}} 到 {{0,1,2}}，对应拥堵等级代码，从以下四个候选规则中选取其一：
-- 规则A：0到0, 1到1, 2到2, 3到0, 4到1
-- 规则B：0到0, 1到2, 2到0, 3到1, 4到2
-- 规则C：0到1, 1到1, 2到2, 3到0, 4到1
-- 规则D：0到1, 1到2, 2到0, 3到1, 4到2
+例如，如果你查询 {{1, 2, 3}}，我可能返回 (2, 1)，表示这三个站点中有 2 个轨道受损，1 个排水失效。
 
-每个路口 v 的最终拥堵等级评定为 C(v) = f(T(v))。
+当你收集足够信息后，请提交最终排查报告。若报告错误或格式不符，排查任务失败。
 
-你可以反复进行查询，每次选择一个路口并请求其拥堵等级。系统会根据真实的评估规则如实返回该路口的等级代码。
+每次派遣无人机查询时，使用以下 XML 格式，列出要查询的站点编号（用逗号分隔）：
 
-你的目标是：
-1. 识别当前采用的拥堵评估规则（A、B、C 或 D）
-2. 给出在该规则下所有满足拥堵等级 C(v)=2（严重拥堵）的路口集合
+<query>1,2,3</query>
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，排查任务失败。
+提交最终排查报告时，必须指明判定结果：
 
-## 查询与提交答案的格式（必须严格遵守）
+**如果判定两类风险互斥**（没有同时面临两种风险的站点），使用：
+<answer>Disjoint</answer>
 
-查询路口拥堵等级（例如查询路口 A）：
-<query>A</query>
+**如果判定两类风险不互斥**（存在高危崩溃站点），必须提供一个见证站点（同时在 R 和 B 中的站点编号）：
+<answer>Witness=5</answer>
 
-提交最终答案时，必须说明规则类型（A、B、C 或 D）并列出所有等级为 2 的路口（用逗号隔开，顺序不限），格式如下：
-<answer>rule=A, nodes=B,C</answer>
-
-如果没有路口的等级为 2，则路口列表写 NONE：
-<answer>rule=B, nodes=NONE</answer>
+注意：你需要用尽可能少的扫描次数完成排查。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the "Traffic Micro-loop Congestion Assessment System". Here are the rules:
+[Transportation Scenario]
+Intelligent Transit System Troubleshooting:
 
-The current road network G has the following intersections and connecting roads:
-- Intersections (Nodes): {nodes}
-- Roads (Undirected edges): {edges}
+In our urban rail network, there is a set of core stations U = {{1, 2, ..., {n}}}. The system has recently detected two hidden risk factors: R (Track Structural Damage) and B (Drainage System Failure), which affect two unknown subsets of U. Each station may be in one of four states:
+1. Only has track damage (Only in R)
+2. Only has drainage failure (Only in B)
+3. Has both track damage and drainage failure (In both R and B)
+4. Operating normally (In neither)
 
-Each intersection v has a micro-loop count T(v), which represents the number of "traffic micro-loops" the intersection is part of (i.e., there exist two neighboring intersections u and w of v such that roads vu, vw, and uw all exist, forming a closed loop).
+Your goal is to determine whether R and B are disjoint (i.e., whether there are any high-risk stations suffering from both conditions). You can repeatedly dispatch drone squads to conduct the following "zone scans" (one query per turn), and I will provide the truthful sensor readings:
 
-The micro-loop counts for each intersection are:
-{triangle_counts}
+**Count Query**: Given a test set of stations T (represented as a list of IDs), I will return two numbers (r, b), where:
+- r = the number of stations in T with track damage
+- b = the number of stations in T with drainage failure
 
-The system has an unknown congestion assessment rule f: {{0,1,2,3,4}} to {{0,1,2}} (corresponding to congestion level codes), selected from one of these four candidates:
-- Rule A: 0 to 0, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule B: 0 to 0, 1 to 2, 2 to 0, 3 to 1, 4 to 2
-- Rule C: 0 to 1, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule D: 0 to 1, 1 to 2, 2 to 0, 3 to 1, 4 to 2
+For example, if you query {{1, 2, 3}}, I might return (2, 1), meaning among these three stations, 2 have track damage and 1 has drainage failure.
 
-The final congestion level of each intersection v is defined as C(v) = f(T(v)).
+When you have enough information, submit your final diagnostic report. If the answer is wrong or the format is invalid, the mission fails.
 
-You can repeatedly query intersections to request their congestion levels. The system will answer truthfully with the code based on the actual assessment rule.
+For each drone query, use the following XML format, listing the station IDs to scan (comma-separated):
 
-Your goal is to:
-1. Identify the current assessment rule (A, B, C, or D)
-2. Provide the complete set of intersections where congestion level C(v)=2 (Severe Congestion) under that rule
+<query>1,2,3</query>
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the assessment fails.
+When submitting the final report, you must specify your conclusion:
 
-## Query and Answer Format (strictly required)
+**If you determine the risks are disjoint** (no station has both issues), use:
+<answer>Disjoint</answer>
 
-To query an intersection's congestion level (e.g., querying intersection A):
-<query>A</query>
+**If you determine the risks are not disjoint** (a high-risk station exists), you must provide a witness station (an ID that is in both R and B):
+<answer>Witness=5</answer>
 
-When submitting the final answer, specify the rule type (A, B, C, or D) and list all intersections with C(v)=2 (comma-separated, order does not matter):
-<answer>rule=A, nodes=B,C</answer>
-
-If no intersections have a level of 2, write NONE for the node list:
-<answer>rule=B, nodes=NONE</answer>
+Note: You should complete the troubleshooting with as few scans as possible.
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-【医疗场景】
-欢迎使用“靶点蛋白协同毒性评估系统”，规则如下：
+临床试验数据分析：
 
-当前已知的生物网络 G 包含以下药物靶点与相互作用关系：
-- 靶点蛋白：{nodes}
-- 相互作用（双向）：{edges}
+在我们的靶向药临床患者队列中，共有 N 名受试者，集合 U = {{1, 2, ..., {n}}}。研究团队怀疑队列中存在两类隐蔽的生理特征：R（携带基因突变 Alpha）和 B（血清病毒载量 Beta 超标）。每名受试者可能处于以下四种状态之一：
+1. 仅携带 Alpha 突变（仅在 R 中）
+2. 仅 Beta 载量超标（仅在 B 中）
+3. 同时存在 Alpha 突变与 Beta 载量超标（同时在 R 和 B 中）
+4. 两项指标均阴性（两者都不在）
 
-已知每个靶点 v 都有一个协同复合物计数 T(v)，表示该靶点参与的“三元协同复合物”个数（即存在与 v 发生作用的两个靶点 u 和 w，使得相互作用 vu、vw、uw 三者同时存在）。
+你的目标是判断 R 与 B 是否互斥（即排查是否存在两项指标双阳性的高风险患者）。你可以反复进行以下“批次抽血化验”（每次一个查询），我会如实返回实验室的读数：
 
-各靶点的协同复合物计数如下：
-{triangle_counts}
+**计数查询**：给定一个受试者样本子集 T（用编号列表表示），我会返回两个数字 (r, b)，其中：
+- r = T 中携带 Alpha 突变的患者人数
+- b = T 中 Beta 载量超标的患者人数
 
-系统内置了一个未知的毒理风险评估规则 f: {{0,1,2,3,4}} 到 {{0,1,2}}，对应毒性风险代码，从以下四个候选规则中选取其一：
-- 规则A：0到0, 1到1, 2到2, 3到0, 4到1
-- 规则B：0到0, 1到2, 2到0, 3到1, 4到2
-- 规则C：0到1, 1到1, 2到2, 3到0, 4到1
-- 规则D：0到1, 1到2, 2到0, 3到1, 4到2
+例如，如果你查询 {{1, 2, 3}}，我可能返回 (2, 1)，表示这三名患者中有 2 人存在 Alpha 突变，1 人 Beta 载量超标。
 
-每个靶点 v 的最终毒理风险等级评定为 C(v) = f(T(v))。
+当你收集足够信息后，请提交最终医学判定。若判定错误或格式不符，分析任务失败。
 
-你可以反复进行查询，每次选择一个靶点并请求其风险代码。系统会根据真实的评估规则如实返回。
+每次提交化验名单时，使用以下 XML 格式，列出要查询的受试者编号（用逗号分隔）：
 
-你的目标是：
-1. 识别当前采用的毒理风险评估规则（A、B、C 或 D）
-2. 给出在该规则下所有满足风险等级 C(v)=2（高风险）的靶点集合
+<query>1,2,3</query>
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，评估失败。
+提交最终医学判定时，必须指明判定结果：
 
-## 查询与提交答案的格式（必须严格遵守）
+**如果判定两项指标互斥**（没有双阳性患者），使用：
+<answer>Disjoint</answer>
 
-查询靶点风险等级（例如查询靶点 A）：
-<query>A</query>
+**如果判定两项指标不互斥**（存在双阳性患者），必须提供一名见证患者（同时在 R 和 B 中的受试者编号）：
+<answer>Witness=5</answer>
 
-提交最终答案时，必须说明规则类型（A、B、C 或 D）并列出所有等级为 2 的靶点（用逗号隔开，顺序不限），格式如下：
-<answer>rule=A, nodes=B,C</answer>
-
-如果没有靶点的等级为 2，则靶点列表写 NONE：
-<answer>rule=B, nodes=NONE</answer>
+注意：由于化验试剂昂贵，你需要用尽可能少的查询次数完成分析。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the "Target Protein Synergistic Toxicity Assessment System". Here are the rules:
+[Healthcare Scenario]
+Clinical Trial Data Analysis:
 
-The known biological network G contains the following drug targets and interaction relationships:
-- Target Proteins (Nodes): {nodes}
-- Interactions (Undirected edges): {edges}
+In our targeted therapy clinical cohort, there are N subjects, forming a set U = {{1, 2, ..., {n}}}. The research team suspects the presence of two hidden physiological traits: R (carrying Genetic Mutation Alpha) and B (elevated Serum Viral Load Beta). Each subject may be in one of four states:
+1. Only carries Mutation Alpha (Only in R)
+2. Only has elevated Load Beta (Only in B)
+3. Has both Mutation Alpha and elevated Load Beta (In both R and B)
+4. Negative for both metrics (In neither)
 
-Each target v has a synergistic complex count T(v), representing the number of "ternary synergistic complexes" the target participates in (i.e., there exist two interacting targets u and w of v such that interactions vu, vw, and uw all exist simultaneously).
+Your goal is to determine whether R and B are disjoint (i.e., whether there are any high-risk dual-positive patients). You can repeatedly conduct the following "batch blood tests" (one query per turn), and I will provide the truthful lab readings:
 
-The complex counts for each target are:
-{triangle_counts}
+**Count Query**: Given a test subset of subjects T (represented as a list of IDs), I will return two numbers (r, b), where:
+- r = the number of patients in T carrying Mutation Alpha
+- b = the number of patients in T with elevated Load Beta
 
-The system features an unknown toxicity risk assessment rule f: {{0,1,2,3,4}} to {{0,1,2}} (corresponding to toxicity risk codes), selected from one of these four candidates:
-- Rule A: 0 to 0, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule B: 0 to 0, 1 to 2, 2 to 0, 3 to 1, 4 to 2
-- Rule C: 0 to 1, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule D: 0 to 1, 1 to 2, 2 to 0, 3 to 1, 4 to 2
+For example, if you query {{1, 2, 3}}, I might return (2, 1), meaning among these three patients, 2 have the Alpha mutation and 1 has an elevated Beta load.
 
-The final toxicity risk level of each target v is defined as C(v) = f(T(v)).
+When you have enough information, submit your final medical conclusion. If the conclusion is wrong or the format is invalid, the analysis fails.
 
-You can repeatedly query targets to request their risk codes. The system will answer truthfully based on the actual assessment rule.
+For each batch test query, use the following XML format, listing the subject IDs to test (comma-separated):
 
-Your goal is to:
-1. Identify the current assessment rule (A, B, C, or D)
-2. Provide the complete set of targets where risk level C(v)=2 (High Risk) under that rule
+<query>1,2,3</query>
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the assessment fails.
+When submitting the final conclusion, you must specify your diagnostic result:
 
-## Query and Answer Format (strictly required)
+**If you determine the metrics are disjoint** (no dual-positive patients), use:
+<answer>Disjoint</answer>
 
-To query a target's risk level (e.g., querying target A):
-<query>A</query>
+**If you determine the metrics are not disjoint** (a dual-positive patient exists), you must provide a witness patient (an ID that is in both R and B):
+<answer>Witness=5</answer>
 
-When submitting the final answer, specify the rule type (A, B, C, or D) and list all targets with C(v)=2 (comma-separated, order does not matter):
-<answer>rule=A, nodes=B,C</answer>
-
-If no targets have a level of 2, write NONE for the node list:
-<answer>rule=B, nodes=NONE</answer>
+Note: Since test reagents are expensive, you should complete the analysis with as few queries as possible.
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-【教育场景】
-我们来使用“学生互助网络综合评价系统”，规则如下：
+学科竞赛集训冲突排查：
 
-当前的班级学习网络 G 包含以下学生与互助关系：
-- 学生节点：{nodes}
-- 互助关系（双向）：{edges}
+在学校选拔的尖子生集合 U = {{1, 2, ..., {n}}} 中，教务处刚刚确立了两份保密的集训名单：R（入选数学奥林匹克集训）和 B（入选物理奥林匹克集训）。每位尖子生可能处于以下四种状态之一：
+1. 仅入选数学集训（仅在 R 中）
+2. 仅入选物理集训（仅在 B 中）
+3. 同时入选两科集训（同时在 R 和 B 中）
+4. 两科均未入选（两者都不在）
 
-已知每名学生 v 都有一个学习小组计数 T(v)，表示该学生参与的“三人学习互助组”个数（即存在与 v 互助的两名学生 u 和 w，使得互助关系 vu、vw、uw 三者同时存在）。
+你的目标是判断 R 与 B 是否互斥（即排查是否存在同时需要参加两科集训，导致时间冲突的学生）。你可以反复向年级主任进行以下“名单核对”（每次一个查询），我会如实返回核对结果：
 
-各学生的学习小组计数如下：
-{triangle_counts}
+**计数查询**：给定一个测试学生小组 T（用学号列表表示），我会返回两个数字 (r, b)，其中：
+- r = T 中入选数学集训的人数
+- b = T 中入选物理集训的人数
 
-系统内置了一个未知的综合表现评级规则 f: {{0,1,2,3,4}} 到 {{0,1,2}}，对应表现评级代码，从以下四个候选规则中选取其一：
-- 规则A：0到0, 1到1, 2到2, 3到0, 4到1
-- 规则B：0到0, 1到2, 2到0, 3到1, 4到2
-- 规则C：0到1, 1到1, 2到2, 3到0, 4到1
-- 规则D：0到1, 1到2, 2到0, 3到1, 4到2
+例如，如果你查询 {{1, 2, 3}}，我可能返回 (2, 1)，表示这三名学生中有 2 人参加数学集训，1 人参加物理集训。
 
-每名学生 v 的最终表现评级定义为 C(v) = f(T(v))。
+当你收集足够信息后，请提交最终排查结果。若结果错误或格式不符，排查任务失败。
 
-你可以反复进行查询，每次选择一名学生并请求其表现评级代码。系统会根据真实的评级规则如实返回。
+每次核对名单时，使用以下 XML 格式，列出要查询的学生学号（用逗号分隔）：
 
-你的目标是：
-1. 识别当前采用的综合表现评级规则（A、B、C 或 D）
-2. 给出在该规则下所有满足表现评级 C(v)=2（卓越表现）的学生集合
+<query>1,2,3</query>
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，评价任务失败。
+提交最终排查结果时，必须指明判定结果：
 
-## 查询与提交答案的格式（必须严格遵守）
+**如果判定两份名单互斥**（没有时间冲突的学生），使用：
+<answer>Disjoint</answer>
 
-查询学生的表现评级（例如查询学生 A）：
-<query>A</query>
+**如果判定两份名单不互斥**（存在时间冲突的学生），必须提供一名见证学生（同时在 R 和 B 中的学生学号）：
+<answer>Witness=5</answer>
 
-提交最终答案时，必须说明规则类型（A、B、C 或 D）并列出所有评级为 2 的学生（用逗号隔开，顺序不限），格式如下：
-<answer>rule=A, nodes=B,C</answer>
-
-如果没有任何学生的评级为 2，则学生列表写 NONE：
-<answer>rule=B, nodes=NONE</answer>
+注意：你需要用尽可能少的核对次数完成排查。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's use the "Student Mutual Support Network Comprehensive Evaluation System". Here are the rules:
+Academic Olympiad Conflict Resolution:
 
-The current class study network G contains the following students and mutual support ties:
-- Students (Nodes): {nodes}
-- Support Ties (Undirected edges): {edges}
+Among the school's elite student pool U = {{1, 2, ..., {n}}}, the academic affairs office has just finalized two confidential training rosters: R (Math Olympiad Camp) and B (Physics Olympiad Camp). Each student may be in one of four states:
+1. Only selected for Math (Only in R)
+2. Only selected for Physics (Only in B)
+3. Selected for both camps (In both R and B)
+4. Selected for neither (In neither)
 
-Each student v has a study group count T(v), representing the number of "triad study groups" the student is part of (i.e., there exist two peers u and w of v such that mutual support ties vu, vw, and uw all exist simultaneously).
+Your goal is to determine whether R and B are disjoint (i.e., whether there are any students facing a schedule conflict by being in both camps). You can repeatedly request a "roster check" from the grade director (one query per turn), and I will provide the truthful check results:
 
-The study group counts for each student are:
-{triangle_counts}
+**Count Query**: Given a test group of students T (represented as a list of IDs), I will return two numbers (r, b), where:
+- r = the number of students in T selected for the Math camp
+- b = the number of students in T selected for the Physics camp
 
-The system utilizes an unknown comprehensive performance evaluation rule f: {{0,1,2,3,4}} to {{0,1,2}} (corresponding to performance tier codes), selected from one of these four candidates:
-- Rule A: 0 to 0, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule B: 0 to 0, 1 to 2, 2 to 0, 3 to 1, 4 to 2
-- Rule C: 0 to 1, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule D: 0 to 1, 1 to 2, 2 to 0, 3 to 1, 4 to 2
+For example, if you query {{1, 2, 3}}, I might return (2, 1), meaning among these three students, 2 are in the Math camp and 1 is in the Physics camp.
 
-The final performance tier of each student v is defined as C(v) = f(T(v)).
+When you have enough information, submit your final resolution. If the resolution is wrong or the format is invalid, the task fails.
 
-You can repeatedly query students to request their performance tier codes. The system will answer truthfully based on the actual evaluation rule.
+For each roster check query, use the following XML format, listing the student IDs (comma-separated):
 
-Your goal is to:
-1. Identify the current evaluation rule (A, B, C, or D)
-2. Provide the complete set of students where performance tier C(v)=2 (Outstanding Performance) under that rule
+<query>1,2,3</query>
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the evaluation fails.
+When submitting the final resolution, you must specify your conclusion:
 
-## Query and Answer Format (strictly required)
+**If you determine the rosters are disjoint** (no scheduling conflicts), use:
+<answer>Disjoint</answer>
 
-To query a student's performance tier (e.g., querying student A):
-<query>A</query>
+**If you determine the rosters are not disjoint** (a student with a conflict exists), you must provide a witness student (an ID that is in both R and B):
+<answer>Witness=5</answer>
 
-When submitting the final answer, specify the rule type (A, B, C, or D) and list all students with C(v)=2 (comma-separated, order does not matter):
-<answer>rule=A, nodes=B,C</answer>
-
-If no students have a tier of 2, write NONE for the node list:
-<answer>rule=B, nodes=NONE</answer>
+Note: You should complete the resolution with as few checks as possible.
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-【工业制造场景】
-我们来进入“生产线冗余单元维护调度系统”，规则如下：
+自动化产线故障诊断：
 
-当前的生产流水线网络 G 包含以下加工工位与物料链路：
-- 生产工位：{nodes}
-- 物料链路（双向）：{edges}
+在我们的核心智能制造流水线中，有 N 台关键机械臂，编号集合 U = {{1, 2, ..., {n}}}。维护中控系统提示可能存在两类潜在的隐患：R（机械轴承磨损超标）和 B（控制固件逻辑异常）。每台机械臂可能处于以下四种状态之一：
+1. 仅机械磨损超标（仅在 R 中）
+2. 仅固件逻辑异常（仅在 B 中）
+3. 同时存在机械磨损与固件异常（同时在 R 和 B 中）
+4. 运行正常（两者都不在）
 
-已知每个工位 v 都有一个闭环单元计数 T(v)，表示该工位参与的“冗余闭环加工单元”个数（即存在与 v 互传物料的两个工位 u 和 w，使得物料链路 vu、vw、uw 三者同时存在）。
+你的目标是判断 R 与 B 是否互斥（即排查这两类故障是否完全独立，或者是否存在同时发生双重故障的瘫痪节点）。你可以反复通过工业物联网总线发送以下“诊断指令”（每次一个查询），我会如实返回底层硬件的自检读数：
 
-各工位的闭环单元计数如下：
-{triangle_counts}
+**计数查询**：给定一个测试机械臂批次 T（用编号列表表示），我会返回两个数字 (r, b)，其中：
+- r = T 中机械磨损超标的机械臂数量
+- b = T 中固件逻辑异常的机械臂数量
 
-系统内置了一个未知的维护调度规则 f: {{0,1,2,3,4}} 到 {{0,1,2}}，对应设备维护优先级代码，从以下四个候选规则中选取其一：
-- 规则A：0到0, 1到1, 2到2, 3到0, 4到1
-- 规则B：0到0, 1到2, 2到0, 3到1, 4到2
-- 规则C：0到1, 1到1, 2到2, 3到0, 4到1
-- 规则D：0到1, 1到2, 2到0, 3到1, 4到2
+例如，如果你查询 {{1, 2, 3}}，我可能返回 (2, 1)，表示这三台设备中有 2 台存在机械磨损，1 台存在固件异常。
 
-每个工位 v 的最终维护优先级定义为 C(v) = f(T(v))。
+当你收集足够信息后，请提交最终诊断报告。若报告错误或格式不符，产线将面临停机风险，游戏失败。
 
-你可以反复进行查询，每次选择一个工位并请求其维护优先级代码。系统会根据真实的调度规则如实返回。
+每次发送诊断指令时，使用以下 XML 格式，列出要查询的设备编号（用逗号分隔）：
 
-你的目标是：
-1. 识别当前采用的维护调度规则（A、B、C 或 D）
-2. 给出在该规则下所有满足维护优先级 C(v)=2（紧急维护）的工位集合
+<query>1,2,3</query>
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，调度任务失败。
+提交最终诊断报告时，必须指明判定结果：
 
-## 查询与提交答案的格式（必须严格遵守）
+**如果判定两类故障互斥**（没有双重故障的设备），使用：
+<answer>Disjoint</answer>
 
-查询工位维护优先级（例如查询工位 A）：
-<query>A</query>
+**如果判定两类故障不互斥**（存在双重故障的设备），必须提供一台见证设备（同时在 R 和 B 中的机械臂编号）：
+<answer>Witness=5</answer>
 
-提交最终答案时，必须说明规则类型（A、B、C 或 D）并列出所有优先级为 2 的工位（用逗号隔开，顺序不限），格式如下：
-<answer>rule=A, nodes=B,C</answer>
-
-如果没有工位的优先级为 2，则工位列表写 NONE：
-<answer>rule=B, nodes=NONE</answer>
+注意：为了避免产线长时间降级运行，你需要用尽可能少的诊断次数完成推理。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Let's access the "Production Line Redundant Cell Maintenance Scheduling System". Here are the rules:
+[Manufacturing/Industry Scenario]
+Automated Production Line Diagnostics:
 
-The current production line network G contains the following workstations and material transfer links:
-- Workstations (Nodes): {nodes}
-- Material Links (Undirected edges): {edges}
+In our core smart manufacturing assembly line, there are N critical robotic arms, forming a set U = {{1, 2, ..., {n}}}. The central maintenance system has flagged two potential underlying faults: R (Mechanical Bearing Wear) and B (Firmware Logic Anomaly). Each robotic arm may be in one of four states:
+1. Only has mechanical wear (Only in R)
+2. Only has a firmware anomaly (Only in B)
+3. Has both mechanical wear and firmware anomaly (In both R and B)
+4. Operating normally (In neither)
 
-Each workstation v has a closed-loop cell count T(v), representing the number of "redundant closed-loop processing cells" the workstation is involved in (i.e., there exist two connected workstations u and w of v such that material links vu, vw, and uw all exist simultaneously).
+Your goal is to determine whether R and B are disjoint (i.e., whether these fault types are completely independent, or if there is a crippled node suffering from a dual fault). You can repeatedly send the following "diagnostic commands" via the IIoT bus (one query per turn), and I will provide the truthful hardware self-test readings:
 
-The cell counts for each workstation are:
-{triangle_counts}
+**Count Query**: Given a test batch of robotic arms T (represented as a list of IDs), I will return two numbers (r, b), where:
+- r = the number of arms in T with mechanical wear
+- b = the number of arms in T with a firmware anomaly
 
-The system has an unknown maintenance scheduling rule f: {{0,1,2,3,4}} to {{0,1,2}} (corresponding to maintenance priority codes), selected from one of these four candidates:
-- Rule A: 0 to 0, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule B: 0 to 0, 1 to 2, 2 to 0, 3 to 1, 4 to 2
-- Rule C: 0 to 1, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule D: 0 to 1, 1 to 2, 2 to 0, 3 to 1, 4 to 2
+For example, if you query {{1, 2, 3}}, I might return (2, 1), meaning among these three devices, 2 have mechanical wear and 1 has a firmware anomaly.
 
-The final maintenance priority of each workstation v is defined as C(v) = f(T(v)).
+When you have enough information, submit your final diagnostic report. If the report is wrong or the format is invalid, the production line faces downtime, and the mission fails.
 
-You can repeatedly query workstations to request their priority codes. The system will answer truthfully based on the actual scheduling rule.
+For each diagnostic query, use the following XML format, listing the device IDs to test (comma-separated):
 
-Your goal is to:
-1. Identify the current scheduling rule (A, B, C, or D)
-2. Provide the complete set of workstations where priority C(v)=2 (Critical Priority) under that rule
+<query>1,2,3</query>
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the scheduling fails.
+When submitting the final report, you must specify your conclusion:
 
-## Query and Answer Format (strictly required)
+**If you determine the faults are disjoint** (no dual-fault devices), use:
+<answer>Disjoint</answer>
 
-To query a workstation's priority code (e.g., querying workstation A):
-<query>A</query>
+**If you determine the faults are not disjoint** (a dual-fault device exists), you must provide a witness device (an ID that is in both R and B):
+<answer>Witness=5</answer>
 
-When submitting the final answer, specify the rule type (A, B, C, or D) and list all workstations with C(v)=2 (comma-separated, order does not matter):
-<answer>rule=A, nodes=B,C</answer>
-
-If no workstations have a priority of 2, write NONE for the node list:
-<answer>rule=B, nodes=NONE</answer>
+Note: To prevent prolonged degraded operations, you should complete the diagnostics with as few queries as possible.
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-【法律合规场景】
-欢迎进入“企业关联交易合规审查系统”，规则如下：
+诉讼案认证物证审查：
 
-当前的商业关联网络 G 包含以下企业法人与合同关联：
-- 企业法人：{nodes}
-- 合同关联（双向）：{edges}
+在一起复杂的商业合规诉讼案中，法庭传唤了 N 份核心商业文档，编号集合 U = {{1, 2, ..., {n}}}。我们的律师团队需要审查其中两类高度敏感的违规内容：R（涉及个人隐私泄露）和 B（包含财务造假证据）。每份文档可能处于以下四种状态之一：
+1. 仅涉及隐私泄露（仅在 R 中）
+2. 仅包含财务造假（仅在 B 中）
+3. 同时存在隐私泄露与财务造假（同时在 R 和 B 中）
+4. 内容完全合规（两者都不在）
 
-已知每个企业 v 都有一个三角交易计数 T(v)，表示该企业参与的“三角债或关联交易闭环”个数（即存在与 v 有业务关联的两个企业 u 和 w，使得合同关联 vu、vw、uw 三者同时存在）。
+你的目标是判断 R 与 B 是否互斥（即排查卷宗中是否存在同时坐实两项指控的“铁证”文档）。你可以反复将文档提交给智能法务助手进行“合规扫描”（每次一个查询），我会如实返回审查读数：
 
-各企业的三角交易计数如下：
-{triangle_counts}
+**计数查询**：给定一个测试文档批次 T（用编号列表表示），我会返回两个数字 (r, b)，其中：
+- r = T 中涉及隐私泄露的文档数量
+- b = T 中包含财务造假的文档数量
 
-系统内置了一个未知的合规审查规则 f: {{0,1,2,3,4}} 到 {{0,1,2}}，对应风险预警级别代码，从以下四个候选规则中选取其一：
-- 规则A：0到0, 1到1, 2到2, 3到0, 4到1
-- 规则B：0到0, 1到2, 2到0, 3到1, 4到2
-- 规则C：0到1, 1到1, 2到2, 3到0, 4到1
-- 规则D：0到1, 1到2, 2到0, 3到1, 4到2
+例如，如果你查询 {{1, 2, 3}}，我可能返回 (2, 1)，表示这三份文档中有 2 份涉及隐私问题，1 份涉及财务问题。
 
-每个企业 v 的最终风险预警级别定义为 C(v) = f(T(v))。
+当你收集足够信息后，请提交最终审查意见。若意见错误或格式不符，法庭辩护将陷入被动，游戏失败。
 
-你可以反复进行查询，每次选择一家企业并请求其预警级别代码。系统会根据真实的审查规则如实返回。
+每次提交法务扫描时，使用以下 XML 格式，列出要查询的文档编号（用逗号分隔）：
 
-你的目标是：
-1. 识别当前采用的合规审查规则（A、B、C 或 D）
-2. 给出在该规则下所有满足预警级别 C(v)=2（红色高风险预警）的企业集合
+<query>1,2,3</query>
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，审查任务失败。
+提交最终审查意见时，必须指明判定结果：
 
-## 查询与提交答案的格式（必须严格遵守）
+**如果判定两类违规互斥**（没有同时坐实两项指控的文档），使用：
+<answer>Disjoint</answer>
 
-查询企业风险预警级别（例如查询企业 A）：
-<query>A</query>
+**如果判定两类违规不互斥**（存在双重违规的“铁证”），必须提供一份见证文档（同时在 R 和 B 中的文档编号）：
+<answer>Witness=5</answer>
 
-提交最终答案时，必须说明规则类型（A、B、C 或 D）并列出所有预警级别为 2 的企业（用逗号隔开，顺序不限），格式如下：
-<answer>rule=A, nodes=B,C</answer>
-
-如果没有任何企业的预警级别为 2，则企业列表写 NONE：
-<answer>rule=B, nodes=NONE</answer>
+注意：由于法律审查耗时费力，你需要用尽可能少的扫描次数完成推理。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the "Corporate Related-Party Transaction Compliance Audit System". Here are the rules:
+[Law Scenario]
+Litigation Evidence Review:
 
-The current commercial association network G contains the following corporate entities and contractual ties:
-- Corporate Entities (Nodes): {nodes}
-- Contractual Ties (Undirected edges): {edges}
+In a complex commercial compliance lawsuit, the court has subpoenaed N core business documents, forming a set U = {{1, 2, ..., {n}}}. Our legal team must review them for two highly sensitive types of violations: R (Privacy Violation) and B (Financial Fraud Evidence). Each document may be in one of four states:
+1. Only involves a privacy violation (Only in R)
+2. Only contains financial fraud evidence (Only in B)
+3. Contains both privacy violation and financial fraud (In both R and B)
+4. Completely compliant (In neither)
 
-Each corporation v has a triangular transaction count T(v), representing the number of "triangular debts or transaction loops" the entity is involved in (i.e., there exist two associated corporations u and w of v such that contractual ties vu, vw, and uw all exist simultaneously).
+Your goal is to determine whether R and B are disjoint (i.e., whether there is any "smoking gun" document in the docket that solidifies both allegations simultaneously). You can repeatedly submit documents to the AI paralegal for a "compliance scan" (one query per turn), and I will provide the truthful review readings:
 
-The transaction counts for each corporation are:
-{triangle_counts}
+**Count Query**: Given a test batch of documents T (represented as a list of IDs), I will return two numbers (r, b), where:
+- r = the number of documents in T involving privacy violations
+- b = the number of documents in T containing financial fraud
 
-The system utilizes an unknown compliance audit rule f: {{0,1,2,3,4}} to {{0,1,2}} (corresponding to risk warning level codes), selected from one of these four candidates:
-- Rule A: 0 to 0, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule B: 0 to 0, 1 to 2, 2 to 0, 3 to 1, 4 to 2
-- Rule C: 0 to 1, 1 to 1, 2 to 2, 3 to 0, 4 to 1
-- Rule D: 0 to 1, 1 to 2, 2 to 0, 3 to 1, 4 to 2
+For example, if you query {{1, 2, 3}}, I might return (2, 1), meaning among these three documents, 2 involve privacy issues and 1 involves financial fraud.
 
-The final risk warning level of each corporation v is defined as C(v) = f(T(v)).
+When you have enough information, submit your final review opinion. If the opinion is wrong or the format is invalid, our court defense will be compromised, and the game fails.
 
-You can repeatedly query corporations to request their warning level codes. The system will answer truthfully based on the actual audit rule.
+For each paralegal scan query, use the following XML format, listing the document IDs to scan (comma-separated):
 
-Your goal is to:
-1. Identify the current audit rule (A, B, C, or D)
-2. Provide the complete set of corporations where warning level C(v)=2 (Red High-Risk Warning) under that rule
+<query>1,2,3</query>
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the audit fails.
+When submitting the final review opinion, you must specify your conclusion:
 
-## Query and Answer Format (strictly required)
+**If you determine the violations are disjoint** (no document solidifies both allegations), use:
+<answer>Disjoint</answer>
 
-To query a corporation's risk warning level (e.g., querying corporation A):
-<query>A</query>
+**If you determine the violations are not disjoint** (a dual-violation "smoking gun" exists), you must provide a witness document (an ID that is in both R and B):
+<answer>Witness=5</answer>
 
-When submitting the final answer, specify the rule type (A, B, C, or D) and list all corporations with C(v)=2 (comma-separated, order does not matter):
-<answer>rule=A, nodes=B,C</answer>
-
-If no corporations have a warning level of 2, write NONE for the node list:
-<answer>rule=B, nodes=NONE</answer>
+Note: Since legal review is time-consuming, you should complete the deduction with as few scans as possible.
 """
 
     tags = ["answer", "query"]
-    reasoning_type = "溯因推理"
-    data_structure = "图"
-
-    # 难度配置说明：
-    # 1 (简单)       - 小图，规则A，较少冲突
-    # 2 (中等偏下)   - 中等图，规则B，需要2-3次查询
-    # 3 (中等偏上)   - 原始图，规则C，需要3-4次查询
-    # 4 (较难)       - 原始图，规则D，需要4-5次查询，更多歧义
-    # 5 (难)         - 原始图，规则B，最大歧义和重叠
+    
+    reasoning_type = "演绎推理"
+    data_structure = "集合"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "nodes": "A, B, C, D",
-                "edges": "AB, AC, BC, AD",
-                "triangle_counts": "T(A)=1, T(B)=1, T(C)=1, T(D)=0",
-                "rule": "A",  # 规则A: 0→0, 1→1, 2→2, 3→0, 4→1
+                "n": 4,
+                "R": [1, 2],
+                "B": [3, 4],
+                "is_disjoint": True,
             },
             2: {
-                "nodes": "A, B, C, D, E, F",
-                "edges": "AB, AC, BC, AD, BD, AE, BE",
-                "triangle_counts": "T(A)=3, T(B)=3, T(C)=1, T(D)=1, T(E)=1, T(F)=0",
-                "rule": "B",  # 规则B: 0→0, 1→2, 2→0, 3→1, 4→2
+                "n": 6,
+                "R": [1, 2, 3],
+                "B": [3, 4, 5],
+                "is_disjoint": False,
             },
             3: {
-                "nodes": "A, B, C, D, E, F, G",
-                "edges": "AB, AC, BC, AD, BD, AE, BE, AF, CF, AG",
-                "triangle_counts": "T(A)=4, T(B)=3, T(C)=2, T(D)=1, T(E)=1, T(F)=1, T(G)=0",
-                "rule": "C",  # 规则C: 0→1, 1→1, 2→2, 3→0, 4→1
+                "n": 8,
+                "R": [1, 2, 3, 4],
+                "B": [5, 6, 7, 8],
+                "is_disjoint": True,
             },
             4: {
-                "nodes": "A, B, C, D, E, F, G",
-                "edges": "AB, AC, BC, AD, BD, AE, BE, AF, CF, AG",
-                "triangle_counts": "T(A)=4, T(B)=3, T(C)=2, T(D)=1, T(E)=1, T(F)=1, T(G)=0",
-                "rule": "D",  # 规则D: 0→1, 1→2, 2→0, 3→1, 4→2
+                "n": 10,
+                "R": [1, 2, 3, 4, 5],
+                "B": [4, 5, 6, 7, 8],
+                "is_disjoint": False,
             },
             5: {
-                "nodes": "A, B, C, D, E, F, G",
-                "edges": "AB, AC, BC, AD, BD, AE, BE, AF, CF, AG",
-                "triangle_counts": "T(A)=4, T(B)=3, T(C)=2, T(D)=1, T(E)=1, T(F)=1, T(G)=0",
-                "rule": "B",  # 规则B: 0→0, 1→2, 2→0, 3→1, 4→2
+                "n": 12,
+                "R": [1, 3, 5, 7, 9, 11],
+                "B": [2, 4, 6, 8, 10, 12],
+                "is_disjoint": True,
             },
         },
         "en": {
             1: {
-                "nodes": "A, B, C, D",
-                "edges": "AB, AC, BC, AD",
-                "triangle_counts": "T(A)=1, T(B)=1, T(C)=1, T(D)=0",
-                "rule": "A",
+                "n": 4,
+                "R": [1, 2],
+                "B": [3, 4],
+                "is_disjoint": True,
             },
             2: {
-                "nodes": "A, B, C, D, E, F",
-                "edges": "AB, AC, BC, AD, BD, AE, BE",
-                "triangle_counts": "T(A)=3, T(B)=3, T(C)=1, T(D)=1, T(E)=1, T(F)=0",
-                "rule": "B",
+                "n": 6,
+                "R": [1, 2, 3],
+                "B": [3, 4, 5],
+                "is_disjoint": False,
             },
             3: {
-                "nodes": "A, B, C, D, E, F, G",
-                "edges": "AB, AC, BC, AD, BD, AE, BE, AF, CF, AG",
-                "triangle_counts": "T(A)=4, T(B)=3, T(C)=2, T(D)=1, T(E)=1, T(F)=1, T(G)=0",
-                "rule": "C",
+                "n": 8,
+                "R": [1, 2, 3, 4],
+                "B": [5, 6, 7, 8],
+                "is_disjoint": True,
             },
             4: {
-                "nodes": "A, B, C, D, E, F, G",
-                "edges": "AB, AC, BC, AD, BD, AE, BE, AF, CF, AG",
-                "triangle_counts": "T(A)=4, T(B)=3, T(C)=2, T(D)=1, T(E)=1, T(F)=1, T(G)=0",
-                "rule": "D",
+                "n": 10,
+                "R": [1, 2, 3, 4, 5],
+                "B": [4, 5, 6, 7, 8],
+                "is_disjoint": False,
             },
             5: {
-                "nodes": "A, B, C, D, E, F, G",
-                "edges": "AB, AC, BC, AD, BD, AE, BE, AF, CF, AG",
-                "triangle_counts": "T(A)=4, T(B)=3, T(C)=2, T(D)=1, T(E)=1, T(F)=1, T(G)=0",
-                "rule": "B",
+                "n": 12,
+                "R": [1, 3, 5, 7, 9, 11],
+                "B": [2, 4, 6, 8, 10, 12],
+                "is_disjoint": True,
             },
         },
     }
 
-    # 映射规则定义
-    RULES = {
-        "A": {0: 0, 1: 1, 2: 2, 3: 0, 4: 1},
-        "B": {0: 0, 1: 2, 2: 0, 3: 1, 4: 2},
-        "C": {0: 1, 1: 1, 2: 2, 3: 0, 4: 1},
-        "D": {0: 1, 1: 2, 2: 0, 3: 1, 4: 2},
-    }
-
-    def __init__(self, config):
-        super().__init__(config)
-
     def _initialize_game(self):
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -605,151 +499,109 @@ If no corporations have a warning level of 2, write NONE for the node list:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
         
-        # 填充游戏信息
-        self._game_info["nodes"] = cfg["nodes"]
-        self._game_info["edges"] = cfg["edges"]
-        self._game_info["triangle_counts"] = cfg["triangle_counts"]
+        self.R = set(cfg["R"])
+        self.B = set(cfg["B"])
+        self.is_disjoint = cfg["is_disjoint"]
         
-        # 解析三角计数 T(v)
-        self.triangle_map = {}  # 节点 -> 三角计数
-        counts_str = cfg["triangle_counts"]
-        # 解析格式如 "T(A)=4, T(B)=3, ..."
-        pattern = r'T\(([A-Z])\)\s*=\s*(\d+)'
-        for match in re.finditer(pattern, counts_str):
-            node = match.group(1)
-            count = int(match.group(2))
-            self.triangle_map[node] = count
-        
-        # 获取真实规则
-        self.true_rule = cfg["rule"]
-        if self.true_rule not in self.RULES:
-            raise ValueError(f"Unknown rule: {self.true_rule}")
-        
-        # 计算每个节点的编码 C(v) = f(T(v))
-        self.encoding_map = {}  # 节点 -> 编码
-        rule_func = self.RULES[self.true_rule]
-        for node, t_count in self.triangle_map.items():
-            self.encoding_map[node] = rule_func[t_count]
-        
-        # 计算正确答案：所有 C(v)=2 的节点
-        self.target_nodes = set()
-        for node, encoding in self.encoding_map.items():
-            if encoding == 2:
-                self.target_nodes.add(node)
+        self.intersection = self.R & self.B
 
     def evaluate(self, parsed_info):
-        """
-        评估最终答案是否正确
-        答案格式：rule=X, nodes=A,B,C 或 rule=X, nodes=NONE
-        """
         raw_ans = parsed_info["answer"].strip()
         
-        try:
-            # 使用正则表达式来正确解析 "rule=X, nodes=..." 格式
-            # 先提取 rule
-            rule_match = re.search(r'rule\s*=\s*([A-Da-d])', raw_ans)
-            if not rule_match:
+        if raw_ans == "Disjoint":
+            return self.is_disjoint
+        
+        witness_match = re.match(r'^Witness\s*=\s*(\d+)$', raw_ans, re.IGNORECASE)
+        if witness_match:
+            try:
+                witness_id = int(witness_match.group(1))
+                return not self.is_disjoint and witness_id in self.intersection
+            except:
                 return False
-            predicted_rule = rule_match.group(1).upper()
-            
-            # 再提取 nodes
-            nodes_match = re.search(r'nodes\s*=\s*(.*)', raw_ans)
-            if not nodes_match:
-                return False
-            nodes_str = nodes_match.group(1).strip().upper()
-            
-            # 1. 检查规则是否正确
-            if predicted_rule != self.true_rule:
-                return False
-            
-            # 2. 检查节点集合是否正确
-            if nodes_str == "NONE":
-                predicted_nodes = set()
-            else:
-                predicted_nodes = set(n.strip() for n in nodes_str.split(",") if n.strip())
-            
-            return predicted_nodes == self.target_nodes
-            
-        except Exception:
-            return False
+        
+        return False
 
     def _cf_core_produce(self, parsed_info):
         if "query" not in parsed_info:
             raise ValueError("No valid query tag found.")
         
-        node = parsed_info["query"].strip().upper()
+        raw_query = parsed_info["query"].strip()
         
-        # 检查节点是否存在
-        if node not in self.triangle_map:
+        if not raw_query:
             if self.config.language == "zh":
-                return f"错误：节点 {node} 不存在于图中。"
+                return "错误：查询集合不能为空。"
             else:
-                return f"Error: Node {node} does not exist in the graph."
+                return "Error: Query set cannot be empty."
         
-        # 返回编码
-        encoding = self.encoding_map[node]
-        if self.config.language == "zh":
-            return f"CODE {encoding}"
-        else:
-            return f"CODE {encoding}"
+        try:
+            query_ids = [int(x.strip()) for x in raw_query.split(",") if x.strip()]
+            
+            n = self._game_info["n"]
+            for qid in query_ids:
+                if qid < 1 or qid > n:
+                    if self.config.language == "zh":
+                        return f"错误：编号 {qid} 超出范围 [1, {n}]。"
+                    else:
+                        return f"Error: ID {qid} is out of range [1, {n}]."
+            
+            query_set = set(query_ids)
+            r_count = len(query_set & self.R)
+            b_count = len(query_set & self.B)
+            
+            return f"({r_count}, {b_count})"
+            
+        except ValueError:
+            if self.config.language == "zh":
+                return "错误：查询格式无效，请使用逗号分隔的数字列表。"
+            else:
+                return "Error: Invalid query format. Please use comma-separated numbers."
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        n = self._game_info["n"]
+        
+        for i in range(1, n + 1):
+            query_set = {i}
+            r_count = len(query_set & self.R)
+            b_count = len(query_set & self.B)
+            answer_str = f"({r_count}, {b_count})"
+            
+            results.append({
+                "query": f"<query>{i}</query>",
+                "answer": answer_str
+            })
+        
+        return results
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """
-        将正确的编码响应替换为错误的编码响应。
-        正确响应格式为 "CODE X"，其中 X 为 0、1 或 2。
-        """
-        # 尝试匹配 "CODE X" 格式
-        match = re.match(r'^CODE\s+(\d+)$', correct.strip())
-        if match:
-            val = int(match.group(1))
-            # 将编码值替换为不同的合法值 (0, 1, 2 中选一个不同的)
-            wrong_val = (val + 1) % 3
-            return f"CODE {wrong_val}"
-        
-        # 处理错误信息的情况（不应该在反事实干预中出现，但作为保底）
+        m = re.match(r'^\((\d+),\s*(\d+)\)$', correct.strip())
+        if m:
+            r_val = int(m.group(1))
+            b_val = int(m.group(2))
+            if r_val > 0:
+                wrong_r = r_val - 1
+            else:
+                wrong_r = r_val + 1
+            return f"({wrong_r}, {b_val})"
+            
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        lower_correct = correct.lower()
-        if "yes" in lower_correct:
-            return correct.replace("Yes", "No").replace("YES", "NO").replace("yes", "no")
-        if "no" in lower_correct:
-            return correct.replace("No", "Yes").replace("NO", "YES").replace("no", "yes")
-        
-        # 中文关键词替换
         if "是" in correct:
             return correct.replace("是", "否")
         if "否" in correct:
             return correct.replace("否", "是")
             
+        lower_correct = correct.lower()
+        if "yes" in lower_correct:
+            if "Yes" in correct: return correct.replace("Yes", "No")
+            if "YES" in correct: return correct.replace("YES", "NO")
+            return correct.replace("yes", "no")
+        if "no" in lower_correct:
+            if "No" in correct: return correct.replace("No", "Yes")
+            if "NO" in correct: return correct.replace("NO", "YES")
+            return correct.replace("no", "yes")
+
         return correct + "_WRONG"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 合法的 XML 标签字符串
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
-        # 本游戏的查询空间为图中所有节点
-        # self.encoding_map 在初始化时已填充所有节点
-        for node in self.encoding_map.keys():
-            # 构造 parsed_info 格式的查询
-            parsed_info = {"query": node}
-            
-            # 使用 _cf_core_produce 获取无副作用的正确答案
-            # 该方法内部已处理了语言(zh/en)和格式(CODE X)
-            answer = self._cf_core_produce(parsed_info)
-            
-            results.append({
-                "query": f"<query>{node}</query>",
-                "answer": answer
-            })
-            
-        return results

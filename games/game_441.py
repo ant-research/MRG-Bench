@@ -1,538 +1,488 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   路径最大边权：两节点间所有路径中最小的最大边权是多少
-# ============================================================
-
 from .base import Game
-import random
+import networkx as nx
 
-class BottleneckPathGame(Game):
+class HiddenTreeScoringGame(Game):
+
+    reasoning_type = "溯因推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们现在来玩一个"瓶颈路径推理"游戏，规则如下：
+我们来玩一个"隐藏树计分法则"的推理游戏，规则如下：
 
-游戏设定了一张加权无向图，包含 {n} 个节点（编号为 {nodes}）。图中存在若干条边，每条边有一个正整数权值，所有权值在 1 到 {U} 之间。起点为 {S}，终点为 {T}，保证图中至少存在一条从起点到终点的路径。
+游戏设定了一棵固定的树（无环连通图），以节点 A 为根。节点集包含：A, B, C, D, E, F, G, H, I, J, K（共 11 个节点）。
+边（无向）为：A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K。
+父子关系由以 A 为根的定向确定。
 
-你的目标是找到瓶颈最小化值 B*：在所有从起点到终点的路径中，路径上最大边权的最小可能值。
+存在一个隐藏的计分法则，从下列四个法则中选择一个并全程固定。对任一节点 u，其"回报值" score(u) 按所选法则定义：
+1) L1：score(u) 等于以 A 为根时，u 为根的子树节点总数（包含 u 自身）。
+2) L2：score(u) 等于以 A 为根时，u 为根的子树节点总数减 1（不包含 u 自身）。
+3) L3：score(u) 等于以 A 为根时，u 的子树中的叶子节点数量（在该有向树中无子节点者）。
+4) L4：score(u) 等于以 A 为根时，u 的子树内与 u 的距离为奇数的节点数量（距离指子树中无向最短路径长度的边数）。
 
-你可以反复向我提出以下类型的问题（每次仅限一个问题），我会如实回答：
+你可以进行询问，每次从以下两类中选一种：
+- Compare(u, v)：询问节点 u 和节点 v 的回报值大小关系，u 与 v 必须为不同的节点名。回答为三选一："u" 表示 score(u) 大于 score(v)；"v" 表示 score(u) 小于 score(v)；"equal" 表示 score(u) 等于 score(v)。
+- Equal(u, v)：询问节点 u 和节点 v 的回报值是否相等，u 与 v 必须为不同的节点名。回答为"是"或"否"，分别表示 score(u) 等于 score(v) 或 score(u) 不等于 score(v)。
 
-1. 阈值查询：给定一个整数阈值 R（1 到 {U} 之间），询问"在仅保留权值小于等于 R 的边所构成的子图中，起点与终点是否连通？"回答"是"或"否"。
+我会根据真实设定的隐藏法则一致作答，不提供任何数值、和差、求和或其他形式的信息。
 
-查询的回答满足单调性：
-- 若对某 R 回答"是"，则对一切大于等于 R 的阈值必回答"是"。
-- 若对某 R 回答"否"，则对一切小于等于 R 的阈值必回答"否"。
+你的目标是尽可能少地询问后给出两项结论：
+1) 指出隐藏计分法则为 L1、L2、L3、L4 中的哪一个。
+2) 指出目标节点 X：按该法则计算所有节点回报值后，按从大到小排序，若有相同回报值则以字母序 A 小于 B 小于 C 等打破并列，X 为排名第 4 的节点。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
-
-## 询问与提交答案的格式（必须严格遵守）
+当且仅当上述两项同时正确时游戏成功；任一项错误则游戏失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 阈值查询（例如查询阈值 10）：
-<query_threshold>10</query_threshold>
+- Compare 查询（例如比较节点 A 和节点 B）：
+<query_compare>A,B</query_compare>
 
-提交最终答案时，必须给出一个整数 L，声称 L 为瓶颈最小化值 B*，格式如下：
-<answer>15</answer>
+- Equal 查询（例如询问节点 C 和节点 D 是否相等）：
+<query_equal>C,D</query_equal>
 
-注意：请尽可能少地提问以找到答案。
+提交最终答案时，必须说明法则类型（L1、L2、L3 或 L4）并给出目标节点名称，格式如下：
+
+<answer>law=L1, node=D</answer>
 """
 
     game_rule_en = """\
-Let's play a "Bottleneck Path Reasoning" game. Here are the rules:
+Let's play a "Hidden Tree Scoring Rule" deduction game. Here are the rules:
 
-The game features a weighted undirected graph with {n} nodes (numbered {nodes}). The graph contains several edges, each with a positive integer weight between 1 and {U}. The starting node is {S} and the destination node is {T}. It is guaranteed that at least one path exists from start to destination.
+The game defines a fixed tree (acyclic connected graph) rooted at node A. The node set includes: A, B, C, D, E, F, G, H, I, J, K (11 nodes in total).
+Edges (undirected) are: A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K.
+Parent-child relationships are determined by rooting the tree at A.
 
-Your goal is to find the bottleneck minimization value B*: among all paths from start to destination, the minimum possible value of the maximum edge weight on a path.
+There exists a hidden scoring rule, selected from the following four rules and fixed throughout. For any node u, its "reward value" score(u) is defined according to the selected rule:
+1) L1: score(u) equals the total number of nodes in the subtree rooted at u (including u itself) when A is the root.
+2) L2: score(u) equals the total number of nodes in the subtree rooted at u minus 1 (excluding u itself) when A is the root.
+3) L3: score(u) equals the number of leaf nodes in the subtree of u (nodes with no children in this directed tree) when A is the root.
+4) L4: score(u) equals the number of nodes in the subtree of u that are at an odd distance from u (distance refers to the number of edges in the undirected shortest path within the subtree) when A is the root.
 
-You can repeatedly ask me the following type of question (one per turn), and I will answer truthfully:
+You can make queries, choosing one of the following two types each time:
+- Compare(u, v): Ask about the relationship between the reward values of nodes u and v, where u and v must be different node names. The answer will be one of three: "u" means score(u) is greater than score(v); "v" means score(u) is less than score(v); "equal" means score(u) equals score(v).
+- Equal(u, v): Ask whether the reward values of nodes u and v are equal, where u and v must be different node names. The answer will be "Yes" or "No", indicating whether score(u) equals score(v) or not.
 
-1. Threshold Query: Given an integer threshold R (between 1 and {U}), ask "In the subgraph formed by keeping only edges with weight less than or equal to R, are the start and destination connected?" Answer "Yes" or "No".
+I will answer consistently based on the true hidden rule, without providing any numerical values, sums, differences, or other forms of information.
 
-The answers satisfy monotonicity:
-- If the answer is "Yes" for some R, then the answer must be "Yes" for all thresholds greater than or equal to R.
-- If the answer is "No" for some R, then the answer must be "No" for all thresholds less than or equal to R.
+Your goal is to provide two conclusions after making as few queries as possible:
+1) Identify which of L1, L2, L3, L4 is the hidden scoring rule.
+2) Identify the target node X: after calculating all nodes' reward values according to the rule, sort them from highest to lowest, breaking ties by alphabetical order A less than B less than C etc., X is the node ranked 4th.
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
-
-## Query and Answer Format (strictly required)
+The game succeeds if and only if both items are correct; failure occurs if either item is wrong.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Threshold Query (e.g., querying threshold 10):
-<query_threshold>10</query_threshold>
+- Compare query (e.g., comparing nodes A and B):
+<query_compare>A,B</query_compare>
 
-When submitting the final answer, provide an integer L claiming that L is the bottleneck minimization value B*, using this format:
-<answer>15</answer>
+- Equal query (e.g., asking if nodes C and D are equal):
+<query_equal>C,D</query_equal>
 
-Note: Try to minimize the number of queries to find the answer.
+When submitting the final answer, specify the rule type (L1, L2, L3, or L4) and the target node name, using this format:
+
+<answer>law=L1, node=D</answer>
 """
 
-    # ================= 场景改造 =================
-    
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-欢迎使用“智能交通物流路径规划系统”。我们现在来进行一项“拥堵瓶颈路线”的排查任务。
+欢迎使用城市路网管辖权推演系统。本系统用于分析核心交通枢纽的层级与管辖效能。
 
-系统映射了一张城市路网图，包含 {n} 个交通枢纽（编号为 {nodes}）。枢纽间存在若干条公路段，每段路有一个代表“拥堵指数”的正整数（范围 1 到 {U}）。起点枢纽为 {S}，终点枢纽为 {T}，系统保证至少存在一条通达路线。
+系统设定了一个固定的交通管辖网络（无环连通图），以主控调度中心 A 为根。枢纽集包含：A, B, C, D, E, F, G, H, I, J, K（共 11 个枢纽）。
+道路连通关系为：A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K。
+上下级管辖关系由以 A 为根的定向确定。
 
-你的目标是找到最小的路线拥堵瓶颈 B*：在所有从起点到终点的路线中，找出那条“途经最拥堵路段的拥堵指数”尽可能小的路线，并求出这个最小化的最高拥堵指数。
+存在一个隐藏的效能计分法则，从下列四个法则中选择一个并全程固定。对任一枢纽 u，其"管辖效能得分" score(u) 按所选法则定义：
+1) L1：score(u) 等于以 A 为根时，u 管辖的下级枢纽总数加上 u 自身。
+2) L2：score(u) 等于以 A 为根时，u 纯管辖的下级枢纽总数（不包含 u 自身）。
+3) L3：score(u) 等于以 A 为根时，u 管辖网络末梢的终端站点数量（即在该管辖分支中无下级枢纽的节点）。
+4) L4：score(u) 等于以 A 为根时，在 u 的管辖子网内，与 u 之间需要跨越奇数次接驳的枢纽数量（即子网内无向最短路径长度的边数为奇数）。
 
-你可以反复向系统提交以下查询（每次仅限一个）：
+你可以进行询问，每次从以下两类中选一种：
+- Compare(u, v)：询问枢纽 u 和枢纽 v 的管辖效能得分大小关系，u 与 v 必须为不同的枢纽名。回答为三选一："u" 表示 score(u) 大于 score(v)；"v" 表示 score(u) 小于 score(v)；"equal" 表示 score(u) 等于 score(v)。
+- Equal(u, v)：询问枢纽 u 和枢纽 v 的管辖效能得分是否相等，u 与 v 必须为不同的枢纽名。回答为"是"或"否"。
 
-1. 阈值查询：给定一个可接受的最大拥堵指数 R（1 到 {U} 之间），询问“在仅保留拥堵指数小于等于 R 的路段时，起点 {S} 与终点 {T} 是否依然连通？”回答“是”或“否”。
+我会根据真实设定的隐藏法则一致作答，不提供任何具体数值或其他形式的信息。
 
-查询结果满足单调性（若 R 连通，则大于 R 必定连通）。当收集到足够信息后，请提交最终答案。
+你的目标是尽可能少地询问后给出两项结论：
+1) 指出当前启用的管辖效能法则为 L1、L2、L3、L4 中的哪一个。
+2) 指出目标枢纽 X：按该法则计算所有枢纽得分后，按从大到小排序，若得分相同则以字母序 A 小于 B 小于 C 等打破并列，X 为排名第 4 的枢纽。
 
-## 询问与提交答案的格式（必须严格遵守）
+当且仅当上述两项同时正确时推演成功；任一项错误则推演失败。
 
-每次询问只能包含一个标签，请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 阈值查询（例如查询拥堵指数阈值 10）：
-<query_threshold>10</query_threshold>
+- Compare 查询（例如比较枢纽 A 和枢纽 B）：
+<query_compare>A,B</query_compare>
 
-提交最终答案时，必须给出一个整数 L，声称 L 为最优路线的最小拥堵瓶颈 B*：
-<answer>15</answer>
+- Equal 查询（例如询问枢纽 C 和枢纽 D 是否相等）：
+<query_equal>C,D</query_equal>
 
-注意：请尽可能少地提问以完成路线排查。
+提交最终答案时，必须说明法则类型（L1、L2、L3 或 L4）并给出目标枢纽名称，格式如下：
+
+<answer>law=L1, node=D</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the "Intelligent Traffic Logistics Routing System". Let's conduct a "Congestion Bottleneck Route" inspection task.
+[Transportation Scenario]
+Welcome to the Urban Road Network Jurisdiction Inference System. This system is designed to analyze the hierarchy and jurisdictional efficiency of core traffic hubs.
 
-The system maps an urban road network with {n} traffic hubs (numbered {nodes}). There are several road segments between hubs, each with a positive integer representing its "Congestion Index" (ranging from 1 to {U}). The starting hub is {S} and the destination hub is {T}. It is guaranteed that at least one viable route exists.
+The system defines a fixed traffic jurisdiction network (an acyclic connected graph), rooted at the main control and dispatch center A. The hub set includes: A, B, C, D, E, F, G, H, I, J, K (11 hubs in total).
+Road connections are: A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K.
+The hierarchical jurisdiction relationship is determined by rooting the tree at A.
 
-Your goal is to find the minimum route congestion bottleneck B*: among all routes from start to destination, find the route where the "maximum congestion index of any single segment" is as small as possible, and output this minimized peak congestion index.
+There is a hidden efficiency scoring rule, chosen from the following four rules and fixed throughout the process. For any hub u, its "jurisdictional efficiency score", score(u), is defined by the selected rule:
+1) L1: score(u) equals the total number of lower-level hubs under u's jurisdiction plus u itself, when A is the root.
+2) L2: score(u) equals the total number of strictly lower-level hubs under u's jurisdiction (excluding u itself), when A is the root.
+3) L3: score(u) equals the number of terminal stations in u's jurisdiction network (i.e., hubs with no further subordinate jurisdictions in the directed graph), when A is the root.
+4) L4: score(u) equals the number of hubs under u's jurisdiction that are at an odd distance from u (distance refers to the number of edges in the undirected shortest path within the jurisdiction subnet), when A is the root.
 
-You can repeatedly submit the following query to the system (one per turn):
+You can make queries, choosing one of the following two types each time:
+- Compare(u, v): Ask about the relationship between the efficiency scores of hubs u and v, where u and v must be different hub names. The answer will be one of three: "u" means score(u) is greater than score(v); "v" means score(u) is less than score(v); "equal" means score(u) equals score(v).
+- Equal(u, v): Ask whether the efficiency scores of hubs u and v are equal, where u and v must be different hub names. The answer will be "Yes" or "No".
 
-1. Threshold Query: Given an acceptable maximum congestion index R (between 1 and {U}), ask "If we only use road segments with a congestion index less than or equal to R, are the start {S} and destination {T} still connected?" Answer "Yes" or "No".
+I will answer consistently based on the true hidden rule, without providing any specific numerical values or other forms of information.
 
-The query results satisfy monotonicity. When you have enough information, submit your final answer.
+Your goal is to provide two conclusions after making as few queries as possible:
+1) Identify which of L1, L2, L3, L4 is the active efficiency scoring rule.
+2) Identify the target hub X: after calculating all hubs' efficiency scores according to the rule, sort them from highest to lowest, breaking ties by alphabetical order A less than B less than C etc., X is the hub ranked 4th.
 
-## Query and Answer Format (strictly required)
+The inference succeeds if and only if both items are correct; failure occurs if either item is wrong.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Threshold Query (e.g., querying congestion threshold 10):
-<query_threshold>10</query_threshold>
+- Compare query:
+<query_compare>A,B</query_compare>
 
-When submitting the final answer, provide an integer L claiming that L is the minimum congestion bottleneck B*:
-<answer>15</answer>
+- Equal query:
+<query_equal>C,D</query_equal>
 
-Note: Try to minimize the number of queries to complete the route inspection.
+When submitting the final answer, specify the rule type and the target hub name:
+
+<answer>law=L1, node=D</answer>
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-欢迎使用“靶向治疗路径分析系统”。我们现在来进行一项“毒副作用最小化”的医学推演任务。
+欢迎使用医疗资源分配分级评估系统。本系统用于分析各病区的向下转诊承载能力与资源权重。
 
-系统构建了一张生物化学状态流转图，包含 {n} 个生理节点（编号为 {nodes}）。节点间存在若干种药物干预方案，每种方案有一个代表“毒性指数”的正整数（范围 1 到 {U}）。初始病理状态为 {S}，目标治愈状态为 {T}，系统保证至少存在一套完整的治疗通路。
+系统设定了一个固定的医疗转诊网络（无环连通图），以核心综合病区 A 为根。病区集包含：A, B, C, D, E, F, G, H, I, J, K（共 11 个病区节点）。
+转诊通道为：A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K。
+上下级转诊流向由以 A 为根的定向确定。
 
-你的目标是找到最小的毒性瓶颈 B*：在所有能达到治愈状态的治疗通路中，找出那条“具有最高毒性的单步治疗方案”毒性尽可能低的通路，并求出该最低的极限毒性指数。
+存在一个隐藏的资源分配权重法则，从下列四个法则中选择一个并全程固定。对任一病区 u，其"分配权重" score(u) 按所选法则定义：
+1) L1：score(u) 等于以 A 为根时，u 收治及向下转诊覆盖的所有关联病区总数（包含 u 自身）。
+2) L2：score(u) 等于以 A 为根时，u 向下转诊覆盖的纯下级病区总数（不包含 u 自身）。
+3) L3：score(u) 等于以 A 为根时，u 转诊链路末端的最终专科末梢病区数量（即在该网络中无进一步下级转诊通道的病区）。
+4) L4：score(u) 等于以 A 为根时，在 u 的转诊覆盖网内，与 u 之间历经奇数次跨层级转诊的病区数量（即子网内无向最短转诊路径长度的通道数为奇数）。
 
-你可以反复向系统提交以下查询（每次仅限一个）：
+你可以进行询问，每次从以下两类中选一种：
+- Compare(u, v)：询问病区 u 和病区 v 的分配权重大小关系，u 与 v 必须为不同的病区名。回答为三选一："u" 表示 score(u) 大于 score(v)；"v" 表示 score(u) 小于 score(v)；"equal" 表示 score(u) 等于 score(v)。
+- Equal(u, v)：询问病区 u 和病区 v 的分配权重是否相等，u 与 v 必须为不同的病区名。回答为"是"或"否"。
 
-1. 阈值查询：给定一个患者可耐受的最大毒性阈值 R（1 到 {U} 之间），询问“如果只允许使用毒性指数小于等于 R 的治疗方案，能否从状态 {S} 最终达到状态 {T}？”回答“是”或“否”。
+我会根据真实设定的隐藏法则一致作答，不提供任何具体数值或其他形式的信息。
 
-查询结果满足单调性。收集足够信息后，请开出最终处方。
+你的目标是尽可能少地询问后给出两项结论：
+1) 指出当前启用的分配权重法则为 L1、L2、L3、L4 中的哪一个。
+2) 指出目标病区 X：按该法则计算所有病区权重后，按从大到小排序，若权重相同则以字母序 A 小于 B 小于 C 等打破并列，X 为排名第 4 的病区。
 
-## 询问与提交答案的格式（必须严格遵守）
+当且仅当上述两项同时正确时评估成功；任一项错误则评估失败。
 
-每次询问只能包含一个标签，请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 阈值查询（例如查询毒性阈值 10）：
-<query_threshold>10</query_threshold>
+- Compare 查询：
+<query_compare>A,B</query_compare>
 
-提交最终答案时，必须给出一个整数 L，声称 L 为最优治疗通路的毒性瓶颈 B*：
-<answer>15</answer>
+- Equal 查询：
+<query_equal>C,D</query_equal>
 
-注意：请尽可能少地提问以确定治疗方案。
+提交最终答案时，必须说明法则类型并给出目标病区名称：
+
+<answer>law=L1, node=D</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Targeted Therapy Pathway Analysis System". Let's conduct a "Toxicity Minimization" medical deduction task.
+Welcome to the Medical Resource Allocation Hierarchical Assessment System. This system is designed to analyze the downstream referral carrying capacity and resource weights of various wards.
 
-The system constructs a biochemical state transition graph with {n} physiological nodes (numbered {nodes}). There are several drug intervention protocols between nodes, each with a positive integer representing its "Toxicity Index" (ranging from 1 to {U}). The initial pathological state is {S} and the target cured state is {T}. It is guaranteed that at least one complete treatment pathway exists.
+The system defines a fixed medical referral network (an acyclic connected graph), rooted at the main comprehensive ward A. The ward set includes: A, B, C, D, E, F, G, H, I, J, K (11 wards in total).
+Referral channels are: A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K.
+The hierarchical referral flow is determined by rooting the tree at A.
 
-Your goal is to find the minimum toxicity bottleneck B*: among all treatment pathways that reach the cured state, find the pathway where the "single intervention with the highest toxicity" is as low as possible, and output this minimum peak toxicity index.
+There is a hidden resource allocation weighting rule, chosen from the following four rules and fixed throughout. For any ward u, its "allocation weight", score(u), is defined by the selected rule:
+1) L1: score(u) equals the total number of wards covered by u's downstream referrals (including u itself) when A is the root.
+2) L2: score(u) equals the total number of strictly downstream wards covered by u's referrals (excluding u itself) when A is the root.
+3) L3: score(u) equals the number of terminal specialized wards in u's referral chain (i.e., wards with no further downstream referral channels in the directed graph) when A is the root.
+4) L4: score(u) equals the number of wards in u's referral network that are at an odd distance from u (distance refers to the number of referral channels in the undirected shortest path within the subnet) when A is the root.
 
-You can repeatedly submit the following query to the system (one per turn):
+You can make queries, choosing one of the following two types each time:
+- Compare(u, v): Ask about the relationship between the allocation weights of wards u and v, where u and v must be different ward names. The answer will be one of three: "u" means score(u) is greater than score(v); "v" means score(u) is less than score(v); "equal" means score(u) equals score(v).
+- Equal(u, v): Ask whether the allocation weights of wards u and v are equal, where u and v must be different ward names. The answer will be "Yes" or "No".
 
-1. Threshold Query: Given a maximum toxicity threshold R (between 1 and {U}) that the patient can tolerate, ask "If we only allow treatment protocols with a toxicity index less than or equal to R, can we progress from state {S} to state {T}?" Answer "Yes" or "No".
+I will answer consistently based on the true hidden rule, without providing any numerical values or other forms of information.
 
-The query results satisfy monotonicity. When you have enough information, submit your final prescription.
+Your goal is to provide two conclusions after making as few queries as possible:
+1) Identify which of L1, L2, L3, L4 is the active allocation weighting rule.
+2) Identify the target ward X: after calculating all wards' weights according to the rule, sort them from highest to lowest, breaking ties by alphabetical order A less than B less than C etc., X is the ward ranked 4th.
 
-## Query and Answer Format (strictly required)
+The assessment succeeds if and only if both items are correct; failure occurs if either item is wrong.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Threshold Query (e.g., querying toxicity threshold 10):
-<query_threshold>10</query_threshold>
+- Compare query:
+<query_compare>A,B</query_compare>
 
-When submitting the final answer, provide an integer L claiming that L is the minimum toxicity bottleneck B*:
-<answer>15</answer>
+- Equal query:
+<query_equal>C,D</query_equal>
 
-Note: Try to minimize the number of queries to determine the treatment plan.
+When submitting the final answer, specify the rule type and the target ward name:
+
+<answer>law=L1, node=D</answer>
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-欢迎使用“自适应学习路径推荐系统”。我们现在来进行一项“认知瓶颈最小化”的教学规划任务。
+欢迎使用学科知识图谱测评系统。本系统用于分析各知识点的衍生范围及教学优先级。
 
-系统映射了一张知识图谱导航网，包含 {n} 个知识概念节点（编号为 {nodes}）。节点间存在若干学习过渡模块，每个模块具有代表“认知负荷（难度指数）”的正整数（范围 1 到 {U}）。基础起点概念为 {S}，目标终点概念为 {T}，系统保证至少存在一条可达的学习路线。
+系统设定了一个固定的知识演进图谱（无环连通图），以核心基础概念 A 为根。知识点集包含：A, B, C, D, E, F, G, H, I, J, K（共 11 个知识点）。
+概念衍生关系为：A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K。
+前置与后置依赖关系由以 A 为根的定向确定。
 
-你的目标是找到难度瓶颈最小的路线 B*：在所有从起点到终点的学习路线中，找出那条“包含最高难度单步模块”难度尽可能低的路线，并求出该路线上的最大难度指数。
+存在一个隐藏的优先级计分法则，从下列四个法则中选择一个并全程固定。对任一知识点 u，其"教学优先级得分" score(u) 按所选法则定义：
+1) L1：score(u) 等于以 A 为根时，该知识点及其衍生出的所有后置知识点总数（包含 u 自身）。
+2) L2：score(u) 等于以 A 为根时，由 u 衍生出的纯后置知识点总数（不包含 u 自身）。
+3) L3：score(u) 等于以 A 为根时，u 衍生链路上的终端具体应用知识点数量（即在该图谱中无进一步衍生概念的知识点）。
+4) L4：score(u) 等于以 A 为根时，在 u 的衍生图谱内，处于奇数层级衍生跨度的知识点数量（即子网内无向最短衍生路径长度的依赖连线数为奇数）。
 
-你可以反复向系统提交以下查询（每次仅限一个）：
+你可以进行询问，每次从以下两类中选一种：
+- Compare(u, v)：询问知识点 u 和知识点 v 的教学优先级大小关系，u 与 v 必须为不同的知识点名。回答为三选一："u" 表示 score(u) 大于 score(v)；"v" 表示 score(u) 小于 score(v)；"equal" 表示 score(u) 等于 score(v)。
+- Equal(u, v)：询问知识点 u 和知识点 v 的教学优先级是否相等，u 与 v 必须为不同的知识点名。回答为"是"或"否"。
 
-1. 阈值查询：给定一个学生可接受的最大难度指数 R（1 到 {U} 之间），询问“如果仅开放难度指数小于等于 R 的过渡模块，能否引导学生从概念 {S} 掌握到概念 {T}？”回答“是”或“否”。
+我会根据真实设定的隐藏法则一致作答，不提供任何具体数值或其他形式的信息。
 
-查询结果满足单调性。收集足够信息后，请提交最终路线难度。
+你的目标是尽可能少地询问后给出两项结论：
+1) 指出当前启用的教学优先级法则为 L1、L2、L3、L4 中的哪一个。
+2) 指出目标知识点 X：按该法则计算所有知识点优先级得分后，按从大到小排序，若得分相同则以字母序 A 小于 B 小于 C 等打破并列，X 为排名第 4 的知识点。
 
-## 询问与提交答案的格式（必须严格遵守）
+当且仅当上述两项同时正确时测评成功；任一项错误则测评失败。
 
-每次询问只能包含一个标签，请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 阈值查询（例如查询难度阈值 10）：
-<query_threshold>10</query_threshold>
+- Compare 查询：
+<query_compare>A,B</query_compare>
 
-提交最终答案时，必须给出一个整数 L，声称 L 为最优路线的难度瓶颈 B*：
-<answer>15</answer>
+- Equal 查询：
+<query_equal>C,D</query_equal>
 
-注意：请尽可能少地提问以完成教学路线规划。
+提交最终答案时，必须说明法则类型并给出目标知识点名称：
+
+<answer>law=L1, node=D</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Adaptive Learning Path Recommendation System". Let's conduct a "Cognitive Bottleneck Minimization" teaching planning task.
+Welcome to the Subject Knowledge Graph Evaluation System. This system is used to analyze the derivation scope and instructional priority of various knowledge points.
 
-The system maps a knowledge graph navigation network with {n} concept nodes (numbered {nodes}). There are several learning transition modules between nodes, each with a positive integer representing its "Cognitive Load (Difficulty Index)" (ranging from 1 to {U}). The starting concept is {S} and the target concept is {T}. It is guaranteed that at least one viable learning route exists.
+The system defines a fixed knowledge evolution graph (an acyclic connected graph), rooted at the core fundamental concept A. The knowledge point set includes: A, B, C, D, E, F, G, H, I, J, K (11 knowledge points in total).
+Concept derivation relationships are: A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K.
+Prerequisite and subsequent dependencies are determined by rooting the tree at A.
 
-Your goal is to find the minimum difficulty bottleneck B*: among all learning routes from the start to the target, find the route where the "maximum difficulty of any single module" is as low as possible, and output this peak difficulty index.
+There is a hidden priority scoring rule, chosen from the following four rules and fixed throughout. For any knowledge point u, its "instructional priority score", score(u), is defined by the selected rule:
+1) L1: score(u) equals the total number of this knowledge point and all its derived subsequent knowledge points (including u itself) when A is the root.
+2) L2: score(u) equals the total number of strictly subsequent knowledge points derived from u (excluding u itself) when A is the root.
+3) L3: score(u) equals the number of terminal applied knowledge points in u's derivation chain (i.e., knowledge points with no further derivations in the directed graph) when A is the root.
+4) L4: score(u) equals the number of knowledge points derived from u that are at an odd number of derivation steps (distance refers to the number of dependency links in the undirected shortest path within the subnet) when A is the root.
 
-You can repeatedly submit the following query to the system (one per turn):
+You can make queries, choosing one of the following two types each time:
+- Compare(u, v): Ask about the relationship between the instructional priority scores of knowledge points u and v, where u and v must be different knowledge point names. The answer will be one of three: "u" means score(u) is greater than score(v); "v" means score(u) is less than score(v); "equal" means score(u) equals score(v).
+- Equal(u, v): Ask whether the instructional priority scores of knowledge points u and v are equal, where u and v must be different knowledge point names. The answer will be "Yes" or "No".
 
-1. Threshold Query: Given an acceptable maximum difficulty index R (between 1 and {U}), ask "If we only unlock modules with a difficulty index less than or equal to R, can the student progress from concept {S} to concept {T}?" Answer "Yes" or "No".
+I will answer consistently based on the true hidden rule, without providing any numerical values or other forms of information.
 
-The query results satisfy monotonicity. When you have enough information, submit your final answer.
+Your goal is to provide two conclusions after making as few queries as possible:
+1) Identify which of L1, L2, L3, L4 is the active priority scoring rule.
+2) Identify the target knowledge point X: after calculating all knowledge points' scores according to the rule, sort them from highest to lowest, breaking ties by alphabetical order A less than B less than C etc., X is the knowledge point ranked 4th.
 
-## Query and Answer Format (strictly required)
+The evaluation succeeds if and only if both items are correct; failure occurs if either item is wrong.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Threshold Query (e.g., querying difficulty threshold 10):
-<query_threshold>10</query_threshold>
+- Compare query:
+<query_compare>A,B</query_compare>
 
-When submitting the final answer, provide an integer L claiming that L is the minimum difficulty bottleneck B*:
-<answer>15</answer>
+- Equal query:
+<query_equal>C,D</query_equal>
 
-Note: Try to minimize the number of queries to complete the learning path planning.
+When submitting the final answer, specify the rule type and the target knowledge point name:
+
+<answer>law=L1, node=D</answer>
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-欢迎使用“柔性制造工艺编排系统”。我们现在来进行一项“应力瓶颈排查”的工艺规划任务。
+欢迎进入智能制造供应链层级分析系统。本系统用于追踪总成部件及其底层的依赖权值。
 
-系统构建了一张装配流水线网络，包含 {n} 个加工工位（编号为 {nodes}）。工位间存在若干流转工序，每道工序有一个代表“破坏风险指数（瞬时应力）”的正整数（范围 1 到 {U}）。原料投入工位为 {S}，成品产出工位为 {T}，系统保证至少存在一套完整的加工流转方案。
+系统设定了一个固定的部件装配网络（无环连通图），以主成品装配节点 A 为根。部件集包含：A, B, C, D, E, F, G, H, I, J, K（共 11 个装配部件）。
+工序依赖关系为：A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K。
+组装层级流向由以 A 为根的定向确定。
 
-你的目标是找到应力瓶颈最小的工艺 B*：在所有可完成加工的流转方案中，找出那套“承受最大瞬时应力”尽可能小的方案，并求出该最小化的极限应力。
+存在一个隐藏的装配权重法则，从下列四个法则中选择一个并全程固定。对任一部件 u，其"供应链依赖权重" score(u) 按所选法则定义：
+1) L1：score(u) 等于以 A 为根时，u 及其包含的所有上游前置依赖子部件总数（包含 u 自身）。
+2) L2：score(u) 等于以 A 为根时，u 包含的纯前置依赖子部件总数（不包含 u 自身）。
+3) L3：score(u) 等于以 A 为根时，支撑 u 的最底层终端原材料部件数量（即在该加工网络中无前置依赖部件的节点）。
+4) L4：score(u) 等于以 A 为根时，在支撑 u 的部件网内，历经奇数次装配工序间隔的部件数量（即依赖子网内无向最短路径长度的工序线数为奇数）。
 
-你可以反复向系统提交以下查询（每次仅限一个）：
+你可以进行询问，每次从以下两类中选一种：
+- Compare(u, v)：询问部件 u 和部件 v 的供应链依赖权重大小关系，u 与 v 必须为不同的部件名。回答为三选一："u" 表示 score(u) 大于 score(v)；"v" 表示 score(u) 小于 score(v)；"equal" 表示 score(u) 等于 score(v)。
+- Equal(u, v)：询问部件 u 和部件 v 的供应链依赖权重是否相等，u 与 v 必须为不同的部件名。回答为"是"或"否"。
 
-1. 阈值查询：给定一个工件可承受的最大应力阈值 R（1 到 {U} 之间），询问“在仅允许使用破坏风险指数小于等于 R 的工序时，能否将原料从工位 {S} 最终加工并送达工位 {T}？”回答“是”或“否”。
+我会根据真实设定的隐藏法则一致作答，不提供任何具体数值或其他形式的信息。
 
-查询结果满足单调性。收集足够信息后，请提交最终工艺参数。
+你的目标是尽可能少地询问后给出两项结论：
+1) 指出当前启用的供应链权重法则为 L1、L2、L3、L4 中的哪一个。
+2) 指出目标部件 X：按该法则计算所有部件权重后，按从大到小排序，若权重相同则以字母序 A 小于 B 小于 C 等打破并列，X 为排名第 4 的部件。
 
-## 询问与提交答案的格式（必须严格遵守）
+当且仅当上述两项同时正确时分析成功；任一项错误则分析失败。
 
-每次询问只能包含一个标签，请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 阈值查询（例如查询应力阈值 10）：
-<query_threshold>10</query_threshold>
+- Compare 查询：
+<query_compare>A,B</query_compare>
 
-提交最终答案时，必须给出一个整数 L，声称 L 为最优工艺流转的应力瓶颈 B*：
-<answer>15</answer>
+- Equal 查询：
+<query_equal>C,D</query_equal>
 
-注意：请尽可能少地提问以完成工艺排布。
+提交最终答案时，必须说明法则类型并给出目标部件名称：
+
+<answer>law=L1, node=D</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Welcome to the "Flexible Manufacturing Process Orchestration System". Let's conduct a "Stress Bottleneck Inspection" process planning task.
+[Manufacturing Scenario]
+Welcome to the Intelligent Manufacturing Supply Chain Hierarchy Analysis System. This system is used to track assembly components and their upstream dependency weights.
 
-The system constructs an assembly pipeline network with {n} processing stations (numbered {nodes}). There are several transfer procedures between stations, each with a positive integer representing its "Breakage Risk Index (Instantaneous Stress)" (ranging from 1 to {U}). The raw material input station is {S} and the finished product output station is {T}. It is guaranteed that at least one complete processing workflow exists.
+The system defines a fixed component assembly network (an acyclic connected graph), rooted at the main final assembly node A. The component set includes: A, B, C, D, E, F, G, H, I, J, K (11 components in total).
+Process dependencies are: A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K.
+Assembly hierarchical flow is determined by rooting the tree at A.
 
-Your goal is to find the minimum stress bottleneck B*: among all workflows that can complete the processing, find the workflow where the "maximum instantaneous stress applied" is as small as possible, and output this minimized peak stress.
+There is a hidden assembly weighting rule, chosen from the following four rules and fixed throughout. For any component u, its "supply chain dependency weight", score(u), is defined by the selected rule:
+1) L1: score(u) equals the total number of component u and all its upstream prerequisite sub-components (including u itself) when A is the root.
+2) L2: score(u) equals the total number of strictly upstream prerequisite sub-components contained by u (excluding u itself) when A is the root.
+3) L3: score(u) equals the number of terminal raw material components supporting u (i.e., components with no further upstream prerequisite dependencies in the directed graph) when A is the root.
+4) L4: score(u) equals the number of components supporting u that are separated by an odd number of assembly steps (distance refers to the number of process lines in the undirected shortest path within the dependency subnet) when A is the root.
 
-You can repeatedly submit the following query to the system (one per turn):
+You can make queries, choosing one of the following two types each time:
+- Compare(u, v): Ask about the relationship between the supply chain dependency weights of components u and v, where u and v must be different component names. The answer will be one of three: "u" means score(u) is greater than score(v); "v" means score(u) is less than score(v); "equal" means score(u) equals score(v).
+- Equal(u, v): Ask whether the dependency weights of components u and v are equal, where u and v must be different component names. The answer will be "Yes" or "No".
 
-1. Threshold Query: Given a maximum stress threshold R (between 1 and {U}) that the workpiece can endure, ask "If we only allow procedures with a breakage risk index less than or equal to R, can the raw material be fully processed and delivered from station {S} to station {T}?" Answer "Yes" or "No".
+I will answer consistently based on the true hidden rule, without providing any numerical values or other forms of information.
 
-The query results satisfy monotonicity. When you have enough information, submit your final answer.
+Your goal is to provide two conclusions after making as few queries as possible:
+1) Identify which of L1, L2, L3, L4 is the active dependency weighting rule.
+2) Identify the target component X: after calculating all components' weights according to the rule, sort them from highest to lowest, breaking ties by alphabetical order A less than B less than C etc., X is the component ranked 4th.
 
-## Query and Answer Format (strictly required)
+The analysis succeeds if and only if both items are correct; failure occurs if either item is wrong.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Threshold Query (e.g., querying stress threshold 10):
-<query_threshold>10</query_threshold>
+- Compare query:
+<query_compare>A,B</query_compare>
 
-When submitting the final answer, provide an integer L claiming that L is the minimum stress bottleneck B*:
-<answer>15</answer>
+- Equal query:
+<query_equal>C,D</query_equal>
 
-Note: Try to minimize the number of queries to finalize the process layout.
+When submitting the final answer, specify the rule type and the target component name:
+
+<answer>law=L1, node=D</answer>
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-欢迎使用“诉讼证据链推演系统”。我们现在来进行一项“争议瓶颈最小化”的法庭辩论准备任务。
+欢迎进入案件证据链综合证明力推演系统。本系统用于分析证据网的相互印证关系及可信度权重。
 
-系统梳理了一张法庭逻辑网络，包含 {n} 个案件事实与论点（编号为 {nodes}）。论点间存在若干法律推导逻辑，每条逻辑链有一个代表“争议指数（被法官驳回的风险）”的正整数（范围 1 到 {U}）。初始客观事实为 {S}，最终胜诉主张为 {T}，系统保证至少存在一条逻辑上可达的证据链。
+系统设定了一个固定的证据链条网络（无环连通图），以核心争议焦点证据 A 为根。证据集包含：A, B, C, D, E, F, G, H, I, J, K（共 11 个证据节点）。
+印证关联为：A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K。
+证明传导方向由以 A 为根的定向确定。
 
-你的目标是找到争议瓶颈最小的证据链 B*：在所有从初始事实到胜诉主张的推导路径中，找出那条“包含最具争议环节”的争议程度尽可能低的路径，并求出该最小化的最高争议指数。
+存在一个隐藏的证明力计分法则，从下列四个法则中选择一个并全程固定。对任一证据 u，其"综合证明力得分" score(u) 按所选法则定义：
+1) L1：score(u) 等于以 A 为根时，该证据及其衍生支撑的所有下游证据总数（包含 u 自身）。
+2) L2：score(u) 等于以 A 为根时，由 u 衍生支撑的纯下游证据总数（不包含 u 自身）。
+3) L3：score(u) 等于以 A 为根时，u 印证链条末端的终局性直接证据数量（即在该证据链中无进一步衍生支撑的末端节点）。
+4) L4：score(u) 等于以 A 为根时，在由 u 延伸的印证网络内，相隔奇数次印证层级的证据数量（即关联子网内无向最短路径长度的印证线数为奇数）。
 
-你可以反复向系统提交以下查询（每次仅限一个）：
+你可以进行询问，每次从以下两类中选一种：
+- Compare(u, v)：询问证据 u 和证据 v 的综合证明力得分大小关系，u 与 v 必须为不同的证据名。回答为三选一："u" 表示 score(u) 大于 score(v)；"v" 表示 score(u) 小于 score(v)；"equal" 表示 score(u) 等于 score(v)。
+- Equal(u, v)：询问证据 u 和证据 v 的综合证明力得分是否相等，u 与 v 必须为不同的证据名。回答为"是"或"否"。
 
-1. 阈值查询：给定一个可容忍的最大争议指数 R（1 到 {U} 之间），询问“如果仅使用争议指数小于等于 R 的推导逻辑，能否从事实 {S} 严密推导出主张 {T}？”回答“是”或“否”。
+我会根据真实设定的隐藏法则一致作答，不提供任何具体数值或其他形式的信息。
 
-查询结果满足单调性。当收集到足够信息后，请提交最终论证策略评估结果。
+你的目标是尽可能少地询问后给出两项结论：
+1) 指出当前启用的证明力法则为 L1、L2、L3、L4 中的哪一个。
+2) 指出目标证据 X：按该法则计算所有证据的证明力得分后，按从大到小排序，若得分相同则以字母序 A 小于 B 小于 C 等打破并列，X 为排名第 4 的证据。
 
-## 询问与提交答案的格式（必须严格遵守）
+当且仅当上述两项同时正确时推演成功；任一项错误则推演失败。
 
-每次询问只能包含一个标签，请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 阈值查询（例如查询争议阈值 10）：
-<query_threshold>10</query_threshold>
+- Compare 查询：
+<query_compare>A,B</query_compare>
 
-提交最终答案时，必须给出一个整数 L，声称 L 为最优证据链的争议瓶颈 B*：
-<answer>15</answer>
+- Equal 查询：
+<query_equal>C,D</query_equal>
 
-注意：请尽可能少地提问以确定最佳辩论策略。
+提交最终答案时，必须说明法则类型并给出目标证据名称：
+
+<answer>law=L1, node=D</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Litigation Evidence Chain Deduction System". Let's conduct a "Controversy Bottleneck Minimization" court debate preparation task.
+Welcome to the Case Evidence Chain Comprehensive Probative Force Inference System. This system is used to analyze the mutual corroboration relationships and overall probative value of the evidence network.
 
-The system maps a legal logic network with {n} case facts and arguments (numbered {nodes}). There are several legal deductions between arguments, each with a positive integer representing its "Controversy Index (risk of being overruled by the judge)" (ranging from 1 to {U}). The initial objective fact is {S} and the final winning claim is {T}. It is guaranteed that at least one logically viable evidence chain exists.
+The system defines a fixed evidence chain network (an acyclic connected graph), rooted at the core disputed fact evidence A. The evidence set includes: A, B, C, D, E, F, G, H, I, J, K (11 evidence nodes in total).
+Corroboration associations are: A-B, A-C, B-D, B-E, E-H, C-F, C-G, G-I, G-J, F-K.
+The direction of proof transmission is determined by rooting the tree at A.
 
-Your goal is to find the minimum controversy bottleneck B*: among all deduction paths from the initial fact to the winning claim, find the path where the "most controversial deduction link" has the lowest possible controversy, and output this minimized peak controversy index.
+There is a hidden probative force scoring rule, chosen from the following four rules and fixed throughout. For any evidence u, its "overall probative value score", score(u), is defined by the selected rule:
+1) L1: score(u) equals the total number of this evidence and all downstream evidence supported by it (including u itself) when A is the root.
+2) L2: score(u) equals the total number of strictly downstream evidence supported by u (excluding u itself) when A is the root.
+3) L3: score(u) equals the number of ultimate direct evidence nodes in u's corroboration chain (i.e., terminal evidence with no further downstream extensions in the directed graph) when A is the root.
+4) L4: score(u) equals the number of evidence nodes extending from u that are separated by an odd number of transmission levels (distance refers to the number of corroboration links in the undirected shortest path within the subnet) when A is the root.
 
-You can repeatedly submit the following query to the system (one per turn):
+You can make queries, choosing one of the following two types each time:
+- Compare(u, v): Ask about the relationship between the probative value scores of evidence u and v, where u and v must be different evidence names. The answer will be one of three: "u" means score(u) is greater than score(v); "v" means score(u) is less than score(v); "equal" means score(u) equals score(v).
+- Equal(u, v): Ask whether the probative value scores of evidence u and v are equal, where u and v must be different evidence names. The answer will be "Yes" or "No".
 
-1. Threshold Query: Given a maximum tolerable controversy index R (between 1 and {U}), ask "If we strictly use legal deductions with a controversy index less than or equal to R, can we rigorously deduce claim {T} from fact {S}?" Answer "Yes" or "No".
+I will answer consistently based on the true hidden rule, without providing any numerical values or other forms of information.
 
-The query results satisfy monotonicity. When you have enough information, submit your final argument strategy assessment.
+Your goal is to provide two conclusions after making as few queries as possible:
+1) Identify which of L1, L2, L3, L4 is the active probative force rule.
+2) Identify the target evidence X: after calculating all evidence's probative value scores according to the rule, sort them from highest to lowest, breaking ties by alphabetical order A less than B less than C etc., X is the evidence ranked 4th.
 
-## Query and Answer Format (strictly required)
+The inference succeeds if and only if both items are correct; failure occurs if either item is wrong.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Threshold Query (e.g., querying controversy threshold 10):
-<query_threshold>10</query_threshold>
+- Compare query:
+<query_compare>A,B</query_compare>
 
-When submitting the final answer, provide an integer L claiming that L is the minimum controversy bottleneck B*:
-<answer>15</answer>
+- Equal query:
+<query_equal>C,D</query_equal>
 
-Note: Try to minimize the number of queries to establish the best debate strategy.
+When submitting the final answer, specify the rule type and the target evidence name:
+
+<answer>law=L1, node=D</answer>
 """
 
-    tags = ["answer", "query_threshold"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+    tags = ["answer", "query_compare", "query_equal"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "n": 4,
-                "nodes": "A,B,C,D",
-                "U": 10,
-                "S": "A",
-                "T": "D",
-                "edges": [
-                    ("A", "B", 3),
-                    ("B", "D", 5),
-                    ("A", "C", 8),
-                    ("C", "D", 2),
-                ],
-                "answer": 5  # 路径 A->B->D，最大边权为5
-            },
-            2: {
-                "n": 5,
-                "nodes": "A,B,C,D,E",
-                "U": 20,
-                "S": "A",
-                "T": "E",
-                "edges": [
-                    ("A", "B", 10),
-                    ("B", "C", 8),
-                    ("C", "E", 12),
-                    ("A", "D", 15),
-                    ("D", "E", 7),
-                    ("B", "D", 6),
-                ],
-                "answer": 10
-            },
-            3: {
-                "n": 6,
-                "nodes": "A,B,C,D,E,F",
-                "U": 25,
-                "S": "A",
-                "T": "F",
-                "edges": [
-                    ("A", "B", 5),
-                    ("A", "C", 18),
-                    ("B", "D", 12),
-                    ("C", "D", 8),
-                    ("D", "E", 15),
-                    ("E", "F", 10),
-                    ("C", "E", 14),
-                    ("B", "C", 7),
-                ],
-                "answer": 14  # 路径 A->B->C->E->F，最大边权为14
-            },
-            4: {
-                "n": 7,
-                "nodes": "A,B,C,D,E,F,G",
-                "U": 30,
-                "S": "A",
-                "T": "G",
-                "edges": [
-                    ("A", "B", 8),
-                    ("A", "C", 12),
-                    ("B", "D", 16),
-                    ("C", "D", 10),
-                    ("D", "E", 14),
-                    ("E", "G", 18),
-                    ("C", "F", 15),
-                    ("F", "E", 9),
-                    ("B", "C", 6),
-                    ("D", "F", 11),
-                ],
-                "answer": 18
-            },
-            5: {
-                "n": 8,
-                "nodes": "A,B,C,D,E,F,G,H",
-                "U": 50,
-                "S": "A",
-                "T": "H",
-                "edges": [
-                    ("A", "B", 10),
-                    ("A", "C", 25),
-                    ("B", "D", 20),
-                    ("C", "D", 15),
-                    ("D", "E", 22),
-                    ("E", "H", 30),
-                    ("C", "F", 18),
-                    ("F", "G", 16),
-                    ("G", "H", 19),
-                    ("B", "C", 8),
-                    ("D", "F", 12),
-                    ("E", "G", 14),
-                    ("F", "E", 17),
-                ],
-                "answer": 19
-            },
+            1: {"law": "L1"},
+            2: {"law": "L2"},
+            3: {"law": "L3"},
+            4: {"law": "L4"},
+            5: {"law": "L4"},
         },
         "en": {
-            1: {
-                "n": 4,
-                "nodes": "A,B,C,D",
-                "U": 10,
-                "S": "A",
-                "T": "D",
-                "edges": [
-                    ("A", "B", 3),
-                    ("B", "D", 5),
-                    ("A", "C", 8),
-                    ("C", "D", 2),
-                ],
-                "answer": 5
-            },
-            2: {
-                "n": 5,
-                "nodes": "A,B,C,D,E",
-                "U": 20,
-                "S": "A",
-                "T": "E",
-                "edges": [
-                    ("A", "B", 10),
-                    ("B", "C", 8),
-                    ("C", "E", 12),
-                    ("A", "D", 15),
-                    ("D", "E", 7),
-                    ("B", "D", 6),
-                ],
-                "answer": 10
-            },
-            3: {
-                "n": 6,
-                "nodes": "A,B,C,D,E,F",
-                "U": 25,
-                "S": "A",
-                "T": "F",
-                "edges": [
-                    ("A", "B", 5),
-                    ("A", "C", 18),
-                    ("B", "D", 12),
-                    ("C", "D", 8),
-                    ("D", "E", 15),
-                    ("E", "F", 10),
-                    ("C", "E", 14),
-                    ("B", "C", 7),
-                ],
-                "answer": 14
-            },
-            4: {
-                "n": 7,
-                "nodes": "A,B,C,D,E,F,G",
-                "U": 30,
-                "S": "A",
-                "T": "G",
-                "edges": [
-                    ("A", "B", 8),
-                    ("A", "C", 12),
-                    ("B", "D", 16),
-                    ("C", "D", 10),
-                    ("D", "E", 14),
-                    ("E", "G", 18),
-                    ("C", "F", 15),
-                    ("F", "E", 9),
-                    ("B", "C", 6),
-                    ("D", "F", 11),
-                ],
-                "answer": 18
-            },
-            5: {
-                "n": 8,
-                "nodes": "A,B,C,D,E,F,G,H",
-                "U": 50,
-                "S": "A",
-                "T": "H",
-                "edges": [
-                    ("A", "B", 10),
-                    ("A", "C", 25),
-                    ("B", "D", 20),
-                    ("C", "D", 15),
-                    ("D", "E", 22),
-                    ("E", "H", 30),
-                    ("C", "F", 18),
-                    ("F", "G", 16),
-                    ("G", "H", 19),
-                    ("B", "C", 8),
-                    ("D", "F", 12),
-                    ("E", "G", 14),
-                    ("F", "E", 17),
-                ],
-                "answer": 19
-            },
+            1: {"law": "L1"},
+            2: {"law": "L2"},
+            3: {"law": "L3"},
+            4: {"law": "L4"},
+            5: {"law": "L4"},
         },
     }
 
@@ -540,7 +490,6 @@ Note: Try to minimize the number of queries to establish the best debate strateg
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏状态，构建图结构并计算正确答案"""
         lang = self.config.language
         diff = int(self.config.difficulty)
 
@@ -550,116 +499,196 @@ Note: Try to minimize the number of queries to establish the best debate strateg
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 设置游戏信息用于填充规则模板
-        self._game_info["n"] = cfg["n"]
-        self._game_info["nodes"] = cfg["nodes"]
-        self._game_info["U"] = cfg["U"]
-        self._game_info["S"] = cfg["S"]
-        self._game_info["T"] = cfg["T"]
+        self.law = cfg["law"]
 
-        # 构建图结构：邻接表，每个节点映射到 [(邻居, 权值), ...]
-        self.graph = {}
-        for node in cfg["nodes"].split(","):
-            self.graph[node.strip()] = []
-        
-        for u, v, w in cfg["edges"]:
-            self.graph[u].append((v, w))
-            self.graph[v].append((u, w))  # 无向图
-        
-        self.start = cfg["S"]
-        self.target = cfg["T"]
-        self.upper_bound = cfg["U"]
-        self.correct_answer = cfg["answer"]
+        self.tree = nx.Graph()
+        edges = [
+            ("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("E", "H"),
+            ("C", "F"), ("C", "G"), ("G", "I"), ("G", "J"), ("F", "K")
+        ]
+        self.tree.add_edges_from(edges)
+        self.root = "A"
+        self.nodes = list(self.tree.nodes())
 
-    def _is_connected_with_threshold(self, threshold):
-        """使用BFS判断在给定阈值下，起点和终点是否连通"""
-        # 只考虑权值 <= threshold 的边
-        visited = set()
-        queue = [self.start]
-        visited.add(self.start)
-        
-        while queue:
-            current = queue.pop(0)
-            if current == self.target:
-                return True
-            
-            for neighbor, weight in self.graph[current]:
-                if weight <= threshold and neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
-        
-        return False
+        self.directed_tree = nx.bfs_tree(self.tree, self.root)
+
+        self.scores = {}
+        for node in self.nodes:
+            self.scores[node] = self._calculate_score(node, self.law)
+
+        sorted_nodes = sorted(self.nodes, key=lambda x: (-self.scores[x], x))
+        self.target_node = sorted_nodes[3]
+
+        self.query_count = 0
+        self.max_queries = 12
+
+        self._game_info = {}
+
+    def _calculate_score(self, node, law):
+        subtree_nodes = list(nx.descendants(self.directed_tree, node))
+        subtree_nodes.append(node)
+
+        if law == "L1":
+            return len(subtree_nodes)
+        elif law == "L2":
+            return len(subtree_nodes) - 1
+        elif law == "L3":
+            leaf_count = 0
+            for n in subtree_nodes:
+                if self.directed_tree.out_degree(n) == 0:
+                    leaf_count += 1
+            return leaf_count
+        elif law == "L4":
+            odd_distance_count = 0
+            for n in subtree_nodes:
+                if n == node:
+                    continue
+                try:
+                    dist = nx.shortest_path_length(self.tree, node, n)
+                    if dist % 2 == 1:
+                        odd_distance_count += 1
+                except nx.NetworkXNoPath:
+                    pass
+            return odd_distance_count
+        else:
+            raise ValueError(f"Unknown law: {law}")
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        try:
-            answer_str = parsed_info["answer"].strip()
-            answer = int(answer_str)
-            return answer == self.correct_answer
-        except:
+        raw_ans = parsed_info["answer"]
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
+
+        if "law" not in ans_dict or "node" not in ans_dict:
             return False
 
-    def _cf_make_wrong(self, correct):
-        """将正确的阈值查询结果翻转为错误答案"""
-        if self.config.language == "zh":
-            return "否" if correct == "是" else "是"
-        else:
-            return "No" if correct == "Yes" else "Yes"
+        if ans_dict["law"] != self.law:
+            return False
+
+        if ans_dict["node"] != self.target_node:
+            return False
+
+        return True
 
     def _cf_core_produce(self, parsed_info):
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_format = "错误：查询格式无效或阈值超出范围。"
+            error_format = "错误：格式无效或节点名称错误。"
+            error_same = "错误：两个节点必须不同。"
+            error_node = "错误：节点名称不存在。"
         else:
             yes_res, no_res = "Yes", "No"
-            error_format = "Error: Invalid query format or threshold out of range."
+            error_format = "Error: Invalid format or node name."
+            error_same = "Error: The two nodes must be different."
+            error_node = "Error: Node name does not exist."
 
-        if "query_threshold" in parsed_info:
+        if "query_compare" in parsed_info:
+            self.query_count += 1
             try:
-                threshold_str = parsed_info["query_threshold"].strip()
-                threshold = int(threshold_str)
-                
-                # 检查阈值是否在合法范围内
-                if threshold < 1 or threshold > self.upper_bound:
+                raw = parsed_info["query_compare"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
                     return error_format
+                u, v = parts[0], parts[1]
                 
-                # 判断连通性
-                is_connected = self._is_connected_with_threshold(threshold)
-                return yes_res if is_connected else no_res
-            except:
+                if u == v:
+                    return error_same
+                if u not in self.nodes or v not in self.nodes:
+                    return error_node
+
+                score_u = self.scores[u]
+                score_v = self.scores[v]
+
+                if score_u > score_v:
+                    return u
+                elif score_u < score_v:
+                    return v
+                else:
+                    return "equal"
+            except Exception:
                 return error_format
+
+        elif "query_equal" in parsed_info:
+            self.query_count += 1
+            try:
+                raw = parsed_info["query_equal"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                u, v = parts[0], parts[1]
+                
+                if u == v:
+                    return error_same
+                if u not in self.nodes or v not in self.nodes:
+                    return error_node
+
+                score_u = self.scores[u]
+                score_v = self.scores[v]
+
+                return yes_res if score_u == score_v else no_res
+            except Exception:
+                return error_format
+
         else:
             raise ValueError("No valid query tag found.")
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
+            
+        low = correct.lower()
+        if low == "yes":
+            return "No"
+        if low == "no":
+            return "Yes"
+        
+        if low == "equal":
+            return self.nodes[0]
+        
+        if correct in self.nodes:
+            return "equal"
+        
+        return correct + "_WRONG"
 
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
+    def get_all_possible_queries(self) -> list[dict]:
         results = []
-        # 本游戏只有一种查询：阈值查询
-        # 范围从 1 到 U
-        for r in range(1, self.upper_bound + 1):
-            query_str = f"<query_threshold>{r}</query_threshold>"
-            
-            # 使用内部逻辑计算连通性
-            is_connected = self._is_connected_with_threshold(r)
-            
-            if self.config.language == "zh":
-                ans = "是" if is_connected else "否"
-            else:
-                ans = "Yes" if is_connected else "No"
-            
-            results.append({
-                "query": query_str,
-                "answer": ans
-            })
-            
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+
+        for u in self.nodes:
+            for v in self.nodes:
+                if u == v:
+                    continue
+                
+                score_u = self.scores[u]
+                score_v = self.scores[v]
+                if score_u > score_v:
+                    ans_compare = u
+                elif score_u < score_v:
+                    ans_compare = v
+                else:
+                    ans_compare = "equal"
+                
+                results.append({
+                    "query": f"<query_compare>{u},{v}</query_compare>",
+                    "answer": ans_compare
+                })
+
+                ans_equal = yes_res if score_u == score_v else no_res
+                
+                results.append({
+                    "query": f"<query_equal>{u},{v}</query_equal>",
+                    "answer": ans_equal
+                })
+                
         return results

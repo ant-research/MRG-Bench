@@ -1,812 +1,849 @@
 from .base import Game
-import random
 import re
+import itertools
 
-
-class PrefixAggregationGame(Game):
+class MinimalVertexCoverGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"前缀聚合模式识别"的推理游戏，规则如下：
+我们现在来玩一个"隐藏图的最小顶点覆盖"推理游戏，规则如下：
 
-游戏设定了一个长度为 {n} 的有序整数序列 a1, a2, ..., a{n}，每项取值范围为 0 到 9。序列的第一项 a1 固定为 0。
+游戏设定了一个顶点集合 V = {{A, B, C, D, E, F, G, H}}。我已秘密构建了一个简单无向图（无自环、无重边），边集合 E 完全隐藏。
 
-我已经秘密选择了一种"聚合模式"，该模式只可能是以下三种之一：
-1. 模式 S（前缀和）：对于位置 k，读数 R(k) 等于前 k 项的和。
-2. 模式 M（前缀最大）：对于位置 k，读数 R(k) 等于前 k 项的最大值。
-3. 模式 C（前缀阈值计数）：对于位置 k，读数 R(k) 等于前 k 项中大于等于 6 的元素个数。
+**顶点覆盖定义**：给定顶点子集 S，若图中每条边的至少一个端点在 S 中，则称 S 覆盖了所有边。
 
-你的目标是通过一系列查询来推断出真实的聚合模式类型（S、M 或 C）。
+你的目标是找到最小的顶点覆盖集合 S，并提供证据证明其最优性。你可以通过以下四种操作与我交互（每次只能选择一种）：
 
-## 交互方式
+**1. 顶点集测试 (CoverTest)**
+测试给定顶点集是否覆盖所有边。
+格式：
+<cover_test>A B C</cover_test>
 
-游戏中维护一个当前位置 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
+响应：
+- 若覆盖所有边：Covered: YES | Size: [集合大小]
+- 若未覆盖：Covered: NO | UncoveredCount: [未覆盖边数] | ExampleEdge: [一条未覆盖的边，如 A-B]
+  注意：返回的示例边会被加入你的"已知边集合"，供后续使用。
 
-1. 前进一步：将位置 k 增加 1（必须按顺序前进，不能跳跃，最多前进到 k = {n}）
-2. 查询当前读数：获取当前位置 k 的聚合读数 R(k)
-3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对于上一位置的增量
-4. 查询当前位置：获取当前的位置 k
+**2. 下界验证 (LowerBound)**
+提交一组已知边，验证它们是否构成匹配（两两不共享端点），以此确立最小覆盖规模的下界。
+格式：
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-当你收集足够信息后，请提交最终答案，宣告真实的聚合模式。若答案错误或格式不符，游戏失败。
+响应：
+- 若有效：LowerBoundValid: YES | Bound: [匹配边数]（会更新已确立的下界）
+- 若无效：LowerBoundValid: NO | Reason: [NotEdges 或 NotDisjoint]
 
-## 操作格式（必须严格遵守）
+注意：只能使用"已知边集合"中的边。
 
-每次操作只能包含一个标签。请使用以下 XML format：
+**3. 查看已知边 (ShowKnown)**
+查看当前通过 CoverTest 获得的所有已知边。
+格式：
+<show_known></show_known>
 
-- 前进一步（内容为空）：
-<step></step>
+响应：
+KnownEdges: [按字母序排列的边列表]
 
-- 查询当前读数（内容为空）：
-<query_reading></query_reading>
+**4. 提交最优答案 (ClaimMinimal)**
+提交你认为的最小顶点覆盖集合及其最优性证据。
+格式：
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- 查询增量（内容为空）：
-<query_delta></query_delta>
+校验条件：
+1) S 必须覆盖所有边
+2) Evidence 中的边必须已通过 LowerBound 验证，且规模为 m
+3) S 的大小必须等于 m
 
-- 查询当前位置（内容为空）：
-<query_position></query_position>
+响应：
+- 若全部满足：Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- 否则：Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
-
-<answer>S</answer>
-
-或
-
-<answer>M</answer>
-
-或
-
-<answer>C</answer>
-
-## 提示
-
-- 初始时 k = 0，R(0) = 0
-- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
-- 三种模式的读数都是非递减的
-- 模式 C 的增量只能是 0 或 1
-- 模式 M 的读数不会超过 9
-- 模式 S 的增量等于当前位置的序列值
+**提示**：
+- 图结构完全隐藏，需要通过测试失败来逐步发现边
+- 匹配的规模给出了最小覆盖的下界
+- 你需要尽可能少的交互次数找到答案
 """
 
     game_rule_en = """\
-Let's play a "Prefix Aggregation Pattern Recognition" deduction game. Here are the rules:
+Let's play a "Hidden Graph Minimal Vertex Cover" deduction game. Here are the rules:
 
-There is an ordered integer sequence of length {n}: a1, a2, ..., a{n}, where each element ranges from 0 to 9. The first element a1 is fixed at 0.
+The game has a fixed vertex set V = {{A, B, C, D, E, F, G, H}}. I have secretly constructed a simple undirected graph (no self-loops, no multiple edges) with a completely hidden edge set E.
 
-I have secretly selected an "aggregation pattern", which can only be one of the following three:
-1. Pattern S (Prefix Sum): For position k, the reading R(k) equals the sum of the first k elements.
-2. Pattern M (Prefix Maximum): For position k, the reading R(k) equals the maximum of the first k elements.
-3. Pattern C (Prefix Threshold Count): For position k, the reading R(k) equals the count of elements among the first k that are greater than or equal to 6.
+**Vertex Cover Definition**: Given a vertex subset S, if at least one endpoint of every edge in the graph is in S, then S covers all edges.
 
-Your goal is to infer the true aggregation pattern type (S, M, or C) through a series of queries.
+Your goal is to find the minimal vertex cover set S and provide evidence proving its optimality. You can interact with me through four types of operations (one at a time):
 
-## Interaction Protocol
+**1. Cover Test (CoverTest)**
+Test whether a given vertex set covers all edges.
+Format:
+<cover_test>A B C</cover_test>
 
-The game maintains a current position k (initially 0). You can perform the following operations (one per turn):
+Response:
+- If it covers all edges: Covered: YES | Size: [size of the set]
+- If not covered: Covered: NO | UncoveredCount: [number of uncovered edges] | ExampleEdge: [an uncovered edge, e.g., A-B]
+  Note: The returned example edge will be added to your "known edge set" for future use.
 
-1. Step forward: Increment position k by 1 (must proceed sequentially, cannot skip, maximum k = {n})
-2. Query current reading: Get the aggregation reading R(k) at current position k
-3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous position
-4. Query current position: Get the current position k
+**2. Lower Bound Verification (LowerBound)**
+Submit a set of known edges to verify if they form a matching (pairwise disjoint), establishing a lower bound on the minimal cover size.
+Format:
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-When you have enough information, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the game fails.
+Response:
+- If valid: LowerBoundValid: YES | Bound: [number of matching edges] (updates the established lower bound)
+- If invalid: LowerBoundValid: NO | Reason: [NotEdges or NotDisjoint]
 
-## Operation Format (strictly required)
+Note: Only edges from the "known edge set" can be used.
 
-Each operation must contain only one tag. Use the following XML format:
+**3. Show Known Edges (ShowKnown)**
+View all edges currently discovered through CoverTest.
+Format:
+<show_known></show_known>
 
-- Step forward (empty content):
-<step></step>
+Response:
+KnownEdges: [list of edges in alphabetical order]
 
-- Query current reading (empty content):
-<query_reading></query_reading>
+**4. Claim Minimal Solution (ClaimMinimal)**
+Submit your proposed minimal vertex cover set and optimality evidence.
+Format:
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- Query delta (empty content):
-<query_delta></query_delta>
+Verification conditions:
+1) S must cover all edges
+2) Evidence edges must be previously verified via LowerBound with size m
+3) Size of S must equal m
 
-- Query current position (empty content):
-<query_position></query_position>
+Response:
+- If all satisfied: Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- Otherwise: Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-When submitting the final answer, specify the pattern type (S, M, or C) using this format:
-
-<answer>S</answer>
-
-or
-
-<answer>M</answer>
-
-or
-
-<answer>C</answer>
-
-## Hints
-
-- Initially k = 0, R(0) = 0
-- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
-- The readings of all three patterns are non-decreasing
-- Pattern C has deltas of only 0 or 1
-- Pattern M has readings that do not exceed 9
-- Pattern S has deltas equal to the current sequence value
+**Notes**:
+- The graph structure is completely hidden; you discover edges through failed tests
+- The size of a matching provides a lower bound for the minimal cover
+- You should find the answer with as few interactions as possible
 """
 
     contextualized_rule_zh_1 = """\
-欢迎进入智能交通路网拥堵分析系统。我们现在来进行一次"路网聚合模式识别"的推理评估，规则如下：
+欢迎来到“城市交通盲区监测”规划系统。
 
-系统记录了一条路线上长度为 {n} 的路段序列的拥堵指数 a1, a2, ..., a{n}，每项拥堵指数范围为 0 到 9。序列的第一个路段 a1 固定为 0（代表起点畅通）。
+城市中设定了8个关键交通枢纽 V = {{A, B, C, D, E, F, G, H}}。根据交通大数据显示，枢纽之间存在若干条隐蔽的“高危拥堵路段”（无自环、无重边），这些路段的集合 E 目前对你是隐藏的。
 
-系统后台秘密选择了一种"路网聚合模式"用于生成读数，该模式只可能是以下三种之一：
-1. 模式 S（前缀和/累计拥堵）：对于检查点 k，读数 R(k) 等于前 k 个路段的拥堵指数总和。
-2. 模式 M（前缀最大/历史最高拥堵）：对于检查点 k，读数 R(k) 等于前 k 个路段中出现的最高拥堵指数。
-3. 模式 C（前缀阈值计数/严重拥堵路段数）：对于检查点 k，读数 R(k) 等于前 k 个路段中指数大于等于 6 的路段个数。
+**监测覆盖定义**：给定一个被部署了监控基站的枢纽子集 S，如果路网中每一条高危路段的至少一个端点枢纽位于 S 中，我们就称 S 实现了对所有高危路段的有效监测覆盖。
 
-你的目标是通过一系列系统查询，推断出后台真实使用的聚合模式类型（S、M 或 C）。
+你的目标是找到部署监控基站的最少枢纽集合 S，并提供证据证明其是最优的（成本最低）。你可以通过以下四种操作与系统交互（每次只能选择一种）：
 
-## 交互方式
+**1. 部署测试 (CoverTest)**
+测试给定的一组枢纽是否能覆盖所有高危路段。
+格式：
+<cover_test>A B C</cover_test>
 
-系统中维护着当前检查点位置 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
+响应：
+- 若覆盖所有路段：Covered: YES | Size: [集合大小]
+- 若未覆盖：Covered: NO | UncoveredCount: [未覆盖路段数] | ExampleEdge: [一条未覆盖的路段，如 A-B]
+  注意：返回的示例路段会被加入你的“已知高危路段库”，供后续使用。
 
-1. 前进一步：将检查点 k 增加 1（必须按顺序驶入下一路段，不能跳跃，最多前进到 k = {n}）
-2. 查询当前读数：获取当前检查点 k 的路网聚合读数 R(k)
-3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一检查点读数的增量
-4. 查询当前位置：获取当前所在的检查点位置 k
+**2. 下界验证 (LowerBound)**
+提交一组已知路段，验证它们是否构成物理上相互独立的路段（两两不共享端点枢纽），以此确立最少基站规模的理论下界。
+格式：
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-当收集到足够的情报后，请提交最终答案，宣告真实的聚合模式。若答案错误或格式不符，排查任务失败。
+响应：
+- 若有效：LowerBoundValid: YES | Bound: [独立路段数]（会更新已确立的下界）
+- 若无效：LowerBoundValid: NO | Reason: [NotEdges 或 NotDisjoint]
 
-## 操作格式（必须严格遵守）
+注意：只能使用“已知高危路段库”中的路段。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+**3. 查看已知路段 (ShowKnown)**
+查看当前通过部署测试失败而揭露的所有已知高危路段。
+格式：
+<show_known></show_known>
 
-- 前进一步（内容为空）：
-<step></step>
+响应：
+KnownEdges: [按字母序排列的路段列表]
 
-- 查询当前读数（内容为空）：
-<query_reading></query_reading>
+**4. 提交最优方案 (ClaimMinimal)**
+提交你认为的最少监控部署枢纽集合及其最优性证据。
+格式：
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- 查询增量（内容为空）：
-<query_delta></query_delta>
+校验条件：
+1) S 必须覆盖所有高危路段
+2) Evidence 中的独立路段必须已通过 LowerBound 验证，且规模为 m
+3) S 的大小必须等于 m
 
-- 查询当前位置（内容为空）：
-<query_position></query_position>
+响应：
+- 若全部满足：Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- 否则：Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
-
-<answer>S</answer>
-
-或
-
-<answer>M</answer>
-
-或
-
-<answer>C</answer>
-
-## 提示
-
-- 初始时 k = 0，R(0) = 0
-- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
-- 三种模式的读数都是非递减的
-- 模式 C 的增量只能是 0 或 1
-- 模式 M 的读数不会超过 9
-- 模式 S 的增量等于当前位置的序列值
+**提示**：
+- 路网高危状态完全隐藏，需要通过试错式部署来逐步排查
+- 相互独立的拥堵路段数量决定了监控成本的下界
+- 你需要尽可能少的交互次数找到最佳规划策略
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the Intelligent Traffic Network Congestion Analysis System. Let's perform a "Network Aggregation Pattern Recognition" evaluation. Here are the rules:
+[Transportation Scenario]
+Welcome to the "Urban Traffic Blind Spot Monitoring" planning system.
 
-The system records a sequence of congestion indices for a route of length {n}: a1, a2, ..., a{n}, where each index ranges from 0 to 9. The first segment a1 is fixed at 0 (indicating a clear starting point).
+The city network comprises 8 key traffic hubs V = {{A, B, C, D, E, F, G, H}}. According to traffic big data, there are several hidden "high-risk congested routes" (no self-loops, no multiple edges) between these hubs. The set of these routes E is completely hidden from you.
 
-The backend has secretly selected a "network aggregation pattern" to generate readings, which can only be one of the following three:
-1. Pattern S (Prefix Sum / Cumulative Congestion): For checkpoint k, the reading R(k) equals the total sum of congestion indices of the first k segments.
-2. Pattern M (Prefix Maximum / Historical Peak Congestion): For checkpoint k, the reading R(k) equals the maximum congestion index among the first k segments.
-3. Pattern C (Prefix Threshold Count / Severe Congestion Count): For checkpoint k, the reading R(k) equals the count of segments among the first k that have a congestion index greater than or equal to 6.
+**Monitoring Cover Definition**: Given a subset of hubs S deployed with monitoring stations, if at least one endpoint hub of every high-risk route is in S, then S effectively covers all high-risk routes.
 
-Your goal is to infer the true aggregation pattern type (S, M, or C) used by the backend through a series of system queries.
+Your goal is to find the minimal hub set S to deploy monitoring stations and provide evidence proving its optimality (lowest cost). You can interact with the system through four types of operations (one at a time):
 
-## Interaction Protocol
+**1. Deployment Test (CoverTest)**
+Test whether a given set of hubs covers all high-risk routes.
+Format:
+<cover_test>A B C</cover_test>
 
-The system maintains a current checkpoint position k (initially 0). You can perform the following operations (one per turn):
+Response:
+- If it covers all routes: Covered: YES | Size: [size of the set]
+- If not covered: Covered: NO | UncoveredCount: [number of uncovered routes] | ExampleEdge: [an uncovered route, e.g., A-B]
+  Note: The returned example route will be added to your "known route repository" for future use.
 
-1. Step forward: Increment checkpoint k by 1 (must proceed sequentially to the next segment, cannot skip, maximum k = {n})
-2. Query current reading: Get the network aggregation reading R(k) at the current checkpoint k
-3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous checkpoint
-4. Query current position: Get the current checkpoint position k
+**2. Lower Bound Verification (LowerBound)**
+Submit a set of known routes to verify if they are physically independent (pairwise disjoint, sharing no endpoint hubs), establishing a theoretical lower bound on the minimal monitoring size.
+Format:
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-When you have gathered enough intelligence, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the evaluation task fails.
+Response:
+- If valid: LowerBoundValid: YES | Bound: [number of independent routes] (updates the established lower bound)
+- If invalid: LowerBoundValid: NO | Reason: [NotEdges or NotDisjoint]
 
-## Operation Format (strictly required)
+Note: Only routes from the "known route repository" can be used.
 
-Each operation must contain only one tag. Use the following XML format:
+**3. Show Known Routes (ShowKnown)**
+View all high-risk routes currently discovered through failed deployment tests.
+Format:
+<show_known></show_known>
 
-- Step forward (empty content):
-<step></step>
+Response:
+KnownEdges: [list of routes in alphabetical order]
 
-- Query current reading (empty content):
-<query_reading></query_reading>
+**4. Claim Minimal Solution (ClaimMinimal)**
+Submit your proposed minimal monitoring hub set and optimality evidence.
+Format:
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- Query delta (empty content):
-<query_delta></query_delta>
+Verification conditions:
+1) S must cover all high-risk routes
+2) Evidence routes must be previously verified via LowerBound with size m
+3) Size of S must equal m
 
-- Query current position (empty content):
-<query_position></query_position>
+Response:
+- If all satisfied: Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- Otherwise: Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-When submitting the final answer, specify the pattern type (S, M, or C) using this format:
-
-<answer>S</answer>
-
-or
-
-<answer>M</answer>
-
-or
-
-<answer>C</answer>
-
-## Hints
-
-- Initially k = 0, R(0) = 0
-- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
-- The readings of all three patterns are non-decreasing
-- Pattern C has deltas of only 0 or 1
-- Pattern M has readings that do not exceed 9
-- Pattern S has deltas equal to the current sequence value
+**Notes**:
+- The high-risk network topology is completely hidden; you discover routes through failed tests
+- The number of mutually independent congested routes provides a lower bound for the minimal deployment cost
+- You should find the answer with as few interactions as possible
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用临床病程体征监测系统。我们现在来进行一次"体征聚合模式识别"的诊断推理，规则如下：
+欢迎使用“致病蛋白相互作用”靶向干预系统。
 
-系统记录了某患者连续 {n} 天的特定症状评分序列 a1, a2, ..., a{n}，每日评分范围为 0 到 9。第 1 天的评分 a1 固定为 0（代表入院时基础状态平稳）。
+病理模型中标记了8种关键蛋白 V = {{A, B, C, D, E, F, G, H}}。医学研究表明，这些蛋白之间存在若干隐蔽的“致病相互作用”（无自相互作用、无重复作用），这些病理级联反应的集合 E 目前完全隐藏。
 
-系统已自动选择了一种"体征聚合模式"以生成评估读数，该模式只可能是以下三种之一：
-1. 模式 S（前缀和/累计症状负荷）：对于随访天数 k，读数 R(k) 等于前 k 天的症状评分总和。
-2. 模式 M（前缀最大/历史最高危急值）：对于随访天数 k，读数 R(k) 等于前 k 天中出现的最高症状评分。
-3. 模式 C（前缀阈值计数/高危状态天数）：对于随访天数 k，读数 R(k) 等于前 k 天中评分大于等于 6 的天数。
+**干预覆盖定义**：给定作为靶向抑制剂标靶的蛋白子集 S，如果每一次致病相互作用中至少有一种蛋白位于 S 中（从而被抑制），则称 S 成功阻断了所有致病相互作用。
 
-你的目标是通过一系列病历查询，推断出系统当前应用的真实聚合模式类型（S、M 或 C）。
+你的目标是筛选出最少的靶向蛋白组合 S，并提供生化层面相互独立的证据来证明其是最优靶点组合。你可以通过以下四种操作与系统交互（每次只能选择一种）：
 
-## 交互方式
+**1. 干预测试 (CoverTest)**
+测试给定的靶向蛋白组合是否能阻断所有致病相互作用。
+格式：
+<cover_test>A B C</cover_test>
 
-系统当前处于随访天数 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
+响应：
+- 若阻断所有作用：Covered: YES | Size: [集合大小]
+- 若未完全阻断：Covered: NO | UncoveredCount: [未阻断的作用数] | ExampleEdge: [一条未被阻断的相互作用，如 A-B]
+  注意：返回的示例相互作用会被加入你的“已知致病作用库”，供后续使用。
 
-1. 前进一步：将随访天数 k 增加 1（必须按日期顺序查看，不能跳跃，最多推进到 k = {n}）
-2. 查询当前读数：获取当前天数 k 的体征聚合读数 R(k)
-3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一天的读数变化量
-4. 查询当前位置：获取当前的随访天数 k
+**2. 下界验证 (LowerBound)**
+提交一组已知的致病作用，验证它们是否构成完全独立的病理反应（两两不共享参与蛋白），以此确立最少抑制剂数量的下界。
+格式：
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-在收集到充分的临床证据后，请提交最终答案，宣告真实的聚合模式。若判断错误或格式不符，诊断任务失败。
+响应：
+- 若有效：LowerBoundValid: YES | Bound: [独立作用数]（会更新已确立的下界）
+- 若无效：LowerBoundValid: NO | Reason: [NotEdges 或 NotDisjoint]
 
-## 操作格式（必须严格遵守）
+注意：只能使用“已知致病作用库”中的相互作用。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+**3. 查看已知相互作用 (ShowKnown)**
+查看当前通过干预测试失败而捕获的所有已知致病相互作用。
+格式：
+<show_known></show_known>
 
-- 前进一步（内容为空）：
-<step></step>
+响应：
+KnownEdges: [按字母序排列的作用列表]
 
-- 查询当前读数（内容为空）：
-<query_reading></query_reading>
+**4. 提交最优方案 (ClaimMinimal)**
+提交你认为的最优靶向蛋白集合及其最优性证据。
+格式：
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- 查询增量（内容为空）：
-<query_delta></query_delta>
+校验条件：
+1) S 必须阻断所有致病相互作用
+2) Evidence 中的独立作用必须已通过 LowerBound 验证，且规模为 m
+3) S 的大小必须等于 m
 
-- 查询当前位置（内容为空）：
-<query_position></query_position>
+响应：
+- 若全部满足：Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- 否则：Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
-
-<answer>S</answer>
-
-或
-
-<answer>M</answer>
-
-或
-
-<answer>C</answer>
-
-## 提示
-
-- 初始时 k = 0，R(0) = 0
-- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
-- 三种模式的读数都是非递减的
-- 模式 C 的增量只能是 0 或 1
-- 模式 M 的读数不会超过 9
-- 模式 S 的增量等于当前位置的序列值
+**提示**：
+- 完整的病理网络完全隐藏，需要通过药物测试失败来逐步暴露致病机制
+- 相互独立的致病反应数量给出了联合用药规模的下界
+- 你需要尽可能少的交互次数找到答案
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the Clinical Vital Signs Monitoring System. Let's perform a "Vital Sign Aggregation Pattern Recognition" diagnostic reasoning task. Here are the rules:
+[Healthcare Scenario]
+Welcome to the "Pathogenic Protein Interaction" targeted intervention system.
 
-The system has recorded a patient's daily specific symptom scores over {n} days: a1, a2, ..., a{n}, where each daily score ranges from 0 to 9. The score for day 1, a1, is fixed at 0 (indicating a stable baseline upon admission).
+The pathological model identifies 8 key proteins V = {{A, B, C, D, E, F, G, H}}. Medical research indicates there are several hidden "pathogenic interactions" (no self-interactions, no redundant links) between these proteins. The set of these pathological cascades E is completely hidden from you.
 
-The system has automatically selected a "vital sign aggregation pattern" to generate assessment readings, which can only be one of the following three:
-1. Pattern S (Prefix Sum / Cumulative Symptom Burden): For follow-up day k, the reading R(k) equals the sum of the symptom scores over the first k days.
-2. Pattern M (Prefix Maximum / Historical Peak Critical Value): For follow-up day k, the reading R(k) equals the highest symptom score observed during the first k days.
-3. Pattern C (Prefix Threshold Count / High-Risk Days Count): For follow-up day k, the reading R(k) equals the number of days among the first k where the score was greater than or equal to 6.
+**Intervention Cover Definition**: Given a subset of targeted proteins S to be inhibited, if at least one protein in every pathogenic interaction is in S (thus inhibited), then S successfully blocks all pathogenic interactions.
 
-Your goal is to infer the true aggregation pattern type (S, M, or C) currently applied by the system through a series of medical record queries.
+Your goal is to screen for the minimal targeted protein combination S and provide biochemically independent evidence proving its optimality. You can interact with the system through four types of operations (one at a time):
 
-## Interaction Protocol
+**1. Intervention Test (CoverTest)**
+Test whether a given combination of targeted proteins blocks all pathogenic interactions.
+Format:
+<cover_test>A B C</cover_test>
 
-The system maintains a current follow-up day k (initially 0). You can perform the following operations (one per turn):
+Response:
+- If all interactions blocked: Covered: YES | Size: [size of the set]
+- If not fully blocked: Covered: NO | UncoveredCount: [number of unblocked interactions] | ExampleEdge: [an unblocked interaction, e.g., A-B]
+  Note: The returned example interaction will be added to your "known pathological interaction repository" for future use.
 
-1. Step forward: Increment follow-up day k by 1 (must proceed sequentially by date, cannot skip, maximum k = {n})
-2. Query current reading: Get the vital sign aggregation reading R(k) at the current day k
-3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous day
-4. Query current position: Get the current follow-up day k
+**2. Lower Bound Verification (LowerBound)**
+Submit a set of known interactions to verify if they form completely independent pathological reactions (pairwise disjoint, sharing no proteins), establishing a lower bound on the minimal number of inhibitors required.
+Format:
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-When you have gathered sufficient clinical evidence, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the diagnostic task fails.
+Response:
+- If valid: LowerBoundValid: YES | Bound: [number of independent interactions] (updates the established lower bound)
+- If invalid: LowerBoundValid: NO | Reason: [NotEdges or NotDisjoint]
 
-## Operation Format (strictly required)
+Note: Only interactions from the "known pathological interaction repository" can be used.
 
-Each operation must contain only one tag. Use the following XML format:
+**3. Show Known Interactions (ShowKnown)**
+View all pathogenic interactions currently captured through failed intervention tests.
+Format:
+<show_known></show_known>
 
-- Step forward (empty content):
-<step></step>
+Response:
+KnownEdges: [list of interactions in alphabetical order]
 
-- Query current reading (empty content):
-<query_reading></query_reading>
+**4. Claim Minimal Solution (ClaimMinimal)**
+Submit your proposed optimal targeted protein set and optimality evidence.
+Format:
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- Query delta (empty content):
-<query_delta></query_delta>
+Verification conditions:
+1) S must block all pathogenic interactions
+2) Evidence interactions must be previously verified via LowerBound with size m
+3) Size of S must equal m
 
-- Query current position (empty content):
-<query_position></query_position>
+Response:
+- If all satisfied: Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- Otherwise: Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-When submitting the final answer, specify the pattern type (S, M, or C) using this format:
-
-<answer>S</answer>
-
-or
-
-<answer>M</answer>
-
-or
-
-<answer>C</answer>
-
-## Hints
-
-- Initially k = 0, R(0) = 0
-- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
-- The readings of all three patterns are non-decreasing
-- Pattern C has deltas of only 0 or 1
-- Pattern M has readings that do not exceed 9
-- Pattern S has deltas equal to the current sequence value
+**Notes**:
+- The complete pathological network is hidden; you discover mechanisms through failed drug tests
+- The number of mutually independent pathogenic reactions provides a lower bound for combination therapy size
+- You should find the answer with as few interactions as possible
 """
 
     contextualized_rule_zh_3 = """\
-欢迎进入自适应学情评估追踪系统。我们现在来进行一次"学情聚合模式识别"的教学推理，规则如下：
+欢迎进入“认知盲区诊断与辅导”教学系统。
 
-系统收录了某学生在 {n} 个连续学习模块中的错误知识点数量序列 a1, a2, ..., a{n}，每个模块的错误数量范围为 0 到 9。第 1 个模块的错误数 a1 固定为 0（代表基础模块已完全掌握）。
+本课程共有8个核心知识模块 V = {{A, B, C, D, E, F, G, H}}。教育评估表明，模块之间存在若干隐蔽的“交叉认知断层”（无单一模块内部断层，无重复断层），这些认知断层的集合 E 目前对你是未知的。
 
-评测引擎秘密配置了一种"学情聚合模式"来生成评价读数，该模式只可能是以下三种之一：
-1. 模式 S（前缀和/累计薄弱点）：对于评估进度 k，读数 R(k) 等于前 k 个模块的错误知识点总和。
-2. 模式 M（前缀最大/单模块最多错误）：对于评估进度 k，读数 R(k) 等于前 k 个模块中出现的最高错误数量。
-3. 模式 C（前缀阈值计数/未达标模块数）：对于评估进度 k，读数 R(k) 等于前 k 个模块中错误数大于等于 6（即未达标）的模块个数。
+**辅导覆盖定义**：给定一个指派了专项辅导的知识模块子集 S，如果每一个认知断层涉及的两个模块中至少有一个被纳入了 S 的辅导范围，我们就称 S 弥补了所有的认知断层。
 
-你的目标是通过一系列学情查询，推断出评测引擎真实采用的聚合模式类型（S、M 或 C）。
+你的目标是制定最精简的专项辅导模块清单 S，并提供证据证明其是最优策略（避免过度增加学生负担）。你可以通过以下四种操作与系统交互：
 
-## 交互方式
+**1. 教学测试 (CoverTest)**
+测试给定的一组辅导模块是否能弥补所有认知断层。
+格式：
+<cover_test>A B C</cover_test>
 
-系统当前处于评估进度 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
+响应：
+- 若弥补所有断层：Covered: YES | Size: [集合大小]
+- 若未完全弥补：Covered: NO | UncoveredCount: [未弥补的断层数] | ExampleEdge: [一个未弥补的断层，如 A-B]
+  注意：返回的示例认知断层会被加入你的“已知薄弱环节库”，供后续使用。
 
-1. 前进一步：将评估进度 k 增加 1（必须按模块顺序推进，不能跳跃，最多推进到 k = {n}）
-2. 查询当前读数：获取当前进度 k 的学情聚合读数 R(k)
-3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一个模块的评价增量
-4. 查询当前位置：获取当前的评估进度 k
+**2. 下界验证 (LowerBound)**
+提交一组已知的认知断层，验证它们是否是完全无关的断层（两两不共享知识模块），以此确立最少辅导模块数量的下界。
+格式：
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-当掌握足够的学情特征后，请提交最终答案，宣告真实的聚合模式。若答案错误或格式不符，评估任务失败。
+响应：
+- 若有效：LowerBoundValid: YES | Bound: [独立断层数]（会更新已确立的下界）
+- 若无效：LowerBoundValid: NO | Reason: [NotEdges 或 NotDisjoint]
 
-## 操作格式（必须严格遵守）
+注意：只能使用“已知薄弱环节库”中的断层。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+**3. 查看已知断层 (ShowKnown)**
+查看当前通过教学测试失败而诊断出的所有已知认知断层。
+格式：
+<show_known></show_known>
 
-- 前进一步（内容为空）：
-<step></step>
+响应：
+KnownEdges: [按字母序排列的断层列表]
 
-- 查询当前读数（内容为空）：
-<query_reading></query_reading>
+**4. 提交最优方案 (ClaimMinimal)**
+提交你认为的最精简专项辅导清单及其最优性证据。
+格式：
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- 查询增量（内容为空）：
-<query_delta></query_delta>
+校验条件：
+1) S 必须弥补所有认知断层
+2) Evidence 中的独立断层必须已通过 LowerBound 验证，且规模为 m
+3) S 的大小必须等于 m
 
-- 查询当前位置（内容为空）：
-<query_position></query_position>
+响应：
+- 若全部满足：Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- 否则：Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
-
-<answer>S</answer>
-
-或
-
-<answer>M</answer>
-
-或
-
-<answer>C</answer>
-
-## 提示
-
-- 初始时 k = 0，R(0) = 0
-- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
-- 三种模式的读数都是非递减的
-- 模式 C 的增量只能是 0 或 1
-- 模式 M 的读数不会超过 9
-- 模式 S 的增量等于当前位置的序列值
+**提示**：
+- 认知障碍网络完全隐藏，需要通过测试反馈来逐步揭示交叉弱点
+- 完全无关的断层数量直接决定了必须开启的专项辅导模块的下界
+- 你需要尽可能少的交互次数找到答案
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Adaptive Learning Assessment Tracking System. Let's engage in a "Learning Aggregation Pattern Recognition" pedagogical deduction. Here are the rules:
+Welcome to the "Cognitive Gap Diagnosis and Tutoring" teaching system.
 
-The system contains a sequence of a student's missed knowledge points across {n} consecutive learning modules: a1, a2, ..., a{n}, where the number of errors per module ranges from 0 to 9. The error count for the first module, a1, is fixed at 0 (indicating complete mastery of the foundation).
+This course consists of 8 core knowledge modules V = {{A, B, C, D, E, F, G, H}}. Educational assessments indicate there are several hidden "cross-module cognitive gaps" (no single-module internal gaps, no redundant gaps). The set of these cognitive gaps E is currently unknown to you.
 
-The evaluation engine has secretly configured a "learning aggregation pattern" to generate assessment readings, which can only be one of the following three:
-1. Pattern S (Prefix Sum / Cumulative Weaknesses): For assessment progress k, the reading R(k) equals the total sum of missed knowledge points across the first k modules.
-2. Pattern M (Prefix Maximum / Peak Module Errors): For assessment progress k, the reading R(k) equals the highest number of errors found in any single module among the first k modules.
-3. Pattern C (Prefix Threshold Count / Substandard Modules Count): For assessment progress k, the reading R(k) equals the number of modules among the first k that have 6 or more errors (considered substandard).
+**Tutoring Cover Definition**: Given a subset of knowledge modules S assigned for specialized tutoring, if at least one of the two modules involved in every cognitive gap is included in S's tutoring scope, then S successfully addresses all cognitive gaps.
 
-Your goal is to infer the true aggregation pattern type (S, M, or C) adopted by the evaluation engine through a series of learning status queries.
+Your goal is to formulate the most streamlined specialized tutoring module list S and provide evidence proving its optimality (avoiding excessive burden on students). You can interact with the system through four types of operations:
 
-## Interaction Protocol
+**1. Teaching Test (CoverTest)**
+Test whether a given set of tutoring modules addresses all cognitive gaps.
+Format:
+<cover_test>A B C</cover_test>
 
-The system maintains a current assessment progress k (initially 0). You can perform the following operations (one per turn):
+Response:
+- If all gaps addressed: Covered: YES | Size: [size of the set]
+- If not fully addressed: Covered: NO | UncoveredCount: [number of unaddressed gaps] | ExampleEdge: [an unaddressed gap, e.g., A-B]
+  Note: The returned example cognitive gap will be added to your "known weak links repository" for future use.
 
-1. Step forward: Increment progress k by 1 (must proceed sequentially by module, cannot skip, maximum k = {n})
-2. Query current reading: Get the learning aggregation reading R(k) at the current progress k
-3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous module
-4. Query current position: Get the current assessment progress k
+**2. Lower Bound Verification (LowerBound)**
+Submit a set of known cognitive gaps to verify if they are completely unrelated gaps (pairwise disjoint, sharing no modules), establishing a lower bound on the minimum number of tutoring modules required.
+Format:
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-When you have sufficient understanding of the learning features, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the assessment task fails.
+Response:
+- If valid: LowerBoundValid: YES | Bound: [number of independent gaps] (updates the established lower bound)
+- If invalid: LowerBoundValid: NO | Reason: [NotEdges or NotDisjoint]
 
-## Operation Format (strictly required)
+Note: Only gaps from the "known weak links repository" can be used.
 
-Each operation must contain only one tag. Use the following XML format:
+**3. Show Known Gaps (ShowKnown)**
+View all cognitive gaps currently diagnosed through failed teaching tests.
+Format:
+<show_known></show_known>
 
-- Step forward (empty content):
-<step></step>
+Response:
+KnownEdges: [list of gaps in alphabetical order]
 
-- Query current reading (empty content):
-<query_reading></query_reading>
+**4. Claim Minimal Solution (ClaimMinimal)**
+Submit your proposed streamlined specialized tutoring list and optimality evidence.
+Format:
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- Query delta (empty content):
-<query_delta></query_delta>
+Verification conditions:
+1) S must address all cognitive gaps
+2) Evidence gaps must be previously verified via LowerBound with size m
+3) Size of S must equal m
 
-- Query current position (empty content):
-<query_position></query_position>
+Response:
+- If all satisfied: Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- Otherwise: Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-When submitting the final answer, specify the pattern type (S, M, or C) using this format:
-
-<answer>S</answer>
-
-or
-
-<answer>M</answer>
-
-or
-
-<answer>C</answer>
-
-## Hints
-
-- Initially k = 0, R(0) = 0
-- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
-- The readings of all three patterns are non-decreasing
-- Pattern C has deltas of only 0 or 1
-- Pattern M has readings that do not exceed 9
-- Pattern S has deltas equal to the current sequence value
+**Notes**:
+- The cognitive obstacle network is hidden; you reveal cross-weaknesses through test feedback
+- The number of completely unrelated gaps directly dictates the lower bound of required specialized modules
+- You should find the answer with as few interactions as possible
 """
 
     contextualized_rule_zh_4 = """\
-欢迎使用智能制造流水线质检分析系统。我们现在来进行一次"缺陷聚合模式识别"的工业排查，规则如下：
+欢迎使用“工业生产线级联故障隐患”排查系统。
 
-系统记录了流水线上 {n} 个连续工位的次品检出量序列 a1, a2, ..., a{n}，每个工位的次品检出量范围为 0 到 9。第 1 个工位 a1 固定为 0（代表原材料准备区无次品）。
+车间内有8个核心生产工作站 V = {{A, B, C, D, E, F, G, H}}。设备运行日志显示，工作站之间潜伏着若干“机械耦合故障隐患”（无单机故障、无重复故障），这些级联隐患的集合 E 对你是不可见的。
 
-质检后台秘密应用了一种"缺陷聚合模式"以输出监控读数，该模式只可能是以下三种之一：
-1. 模式 S（前缀和/累计次品总数）：对于检查工位 k，读数 R(k) 等于前 k 个工位的次品检出量总和。
-2. 模式 M（前缀最大/单工位最高缺陷）：对于检查工位 k，读数 R(k) 等于前 k 个工位中检出次品的最高纪录。
-3. 模式 C（前缀阈值计数/异常工位数量）：对于检查工位 k，读数 R(k) 等于前 k 个工位中次品量大于等于 6 的异常工位个数。
+**维保覆盖定义**：给定一个派驻了维修工程师的工作站子集 S，如果每一对级联故障隐患中至少有一端的工作站位于 S 中（得到彻底排查），我们就认为 S实现了对全线故障隐患的阻断覆盖。
 
-你的目标是通过一系列流水线数据查询，推断出质检后台真实使用的聚合模式类型（S、M 或 C）。
+你的任务是制定最少派驻工程师的排班方案 S，并提供现场数据证明人员配置的极限下界。你可以通过四种操作与系统交互：
 
-## 交互方式
+**1. 排查测试 (CoverTest)**
+测试给定派驻工程师的工作站组合是否能阻断全线故障隐患。
+格式：
+<cover_test>A B C</cover_test>
 
-系统当前处于检查工位 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
+响应：
+- 若阻断全线隐患：Covered: YES | Size: [集合大小]
+- 若未阻断：Covered: NO | UncoveredCount: [漏检的级联隐患数] | ExampleEdge: [一条漏检的故障隐患，如 A-B]
+  注意：返回的示例隐患会被记录到你的“已知隐患工单库”中。
 
-1. 前进一步：将检查工位 k 增加 1（必须按流水线顺序推进，不能跳跃，最多推进到 k = {n}）
-2. 查询当前读数：获取当前工位 k 的监控聚合读数 R(k)
-3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一个工位的监控数据增量
-4. 查询当前位置：获取当前的检查工位编号 k
+**2. 下界验证 (LowerBound)**
+提交一组已知的故障隐患，验证它们是否属于各自孤立的机械失效（两两不共享工作站），以此计算最少维修人员需求的物理下界。
+格式：
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-当收集到充分的质检特征后，请提交最终答案，宣告真实的聚合模式。若推断错误或格式不符，排查任务失败。
+响应：
+- 若有效：LowerBoundValid: YES | Bound: [孤立隐患数]（会更新已确立的下界）
+- 若无效：LowerBoundValid: NO | Reason: [NotEdges 或 NotDisjoint]
 
-## 操作格式（必须严格遵守）
+注意：只能调用“已知隐患工单库”中的记录。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+**3. 查看已知隐患 (ShowKnown)**
+调取当前因排查测试未通过而暴露出的一切已知级联隐患。
+格式：
+<show_known></show_known>
 
-- 前进一步（内容为空）：
-<step></step>
+响应：
+KnownEdges: [按字母序排列的隐患列表]
 
-- 查询当前读数（内容为空）：
-<query_reading></query_reading>
+**4. 提交最优方案 (ClaimMinimal)**
+提交你认为最低成本的维保派驻组合及下界支撑证据。
+格式：
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- 查询增量（内容为空）：
-<query_delta></query_delta>
+校验条件：
+1) S 必须覆盖所有级联故障隐患
+2) Evidence 中的孤立隐患必须已通过 LowerBound 验证，且规模为 m
+3) S 的大小必须等于 m
 
-- 查询当前位置（内容为空）：
-<query_position></query_position>
+响应：
+- 若全部满足：Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- 否则：Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
-
-<answer>S</answer>
-
-或
-
-<answer>M</answer>
-
-或
-
-<answer>C</answer>
-
-## 提示
-
-- 初始时 k = 0，R(0) = 0
-- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
-- 三种模式的读数都是非递减的
-- 模式 C 的增量只能是 0 或 1
-- 模式 M 的读数不会超过 9
-- 模式 S 的增量等于当前位置的序列值
+**提示**：
+- 隐藏的隐患拓扑需要借助漏检反馈来持续拼凑
+- 完全孤立的失效点数量构成了维保人力配置的硬性底线
+- 你需要用最少的测试操作推导出最优方案
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Welcome to the Smart Manufacturing Pipeline Quality Inspection Analysis System. Let's conduct an industrial troubleshooting based on "Defect Aggregation Pattern Recognition". Here are the rules:
+[Manufacturing/Industry Scenario]
+Welcome to the "Industrial Assembly Line Cascading Fault Risk" inspection system.
 
-The system records a sequence of defective item counts across {n} consecutive workstations on the assembly line: a1, a2, ..., a{n}, where each count ranges from 0 to 9. The first workstation a1 is fixed at 0 (representing the defect-free raw material preparation area).
+The workshop houses 8 core production workstations V = {{A, B, C, D, E, F, G, H}}. Equipment logs indicate there are latent "mechanical coupling fault risks" (no single-machine faults, no redundant faults) between workstations. The set of these cascading risks E is invisible to you.
 
-The quality inspection backend has secretly applied a "defect aggregation pattern" to output monitoring readings, which can only be one of the following three:
-1. Pattern S (Prefix Sum / Cumulative Defect Total): For inspected workstation k, the reading R(k) equals the total sum of defective items from the first k workstations.
-2. Pattern M (Prefix Maximum / Peak Station Defects): For inspected workstation k, the reading R(k) equals the highest defective count recorded among the first k workstations.
-3. Pattern C (Prefix Threshold Count / Anomalous Stations Count): For inspected workstation k, the reading R(k) equals the number of anomalous workstations among the first k that have a defective count greater than or equal to 6.
+**Maintenance Cover Definition**: Given a subset of workstations S deployed with maintenance engineers, if at least one workstation from every cascading fault pair is in S (and thoroughly inspected), we consider S to have effectively blocked all line fault risks.
 
-Your objective is to infer the true aggregation pattern type (S, M, or C) applied by the backend through a series of pipeline data queries.
+Your task is to develop a scheduling plan S deploying the fewest engineers, and provide field data to prove the baseline personnel requirements. You can interact with the system via four operations:
 
-## Interaction Protocol
+**1. Inspection Test (CoverTest)**
+Test whether a given combination of workstations manned by engineers blocks all fault risks.
+Format:
+<cover_test>A B C</cover_test>
 
-The system maintains a current inspection workstation k (initially 0). You can perform the following operations (one per turn):
+Response:
+- If all risks blocked: Covered: YES | Size: [size of the set]
+- If not completely blocked: Covered: NO | UncoveredCount: [number of missed cascading risks] | ExampleEdge: [a missed fault risk, e.g., A-B]
+  Note: The returned example risk will be recorded in your "known risk work order repository".
 
-1. Step forward: Increment workstation k by 1 (must proceed sequentially along the pipeline, cannot skip, maximum k = {n})
-2. Query current reading: Get the monitoring aggregation reading R(k) at the current workstation k
-3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous workstation
-4. Query current position: Get the current inspection workstation k
+**2. Lower Bound Verification (LowerBound)**
+Submit a set of known fault risks to verify if they are isolated mechanical failures (pairwise disjoint, sharing no workstations), calculating the physical lower bound for minimum maintenance personnel required.
+Format:
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-When you have gathered enough quality inspection data, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the troubleshooting task fails.
+Response:
+- If valid: LowerBoundValid: YES | Bound: [number of isolated risks] (updates the established lower bound)
+- If invalid: LowerBoundValid: NO | Reason: [NotEdges or NotDisjoint]
 
-## Operation Format (strictly required)
+Note: You can only invoke records from the "known risk work order repository".
 
-Each operation must contain only one tag. Use the following XML format:
+**3. Show Known Risks (ShowKnown)**
+Retrieve all known cascading risks exposed thus far through failed inspection tests.
+Format:
+<show_known></show_known>
 
-- Step forward (empty content):
-<step></step>
+Response:
+KnownEdges: [list of risks in alphabetical order]
 
-- Query current reading (empty content):
-<query_reading></query_reading>
+**4. Claim Minimal Solution (ClaimMinimal)**
+Submit your proposed lowest-cost maintenance deployment combination and its lower-bound supporting evidence.
+Format:
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- Query delta (empty content):
-<query_delta></query_delta>
+Verification conditions:
+1) S must cover all cascading fault risks
+2) Evidence risks must be previously verified via LowerBound with size m
+3) Size of S must equal m
 
-- Query current position (empty content):
-<query_position></query_position>
+Response:
+- If all satisfied: Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- Otherwise: Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-When submitting the final answer, specify the pattern type (S, M, or C) using this format:
-
-<answer>S</answer>
-
-or
-
-<answer>M</answer>
-
-or
-
-<answer>C</answer>
-
-## Hints
-
-- Initially k = 0, R(0) = 0
-- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
-- The readings of all three patterns are non-decreasing
-- Pattern C has deltas of only 0 or 1
-- Pattern M has readings that do not exceed 9
-- Pattern S has deltas equal to the current sequence value
+**Notes**:
+- The hidden risk topology must be pieced together continuously via missed inspection feedback
+- The number of completely isolated failure points constitutes the hard baseline for maintenance manpower allocation
+- You should deduce the optimal solution with the fewest test operations
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用案件违规行为审查辅助系统。我们现在来进行一次"法务聚合模式识别"的案情推理，规则如下：
+欢迎接入“经侦专案组非法利益输送”分析网络。
 
-系统记录了某案件在 {n} 个连续调查阶段中发现的违规行为数量序列 a1, a2, ..., a{n}，每个阶段的违规数量范围为 0 到 9。第 1 阶段 a1 固定为 0（代表初步审查时的无罪推定假定）。
+案件卷宗锁定了8名核心嫌疑主体 V = {{A, B, C, D, E, F, G, H}}。情报显示，这些主体之间存在若干隐蔽的“双向非法利益输送”（无内部自洗钱，无重复立案记录），完整的输送网络 E 目前被严密伪装。
 
-审查引擎秘密设定了一种"法务聚合模式"来生成案情严重性读数，该模式只可能是以下三种之一：
-1. 模式 S（前缀和/累计违规总数）：对于审查阶段 k，读数 R(k) 等于前 k 个阶段发现的违规行为总和。
-2. 模式 M（前缀最大/单阶段最恶劣情节）：对于审查阶段 k，读数 R(k) 等于前 k 个阶段中出现的单次最高违规数量。
-3. 模式 C（前缀阈值计数/重大违规阶段数）：对于审查阶段 k，读数 R(k) 等于前 k 个阶段中违规数量大于等于 6（即构成重大违规）的阶段个数。
+**调查覆盖定义**：给定一个被采取深度审查措施的嫌疑主体子集 S，如果每一笔非法利益输送交易中，至少有一方的涉案主体被列入 S 中进行突击审讯，则称 S 成功暴露了所有的非法输送链条。
 
-你的目标是通过一系列案情卷宗查询，推断出审查引擎真实采用的聚合模式类型（S、M 或 C）。
+你的目标是精准圈定最少需要启动调查的嫌疑名单 S，并出具确凿的资金链路证明该名单已是最小打击范围。你可以通过以下四种指令展开侦查：
 
-## 交互方式
+**1. 传唤测试 (CoverTest)**
+测试对给定的一组主体发起审查是否足以暴露所有的利益输送。
+格式：
+<cover_test>A B C</cover_test>
 
-系统当前处于审查阶段 k（初始为 0）。你可以进行以下操作（每次仅限一个操作）：
+响应：
+- 若暴露出所有链条：Covered: YES | Size: [集合大小]
+- 若有链条漏网：Covered: NO | UncoveredCount: [未暴露的输送网络数] | ExampleEdge: [一条未暴露的利益输送，如 A-B]
+  注意：暴露出的示例交易记录将并入你的“已知犯罪事实库”。
 
-1. 前进一步：将审查阶段 k 增加 1（必须按调查程序顺序推进，不能跳跃，最多推进到 k = {n}）
-2. 查询当前读数：获取当前阶段 k 的案情聚合读数 R(k)
-3. 查询增量：获取 Delta(k) = R(k) - R(k-1)，即相对上一阶段的严重性读数增量
-4. 查询当前位置：获取当前的审查阶段编号 k
+**2. 下界验证 (LowerBound)**
+提交一组已知的利益输送交易，验证它们是否属于绝对孤立的作案动作（两两不涉及同一嫌疑主体），借此确定抓捕范围的硬性下限。
+格式：
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-当梳理出明确的法务证据链后，请提交最终答案，宣告真实的聚合模式。若判断错误或格式不符，审查任务失败。
+响应：
+- 若有效：LowerBoundValid: YES | Bound: [孤立交易数]（会更新已确立的下限）
+- 若无效：LowerBoundValid: NO | Reason: [NotEdges 或 NotDisjoint]
 
-## 操作格式（必须严格遵守）
+注意：必须且只能引用“已知犯罪事实库”中的交易。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+**3. 查看已知交易 (ShowKnown)**
+调阅当前侦查过程中因未达到完全覆盖而被迫浮出水面的所有已知交易记录。
+格式：
+<show_known></show_known>
 
-- 前进一步（内容为空）：
-<step></step>
+响应：
+KnownEdges: [按字母序排列的交易列表]
 
-- 查询当前读数（内容为空）：
-<query_reading></query_reading>
+**4. 提交最优方案 (ClaimMinimal)**
+提交你认定的最小审查嫌疑名单及支持其不可删减的独立案件证据。
+格式：
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- 查询增量（内容为空）：
-<query_delta></query_delta>
+校验条件：
+1) S 必须暴露所有的利益输送网络
+2) Evidence 中的孤立交易必须已通过 LowerBound 验证，且规模为 m
+3) S 的大小必须等于 m
 
-- 查询当前位置（内容为空）：
-<query_position></query_position>
+响应：
+- 若全部满足：Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- 否则：Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-提交最终答案时，必须说明模式类型（S、M 或 C），格式如下：
-
-<answer>S</answer>
-
-或
-
-<answer>M</answer>
-
-或
-
-<answer>C</answer>
-
-## 提示
-
-- 初始时 k = 0，R(0) = 0
-- 由于 a1 = 0，三种模式在 k = 1 时的读数相同，都是 0
-- 三种模式的读数都是非递减的
-- 模式 C 的增量只能是 0 或 1
-- 模式 M 的读数不会超过 9
-- 模式 S 的增量等于当前位置的序列值
+**提示**：
+- 洗钱利益网极具隐蔽性，必须通过传唤覆盖失败来钓出关联线索
+- 平行作案（互不交叉）的数量锚定了必须审查的最少嫌疑人数
+- 专案组资源有限，请用最精简的侦查动作破局
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the Case Violation Review Assistance System. Let's conduct a legal deduction based on "Legal Aggregation Pattern Recognition". Here are the rules:
+[Law Scenario]
+Welcome to the "Economic Crime Task Force Illicit Transaction" analysis network.
 
-The system records a sequence of identified violation counts across {n} consecutive investigation stages for a case: a1, a2, ..., a{n}, where the number of violations per stage ranges from 0 to 9. The first stage a1 is fixed at 0 (representing the presumption of innocence during the preliminary review).
+The case file locks onto 8 key suspects/legal entities V = {{A, B, C, D, E, F, G, H}}. Intelligence indicates hidden "two-way illicit transactions" (no internal self-laundering, no duplicate case records) exist among these entities. The complete transaction network E is currently heavily disguised.
 
-The review engine has secretly configured a "legal aggregation pattern" to generate case severity readings, which can only be one of the following three:
-1. Pattern S (Prefix Sum / Cumulative Violations Total): For review stage k, the reading R(k) equals the total sum of violations discovered across the first k stages.
-2. Pattern M (Prefix Maximum / Most Egregious Single-Stage Offense): For review stage k, the reading R(k) equals the highest number of violations found in any single stage among the first k stages.
-3. Pattern C (Prefix Threshold Count / Major Violation Stages Count): For review stage k, the reading R(k) equals the number of stages among the first k where the violation count is greater than or equal to 6 (constituting a major violation stage).
+**Investigation Cover Definition**: Given a subset of suspect entities S subjected to deep investigative measures, if at least one involved entity in every illicit transaction is included in S for a surprise interrogation, then S successfully exposes all illicit transaction chains.
 
-Your objective is to infer the true aggregation pattern type (S, M, or C) adopted by the review engine through a series of case file queries.
+Your goal is to precisely delineate the minimal suspect list S requiring investigation, and issue conclusive financial linkage evidence proving this list is the absolute minimum strike scope. You can conduct reconnaissance via four commands:
 
-## Interaction Protocol
+**1. Subpoena Test (CoverTest)**
+Test whether launching investigations against a given set of entities is sufficient to expose all illicit transactions.
+Format:
+<cover_test>A B C</cover_test>
 
-The system maintains a current review stage k (initially 0). You can perform the following operations (one per turn):
+Response:
+- If all chains exposed: Covered: YES | Size: [size of the set]
+- If any chains slip through: Covered: NO | UncoveredCount: [number of unexposed networks] | ExampleEdge: [an unexposed illicit transaction, e.g., A-B]
+  Note: The exposed example transaction record will be merged into your "known criminal facts repository".
 
-1. Step forward: Increment review stage k by 1 (must proceed sequentially through the investigation process, cannot skip, maximum k = {n})
-2. Query current reading: Get the legal aggregation reading R(k) at the current stage k
-3. Query delta: Get Delta(k) = R(k) - R(k-1), the increment relative to the previous stage
-4. Query current position: Get the current review stage k
+**2. Lower Bound Verification (LowerBound)**
+Submit a set of known illicit transactions to verify if they are absolutely isolated criminal acts (pairwise disjoint, involving no shared suspects), thereby establishing the strict lower limit for the arrest scope.
+Format:
+<lower_bound>A-B; C-D; E-F</lower_bound>
 
-When you have formed a clear chain of legal evidence, submit your final answer declaring the true aggregation pattern. If the answer is wrong or the format is invalid, the review task fails.
+Response:
+- If valid: LowerBoundValid: YES | Bound: [number of isolated transactions] (updates the established lower limit)
+- If invalid: LowerBoundValid: NO | Reason: [NotEdges or NotDisjoint]
 
-## Operation Format (strictly required)
+Note: You must strictly reference transactions from the "known criminal facts repository".
 
-Each operation must contain only one tag. Use the following XML format:
+**3. Show Known Transactions (ShowKnown)**
+Review all known transaction records currently forced to surface due to incomplete investigation coverage.
+Format:
+<show_known></show_known>
 
-- Step forward (empty content):
-<step></step>
+Response:
+KnownEdges: [list of transactions in alphabetical order]
 
-- Query current reading (empty content):
-<query_reading></query_reading>
+**4. Claim Minimal Solution (ClaimMinimal)**
+Submit your identified minimal suspect interrogation list and the independent case evidence supporting its irreducibility.
+Format:
+<claim_minimal>S=A B C || Evidence=A-D; B-E; C-F</claim_minimal>
 
-- Query delta (empty content):
-<query_delta></query_delta>
+Verification conditions:
+1) S must expose all illicit transaction networks
+2) Evidence isolated transactions must be previously verified via LowerBound with size m
+3) Size of S must equal m
 
-- Query current position (empty content):
-<query_position></query_position>
+Response:
+- If all satisfied: Win: YES | MinimalSize: [m] | OneOptimalSet: [S]
+- Otherwise: Win: NO | Reason: [NotCovered / EvidenceInvalid / SizeMismatch]
 
-When submitting the final answer, specify the pattern type (S, M, or C) using this format:
-
-<answer>S</answer>
-
-or
-
-<answer>M</answer>
-
-or
-
-<answer>C</answer>
-
-## Hints
-
-- Initially k = 0, R(0) = 0
-- Since a1 = 0, all three patterns have the same reading at k = 1, which is 0
-- The readings of all three patterns are non-decreasing
-- Pattern C has deltas of only 0 or 1
-- Pattern M has readings that do not exceed 9
-- Pattern S has deltas equal to the current sequence value
+**Notes**:
+- The laundering interest network is highly elusive; associated clues must be lured out through failed subpoena coverages
+- The number of parallel (non-intersecting) crimes anchors the minimum number of suspects that must be investigated
+- Task force resources are limited; please break the case with the most streamlined investigative moves
 """
 
-    tags = ["answer", "step", "query_reading", "query_delta", "query_position"]
-    
-    reasoning_type = "溯因推理"
-    data_structure = "序列"
-
-    # 难度配置：
-    # 1 (简单)        - N=7, 模式容易区分
-    # 2 (中等偏下)    - N=8, 需要更多步骤
-    # 3 (中等偏上)    - N=9, 模式相似度较高
-    # 4 (较难)        - N=10, 需要仔细分析
-    # 5 (难)          - N=12, 最复杂情况
+    tags = ["cover_test", "lower_bound", "show_known", "claim_minimal", "answer"]
+    reasoning_type = "归纳推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 7,
-                "sequence": [0, 2, 3, 1, 7, 4, 8],  # S会较大，M到9，C有明显特征
-                "pattern": "M"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "C"),
+                    ("A", "D"),
+                ],
+                "min_cover_size": 1,
+                "one_solution": ["A"],
             },
             2: {
-                "n": 8,
-                "sequence": [0, 1, 2, 6, 3, 7, 1, 8],  # C模式，有2个>=6
-                "pattern": "C"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "C"),
+                    ("B", "C"),
+                    ("D", "E"),
+                    ("D", "F"),
+                    ("E", "F"),
+                ],
+                "min_cover_size": 3,
+                "one_solution": ["A", "C", "D"],
             },
             3: {
-                "n": 9,
-                "sequence": [0, 2, 1, 3, 2, 1, 4, 6, 5],  # S模式，总和24
-                "pattern": "S"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "C"),
+                    ("B", "D"),
+                    ("C", "D"),
+                    ("E", "F"),
+                    ("E", "G"),
+                    ("F", "H"),
+                    ("G", "H"),
+                ],
+                "min_cover_size": 4,
+                "one_solution": ["A", "D", "E", "H"],
             },
             4: {
-                "n": 10,
-                "sequence": [0, 1, 2, 3, 6, 2, 7, 1, 8, 3],  # M模式，最大值8
-                "pattern": "M"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "C"),
+                    ("A", "D"),
+                    ("B", "E"),
+                    ("C", "F"),
+                    ("D", "G"),
+                    ("E", "H"),
+                    ("F", "H"),
+                    ("G", "H"),
+                ],
+                "min_cover_size": 4,
+                "one_solution": ["A", "E", "F", "G"],
             },
             5: {
-                "n": 12,
-                "sequence": [0, 1, 6, 2, 3, 7, 1, 8, 2, 4, 6, 3],  # C模式，有4个>=6
-                "pattern": "C"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "E"),
+                    ("B", "C"),
+                    ("B", "F"),
+                    ("C", "D"),
+                    ("C", "G"),
+                    ("D", "H"),
+                    ("E", "F"),
+                    ("F", "G"),
+                    ("G", "H"),
+                ],
+                "min_cover_size": 4,
+                "one_solution": ["B", "C", "E", "H"],
             },
         },
         "en": {
             1: {
-                "n": 7,
-                "sequence": [0, 2, 3, 1, 7, 4, 8],
-                "pattern": "M"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "C"),
+                    ("A", "D"),
+                ],
+                "min_cover_size": 1,
+                "one_solution": ["A"],
             },
             2: {
-                "n": 8,
-                "sequence": [0, 1, 2, 6, 3, 7, 1, 8],
-                "pattern": "C"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "C"),
+                    ("B", "C"),
+                    ("D", "E"),
+                    ("D", "F"),
+                    ("E", "F"),
+                ],
+                "min_cover_size": 3,
+                "one_solution": ["A", "C", "D"],
             },
             3: {
-                "n": 9,
-                "sequence": [0, 2, 1, 3, 2, 1, 4, 6, 5],
-                "pattern": "S"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "C"),
+                    ("B", "D"),
+                    ("C", "D"),
+                    ("E", "F"),
+                    ("E", "G"),
+                    ("F", "H"),
+                    ("G", "H"),
+                ],
+                "min_cover_size": 4,
+                "one_solution": ["A", "D", "E", "H"],
             },
             4: {
-                "n": 10,
-                "sequence": [0, 1, 2, 3, 6, 2, 7, 1, 8, 3],
-                "pattern": "M"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "C"),
+                    ("A", "D"),
+                    ("B", "E"),
+                    ("C", "F"),
+                    ("D", "G"),
+                    ("E", "H"),
+                    ("F", "H"),
+                    ("G", "H"),
+                ],
+                "min_cover_size": 4,
+                "one_solution": ["A", "E", "F", "G"],
             },
             5: {
-                "n": 12,
-                "sequence": [0, 1, 6, 2, 3, 7, 1, 8, 2, 4, 6, 3],
-                "pattern": "C"
+                "edges": [
+                    ("A", "B"),
+                    ("A", "E"),
+                    ("B", "C"),
+                    ("B", "F"),
+                    ("C", "D"),
+                    ("C", "G"),
+                    ("D", "H"),
+                    ("E", "F"),
+                    ("F", "G"),
+                    ("G", "H"),
+                ],
+                "min_cover_size": 4,
+                "one_solution": ["B", "C", "E", "H"],
             },
         },
     }
@@ -815,9 +852,11 @@ or
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据难度和语言加载序列和模式"""
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
+        
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -825,190 +864,262 @@ or
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
         
-        # 加载序列和真实模式
-        self.sequence = cfg["sequence"]
-        self.true_pattern = cfg["pattern"]
+        self.edges = set()
+        for u, v in cfg["edges"]:
+            self.edges.add(tuple(sorted([u, v])))
         
-        # 当前位置 k，初始为 0
-        self.current_k = 0
+        self.min_cover_size = cfg["min_cover_size"]
+        self.one_solution = set(cfg["one_solution"])
         
-        # 阈值 tau = 6
-        self.tau = 6
+        self.known_edges = set()
+        self.verified_lower_bounds = {}
+        self.established_lower_bound = 0
+        self.returned_edges = set()
         
-        # 预计算所有位置的读数（用于快速查询）
-        self._precompute_readings()
+        self._game_info = {}
 
-    def _precompute_readings(self):
-        """预计算三种模式下所有位置的读数"""
-        n = len(self.sequence)
-        
-        # 初始化读数数组（索引0到n）
-        self.readings_S = [0] * (n + 1)  # 前缀和
-        self.readings_M = [0] * (n + 1)  # 前缀最大
-        self.readings_C = [0] * (n + 1)  # 前缀阈值计数
-        
-        for k in range(1, n + 1):
-            # 注意：sequence是从索引0开始的，sequence[k-1]对应ak
-            ak = self.sequence[k - 1]
-            
-            # 模式 S：前缀和
-            self.readings_S[k] = self.readings_S[k - 1] + ak
-            
-            # 模式 M：前缀最大
-            self.readings_M[k] = max(self.readings_M[k - 1], ak)
-            
-            # 模式 C：前缀阈值计数
-            self.readings_C[k] = self.readings_C[k - 1] + (1 if ak >= self.tau else 0)
+    def _normalize_edge(self, u, v):
+        return tuple(sorted([u.strip().upper(), v.strip().upper()]))
 
-    def _get_reading(self, k):
-        """获取当前位置 k 的读数（根据真实模式）"""
-        if self.true_pattern == "S":
-            return self.readings_S[k]
-        elif self.true_pattern == "M":
-            return self.readings_M[k]
-        elif self.true_pattern == "C":
-            return self.readings_C[k]
-        else:
-            raise ValueError(f"Unknown pattern: {self.true_pattern}")
+    def _parse_vertex_set(self, s):
+        if not s or not s.strip():
+            return set()
+        return set(v.strip().upper() for v in s.split() if v.strip())
+
+    def _parse_edge_list(self, s):
+        if not s or not s.strip():
+            return set()
+        edges = set()
+        for edge_str in s.split(";"):
+            edge_str = edge_str.strip()
+            if "-" in edge_str:
+                parts = edge_str.split("-")
+                if len(parts) == 2:
+                    edges.add(self._normalize_edge(parts[0], parts[1]))
+        return edges
+
+    def _check_cover(self, vertex_set):
+        uncovered = []
+        for edge in self.edges:
+            u, v = edge
+            if u not in vertex_set and v not in vertex_set:
+                uncovered.append(edge)
+        return uncovered
+
+    def _get_example_edge(self, uncovered_edges):
+        for edge in uncovered_edges:
+            if edge not in self.known_edges:
+                return edge
+        return uncovered_edges[0] if uncovered_edges else None
+
+    def _check_matching(self, edge_set):
+        used_vertices = set()
+        for edge in edge_set:
+            u, v = edge
+            if u in used_vertices or v in used_vertices:
+                return False
+            used_vertices.add(u)
+            used_vertices.add(v)
+        return True
+
+    def step(self, response: str):
+        try:
+            parsed_info = self.parse(response)
+            if "claim_minimal" in parsed_info:
+                parsed_info["answer"] = parsed_info["claim_minimal"]
+            
+            if "answer" in parsed_info:
+                is_success = self.evaluate(parsed_info)
+                if is_success:
+                    res = "答案正确" if self.config.language == "zh" else "Correct answer."
+                    self.state.set_state("success", "success")
+                    self.state.add_message("user", res)
+                else:
+                    res = "答案错误" if self.config.language == "zh" else "Incorrect answer."
+                    self.state.set_state("failed", "incorrect answer")
+                    self.state.add_message("user", res)
+            else:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+                
+        except Exception as e:
+            self.state.set_state("failed", str(e))    
+        
+        return self.state
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案是否正确"""
-        player_answer = parsed_info["answer"].strip().upper()
-        return player_answer == self.true_pattern
+        raw_ans = parsed_info.get("claim_minimal") or parsed_info.get("answer", "")
+        
+        parts = raw_ans.split("||")
+        if len(parts) != 2:
+            return False
+        
+        s_part = parts[0].strip()
+        evidence_part = parts[1].strip()
+        
+        if not s_part.startswith("S="):
+            return False
+        s_str = s_part[2:].strip()
+        proposed_cover = self._parse_vertex_set(s_str)
+        
+        if not evidence_part.startswith("Evidence="):
+            return False
+        evidence_str = evidence_part[9:].strip()
+        evidence_edges = self._parse_edge_list(evidence_str)
+        
+        uncovered = self._check_cover(proposed_cover)
+        if uncovered:
+            return False
+        
+        m = len(evidence_edges)
+        if m == 0 or m not in self.verified_lower_bounds:
+            return False
+        if evidence_edges != self.verified_lower_bounds[m]:
+            return False
+        
+        if len(proposed_cover) != m:
+            return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        """原始的响应生成逻辑"""
-        if self.config.language == "zh":
-            error_msg = "错误：无效操作。"
-            step_msg = "已前进到位置 {k}。"
-            max_step_msg = "错误：已到达序列末尾，无法继续前进。"
-            reading_msg = "当前读数 R({k}) = {reading}。"
-            delta_msg = "增量 Delta({k}) = {delta}。"
-            delta_zero_msg = "错误：当前在位置 0，无法查询增量。"
-            position_msg = "当前位置 k = {k}。"
+        lang = self.config.language
+        
+        if "cover_test" in parsed_info:
+            s_str = parsed_info["cover_test"]
+            vertex_set = self._parse_vertex_set(s_str)
+            uncovered = self._check_cover(vertex_set)
+            
+            if not uncovered:
+                return f"Covered: YES | Size: {len(vertex_set)}"
+            else:
+                example_edge = self._get_example_edge(uncovered)
+                if example_edge:
+                    self.known_edges.add(example_edge)
+                    self.returned_edges.add(example_edge)
+                    u, v = example_edge
+                    return f"Covered: NO | UncoveredCount: {len(uncovered)} | ExampleEdge: {u}-{v}"
+                else:
+                    return f"Covered: NO | UncoveredCount: {len(uncovered)}"
+        
+        elif "lower_bound" in parsed_info:
+            edge_str = parsed_info["lower_bound"]
+            edge_set = self._parse_edge_list(edge_str)
+            
+            if not edge_set.issubset(self.known_edges):
+                return "LowerBoundValid: NO | Reason: NotEdges"
+            
+            if not self._check_matching(edge_set):
+                return "LowerBoundValid: NO | Reason: NotDisjoint"
+            
+            m = len(edge_set)
+            self.verified_lower_bounds[m] = edge_set
+            self.established_lower_bound = max(self.established_lower_bound, m)
+            return f"LowerBoundValid: YES | Bound: {m}"
+        
+        elif "show_known" in parsed_info:
+            if not self.known_edges:
+                return "KnownEdges: []"
+            sorted_edges = sorted(self.known_edges)
+            edge_strs = [f"{u}-{v}" for u, v in sorted_edges]
+            return f"KnownEdges: [{', '.join(edge_strs)}]"
+        
+        elif "claim_minimal" in parsed_info:
+            raw_ans = parsed_info["claim_minimal"]
+            parts = raw_ans.split("||")
+            if len(parts) != 2:
+                return "Win: NO | Reason: InvalidFormat"
+            
+            s_part = parts[0].strip()
+            evidence_part = parts[1].strip()
+            
+            if not s_part.startswith("S=") or not evidence_part.startswith("Evidence="):
+                return "Win: NO | Reason: InvalidFormat"
+            
+            s_str = s_part[2:].strip()
+            evidence_str = evidence_part[9:].strip()
+            
+            proposed_cover = self._parse_vertex_set(s_str)
+            evidence_edges = self._parse_edge_list(evidence_str)
+            
+            uncovered = self._check_cover(proposed_cover)
+            if uncovered:
+                return "Win: NO | Reason: NotCovered"
+            
+            m = len(evidence_edges)
+            if m == 0 or m not in self.verified_lower_bounds or evidence_edges != self.verified_lower_bounds[m]:
+                return "Win: NO | Reason: EvidenceInvalid"
+            
+            if len(proposed_cover) != m:
+                return "Win: NO | Reason: SizeMismatch"
+            
+            return f"Win: YES | MinimalSize: {m} | OneOptimalSet: {{{', '.join(sorted(proposed_cover))}}}"
+        
         else:
-            error_msg = "Error: Invalid operation."
-            step_msg = "Stepped forward to position {k}."
-            max_step_msg = "Error: Already at sequence end, cannot step forward."
-            reading_msg = "Current reading R({k}) = {reading}."
-            delta_msg = "Delta({k}) = {delta}."
-            delta_zero_msg = "Error: At position 0, cannot query delta."
-            position_msg = "Current position k = {k}."
+            raise ValueError("No valid query tag found.")
 
-        # 优先级：step > query_reading > query_delta > query_position
-        if "step" in parsed_info:
-            # 前进一步
-            if self.current_k >= self._game_info["n"]:
-                return max_step_msg
-            self.current_k += 1
-            return step_msg.format(k=self.current_k)
-
-        elif "query_reading" in parsed_info:
-            # 查询当前读数
-            reading = self._get_reading(self.current_k)
-            return reading_msg.format(k=self.current_k, reading=reading)
-
-        elif "query_delta" in parsed_info:
-            # 查询增量
-            if self.current_k == 0:
-                return delta_zero_msg
-            current_reading = self._get_reading(self.current_k)
-            previous_reading = self._get_reading(self.current_k - 1)
-            delta = current_reading - previous_reading
-            return delta_msg.format(k=self.current_k, delta=delta)
-
-        elif "query_position" in parsed_info:
-            # 查询当前位置
-            return position_msg.format(k=self.current_k)
-
-        else:
-            return error_msg
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """生成一个与正确答案不同的错误响应"""
-        # 尝试找到响应中的数值并修改
-        # 匹配 "= 数字" 模式（如 R(k) = 15, Delta(k) = 3, k = 5）
-        match = re.search(r'=\s*(-?\d+)', correct)
-        if match:
-            num = int(match.group(1))
-            wrong_num = num + random.choice([-2, -1, 1, 2, 3])
-            if wrong_num == num:  # 防止偏移后恰好相等
-                wrong_num = num + 1
-            return correct[:match.start(1)] + str(wrong_num) + correct[match.end(1):]
-
-        # 匹配 "position 数字" 或 "位置 数字" 模式
-        match = re.search(r'(position\s+|位置\s*)(\d+)', correct)
-        if match:
-            num = int(match.group(2))
-            wrong_num = num + 1
-            return correct[:match.start(2)] + str(wrong_num) + correct[match.end(2):]
-
-        # 兜底
-        return correct + " [WRONG]"
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if "是" in correct:
+            return correct.replace("是", "否")
+        if "否" in correct:
+            return correct.replace("否", "是")
+            
+        if "YES" in correct:
+            return correct.replace("YES", "NO")
+        if "NO" in correct:
+            return correct.replace("NO", "YES")
+        if "Yes" in correct:
+            return correct.replace("Yes", "No")
+        if "No" in correct:
+            return correct.replace("No", "Yes")
+            
+        return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        模拟从位置0走到位置n的完整流程，每步生成step、reading、delta查询。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # XML格式的查询标签
-                "answer": str,   # 对应的正确答案字符串
-            }
-        """
         queries = []
-        n = self._game_info["n"]
-
-        if self.config.language == "zh":
-            step_msg = "已前进到位置 {k}。"
-            reading_msg = "当前读数 R({k}) = {reading}。"
-            delta_msg = "增量 Delta({k}) = {delta}。"
-            position_msg = "当前位置 k = {k}。"
-        else:
-            step_msg = "Stepped forward to position {k}."
-            reading_msg = "Current reading R({k}) = {reading}."
-            delta_msg = "Delta({k}) = {delta}."
-            position_msg = "Current position k = {k}."
-
-        # 初始位置 k=0 的读数和位置查询
+        vertices = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        
+        for r in range(len(vertices) + 1):
+            for subset in itertools.combinations(vertices, r):
+                query_content = " ".join(subset)
+                query_str = f"<cover_test>{query_content}</cover_test>"
+                
+                vertex_set = set(subset)
+                uncovered = self._check_cover(vertex_set)
+                
+                if not uncovered:
+                    ans = f"Covered: YES | Size: {len(vertex_set)}"
+                else:
+                    sorted_uncovered = sorted(uncovered)
+                    example_edge = sorted_uncovered[0]
+                    u, v = example_edge
+                    ans = f"Covered: NO | UncoveredCount: {len(uncovered)} | ExampleEdge: {u}-{v}"
+                
+                queries.append({
+                    "query": query_str,
+                    "answer": ans
+                })
+        
         queries.append({
-            "query": "<query_reading></query_reading>",
-            "answer": reading_msg.format(k=0, reading=self._get_reading(0))
+            "query": "<show_known></show_known>",
+            "answer": "KnownEdges: []"
         })
-        queries.append({
-            "query": "<query_position></query_position>",
-            "answer": position_msg.format(k=0)
-        })
-
-        # 逐步前进并枚举每一步的查询
-        for k in range(1, n + 1):
-            # step 前进
-            queries.append({
-                "query": "<step></step>",
-                "answer": step_msg.format(k=k)
-            })
-            # 查询当前读数
-            reading = self._get_reading(k)
-            queries.append({
-                "query": "<query_reading></query_reading>",
-                "answer": reading_msg.format(k=k, reading=reading)
-            })
-            # 查询增量
-            current_val = self._get_reading(k)
-            prev_val = self._get_reading(k - 1)
-            delta = current_val - prev_val
-            queries.append({
-                "query": "<query_delta></query_delta>",
-                "answer": delta_msg.format(k=k, delta=delta)
-            })
-            # 查询位置
-            queries.append({
-                "query": "<query_position></query_position>",
-                "answer": position_msg.format(k=k)
-            })
-
+        
+        edge_list = sorted(self.edges)
+        for r in range(1, len(edge_list) + 1):
+            for edge_subset in itertools.combinations(edge_list, r):
+                edge_set = set(edge_subset)
+                if self._check_matching(edge_set):
+                    edge_strs = "; ".join(f"{u}-{v}" for u, v in sorted(edge_set))
+                    query_str = f"<lower_bound>{edge_strs}</lower_bound>"
+                    ans = f"LowerBoundValid: YES | Bound: {len(edge_set)}"
+                    queries.append({
+                        "query": query_str,
+                        "answer": ans
+                    })
+        
         return queries

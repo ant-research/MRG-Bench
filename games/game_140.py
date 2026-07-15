@@ -1,798 +1,800 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   元素距离：两个给定元素之间相隔多少个位置
-# ============================================================
-
 from .base import Game
-import re
 import random
-from typing import List, Dict
 
-
-class PeriodicPatternDiscoveryGame(Game):
+class HiddenDistancePatternGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"周期基块识别"的推理游戏，规则如下：
+我们来玩一个"隐藏距离模式"的推理游戏，规则如下：
 
-游戏设定了一个字母表，包含四个符号：A、B、C、D。
+游戏设定了一个固定的无向树 T，包含以下节点和边：
+- 节点：A, B, C, D, E, F, G, H, I
+- 边：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-存在一个未知的原始序列 M，其长度 P 在 2 到 6 之间，且 M 是原始的（不是更短序列的重复）。观测序列 S 由 M 重复 T 次（T 大于等于 3）串联而成，即 S = M 重复 T 次。S 的总长度 N 等于 P 乘以 T。S 的第 1 个位置与 M 的第 1 个位置对齐。
+距离定义：对任意节点对 (X,Y)，d(X,Y) 为其在 T 上的最短路径长度（边数）。
 
-你不知道 P、N 或 M 的内容。
+系统内部已固定（但对你隐藏）以下两个要素：
+1. 一个读数模式 f，从以下4种中选择其一：
+   - 模式I：返回值 r 等于 d
+   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
+   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
+   - 模式IV：r 等于 d 减 1 与 0 中的较大值
 
-定义 pos(X, k) 为序列 S 中从左到右第 k 次出现符号 X 的位置索引（位置从 1 开始计数）。
+2. 一个隐藏目标对 Pk，从以下4对中选择其一：
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-你的目标是通过提问推断出原始序列 M 的完整内容（包括长度和符号序列）。你需要尽可能少的提问次数来完成任务。
+你的任务是通过交互查询推断出：
+1. 实际使用的读数模式（I/II/III/IV）
+2. 隐藏目标对的编号（P1/P2/P3/P4）
+3. 该目标对的真实距离值
 
-## 允许的提问类型
+你可以进行以下类型的查询：
 
-你可以反复向我提出以下两类问题（每次仅限一个问题）：
+1. 校准查询：提交任意节点对 (X,Y)，系统返回经过模式 f 处理后的读数 r。你需要至少完成2次校准查询。
 
-1. **存在性查询**：询问符号 X 的第 k 次出现是否存在。
-   - 我会回答"是"或"否"。
+2. 目标对读数请求：在完成至少2次校准查询后，可以请求获取隐藏目标对的读数 r_target。此类查询至多只能进行1次。
 
-2. **距离查询**：从符号 X 的第 k 次出现向右，最近的符号 Y 与它之间相隔多少个位置？
-   - 若 pos(X, k) 不存在，我会回答"无第 k 次 X"。
-   - 若存在但右侧无任何 Y，我会回答"右侧无 Y"。
-   - 否则，我会回答一个非负整数 d（表示中间间隔的位置数，相邻则 d = 0）。
+3. 最终提交：提交你推断的模式、目标对编号和真实距离。三项必须全部正确才算成功。
 
-## 提问与提交答案的格式（必须严格遵守）
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-每次提问只能包含一个标签。请使用以下 XML 格式：
+- 校准查询（例如查询节点 A 和 F 之间的距离）：
+<query_calibrate>A,F</query_calibrate>
 
-- 存在性查询（例如询问符号 A 的第 3 次出现是否存在）：
-<query_exist>A,3</query_exist>
+- 目标对读数请求（内容为空）：
+<query_target></query_target>
 
-- 距离查询（例如询问从符号 A 的第 2 次出现向右，最近的符号 B 与它之间相隔多少个位置）：
-<query_distance>A,2,B</query_distance>
+- 最终提交（依次给出模式、目标对编号、真实距离）：
+<answer>mode=I, pair=P1, distance=4</answer>
 
-当你准备好提交最终答案时，请按以下格式提交原始序列 M：
-
-<answer>ABC</answer>
-
-注意：答案必须是由字母表中的符号组成的字符串，不含空格或其他字符。
+注意事项：
+- 必须至少完成2次校准查询后才能请求目标对读数
+- 目标对读数请求至多只能进行1次
+- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
+- 违反规则或答案错误将导致游戏失败
 """
 
     game_rule_en = """\
-Let's play a "Periodic Pattern Discovery" deduction game. Here are the rules:
+Let's play a "Hidden Distance Pattern" deduction game. Here are the rules:
 
-The game defines an alphabet containing four symbols: A, B, C, D.
+The game has a fixed undirected tree T with the following nodes and edges:
+- Nodes: A, B, C, D, E, F, G, H, I
+- Edges: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-There exists an unknown primitive sequence M with length P between 2 and 6, and M is primitive (not a repetition of a shorter sequence). The observation sequence S is formed by concatenating M repeated T times (T is greater than or equal to 3), i.e., S = M repeated T times. The total length of S, N, equals P times T. The first position of S aligns with the first position of M.
+Distance definition: For any node pair (X,Y), d(X,Y) is the shortest path length (number of edges) in T.
 
-You do not know P, N, or the content of M.
+The system has internally fixed (but hidden from you) two elements:
+1. A reading pattern f, chosen from the following 4 types:
+   - Mode I: return value r equals d
+   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
+   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
+   - Mode IV: r equals the maximum of d minus 1 and 0
 
-Define pos(X, k) as the position index (1-indexed) of the k-th occurrence of symbol X in sequence S from left to right.
+2. A hidden target pair Pk, chosen from the following 4 pairs:
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-Your goal is to infer the complete content of the primitive sequence M (including its length and symbol sequence) through queries. You should use as few queries as possible to accomplish the task.
+Your task is to infer through interactive queries:
+1. The actual reading pattern (I/II/III/IV)
+2. The hidden target pair number (P1/P2/P3/P4)
+3. The true distance value of that target pair
 
-## Allowed Query Types
+You can perform the following types of queries:
 
-You can repeatedly ask me the following two types of questions (one question per turn):
+1. Calibration Query: Submit any node pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 calibration queries.
 
-1. **Existence Query**: Ask whether the k-th occurrence of symbol X exists.
-   - I will answer "Yes" or "No".
+2. Target Reading Request: After completing at least 2 calibration queries, you can request the reading r_target of the hidden target pair. This query can be performed at most once.
 
-2. **Distance Query**: From the k-th occurrence of symbol X to the right, how many positions are there between it and the nearest symbol Y?
-   - If pos(X, k) does not exist, I will answer "No k-th X".
-   - If it exists but there is no Y to its right, I will answer "No Y on right".
-   - Otherwise, I will answer a non-negative integer d (representing the number of positions in between; d = 0 if adjacent).
+3. Final Submission: Submit your inferred pattern, target pair number, and true distance. All three must be correct to succeed.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag, using the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Calibration Query (e.g., querying distance between nodes A and F):
+<query_calibrate>A,F</query_calibrate>
 
-- Existence Query (e.g., asking if the 3rd occurrence of symbol A exists):
-<query_exist>A,3</query_exist>
+- Target Reading Request (empty content):
+<query_target></query_target>
 
-- Distance Query (e.g., asking the distance from the 2nd occurrence of symbol A to the nearest symbol B on the right):
-<query_distance>A,2,B</query_distance>
+- Final Submission (provide pattern, pair number, and true distance):
+<answer>mode=I, pair=P1, distance=4</answer>
 
-When you are ready to submit your final answer, submit the primitive sequence M in the following format:
-
-<answer>ABC</answer>
-
-Note: The answer must be a string composed of symbols from the alphabet, without spaces or other characters.
+Notes:
+- You must complete at least 2 calibration queries before requesting target reading
+- Target reading request can be performed at most once
+- Node names must be chosen from A, B, C, D, E, F, G, H, I
+- Violating rules or incorrect answers will result in game failure
 """
 
-    # ================= 场景1：交通 =================
     contextualized_rule_zh_1 = """\
-我们在进行“智能交通信号调度周期识别”的推理游戏，规则如下：
+欢迎使用“路网传感器标定系统”。
+本系统管理的交通枢纽路网 T 包含以下枢纽节点和直达路段：
+- 枢纽节点：A, B, C, D, E, F, G, H, I
+- 直达路段：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-游戏设定了一个交通信号系统，包含四个相位：A、B、C、D。
+站间距定义：任意枢纽对 (X,Y) 之间的 d(X,Y) 为两者在路网上的最短路段数。
 
-存在一个未知的核心调度周期序列 M，其长度 P 在 2 到 6 之间，且 M 是最简周期（不可由更短序列的重复构成）。观测到的全天调度日志 S 由 M 重复 T 次（T 大于等于 3）串联而成，即 S = M 重复 T 次。S 的总长度 N 等于 P 乘以 T。S 的第 1 个记录与 M 的第 1 个位置对齐。
+系统内部已设定了两个隐藏参数，需要你通过探测来逆向推导：
+1. 传感器计费模式 f，从以下4种中选择其一：
+   - 模式I：计费读数 r 等于实际路段数 d
+   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
+   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
+   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即起步减免）
 
-你不知道 P、N 或 M 的内容。
+2. 一条隐藏的特殊物流线 Pk，从以下4组中选择其一：
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-定义 pos(X, k) 为日志 S 中从左到右第 k 次出现相位 X 的位置索引（位置从 1 开始计数）。
+你的任务是通过交互查询推断出：
+1. 实际使用的计费模式（I/II/III/IV）
+2. 特殊物流线的编号（P1/P2/P3/P4）
+3. 该特殊物流线的真实路段数
 
-你的目标是通过提问推断出核心调度周期 M 的完整内容（包括长度和相位序列）。你需要尽可能少的提问次数来完成任务。
+你可以进行以下类型的查询：
+1. 路线测试（校准查询）：提交任意枢纽对 (X,Y)，系统返回经过模式 f 处理后的计费读数 r。你需要至少完成2次路线测试。
+2. 特殊线读数请求：在完成至少2次路线测试后，可以请求获取隐藏特殊物流线的计费读数 r_target。此类查询至多只能进行1次。
+3. 最终提交：提交你推断的计费模式、物流线编号和真实路段数。三项必须全部正确才算成功。
 
-## 允许的提问类型
+每次查询只能包含一个标签，使用以下 XML 格式：
+- 路线测试（例如查询枢纽 A 和 F）：
+<query_calibrate>A,F</query_calibrate>
+- 特殊线读数请求（内容为空）：
+<query_target></query_target>
+- 最终提交（依次给出模式、物流线编号、真实路段数）：
+<answer>mode=I, pair=P1, distance=4</answer>
 
-你可以反复向我提出以下两类问题（每次仅限一个问题）：
-
-1. **存在性查询**：询问相位 X 的第 k 次出现是否存在。
-   - 我会回答“是”或“否”。
-
-2. **距离查询**：从相位 X 的第 k 次出现向右，最近的相位 Y 与它之间相隔几个调度位？
-   - 若 pos(X, k) 不存在，我会回答“无第 k 次 X”。
-   - 若存在但右侧无任何 Y，我会回答“右侧无 Y”。
-   - 否则，我会回答一个非负整数 d（表示中间间隔的调度位数，相邻则 d = 0）。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次提问只能包含一个标签。请使用以下 XML 格式：
-
-- 存在性查询（例如询问相位 A 的第 3 次出现是否存在）：
-<query_exist>A,3</query_exist>
-
-- 距离查询（例如询问从相位 A 的第 2 次出现向右，最近的相位 B 与它之间相隔几个调度位）：
-<query_distance>A,2,B</query_distance>
-
-当你准备好提交最终答案时，请按以下格式提交核心调度周期 M：
-
-<answer>ABC</answer>
-
-注意：答案必须是由系统设定的相位代号组成的字符串，不含空格或其他字符。
+注意事项：
+- 必须至少完成2次路线测试后才能请求特殊线读数
+- 特殊线读数请求至多只能进行1次
+- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
+- 违反规则或答案错误将导致测试失败
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's play an "Intelligent Traffic Signal Dispatch Cycle Recognition" deduction game. Here are the rules:
+Welcome to the "Road Network Sensor Calibration System".
 
-The game defines a traffic signal system containing four phases: A, B, C, D.
+The managed traffic hub network T contains the following hub nodes and direct routes:
+- Hubs: A, B, C, D, E, F, G, H, I
+- Direct routes: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-There exists an unknown core dispatch cycle sequence M with length P between 2 and 6, and M is primitive (not a repetition of a shorter sequence). The observed daily dispatch log S is formed by concatenating M repeated T times (T is greater than or equal to 3), i.e., S = M repeated T times. The total length of S, N, equals P times T. The first position of S aligns with the first position of M.
+Distance definition: For any hub pair (X,Y), d(X,Y) is the shortest number of route segments in T.
 
-You do not know P, N, or the content of M.
+The system has internally fixed two hidden elements:
+1. A billing pattern f, chosen from the following 4 types:
+   - Mode I: reading r equals actual distance d
+   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
+   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
+   - Mode IV: r equals the maximum of d minus 1 and 0
 
-Define pos(X, k) as the position index (1-indexed) of the k-th occurrence of phase X in log S from left to right.
+2. A hidden special logistics line Pk, chosen from the following 4 pairs:
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-Your goal is to infer the complete content of the core dispatch cycle M (including its length and phase sequence) through queries. You should use as few queries as possible to accomplish the task.
+Your task is to infer through interactive queries:
+1. The actual billing pattern (I/II/III/IV)
+2. The special logistics line number (P1/P2/P3/P4)
+3. The true route segment distance of that line
 
-## Allowed Query Types
+You can perform the following queries:
+1. Route Test (Calibration Query): Submit any hub pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 route tests.
+2. Special Line Reading Request: After completing at least 2 route tests, you can request the reading r_target of the hidden special line. This can be performed at most once.
+3. Final Submission: Submit your inferred pattern, line number, and true distance. All three must be correct to succeed.
 
-You can repeatedly ask me the following two types of questions (one question per turn):
+Each query must contain only one tag, using the following XML format:
+- Route Test (e.g., test hubs A and F):
+<query_calibrate>A,F</query_calibrate>
+- Special Line Reading Request (empty content):
+<query_target></query_target>
+- Final Submission:
+<answer>mode=I, pair=P1, distance=4</answer>
 
-1. **Existence Query**: Ask whether the k-th occurrence of phase X exists.
-   - I will answer "Yes" or "No".
-
-2. **Distance Query**: From the k-th occurrence of phase X to the right, how many dispatch slots are there between it and the nearest phase Y?
-   - If pos(X, k) does not exist, I will answer "No k-th X".
-   - If it exists but there is no Y to its right, I will answer "No Y on right".
-   - Otherwise, I will answer a non-negative integer d (representing the number of slots in between; d = 0 if adjacent).
-
-## Query and Answer Format (strictly required)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Existence Query (e.g., asking if the 3rd occurrence of phase A exists):
-<query_exist>A,3</query_exist>
-
-- Distance Query (e.g., asking the distance from the 2nd occurrence of phase A to the nearest phase B on the right):
-<query_distance>A,2,B</query_distance>
-
-When you are ready to submit your final answer, submit the core dispatch cycle M in the following format:
-
-<answer>ABC</answer>
-
-Note: The answer must be a string composed of phase codes from the system, without spaces or other characters.
+Notes:
+- You must complete at least 2 route tests before requesting the special line reading.
+- Special line reading request can be performed at most once.
+- Hub names must be chosen from A, B, C, D, E, F, G, H, I.
+- Violating rules or incorrect answers will result in failure.
 """
 
-    # ================= 场景2：医疗 =================
     contextualized_rule_zh_2 = """\
-我们在进行“患者用药周期节律识别”的推理游戏，规则如下：
+欢迎使用“神经传导通路分析系统”。
+已知患者的局部神经传导网络 T 包含以下脑区节点和突触连接：
+- 脑区节点：A, B, C, D, E, F, G, H, I
+- 突触连接：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-临床设定了四类靶向药物代号：A、B、C、D。
+传导跳数定义：任意脑区对 (X,Y) 之间的 d(X,Y) 为其在网络中最短的突触连接数。
 
-存在一个未知的核心用药循环序列 M，其长度 P 在 2 到 6 之间，且 M 是原始循环（不可由更短序列的重复构成）。患者的完整给药记录 S 由 M 重复 T 次（T 大于等于 3）串联而成，即 S = M 重复 T 次。S 的总长度 N 等于 P 乘以 T。S 的第 1 次给药与 M 的第 1 个位置对齐。
+系统监测到存在未知的信号失真和潜在病灶，内部固化了以下要素：
+1. 信号失真模式 f，从以下4种中选择其一：
+   - 模式I：监测读数 r 等于真实跳数 d
+   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
+   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
+   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即存在阈值衰减）
 
-你不知道 P、N 或 M 的内容。
+2. 一对隐藏的关联病灶区 Pk，从以下4对中选择其一：
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-定义 pos(X, k) 为记录 S 中从左到右第 k 次给予药物 X 的给药顺位序号（顺位从 1 开始计数）。
+你的任务是通过交互刺激推断出：
+1. 实际的信号失真模式（I/II/III/IV）
+2. 关联病灶区的编号（P1/P2/P3/P4）
+3. 该病灶区之间的真实传导跳数
 
-你的目标是通过提问推断出核心用药循环序列 M 的完整内容（包括长度和药物序列）。你需要尽可能少的提问次数来完成任务。
+你可以进行以下类型的查询：
+1. 刺激传导测试（校准查询）：提交任意脑区对 (X,Y)，系统返回经过模式 f 处理后的监测读数 r。你需要至少完成2次传导测试。
+2. 病灶读数请求：在完成至少2次传导测试后，可以获取隐藏病灶对的失真读数 r_target。此类查询至多只能进行1次。
+3. 最终提交：提交你推断的失真模式、病灶编号和真实跳数。三项必须全部正确才算成功。
 
-## 允许的提问类型
+每次查询只能包含一个标签，使用以下 XML 格式：
+- 刺激传导测试（例如测试脑区 A 和 F）：
+<query_calibrate>A,F</query_calibrate>
+- 病灶读数请求（内容为空）：
+<query_target></query_target>
+- 最终提交（依次给出模式、病灶编号、真实跳数）：
+<answer>mode=I, pair=P1, distance=4</answer>
 
-你可以反复向我提出以下两类问题（每次仅限一个问题）：
-
-1. **存在性查询**：询问药物 X 的第 k 次给予是否存在。
-   - 我会回答“是”或“否”。
-
-2. **距离查询**：从药物 X 的第 k 次给予向右，最近的药物 Y 与它之间相隔几次给药？
-   - 若 pos(X, k) 不存在，我会回答“无第 k 次 X”。
-   - 若存在但右侧无任何 Y，我会回答“右侧无 Y”。
-   - 否则，我会回答一个非负整数 d（表示中间间隔的给药次数，相邻则 d = 0）。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次提问只能包含一个标签。请使用以下 XML 格式：
-
-- 存在性查询（例如询问药物 A 的第 3 次给予是否存在）：
-<query_exist>A,3</query_exist>
-
-- 距离查询（例如询问从药物 A 的第 2 次给予向右，最近的药物 B 与它之间相隔几次给药）：
-<query_distance>A,2,B</query_distance>
-
-当你准备好提交最终答案时，请按以下格式提交核心用药循环 M：
-
-<answer>ABC</answer>
-
-注意：答案必须是由设定的药物代号组成的字符串，不含空格或其他字符。
+注意事项：
+- 必须至少完成2次传导测试后才能请求病灶读数
+- 病灶读数请求至多只能进行1次
+- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
+- 违反规则或答案错误将导致诊断失败
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's play a "Patient Medication Cycle Rhythm Recognition" deduction game. Here are the rules:
+Welcome to the "Neural Conduction Pathway Analysis System".
 
-The clinic defines four targeted drug codes: A, B, C, D.
+The local neural network T contains the following brain region nodes and synaptic connections:
+- Brain regions: A, B, C, D, E, F, G, H, I
+- Synaptic connections: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-There exists an unknown core medication cycle sequence M with length P between 2 and 6, and M is primitive (not a repetition of a shorter sequence). The patient's complete medication record S is formed by concatenating M repeated T times (T is greater than or equal to 3), i.e., S = M repeated T times. The total length of S, N, equals P times T. The first medication of S aligns with the first position of M.
+Conduction hops definition: For any region pair (X,Y), d(X,Y) is the shortest number of synaptic connections in T.
 
-You do not know P, N, or the content of M.
+The system has internally fixed two hidden elements:
+1. A signal distortion pattern f, chosen from the following 4 types:
+   - Mode I: monitored reading r equals actual hops d
+   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
+   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
+   - Mode IV: r equals the maximum of d minus 1 and 0
 
-Define pos(X, k) as the position index (1-indexed) of the k-th administration of drug X in record S from left to right.
+2. A hidden correlated lesion pair Pk, chosen from the following 4 pairs:
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-Your goal is to infer the complete content of the core medication cycle M (including its length and drug sequence) through queries. You should use as few queries as possible to accomplish the task.
+Your task is to infer through interactive stimulation:
+1. The actual signal distortion pattern (I/II/III/IV)
+2. The lesion pair number (P1/P2/P3/P4)
+3. The true conduction hops of that lesion pair
 
-## Allowed Query Types
+You can perform the following queries:
+1. Stimulation Test (Calibration Query): Submit any region pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 tests.
+2. Lesion Reading Request: After completing at least 2 tests, you can request the reading r_target of the hidden lesion pair. This can be performed at most once.
+3. Final Submission: Submit your inferred pattern, lesion number, and true hops. All three must be correct to succeed.
 
-You can repeatedly ask me the following two types of questions (one question per turn):
+Each query must contain only one tag, using the following XML format:
+- Stimulation Test (e.g., test regions A and F):
+<query_calibrate>A,F</query_calibrate>
+- Lesion Reading Request (empty content):
+<query_target></query_target>
+- Final Submission:
+<answer>mode=I, pair=P1, distance=4</answer>
 
-1. **Existence Query**: Ask whether the k-th administration of drug X exists.
-   - I will answer "Yes" or "No".
-
-2. **Distance Query**: From the k-th administration of drug X to the right, how many medication intervals are there between it and the nearest drug Y?
-   - If pos(X, k) does not exist, I will answer "No k-th X".
-   - If it exists but there is no Y to its right, I will answer "No Y on right".
-   - Otherwise, I will answer a non-negative integer d (representing the number of intervals in between; d = 0 if adjacent).
-
-## Query and Answer Format (strictly required)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Existence Query (e.g., asking if the 3rd administration of drug A exists):
-<query_exist>A,3</query_exist>
-
-- Distance Query (e.g., asking the distance from the 2nd administration of drug A to the nearest drug B on the right):
-<query_distance>A,2,B</query_distance>
-
-When you are ready to submit your final answer, submit the core medication cycle M in the following format:
-
-<answer>ABC</answer>
-
-Note: The answer must be a string composed of the defined drug codes, without spaces or other characters.
+Notes:
+- You must complete at least 2 tests before requesting the lesion reading.
+- Lesion reading request can be performed at most once.
+- Region names must be chosen from A, B, C, D, E, F, G, H, I.
+- Violating rules or incorrect answers will result in failure.
 """
 
-    # ================= 场景3：教育 =================
     contextualized_rule_zh_3 = """\
-我们在进行“标准化教学模块周期识别”的推理游戏，规则如下：
+欢迎使用“知识图谱评估偏差分析系统”。
+当前学科知识依赖树 T 包含以下知识模块和先修关系：
+- 知识模块：A, B, C, D, E, F, G, H, I
+- 先修关系：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-课程库设定了四种教学模块：A、B、C、D。
+学习跨度定义：任意知识模块对 (X,Y) 之间的 d(X,Y) 为其在图谱上的最短依赖路径长度。
 
-存在一个未知的核心教学计划序列 M，其长度 P 在 2 到 6 之间，且 M 是基础计划（不可由更短序列的重复构成）。观测到的学期总课表 S 由 M 重复 T 次（T 大于等于 3）串联而成，即 S = M 重复 T 次。S 的总长度 N 等于 P 乘以 T。S 的第 1 个课时与 M 的第 1 个位置对齐。
+测试系统存在固有的评估偏差，并设置了核心考查路径：
+1. 计分评估模式 f，从以下4种中选择其一：
+   - 模式I：评估层级 r 等于实际跨度 d
+   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
+   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
+   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即基础免测）
 
-你不知道 P、N 或 M 的内容。
+2. 一条隐藏的核心考查路径 Pk，从以下4对中选择其一：
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-定义 pos(X, k) 为总课表 S 中从左到右第 k 次教授模块 X 的课时序号（序号从 1 开始计数）。
+你的任务是通过交互查询推断出：
+1. 实际的计分评估模式（I/II/III/IV）
+2. 核心考查路径的编号（P1/P2/P3/P4）
+3. 该考查路径的真实学习跨度
 
-你的目标是通过提问推断出核心教学计划 M 的完整内容（包括长度和模块序列）。你需要尽可能少的提问次数来完成任务。
+你可以进行以下类型的查询：
+1. 评估路径校准（校准查询）：提交任意模块对 (X,Y)，系统返回经过模式 f 处理后的评估层级 r。你需要至少完成2次校准。
+2. 核心考查请求：在完成至少2次评估路径校准后，可以请求获取核心考查路径的评估读数 r_target。此类查询至多只能进行1次。
+3. 最终提交：提交你推断的评估模式、考查路径编号和真实跨度。三项必须全部正确才算成功。
 
-## 允许的提问类型
+每次查询只能包含一个标签，使用以下 XML 格式：
+- 评估路径校准（例如查询模块 A 和 F）：
+<query_calibrate>A,F</query_calibrate>
+- 核心考查请求（内容为空）：
+<query_target></query_target>
+- 最终提交（依次给出模式、考查路径编号、真实跨度）：
+<answer>mode=I, pair=P1, distance=4</answer>
 
-你可以反复向我提出以下两类问题（每次仅限一个问题）：
-
-1. **存在性查询**：询问模块 X 的第 k 次教授是否存在。
-   - 我会回答“是”或“否”。
-
-2. **距离查询**：从模块 X 的第 k 次教授向右，最近的模块 Y 与它之间相隔几个课时？
-   - 若 pos(X, k) 不存在，我会回答“无第 k 次 X”。
-   - 若存在但右侧无任何 Y，我会回答“右侧无 Y”。
-   - 否则，我会回答一个非负整数 d（表示中间间隔的课时数，相邻则 d = 0）。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次提问只能包含一个标签。请使用以下 XML 格式：
-
-- 存在性查询（例如询问模块 A 的第 3 次教授是否存在）：
-<query_exist>A,3</query_exist>
-
-- 距离查询（例如询问从模块 A 的第 2 次教授向右，最近的模块 B 与它之间相隔几个课时）：
-<query_distance>A,2,B</query_distance>
-
-当你准备好提交最终答案时，请按以下格式提交核心教学计划 M：
-
-<answer>ABC</answer>
-
-注意：答案必须是由设定的模块代号组成的字符串，不含空格或其他字符。
+注意事项：
+- 必须至少完成2次评估路径校准后才能请求核心考查读数
+- 核心考查请求至多只能进行1次
+- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
+- 违反规则或答案错误将导致分析失败
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Standardized Teaching Module Cycle Recognition" deduction game. Here are the rules:
+Welcome to the "Knowledge Graph Assessment Bias Analysis System".
 
-The curriculum library defines four teaching modules: A, B, C, D.
+The subject dependency tree T contains the following knowledge modules and prerequisite links:
+- Modules: A, B, C, D, E, F, G, H, I
+- Prerequisite links: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-There exists an unknown core teaching plan sequence M with length P between 2 and 6, and M is foundational (not a repetition of a shorter sequence). The observed full semester syllabus S is formed by concatenating M repeated T times (T is greater than or equal to 3), i.e., S = M repeated T times. The total length of S, N, equals P times T. The first slot of S aligns with the first position of M.
+Learning span definition: For any module pair (X,Y), d(X,Y) is the shortest dependency path length in T.
 
-You do not know P, N, or the content of M.
+The system has internally fixed two hidden elements:
+1. A scoring assessment pattern f, chosen from the following 4 types:
+   - Mode I: assessment level r equals actual span d
+   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
+   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
+   - Mode IV: r equals the maximum of d minus 1 and 0
 
-Define pos(X, k) as the position index (1-indexed) of the k-th session of module X in the syllabus S from left to right.
+2. A hidden core examination path Pk, chosen from the following 4 pairs:
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-Your goal is to infer the complete content of the core teaching plan M (including its length and module sequence) through queries. You should use as few queries as possible to accomplish the task.
+Your task is to infer through interactive queries:
+1. The actual assessment pattern (I/II/III/IV)
+2. The core examination path number (P1/P2/P3/P4)
+3. The true learning span of that core path
 
-## Allowed Query Types
+You can perform the following queries:
+1. Assessment Path Calibration (Calibration Query): Submit any module pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 calibrations.
+2. Core Path Request: After completing at least 2 calibrations, you can request the reading r_target of the hidden core path. This can be performed at most once.
+3. Final Submission: Submit your inferred pattern, core path number, and true span. All three must be correct to succeed.
 
-You can repeatedly ask me the following two types of questions (one question per turn):
+Each query must contain only one tag, using the following XML format:
+- Assessment Path Calibration (e.g., query modules A and F):
+<query_calibrate>A,F</query_calibrate>
+- Core Path Request (empty content):
+<query_target></query_target>
+- Final Submission:
+<answer>mode=I, pair=P1, distance=4</answer>
 
-1. **Existence Query**: Ask whether the k-th session of module X exists.
-   - I will answer "Yes" or "No".
-
-2. **Distance Query**: From the k-th session of module X to the right, how many teaching slots are there between it and the nearest module Y?
-   - If pos(X, k) does not exist, I will answer "No k-th X".
-   - If it exists but there is no Y to its right, I will answer "No Y on right".
-   - Otherwise, I will answer a non-negative integer d (representing the number of slots in between; d = 0 if adjacent).
-
-## Query and Answer Format (strictly required)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Existence Query (e.g., asking if the 3rd session of module A exists):
-<query_exist>A,3</query_exist>
-
-- Distance Query (e.g., asking the distance from the 2nd session of module A to the nearest module B on the right):
-<query_distance>A,2,B</query_distance>
-
-When you are ready to submit your final answer, submit the core teaching plan M in the following format:
-
-<answer>ABC</answer>
-
-Note: The answer must be a string composed of the defined module codes, without spaces or other characters.
+Notes:
+- You must complete at least 2 calibrations before requesting the core path reading.
+- Core path request can be performed at most once.
+- Module names must be chosen from A, B, C, D, E, F, G, H, I.
+- Violating rules or incorrect answers will result in failure.
 """
 
-    # ================= 场景4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-我们在进行“柔性流水线生产节拍识别”的推理游戏，规则如下：
+欢迎进入“工业管网仪表校验与故障排查系统”。
+厂区控制网 T 包含以下工作站节点和通信总线：
+- 工作站节点：A, B, C, D, E, F, G, H, I
+- 通信总线：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-产线上设定了四类加工作业：A、B、C、D。
+总线物理段数定义：任意工作站对 (X,Y) 之间的 d(X,Y) 为其在控制网上的最短总线段数。
 
-存在一个未知的标准生产批次序列 M，其长度 P 在 2 到 6 之间，且 M 是最小工艺循环（不可由更短序列的重复构成）。观测到的连续排产序列 S 由 M 重复 T 次（T 大于等于 3）串联而成，即 S = M 重复 T 次。S 的总长度 N 等于 P 乘以 T。S 的第 1 个加工作业与 M 的第 1 个位置对齐。
+系统中仪表的读数存在系统补偿偏差，并存在一对隐藏的故障隐患链路：
+1. 仪表读数补偿模式 f，从以下4种中选择其一：
+   - 模式I：显示读数 r 等于实际段数 d
+   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
+   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
+   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即消除串扰本底）
 
-你不知道 P、N 或 M 的内容。
+2. 一对隐藏的故障隐患链路 Pk，从以下4对中选择其一：
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-定义 pos(X, k) 为排产序列 S 中从左到右第 k 次执行作业 X 的工位序号（序号从 1 开始计数）。
+你的任务是通过诊断交互推断出：
+1. 实际的仪表补偿模式（I/II/III/IV）
+2. 故障隐患链路的编号（P1/P2/P3/P4）
+3. 该隐患链路的真实物理段数
 
-你的目标是通过提问推断出标准生产批次序列 M 的完整内容（包括长度和作业序列）。你需要尽可能少的提问次数来完成任务。
+你可以进行以下类型的查询：
+1. 仪表校准检测（校准查询）：提交任意工作站对 (X,Y)，系统返回经过模式 f 处理后的仪表显示读数 r。你需要至少完成2次检测。
+2. 故障链路读数请求：在完成至少2次校准检测后，可以请求获取故障链路的仪表读数 r_target。此类查询至多只能进行1次。
+3. 最终提交：提交你推断的补偿模式、隐患链路编号和真实段数。三项必须全部正确才算成功。
 
-## 允许的提问类型
+每次查询只能包含一个标签，使用以下 XML 格式：
+- 仪表校准检测（例如检测工作站 A 和 F）：
+<query_calibrate>A,F</query_calibrate>
+- 故障链路读数请求（内容为空）：
+<query_target></query_target>
+- 最终提交（依次给出模式、链路编号、真实段数）：
+<answer>mode=I, pair=P1, distance=4</answer>
 
-你可以反复向我提出以下两类问题（每次仅限一个问题）：
-
-1. **存在性查询**：询问作业 X 的第 k 次执行是否存在。
-   - 我会回答“是”或“否”。
-
-2. **距离查询**：从作业 X 的第 k 次执行向右，最近的作业 Y 与它之间相隔几个工位？
-   - 若 pos(X, k) 不存在，我会回答“无第 k 次 X”。
-   - 若存在但右侧无任何 Y，我会回答“右侧无 Y”。
-   - 否则，我会回答一个非负整数 d（表示中间间隔的工位数，相邻则 d = 0）。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次提问只能包含一个标签。请使用以下 XML 格式：
-
-- 存在性查询（例如询问作业 A 的第 3 次执行是否存在）：
-<query_exist>A,3</query_exist>
-
-- 距离查询（例如询问从作业 A 的第 2 次执行向右，最近的作业 B 与它之间相隔几个工位）：
-<query_distance>A,2,B</query_distance>
-
-当你准备好提交最终答案时，请按以下格式提交标准生产批次 M：
-
-<answer>ABC</answer>
-
-注意：答案必须是由设定的作业代号组成的字符串，不含空格或其他字符。
+注意事项：
+- 必须至少完成2次校准检测后才能请求故障链路读数
+- 故障链路读数请求至多只能进行1次
+- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
+- 违反规则或答案错误将导致排查失败
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Let's play a "Flexible Assembly Line Production Takt Recognition" deduction game. Here are the rules:
+[Manufacturing Scenario]
+Welcome to the "Industrial Pipeline Instrument Calibration and Troubleshooting System".
 
-The assembly line defines four types of operations: A, B, C, D.
+The control network T contains the following workstations and communication buses:
+- Workstations: A, B, C, D, E, F, G, H, I
+- Communication buses: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-There exists an unknown standard production batch sequence M with length P between 2 and 6, and M is the minimal process cycle (not a repetition of a shorter sequence). The observed continuous production sequence S is formed by concatenating M repeated T times (T is greater than or equal to 3), i.e., S = M repeated T times. The total length of S, N, equals P times T. The first operation of S aligns with the first position of M.
+Physical segments definition: For any workstation pair (X,Y), d(X,Y) is the shortest number of physical segments in T.
 
-You do not know P, N, or the content of M.
+The system has internally fixed two hidden elements:
+1. An instrument compensation pattern f, chosen from the following 4 types:
+   - Mode I: display reading r equals actual segments d
+   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
+   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
+   - Mode IV: r equals the maximum of d minus 1 and 0
 
-Define pos(X, k) as the position index (1-indexed) of the k-th execution of operation X in the sequence S from left to right.
+2. A hidden fault risk link Pk, chosen from the following 4 pairs:
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-Your goal is to infer the complete content of the standard production batch sequence M (including its length and operation sequence) through queries. You should use as few queries as possible to accomplish the task.
+Your task is to infer through diagnostic queries:
+1. The actual compensation pattern (I/II/III/IV)
+2. The fault link number (P1/P2/P3/P4)
+3. The true physical segments of that fault link
 
-## Allowed Query Types
+You can perform the following queries:
+1. Instrument Calibration Test (Calibration Query): Submit any workstation pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 tests.
+2. Fault Link Reading Request: After completing at least 2 tests, you can request the reading r_target of the hidden fault link. This can be performed at most once.
+3. Final Submission: Submit your inferred pattern, fault link number, and true segments. All three must be correct to succeed.
 
-You can repeatedly ask me the following two types of questions (one question per turn):
+Each query must contain only one tag, using the following XML format:
+- Instrument Calibration Test (e.g., test workstations A and F):
+<query_calibrate>A,F</query_calibrate>
+- Fault Link Reading Request (empty content):
+<query_target></query_target>
+- Final Submission:
+<answer>mode=I, pair=P1, distance=4</answer>
 
-1. **Existence Query**: Ask whether the k-th execution of operation X exists.
-   - I will answer "Yes" or "No".
-
-2. **Distance Query**: From the k-th execution of operation X to the right, how many operational steps are there between it and the nearest operation Y?
-   - If pos(X, k) does not exist, I will answer "No k-th X".
-   - If it exists but there is no Y to its right, I will answer "No Y on right".
-   - Otherwise, I will answer a non-negative integer d (representing the number of operational steps in between; d = 0 if adjacent).
-
-## Query and Answer Format (strictly required)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Existence Query (e.g., asking if the 3rd execution of operation A exists):
-<query_exist>A,3</query_exist>
-
-- Distance Query (e.g., asking the distance from the 2nd execution of operation A to the nearest operation B on the right):
-<query_distance>A,2,B</query_distance>
-
-When you are ready to submit your final answer, submit the standard production batch sequence M in the following format:
-
-<answer>ABC</answer>
-
-Note: The answer must be a string composed of the defined operation codes, without spaces or other characters.
+Notes:
+- You must complete at least 2 tests before requesting the fault link reading.
+- Fault link reading request can be performed at most once.
+- Workstation names must be chosen from A, B, C, D, E, F, G, H, I.
+- Violating rules or incorrect answers will result in failure.
 """
 
-    # ================= 场景5：法律 =================
     contextualized_rule_zh_5 = """\
-我们在进行“合规审计程序周期识别”的推理游戏，规则如下：
+欢迎启动“涉案资金网络穿透式审计系统”。
+已查明的资金流转网络 T 包含以下涉案主体账户和流转关系：
+- 主体账户：A, B, C, D, E, F, G, H, I
+- 资金流转链：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-审计流程设定了四类审查项：A、B、C、D。
+流转层级定义：任意账户对 (X,Y) 之间的 d(X,Y) 为其在网络上的最短流转环节数。
 
-存在一个未知的核心审计循环序列 M，其长度 P 在 2 到 6 之间，且 M 是最简循环（不可由更短序列的重复构成）。观测到的总审计流水 S 由 M 重复 T 次（T 大于等于 3）串联而成，即 S = M 重复 T 次。S 的总长度 N 等于 P 乘以 T。S 的第 1 个动作与 M 的第 1 个位置对齐。
+犯罪集团设置了账目混淆策略，并掩盖了一条核心利益输送链：
+1. 审计干扰模式 f，从以下4种中选择其一：
+   - 模式I：账面层级 r 等于实际层级 d
+   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d（虚增偶数结构）
+   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d（虚增奇数结构）
+   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即掩盖直接流水）
 
-你不知道 P、N 或 M 的内容。
+2. 一条隐藏的核心输送链 Pk，从以下4对中选择其一：
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-定义 pos(X, k) 为审计流水 S 中从左到右第 k 次执行审查项 X 的次序索引（次序从 1 开始计数）。
+你的任务是通过追踪查询推断出：
+1. 实际的审计干扰模式（I/II/III/IV）
+2. 核心输送链的编号（P1/P2/P3/P4）
+3. 该输送链的真实流转层级数
 
-你的目标是通过提问推断出核心审计循环 M 的完整内容（包括长度和审查项序列）。你需要尽可能少的提问次数来完成任务。
+你可以进行以下类型的操作：
+1. 追踪审计查询（校准查询）：提交任意账户对 (X,Y)，系统返回经过模式 f 处理后的账面层级 r。你需要至少完成2次审计。
+2. 核心输送链取证：在完成至少2次追踪审计后，可以请求获取核心输送链的账面层级 r_target。此类请求至多只能进行1次。
+3. 最终提交：提交你推断的干扰模式、输送链编号和真实流转层级。三项必须全部正确才算成功。
 
-## 允许的提问类型
+每次查询只能包含一个标签，使用以下 XML 格式：
+- 追踪审计查询（例如查询账户 A 和 F）：
+<query_calibrate>A,F</query_calibrate>
+- 核心输送链取证（内容为空）：
+<query_target></query_target>
+- 最终提交（依次给出模式、输送链编号、真实层级）：
+<answer>mode=I, pair=P1, distance=4</answer>
 
-你可以反复向我提出以下两类问题（每次仅限一个问题）：
-
-1. **存在性查询**：询问审查项 X 的第 k 次执行是否存在。
-   - 我会回答“是”或“否”。
-
-2. **距离查询**：从审查项 X 的第 k 次执行向右，最近的审查项 Y 与它之间相隔几个审计步？
-   - 若 pos(X, k) 不存在，我会回答“无第 k 次 X”。
-   - 若存在但右侧无任何 Y，我会回答“右侧无 Y”。
-   - 否则，我会回答一个非负整数 d（表示中间间隔的审计步数，相邻则 d = 0）。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次提问只能包含一个标签。请使用以下 XML 格式：
-
-- 存在性查询（例如询问审查项 A 的第 3 次执行是否存在）：
-<query_exist>A,3</query_exist>
-
-- 距离查询（例如询问从审查项 A 的第 2 次执行向右，最近的审查项 B 与它之间相隔几个审计步）：
-<query_distance>A,2,B</query_distance>
-
-当你准备好提交最终答案时，请按以下格式提交核心审计循环 M：
-
-<answer>ABC</answer>
-
-注意：答案必须是由设定的审查项代号组成的字符串，不含空格或其他字符。
+注意事项：
+- 必须至少完成2次追踪审计后才能进行核心链取证
+- 核心链取证请求至多只能进行1次
+- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
+- 违反规则或答案错误将导致取证失败
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's play a "Compliance Audit Procedure Cycle Recognition" deduction game. Here are the rules:
+Welcome to the "Forensic Audit of Illicit Fund Networks System".
 
-The audit workflow defines four types of items: A, B, C, D.
+The fund transfer network T contains the following entities and transfer links:
+- Entities: A, B, C, D, E, F, G, H, I
+- Transfer links: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
 
-There exists an unknown core audit cycle sequence M with length P between 2 and 6, and M is the minimal cycle (not a repetition of a shorter sequence). The observed total audit log S is formed by concatenating M repeated T times (T is greater than or equal to 3), i.e., S = M repeated T times. The total length of S, N, equals P times T. The first action of S aligns with the first position of M.
+Transfer steps definition: For any entity pair (X,Y), d(X,Y) is the shortest number of transfer steps in T.
 
-You do not know P, N, or the content of M.
+The system has internally fixed two hidden elements:
+1. An audit interference pattern f, chosen from the following 4 types:
+   - Mode I: ledger steps r equals actual steps d
+   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
+   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
+   - Mode IV: r equals the maximum of d minus 1 and 0
 
-Define pos(X, k) as the position index (1-indexed) of the k-th execution of item X in the log S from left to right.
+2. A hidden core illicit transfer chain Pk, chosen from the following 4 pairs:
+   - P1: (A, F)
+   - P2: (C, H)
+   - P3: (D, I)
+   - P4: (E, G)
 
-Your goal is to infer the complete content of the core audit cycle sequence M (including its length and item sequence) through queries. You should use as few queries as possible to accomplish the task.
+Your task is to infer through tracing queries:
+1. The actual audit interference pattern (I/II/III/IV)
+2. The core transfer chain number (P1/P2/P3/P4)
+3. The true transfer steps of that core chain
 
-## Allowed Query Types
+You can perform the following queries:
+1. Tracing Audit Query (Calibration Query): Submit any entity pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 audits.
+2. Core Transfer Chain Evidence Request: After completing at least 2 audits, you can request the reading r_target of the hidden core chain. This can be performed at most once.
+3. Final Submission: Submit your inferred pattern, chain number, and true steps. All three must be correct to succeed.
 
-You can repeatedly ask me the following two types of questions (one question per turn):
+Each query must contain only one tag, using the following XML format:
+- Tracing Audit Query (e.g., query entities A and F):
+<query_calibrate>A,F</query_calibrate>
+- Core Transfer Chain Evidence Request (empty content):
+<query_target></query_target>
+- Final Submission:
+<answer>mode=I, pair=P1, distance=4</answer>
 
-1. **Existence Query**: Ask whether the k-th execution of item X exists.
-   - I will answer "Yes" or "No".
-
-2. **Distance Query**: From the k-th execution of item X to the right, how many audit steps are there between it and the nearest item Y?
-   - If pos(X, k) does not exist, I will answer "No k-th X".
-   - If it exists but there is no Y to its right, I will answer "No Y on right".
-   - Otherwise, I will answer a non-negative integer d (representing the number of audit steps in between; d = 0 if adjacent).
-
-## Query and Answer Format (strictly required)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Existence Query (e.g., asking if the 3rd execution of item A exists):
-<query_exist>A,3</query_exist>
-
-- Distance Query (e.g., asking the distance from the 2nd execution of item A to the nearest item B on the right):
-<query_distance>A,2,B</query_distance>
-
-When you are ready to submit your final answer, submit the core audit cycle sequence M in the following format:
-
-<answer>ABC</answer>
-
-Note: The answer must be a string composed of the defined item codes, without spaces or other characters.
+Notes:
+- You must complete at least 2 audits before requesting the core chain evidence.
+- Core chain evidence request can be performed at most once.
+- Entity names must be chosen from A, B, C, D, E, F, G, H, I.
+- Violating rules or incorrect answers will result in failure.
 """
 
-    tags = ["answer", "query_exist", "query_distance"]
-
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
-
-    # 难度配置：
-    # 1 (简单)       - P=2, T=4, 简单模式
-    # 2 (中等偏下)   - P=3, T=4, 中等模式
-    # 3 (中等偏上)   - P=4, T=3, 中等模式
-    # 4 (较难)       - P=5, T=3, 复杂模式
-    # 5 (难)         - P=6, T=3, 复杂模式
+    tags = ["answer", "query_calibrate", "query_target"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {"M": "AB", "T": 4},
-            2: {"M": "ABC", "T": 4},
-            3: {"M": "ABCD", "T": 3},
-            4: {"M": "ABCDA", "T": 3},
-            5: {"M": "ABCDAB", "T": 3},
+        1: {
+            "mode": "I",
+            "target_pair": "P2",
         },
-        "en": {
-            1: {"M": "AB", "T": 4},
-            2: {"M": "ABC", "T": 4},
-            3: {"M": "ABCD", "T": 3},
-            4: {"M": "ABCDA", "T": 3},
-            5: {"M": "ABCDAB", "T": 3},
+        2: {
+            "mode": "II",
+            "target_pair": "P1",
+        },
+        3: {
+            "mode": "III",
+            "target_pair": "P4",
+        },
+        4: {
+            "mode": "IV",
+            "target_pair": "P2",
+        },
+        5: {
+            "mode": "IV",
+            "target_pair": "P3",
         },
     }
 
+    def __init__(self, config):
+        self.tree_edges = [
+            ("A", "B"), ("B", "C"), ("B", "D"), ("D", "E"), 
+            ("E", "F"), ("C", "G"), ("G", "H"), ("H", "I")
+        ]
+        
+        self.target_pairs_info = {
+            "P1": (("A", "F"), 4),
+            "P2": (("C", "H"), 2),
+            "P3": (("D", "I"), 5),
+            "P4": (("E", "G"), 4),
+        }
+        
+        super().__init__(config)
+
     def _initialize_game(self):
-        lang = self.config.language
-        diff = int(self.config.difficulty)
-
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        diff = self.config.difficulty
+        
+        if isinstance(diff, str):
+            diff = int(diff)
+        
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
-
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 为了增加随机性并防止模型死记硬背，动态生成一个基于随机字母排列的原始序列 M
-        base_letters = ["A", "B", "C", "D"]
-        random.shuffle(base_letters)
-        base_str = "".join(base_letters)
+        cfg = self.DIFFICULTY_CONFIG[diff]
         
-        if diff == 1:
-            self.M = base_str[:2]
-        elif diff == 2:
-            self.M = base_str[:3]
-        elif diff == 3:
-            self.M = base_str[:4]
-        elif diff == 4:
-            self.M = base_str[:4] + base_str[:1]
-        elif diff == 5:
-            self.M = base_str[:4] + base_str[:2]
-        else:
-            self.M = cfg["M"]
-            
-        self.T = cfg["T"]  # 重复次数
-        self.P = len(self.M)  # 原始序列长度
-        self.S = self.M * self.T  # 观测序列
-        self.N = len(self.S)  # 观测序列长度
-
-        # 预计算所有符号的位置索引（1-indexed）
-        self.symbol_positions = {}
-        for symbol in "ABCD":
-            positions = []
-            for i, char in enumerate(self.S, start=1):
-                if char == symbol:
-                    positions.append(i)
-            self.symbol_positions[symbol] = positions
-
-        # 初始化游戏信息（用于格式化规则）
+        self.mode = cfg["mode"]
+        self.target_pair_name = cfg["target_pair"]
+        self.target_pair_nodes, self.target_true_distance = self.target_pairs_info[self.target_pair_name]
+        
+        self._build_graph()
+        
+        self.calibration_count = 0
+        self.target_query_count = 0
+        
         self._game_info = {}
 
-    def evaluate(self, parsed_info):
-        """
-        评估模型提交的答案是否正确
-        """
-        raw_ans = parsed_info["answer"].strip().upper()
+    def _build_graph(self):
+        from collections import defaultdict, deque
         
-        # 答案必须只包含 ABCD
-        if not all(c in "ABCD" for c in raw_ans):
+        self.graph = defaultdict(list)
+        for u, v in self.tree_edges:
+            self.graph[u].append(v)
+            self.graph[v].append(u)
+    
+    def _compute_distance(self, node1, node2):
+        from collections import deque
+        
+        if node1 == node2:
+            return 0
+        
+        visited = {node1}
+        queue = deque([(node1, 0)])
+        
+        while queue:
+            current, dist = queue.popleft()
+            for neighbor in self.graph[current]:
+                if neighbor == node2:
+                    return dist + 1
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, dist + 1))
+        
+        return -1
+    
+    def _apply_mode(self, true_distance):
+        d = true_distance
+        
+        if self.mode == "I":
+            return d
+        elif self.mode == "II":
+            return d + 1 if d % 2 == 1 else d
+        elif self.mode == "III":
+            return d + 1 if d % 2 == 0 else d
+        elif self.mode == "IV":
+            return max(0, d - 1)
+        else:
+            raise ValueError(f"Unknown mode: {self.mode}")
+
+    def evaluate(self, parsed_info):
+        raw_ans = parsed_info["answer"]
+        
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
+        
+        if "mode" not in ans_dict or "pair" not in ans_dict or "distance" not in ans_dict:
             return False
         
-        # 检查是否与原始序列 M 完全匹配
-        return raw_ans == self.M
-
-    def _cf_core_produce(self, parsed_info):
-        """
-        原始业务逻辑：根据模型的查询生成响应
-        """
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            no_kth_x = "无第 {k} 次 {X}"
-            no_y_right = "右侧无 {Y}"
-        else:
-            yes_res, no_res = "Yes", "No"
-            no_kth_x = "No {k}-th {X}"
-            no_y_right = "No {Y} on right"
-
-        # 优先处理存在性查询
-        if "query_exist" in parsed_info:
-            try:
-                raw = parsed_info["query_exist"].strip()
-                parts = [x.strip().upper() for x in raw.split(",")]
-                if len(parts) != 2:
-                    raise ValueError
-                X, k_str = parts
-                k = int(k_str)
-                
-                if X not in ("A", "B", "C", "D") or k < 1:
-                    raise ValueError
-                
-                # 检查第 k 次出现是否存在
-                positions = self.symbol_positions.get(X, [])
-                if k <= len(positions):
-                    return yes_res
-                else:
-                    return no_res
-            except:
-                return "Error: Invalid format." if self.config.language == "en" else "错误：格式无效。"
-
-        # 处理距离查询
-        elif "query_distance" in parsed_info:
-            try:
-                raw = parsed_info["query_distance"].strip()
-                parts = [x.strip().upper() for x in raw.split(",")]
-                if len(parts) != 3:
-                    raise ValueError
-                X, k_str, Y = parts
-                k = int(k_str)
-                
-                if X not in ("A", "B", "C", "D") or Y not in ("A", "B", "C", "D") or k < 1:
-                    raise ValueError
-                
-                # 获取 X 的第 k 次出现位置
-                x_positions = self.symbol_positions.get(X, [])
-                if k > len(x_positions):
-                    return no_kth_x.format(k=k, X=X)
-                
-                pos_x = x_positions[k - 1]  # 1-indexed
-                
-                # 查找 pos_x 右侧最近的 Y
-                y_positions = self.symbol_positions.get(Y, [])
-                right_y_positions = [p for p in y_positions if p > pos_x]
-                
-                if not right_y_positions:
-                    return no_y_right.format(Y=Y)
-                
-                # 最近的 Y 位置
-                nearest_y = min(right_y_positions)
-                distance = nearest_y - pos_x - 1  # 中间间隔的位置数
-                
-                return str(distance)
-            except:
-                return "Error: Invalid format." if self.config.language == "en" else "错误：格式无效。"
-
-        else:
-            raise ValueError("No valid query tag found.")
+        if ans_dict["mode"] != self.mode:
+            return False
+        
+        if ans_dict["pair"] != self.target_pair_name:
+            return False
+        
+        try:
+            submitted_distance = int(ans_dict["distance"])
+        except ValueError:
+            return False
+        
+        return submitted_distance == self.target_true_distance
 
     def _cf_make_wrong(self, correct: str) -> str:
-        # 若 correct 是纯整数字符串（距离结果）
-        if correct.lstrip('-').isdigit():
-            val = int(correct)
-            return str(val + 1) if val >= 0 else str(val - 1)
-        
-        # 关键词替换（中文）
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
+        try:
+            correct_val = int(correct)
+            wrong_val = correct_val + 1
+            return str(wrong_val)
+        except (ValueError, TypeError):
+            return correct + " [WRONG]"
+
+    def _cf_core_produce(self, parsed_info):
+        if "query_calibrate" in parsed_info:
+            raw = parsed_info["query_calibrate"].strip()
+            parts = [x.strip() for x in raw.split(",")]
             
-        # 关键词替换（英文，忽略大小写，保持原始风格）
-        low_correct = correct.lower()
-        if low_correct == "yes":
-            if correct.istitle(): return "No"
-            if correct.isupper(): return "NO"
-            return "no"
-        if low_correct == "no":
-            if correct.istitle(): return "Yes"
-            if correct.isupper(): return "YES"
-            return "yes"
-
-        # 处理 "无第 k 次 X" / "No k-th X" → 改为存在（返回 yes/是）
-        if self.config.language == "zh":
-            if correct.startswith("无第"):
-                return "是"
-            if correct.startswith("右侧无"):
-                return "0"  # 假装相邻
+            if len(parts) != 2:
+                raise ValueError(
+                    "Calibration query must contain exactly two nodes separated by a comma."
+                    if self.config.language == "en" else
+                    "校准查询必须包含恰好两个节点，用逗号分隔。"
+                )
+            
+            node1, node2 = parts
+            
+            valid_nodes = {"A", "B", "C", "D", "E", "F", "G", "H", "I"}
+            if node1 not in valid_nodes or node2 not in valid_nodes:
+                raise ValueError(
+                    "Invalid node name. Must be chosen from A, B, C, D, E, F, G, H, I."
+                    if self.config.language == "en" else
+                    "节点名称无效。必须从 A, B, C, D, E, F, G, H, I 中选择。"
+                )
+            
+            true_dist = self._compute_distance(node1, node2)
+            
+            reading = self._apply_mode(true_dist)
+            
+            self.calibration_count += 1
+            
+            return str(reading)
+        
+        elif "query_target" in parsed_info:
+            if self.calibration_count < 2:
+                raise ValueError(
+                    f"You must complete at least 2 calibration queries before requesting target reading. Current count: {self.calibration_count}."
+                    if self.config.language == "en" else
+                    f"必须至少完成2次校准查询后才能请求目标对读数。当前已完成 {self.calibration_count} 次。"
+                )
+            
+            if self.target_query_count >= 1:
+                raise ValueError(
+                    "Target reading request can be performed at most once."
+                    if self.config.language == "en" else
+                    "目标对读数请求至多只能进行1次。"
+                )
+            
+            self.target_query_count += 1
+            
+            target_reading = self._apply_mode(self.target_true_distance)
+            
+            return str(target_reading)
+        
         else:
-            if correct.startswith("No ") and "-th" in correct:
-                return "Yes"
-            if correct.startswith("No ") and "on right" in correct:
-                return "0"  # 假装相邻
+            raise ValueError(
+                "No valid query tag found."
+                if self.config.language == "en" else
+                "未找到有效的查询标签。"
+            )
 
-        # 若都不匹配
-        return correct + "_WRONG"
-
-    def get_all_possible_queries(self) -> List[Dict[str, str]]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 包含合法 XML 标签的查询内容字符串
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
+    def get_all_possible_queries(self) -> list[dict]:
         queries = []
-        lang = self.config.language
-
-        # 准备语言相关的回复模板
-        if lang == "zh":
-            yes_res, no_res = "是", "否"
-            no_y_right = "右侧无 {Y}"
-        else:
-            yes_res, no_res = "Yes", "No"
-            no_y_right = "No {Y} on right"
+        nodes = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
         
-        symbols = ["A", "B", "C", "D"]
-
-        # 1. 生成所有合法的存在性查询 <query_exist>X,k</query_exist>
-        for X in symbols:
-            positions = self.symbol_positions.get(X, [])
-            max_k = len(positions)
-            
-            # 遍历 k 从 1 到 max_k + 1
-            for k in range(1, max_k + 2):
-                query_content = f"{X},{k}"
-                
-                # 计算正确答案
-                if k <= max_k:
-                    ans = yes_res
-                else:
-                    ans = no_res
+        for i, n1 in enumerate(nodes):
+            for n2 in nodes[i+1:]:
+                true_dist = self._compute_distance(n1, n2)
+                reading = self._apply_mode(true_dist)
                 
                 queries.append({
-                    "query": f"<query_exist>{query_content}</query_exist>",
-                    "answer": ans
+                    "query": f"<query_calibrate>{n1},{n2}</query_calibrate>",
+                    "answer": str(reading)
                 })
-
-        # 2. 生成所有合法的距离查询 <query_distance>X,k,Y</query_distance>
-        for X in symbols:
-            x_positions = self.symbol_positions.get(X, [])
-            for i, pos_x in enumerate(x_positions):
-                k = i + 1  # X 的第 k 次出现
-                
-                for Y in symbols:
-                    query_content = f"{X},{k},{Y}"
-                    
-                    # 查找 pos_x 右侧最近的 Y
-                    y_positions = self.symbol_positions.get(Y, [])
-                    right_y_positions = [p for p in y_positions if p > pos_x]
-                    
-                    if not right_y_positions:
-                        ans = no_y_right.format(Y=Y)
-                    else:
-                        nearest_y = min(right_y_positions)
-                        distance = nearest_y - pos_x - 1
-                        ans = str(distance)
-                    
-                    queries.append({
-                        "query": f"<query_distance>{query_content}</query_distance>",
-                        "answer": ans
-                    })
+        
+        target_reading = self._apply_mode(self.target_true_distance)
+        queries.append({
+            "query": "<query_target></query_target>",
+            "answer": str(target_reading)
+        })
 
         return queries

@@ -1,571 +1,513 @@
 from .base import Game
-import random
 import re
-import itertools
 
-
-class GraphIsolatedNodesGame(Game):
-    
-    reasoning_type = "归纳推理"
-    data_structure = "图"
+class HiddenOrderDeductionGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"图孤立节点推理"游戏，规则如下：
+我们现在来玩一个"隐藏顺序推理"游戏，规则如下：
 
-游戏设定了一个未知的无向图 G，其中节点集合 V 包含编号 1 到 {n} 的节点，但边集合 E 是未知的。已知图中至少存在一个非孤立节点（度数大于等于1），且至少存在一个度数为 1 的节点。
+游戏设定了一个由 {n} 个不同元素组成的集合 S = {elements}，系统已为这些元素确定了一个隐藏的全序关系（即一个从小到大的标准排列），但你无法直接看到。
 
-我提供了 {num_testers} 个测试器（编号为 1 到 {num_testers}）。每个测试器 f 对任意节点 v 的响应由一个未知的布尔函数 P_f(度数) 决定，该函数满足以下性质：
-- 对度数为 0 的节点返回负反馈
-- 对度数单调不减（度数越高，越可能返回正反馈）
-- 至少存在一个测试器对所有度数大于等于 1 的节点都返回正反馈
+初始状态下，你会看到这些元素的一个打乱的排列。你的目标是通过有限的操作，推断出隐藏的全序关系，并使当前排列按照该隐藏顺序完全递增排列。
 
-你的目标是通过查询确定所有孤立节点（度数为 0 的节点）的精确集合。你可以使用以下三种查询方式（每次仅限一个查询）：
+系统内部维护了一个"整齐度"指标，它表示当前排列中有多少对元素的相对位置符合隐藏顺序。当整齐度达到最大值时，当前排列就是完全有序的。
 
-1. 探测查询：测试单个节点 v 在测试器 f 下的响应。返回"正反馈"或"负反馈"。
-2. 比较查询：比较两个节点 x 和 y 在测试器 f 下的响应。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
-3. 计数查询：统计节点集合 S 中有多少个节点在测试器 f 下返回正反馈。返回一个非负整数。
+每次你可以执行以下操作之一（使用 XML 格式）：
 
-当你收集足够信息后，请提交你认为的孤立节点集合。若答案正确则游戏成功；若错误，我会告知误报数（你提交的集合中实际非孤立的节点数）和漏报数（实际孤立但你未提交的节点数）。
+1. **交换相邻元素**：交换位置 i 和 i+1 的元素（i 从 1 开始计数，1 <= i < {n}）
+   系统会告诉你交换后是"更整齐"还是"更混乱"，并显示交换后的新排列。
+   格式：<swap>i</swap>
+   示例：<swap>3</swap> 表示交换位置 3 和位置 4 的元素
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **查询当前排列**：查看当前的元素排列（不改变状态）
+   格式：<query_queue></query_queue>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+3. **查询是否完全有序**：询问当前排列是否已经完全有序
+   格式：<query_ordered></query_ordered>
 
-- 探测查询（例如用测试器 2 探测节点 5）：
-<query_probe>v=5, f=2</query_probe>
+4. **提交最终答案**：提交你推断出的隐藏全序（从小到大的排列）
+   格式：<answer>元素1,元素2,...,元素{n}</answer>
+   示例：<answer>A,C,B,D</answer>
 
-- 比较查询（例如用测试器 1 比较节点 3 和 7）：
-<query_compare>x=3, y=7, f=1</query_compare>
+满足以下任一条件即为成功：
+- 使当前排列达到完全有序状态，并提交与之一致的答案
+- 直接提交与隐藏全序完全一致的答案
 
-- 计数查询（例如用测试器 3 统计节点集合 {{1,2,5}}）：
-<query_count>S=1,2,5, f=3</query_count>
+- 提交的答案不正确
+- 操作格式不符合要求
 
-提交最终答案时，列出所有孤立节点的编号（用逗号隔开，顺序不限）。如果认为没有孤立节点，提交空集：
-
-<answer>isolated=1,3,5</answer>
-
-或
-
-<answer>isolated=</answer>
+请尽可能用较少的操作次数找出隐藏的全序关系。
 """
 
     game_rule_en = """\
-Let's play a "Graph Isolated Nodes Inference" game. Here are the rules:
+Let's play a "Hidden Order Deduction" game. Here are the rules:
 
-The game involves an unknown undirected graph G, where the vertex set V contains nodes numbered from 1 to {n}, but the edge set E is unknown. It is known that the graph has at least one non-isolated node (degree greater than or equal to 1), and at least one node with degree 1.
+The game has a set S consisting of {n} distinct elements: {elements}. The system has determined a hidden total order (i.e., a standard sequence from smallest to largest) for these elements, but you cannot see it directly.
 
-I provide {num_testers} testers (numbered 1 to {num_testers}). Each tester f responds to any node v according to an unknown boolean function P_f(degree), which satisfies:
-- Returns negative feedback for nodes with degree 0
-- Monotone non-decreasing with respect to degree (higher degree is more likely to return positive feedback)
-- At least one tester returns positive feedback for all nodes with degree greater than or equal to 1
+Initially, you will see a shuffled arrangement of these elements. Your goal is to deduce the hidden total order through limited operations and make the current arrangement fully sorted according to that hidden order.
 
-Your goal is to determine the exact set of isolated nodes (nodes with degree 0) through queries. You can use the following three query types (one query at a time):
+The system maintains an internal "tidiness" metric, which represents how many pairs of elements in the current arrangement are in the correct relative position according to the hidden order. When tidiness reaches its maximum value, the current arrangement is fully sorted.
 
-1. Probe Query: Test a single node v using tester f. Returns "positive" or "negative".
-2. Compare Query: Compare two nodes x and y using tester f. Returns "only x positive", "only y positive", "both positive", or "both negative".
-3. Count Query: Count how many nodes in set S return positive feedback using tester f. Returns a non-negative integer.
+Each turn you can perform one of the following operations (using XML format):
 
-When you have enough information, submit the set of isolated nodes you believe. If correct, the game succeeds; if wrong, I will tell you the number of false positives (non-isolated nodes you included) and false negatives (actual isolated nodes you missed).
+1. **Swap adjacent elements**: Swap elements at positions i and i+1 (i starts from 1, 1 <= i < {n})
+   The system will tell you whether the swap made it "tidier" or "messier", and show the new arrangement.
+   Format: <swap>i</swap>
+   Example: <swap>3</swap> means swap elements at positions 3 and 4
 
-## Query and Answer Format (strictly required)
+2. **Query current queue**: View the current element arrangement (does not change state)
+   Format: <query_queue></query_queue>
 
-Each query must contain only one tag. Use the following XML format:
+3. **Query if fully ordered**: Ask whether the current arrangement is fully sorted
+   Format: <query_ordered></query_ordered>
 
-- Probe Query (e.g., probe node 5 with tester 2):
-<query_probe>v=5, f=2</query_probe>
+4. **Submit final answer**: Submit your deduced hidden total order (arrangement from smallest to largest)
+   Format: <answer>element1,element2,...,element{n}</answer>
+   Example: <answer>A,C,B,D</answer>
 
-- Compare Query (e.g., compare nodes 3 and 7 with tester 1):
-<query_compare>x=3, y=7, f=1</query_compare>
+Success is achieved if any of the following is met:
+- Make the current arrangement fully ordered and submit an answer consistent with it
+- Directly submit an answer that is completely consistent with the hidden total order
 
-- Count Query (e.g., count nodes {{1,2,5}} with tester 3):
-<query_count>S=1,2,5, f=3</query_count>
+- The submitted answer is incorrect
+- Operation format does not meet requirements
 
-When submitting the final answer, list all isolated node IDs (comma-separated, order does not matter). If you believe there are no isolated nodes, submit an empty set:
-
-<answer>isolated=1,3,5</answer>
-
-or
-
-<answer>isolated=</answer>
+Please try to find the hidden total order with as few operations as possible.
 """
 
     contextualized_rule_zh_1 = """\
-我们来模拟一个"城市交通路网连通性排查"任务，规则如下：
+欢迎使用智能交通调度系统。请根据规则进行车辆放行序列的优化：
 
-系统设定了一个未知的城市交通路网 G，其中节点集合 V 包含编号 1 到 {n} 的交通路口，但路口之间的直达道路集合 E 是未知的。已知路网中至少存在一个正常连通的路口（至少有一条道路相连），且至少存在一个仅有一条道路相连的末端路口。
+调度中心检测到由 {n} 辆特种车辆组成的队列，标识为 S = {elements}。基于紧急程度和路线规划，系统预设了一个隐藏的最佳放行序列（即优先级从高到低的标准排列），但由于网络故障你无法直接获取该序列。
 
-指挥中心分配了 {num_testers} 个不同灵敏度的交通流量监测站（编号 1 到 {num_testers}）。每个监测站 f 对任意路口 v 的活动反馈由一个未知的布尔函数 P_f(连通道路数) 决定，该函数满足以下性质：
-- 对没有任何连通道路的“废弃孤立路口”始终返回负反馈
-- 对道路数单调不减（连通的道路越多，越可能返回正反馈）
-- 至少存在一个监测站对所有连通道路数大于等于 1 的路口都返回正反馈
+初始状态下，你会看到这些车辆的一个随机初始调度队列。你的目标是通过有限的调度指令，推断出隐藏的最佳放行序列，并使当前队列完全符合该标准优先级排列。
 
-你的目标是通过查询指令，精确找出所有“废弃孤立路口”（连通道路数为 0 的路口）的集合。你可以使用以下三种指令（每次仅限一个）：
+系统内部实时计算一个"顺畅度指标"，它表示当前队列中有多少对车辆的相对位置符合预设的最佳放行优先级。当顺畅度达到最大值时，当前队列即为最佳调度状态。
 
-1. 探测查询：用监测站 f 探测单个路口 v 的车流活动。返回"正反馈"或"负反馈"。
-2. 比较查询：用监测站 f 比较路口 x 和 y 的车流活跃表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
-3. 计数查询：用监测站 f 统计路口集合 S 中有多少个路口返回正反馈。返回一个非负整数。
+每次你可以执行以下操作之一（使用 XML 格式）：
 
-当你收集足够信息后，请提交你认为的废弃孤立路口集合。若答案正确则排查成功；若错误，我会告知误报数（提交中实际非孤立的路口数）和漏报数（实际孤立但未提交的路口数）。
+1. **调整相邻车辆**：交换队列中位置 i 和 i+1 的车辆（i 从 1 开始计数，1 <= i < {n}）
+   系统会反馈调度后顺畅度是"更整齐"还是"更混乱"，并显示最新的队列状态。
+   格式：<swap>i</swap>
+   示例：<swap>3</swap> 表示交换位置 3 和位置 4 的车辆
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **查询当前队列**：查看当前车辆的排队顺序（不改变状态）
+   格式：<query_queue></query_queue>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+3. **查询是否达到最佳调度**：询问当前队列是否已完全符合最佳放行序列
+   格式：<query_ordered></query_ordered>
 
-- 探测查询（例如用监测站 2 探测路口 5）：
-<query_probe>v=5, f=2</query_probe>
+4. **提交最终方案**：提交你推断出的最佳放行序列（按优先级从高到低排列）
+   格式：<answer>车辆1,车辆2,...,车辆{n}</answer>
+   示例：<answer>A,C,B,D</answer>
 
-- 比较查询（例如用监测站 1 比较路口 3 和 7）：
-<query_compare>x=3, y=7, f=1</query_compare>
+满足以下任一条件即为成功调度：
+- 使当前队列达到最佳调度状态，并提交与之一致的最终方案
+- 直接提交与预设最佳放行序列完全一致的方案
 
-- 计数查询（例如用监测站 3 统计路口集合 {{1,2,5}}）：
-<query_count>S=1,2,5, f=3</query_count>
+- 提交的最终方案不正确
+- 调度指令格式不符合要求
 
-提交最终答案时，列出所有孤立路口的编号（用逗号隔开，顺序不限）。如果认为没有孤立路口，提交空集：
-
-<answer>isolated=1,3,5</answer>
-
-或
-
-<answer>isolated=</answer>
+请在保证道路网络不崩溃的前提下，用最少的调度指令找出最佳放行序列。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's simulate a "City Traffic Network Connectivity Inspection" task. Here are the rules:
+Welcome to the Intelligent Traffic Dispatch System. Please optimize the vehicle release sequence according to the following rules:
 
-The system involves an unknown city traffic network G, where the junction set V contains traffic junctions numbered from 1 to {n}, but the direct road set E between junctions is unknown. It is known that the network has at least one normally connected junction (with at least one connecting road), and at least one dead-end junction with exactly one connecting road.
+The dispatch center has detected a queue consisting of {n} special vehicles, identified as S = {elements}. Based on urgency and route planning, the system has determined a hidden optimal release sequence (i.e., a standard arrangement from highest to lowest priority), but you cannot access it directly due to a network glitch.
 
-The command center provides {num_testers} traffic flow monitoring stations of varying sensitivities (numbered 1 to {num_testers}). Each station f responds to any junction v based on an unknown boolean function P_f(number of connecting roads), which satisfies:
-- Returns negative feedback for "abandoned isolated junctions" with no connecting roads
-- Monotone non-decreasing with respect to the number of connecting roads (more roads make positive feedback more likely)
-- At least one station returns positive feedback for all junctions with 1 or more connecting roads
+Initially, you will see a randomized initial dispatch queue of these vehicles. Your objective is to deduce the hidden optimal release sequence through limited dispatch commands and make the current queue fully comply with that standard priority arrangement.
 
-Your goal is to precisely determine the set of all "abandoned isolated junctions" (junctions with 0 connecting roads) through query commands. You can use the following three types of commands (one query at a time):
+The system maintains an internal "smoothness metric" in real-time, representing how many pairs of vehicles in the current queue are in the correct relative position according to the optimal release priority. When the smoothness metric reaches its peak, the current queue is in the optimal dispatch state.
 
-1. Probe Query: Detect traffic activity at a single junction v using station f. Returns "positive" or "negative".
-2. Compare Query: Compare traffic activity between junctions x and y using station f. Returns "only x positive", "only y positive", "both positive", or "both negative".
-3. Count Query: Count how many junctions in set S return positive feedback using station f. Returns a non-negative integer.
+Each turn you can perform one of the following operations (using XML format):
 
-When you have gathered enough information, submit the set of abandoned isolated junctions you believe. If correct, the inspection succeeds; if wrong, I will tell you the number of false positives (non-isolated junctions you included) and false negatives (actual isolated junctions you missed).
+1. **Swap adjacent vehicles**: Swap vehicles at positions i and i+1 in the queue (i starts from 1, 1 <= i < {n})
+   The system will report whether the swap made the smoothness "Tidier" or "Messier", and show the updated queue state.
+   Format: <swap>i</swap>
+   Example: <swap>3</swap> means swap vehicles at positions 3 and 4
 
-## Query and Answer Format (strictly required)
+2. **Query current queue**: View the current vehicle queuing order (does not change state)
+   Format: <query_queue></query_queue>
 
-Each query must contain only one tag. Use the following XML format:
+3. **Query if optimal**: Ask whether the current queue fully complies with the optimal release sequence
+   Format: <query_ordered></query_ordered>
 
-- Probe Query (e.g., probe junction 5 with station 2):
-<query_probe>v=5, f=2</query_probe>
+4. **Submit final plan**: Submit your deduced optimal release sequence (arranged from highest to lowest priority)
+   Format: <answer>vehicle1,vehicle2,...,vehicle{n}</answer>
+   Example: <answer>A,C,B,D</answer>
 
-- Compare Query (e.g., compare junctions 3 and 7 with station 1):
-<query_compare>x=3, y=7, f=1</query_compare>
+Successful dispatch is achieved if any of the following is met:
+- Make the current queue reach the optimal dispatch state and submit a plan consistent with it
+- Directly submit a plan that perfectly matches the hidden optimal release sequence
 
-- Count Query (e.g., count junction set {{1,2,5}} with station 3):
-<query_count>S=1,2,5, f=3</query_count>
+- The submitted final plan is incorrect
+- Command format does not meet requirements
 
-When submitting the final answer, list all isolated junction IDs (comma-separated, order does not matter). If you believe there are no isolated junctions, submit an empty set:
-
-<answer>isolated=1,3,5</answer>
-
-or
-
-<answer>isolated=</answer>
+Please try to deduce the optimal release sequence with the minimum number of dispatch commands to prevent traffic gridlock.
 """
 
     contextualized_rule_zh_2 = """\
-我们来进行一项"蛋白互作网络失活排查"任务，规则如下：
+欢迎进入智能临床药学辅助系统，请按医疗规程进行急救药物的配伍排序：
 
-系统映射了一个未知的生物体内蛋白互作网络 G，其中节点集合 V 包含编号 1 到 {n} 的蛋白质簇，但蛋白之间的结合链路集合 E 是未知的。已知网络中至少存在一个正常活性的蛋白簇（至少有一条相互作用链路），且至少存在一个仅有一条链路的边缘蛋白簇。
+当前处方涉及 {n} 种不同的急救药物，编号集合为 S = {elements}。根据最新的药代动力学指南，系统已生成这些药物的一个隐藏标准配伍顺序（即副作用最小、疗效最佳的安全注射序列），但因权限限制你不可见。
 
-实验室配置了 {num_testers} 种不同浓度的生化试剂（编号 1 到 {num_testers}）。每种试剂 f 对任意蛋白簇 v 的生化反应由一个未知的布尔函数 P_f(结合链路数) 决定，该函数满足以下性质：
-- 对没有任何链路的“失活孤立蛋白”始终返回负反馈
-- 对链路数单调不减（链路越多，空间结构越稳定，越可能返回正反馈）
-- 至少存在一种试剂对所有结合链路数大于等于 1 的蛋白簇都返回正反馈
+初始状态下，你会看到一个存在风险的随机注射队列。你的目标是通过有限的调整操作，推断出隐藏的标准配伍顺序，并使当前的药物注射队列完全符合该安全序列。
 
-你的目标是通过实验查询，精确找出所有“失活孤立蛋白”（链路数为 0 的蛋白簇）的集合。你可以使用以下三种实验指令（每次仅限一个）：
+系统内部实时监控一个"疗效预期指标"，它表示当前队列中有多少对药物的相对给药顺序符合标准配伍规范。当该指标达到最大值时，当前给药队列即为最安全的完全有序状态。
 
-1. 探测查询：用试剂 f 测试单个蛋白簇 v 的生化反应。返回"正反馈"或"负反馈"。
-2. 比较查询：用试剂 f 比较蛋白簇 x 和 y 的反应强度表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
-3. 计数查询：用试剂 f 统计蛋白簇集合 S 中有多少个蛋白呈现正反馈反应。返回一个非负整数。
+每次你可以执行以下操作之一（使用 XML 格式）：
 
-当你收集足够信息后，请提交你排查出的失活孤立蛋白集合。若答案正确则任务成功；若错误，我会告知误报数（提交中实际具有活性的蛋白数）和漏报数（实际失活但未提交的蛋白数）。
+1. **调换相邻药物**：调换注射队列中位置 i 和 i+1 的药物（i 从 1 开始计数，1 <= i < {n}）
+   系统会根据药理学模型评估调整后是"更整齐"（预期提升）还是"更混乱"（预期下降），并显示最新给药队列。
+   格式：<swap>i</swap>
+   示例：<swap>3</swap> 表示调换位置 3 和位置 4 的药物
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **核对当前队列**：查看目前的药物给药顺序（不改变状态）
+   格式：<query_queue></query_queue>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+3. **查询是否合规**：询问当前注射队列是否已完全符合标准配伍顺序
+   格式：<query_ordered></query_ordered>
 
-- 探测查询（例如用试剂 2 探测蛋白簇 5）：
-<query_probe>v=5, f=2</query_probe>
+4. **提交最终方案**：提交你推断出的标准配伍顺序
+   格式：<answer>药物1,药物2,...,药物{n}</answer>
+   示例：<answer>A,C,B,D</answer>
 
-- 比较查询（例如用试剂 1 比较蛋白簇 3 和 7）：
-<query_compare>x=3, y=7, f=1</query_compare>
+满足以下任一条件即可完成抢救准备：
+- 将当前注射队列调整至完全合规状态，并提交一致的方案
+- 直接提交与隐藏标准配伍顺序完全一致的答案
 
-- 计数查询（例如用试剂 3 统计蛋白簇集合 {{1,2,5}}）：
-<query_count>S=1,2,5, f=3</query_count>
+- 提交的配伍方案存在医疗错误
+- 操作指令格式不符合系统要求
 
-提交最终答案时，列出所有失活蛋白的编号（用逗号隔开，顺序不限）。如果认为没有失活蛋白，提交空集：
-
-<answer>isolated=1,3,5</answer>
-
-或
-
-<answer>isolated=</answer>
+抢救时间宝贵，请尽可能用最少的调换次数推断出正确的标准配伍顺序。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's perform a "Protein Interaction Network Inactivation Screening" task. Here are the rules:
+Welcome to the Intelligent Clinical Pharmacy Assist System. Please sequence the emergency medications according to medical protocols:
 
-The system maps an unknown biological protein interaction network G, where the node set V contains protein clusters numbered from 1 to {n}, but the binding link set E between proteins is unknown. It is known that the network has at least one normally active protein cluster (with at least one interaction link), and at least one marginal cluster with exactly one link.
+The current prescription involves {n} distinct emergency medications, identified by the set S = {elements}. Based on the latest pharmacokinetic guidelines, the system has generated a hidden standard compounding sequence (i.e., the safest injection order with minimal side effects and optimal efficacy), but it is invisible to you due to access restrictions.
 
-The laboratory is equipped with {num_testers} biochemical reagents of varying concentrations (numbered 1 to {num_testers}). Each reagent f responds to any protein cluster v based on an unknown boolean function P_f(number of links), which satisfies:
-- Returns negative feedback for "inactivated isolated proteins" with no links
-- Monotone non-decreasing with respect to the number of links (more links mean higher stability, making positive feedback more likely)
-- At least one reagent returns positive feedback for all clusters with 1 or more links
+Initially, you will see a randomized and potentially risky injection queue. Your objective is to deduce the hidden standard compounding sequence through limited adjustments and make the current medication injection queue fully compliant with this safe sequence.
 
-Your goal is to precisely determine the set of all "inactivated isolated proteins" (clusters with 0 links) through experimental queries. You can use the following three types of queries (one query at a time):
+The system monitors an internal "efficacy expectation metric" in real-time, which represents how many pairs of medications in the current queue have relative administration orders that comply with standard compounding protocols. When this metric reaches its peak, the current administration queue is in the safest, fully ordered state.
 
-1. Probe Query: Test the biochemical reaction of a single cluster v using reagent f. Returns "positive" or "negative".
-2. Compare Query: Compare the reaction intensity between clusters x and y using reagent f. Returns "only x positive", "only y positive", "both positive", or "both negative".
-3. Count Query: Count how many clusters in set S show positive reactions using reagent f. Returns a non-negative integer.
+Each turn you can perform one of the following operations (using XML format):
 
-When you have gathered enough information, submit the set of inactivated isolated proteins. If correct, the screening succeeds; if wrong, I will tell you the number of false positives (active proteins you included) and false negatives (actual inactivated proteins you missed).
+1. **Swap adjacent medications**: Swap medications at positions i and i+1 in the injection queue (i starts from 1, 1 <= i < {n})
+   The system will evaluate via pharmacological models whether the adjustment made it "Tidier" (expected improvement) or "Messier" (expected decline), and display the updated queue.
+   Format: <swap>i</swap>
+   Example: <swap>3</swap> means swap medications at positions 3 and 4
 
-## Query and Answer Format (strictly required)
+2. **Verify current queue**: Review the current medication administration order (does not change state)
+   Format: <query_queue></query_queue>
 
-Each query must contain only one tag. Use the following XML format:
+3. **Query if compliant**: Ask whether the current injection queue is fully compliant with the standard compounding sequence
+   Format: <query_ordered></query_ordered>
 
-- Probe Query (e.g., probe cluster 5 with reagent 2):
-<query_probe>v=5, f=2</query_probe>
+4. **Submit final regimen**: Submit your deduced standard compounding sequence
+   Format: <answer>med1,med2,...,med{n}</answer>
+   Example: <answer>A,C,B,D</answer>
 
-- Compare Query (e.g., compare clusters 3 and 7 with reagent 1):
-<query_compare>x=3, y=7, f=1</query_compare>
+Preparation for resuscitation is complete if any of the following is met:
+- Adjust the current injection queue to a fully compliant state and submit a regimen consistent with it
+- Directly submit a regimen that perfectly matches the hidden standard compounding sequence
 
-- Count Query (e.g., count cluster set {{1,2,5}} with reagent 3):
-<query_count>S=1,2,5, f=3</query_count>
+- The submitted compounding regimen contains medical errors
+- Operation format does not meet system requirements
 
-When submitting the final answer, list all inactivated protein IDs (comma-separated, order does not matter). If you believe there are no inactivated proteins, submit an empty set:
-
-<answer>isolated=1,3,5</answer>
-
-or
-
-<answer>isolated=</answer>
+Resuscitation time is critical. Please deduce the correct standard compounding sequence with the minimum number of swaps.
 """
 
     contextualized_rule_zh_3 = """\
-我们来开展一次"学生知识图谱盲区诊断"任务，规则如下：
+欢迎使用智能教学教案编排系统，请完成课程知识点大纲的优化：
 
-系统调取了一名学生的综合知识图谱 G，其中节点集合 V 包含编号 1 到 {n} 的核心知识模块，但模块之间的认知关联集合 E 是未知的。已知图谱中至少存在一个被正常关联的模块（至少能与其他一个模块联系起来），且至少存在一个仅有一个跨模块关联的节点。
+本单元包含了 {n} 个核心教学模块，集合 S = {elements}。基于教育心理学，系统内部已构建了一条隐藏的认知递进序列（即由浅入深、逻辑自洽的标准教学顺序），但作为测验，当前对你屏蔽。
 
-教研组提供了 {num_testers} 个不同难度的评估模型（编号 1 到 {num_testers}）。每个模型 f 对任意模块 v 的掌握度反馈由一个未知的布尔函数 P_f(认知关联数) 决定，该函数满足以下性质：
-- 对没有任何认知关联的“孤立盲区模块”始终返回负反馈（未达标）
-- 对关联数单调不减（能建立联系的知识点越多，越可能返回正反馈）
-- 至少存在一个基础评估模型对所有关联数大于等于 1 的模块都返回正反馈
+初始状态下，你会看到一份打乱的授课大纲草案。你的目标是通过有限的大纲微调，推断出这条隐藏的认知递进序列，并使当前的授课大纲完全按照该标准顺序排列。
 
-你的目标是通过诊断指令，精确找出所有“孤立盲区模块”（认知关联数为 0 的模块）的集合。你可以使用以下三种指令（每次仅限一个）：
+系统内部通过学习曲线模型计算"认知连贯度"，它反映当前大纲中有多少对教学模块的先后关系符合标准的认知递进逻辑。当连贯度达到最大值时，当前的教学大纲即为完全科学的有序状态。
 
-1. 探测查询：用评估模型 f 测试单个模块 v 的掌握情况。返回"正反馈"或"负反馈"。
-2. 比较查询：用评估模型 f 比较模块 x 和 y 的掌握表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
-3. 计数查询：用评估模型 f 统计模块集合 S 中有多少个模块返回正反馈。返回一个非负整数。
+每次你可以执行以下操作之一（使用 XML 格式）：
 
-当你收集足够信息后，请提交你诊断出的孤立盲区模块集合。若答案正确则诊断成功；若错误，我会告知误报数（提交中实际有认知关联的模块数）和漏报数（实际是盲区但未提交的模块数）。
+1. **调换相邻模块**：交换授课大纲中位置 i 和 i+1 的教学模块（i 从 1 开始计数，1 <= i < {n}）
+   系统会告诉你调整后大纲的连贯度是"更整齐"还是"更混乱"，并展示更新后的大纲。
+   格式：<swap>i</swap>
+   示例：<swap>3</swap> 表示交换位置 3 和位置 4 的模块
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **审阅当前大纲**：查看目前的教学模块排列（不改变状态）
+   格式：<query_queue></query_queue>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+3. **查询是否科学**：询问当前大纲是否已经完全符合认知递进序列
+   格式：<query_ordered></query_ordered>
 
-- 探测查询（例如用评估模型 2 测试模块 5）：
-<query_probe>v=5, f=2</query_probe>
+4. **提交最终教案**：提交你推断出的标准教学顺序
+   格式：<answer>模块1,模块2,...,模块{n}</answer>
+   示例：<answer>A,C,B,D</answer>
 
-- 比较查询（例如用评估模型 1 比较模块 3 和 7）：
-<query_compare>x=3, y=7, f=1</query_compare>
+满足以下任一条件即为备课成功：
+- 使当前大纲达到完全有序的科学状态，并提交与之一致的教案
+- 直接提交与隐藏的认知递进序列完全一致的教案
 
-- 计数查询（例如用评估模型 3 统计模块集合 {{1,2,5}}）：
-<query_count>S=1,2,5, f=3</query_count>
+- 提交的教案逻辑顺序错误
+- 教研操作格式不符合规范
 
-提交最终答案时，列出所有盲区模块的编号（用逗号隔开，顺序不限）。如果认为没有盲区模块，提交空集：
-
-<answer>isolated=1,3,5</answer>
-
-或
-
-<answer>isolated=</answer>
+请高效利用测试反馈，用尽量少的调换步骤理清教学知识点的隐藏脉络。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's conduct a "Student Knowledge Graph Blind Spot Diagnosis" task. Here are the rules:
+Welcome to the Intelligent Lesson Planning System. Please optimize the course knowledge syllabus:
 
-The system retrieves a student's comprehensive knowledge graph G, where the node set V contains core knowledge modules numbered from 1 to {n}, but the cognitive association set E between modules is unknown. It is known that the graph has at least one normally associated module (linked to at least one other module), and at least one module with exactly one cross-module association.
+This unit contains {n} core teaching modules, denoted as set S = {elements}. Based on educational psychology, the system has constructed a hidden cognitive progression sequence (i.e., a standard teaching order from basic to advanced with coherent logic), but it is currently masked from you as a pedagogical test.
 
-The teaching research group provides {num_testers} evaluation models of varying difficulties (numbered 1 to {num_testers}). Each model f responds to any module v based on an unknown boolean function P_f(number of associations), which satisfies:
-- Returns negative feedback for "isolated blind spot modules" with no cognitive associations
-- Monotone non-decreasing with respect to the number of associations (more linked knowledge makes positive feedback more likely)
-- At least one baseline model returns positive feedback for all modules with 1 or more associations
+Initially, you will see a shuffled draft of the teaching syllabus. Your goal is to deduce this hidden cognitive progression sequence through limited syllabus adjustments and arrange the current syllabus to fully follow this standard order.
 
-Your goal is to precisely determine the set of all "isolated blind spot modules" (modules with 0 associations) through diagnostic queries. You can use the following three types of queries (one query at a time):
+The system calculates a "cognitive coherence metric" using learning curve models, reflecting how many pairs of teaching modules in the current syllabus have preceding-succeeding relationships that align with standard cognitive progression logic. When coherence is maximized, the current syllabus is in a scientifically fully ordered state.
 
-1. Probe Query: Test the mastery of a single module v using model f. Returns "positive" or "negative".
-2. Compare Query: Compare the mastery performance between modules x and y using model f. Returns "only x positive", "only y positive", "both positive", or "both negative".
-3. Count Query: Count how many modules in set S return positive feedback using model f. Returns a non-negative integer.
+Each turn you can perform one of the following operations (using XML format):
 
-When you have gathered enough information, submit the set of blind spot modules you diagnosed. If correct, the diagnosis succeeds; if wrong, I will tell you the number of false positives (associated modules you included) and false negatives (actual blind spots you missed).
+1. **Swap adjacent modules**: Swap teaching modules at positions i and i+1 in the syllabus (i starts from 1, 1 <= i < {n})
+   The system will tell you whether the adjusted syllabus coherence is "Tidier" or "Messier", and display the updated syllabus.
+   Format: <swap>i</swap>
+   Example: <swap>3</swap> means swap modules at positions 3 and 4
 
-## Query and Answer Format (strictly required)
+2. **Review current syllabus**: Check the current arrangement of teaching modules (does not change state)
+   Format: <query_queue></query_queue>
 
-Each query must contain only one tag. Use the following XML format:
+3. **Query if scientific**: Ask whether the current syllabus fully conforms to the cognitive progression sequence
+   Format: <query_ordered></query_ordered>
 
-- Probe Query (e.g., test module 5 with model 2):
-<query_probe>v=5, f=2</query_probe>
+4. **Submit final lesson plan**: Submit your deduced standard teaching order
+   Format: <answer>module1,module2,...,module{n}</answer>
+   Example: <answer>A,C,B,D</answer>
 
-- Compare Query (e.g., compare modules 3 and 7 with model 1):
-<query_compare>x=3, y=7, f=1</query_compare>
+Lesson preparation is successful if any of the following is met:
+- Bring the current syllabus to a scientifically fully ordered state and submit a lesson plan consistent with it
+- Directly submit a lesson plan perfectly matching the hidden cognitive progression sequence
 
-- Count Query (e.g., count module set {{1,2,5}} with model 3):
-<query_count>S=1,2,5, f=3</query_count>
+- The submitted lesson plan has an incorrect logical order
+- Pedagogical operation format violates specifications
 
-When submitting the final answer, list all blind spot module IDs (comma-separated, order does not matter). If you believe there are no blind spot modules, submit an empty set:
-
-<answer>isolated=1,3,5</answer>
-
-or
-
-<answer>isolated=</answer>
+Please effectively utilize test feedback to clarify the hidden threads of teaching knowledge points with as few swap steps as possible.
 """
 
     contextualized_rule_zh_4 = """\
-我们来执行一项"工厂物联网设备断连排查"任务，规则如下：
+欢迎登录柔性制造控制系统，当前正进行自动化产线的工序排程：
 
-系统记录了一个未知的工厂控制网络 G，其中节点集合 V 包含编号 1 到 {n} 的设备节点，但设备之间的通信链路集合 E 是未知的。已知网络中至少存在一台正常连网的设备（至少有一条通信链路），且至少存在一台位于网络末端、仅有一条链路的设备。
+本次装配任务包含 {n} 个核心生产工序，工单集合 S = {elements}。工艺数据库中存储了针对该批次产品的一套隐藏的黄金工艺流（即能最小化损耗的标准装配顺序），但未对当前操作终端公开。
 
-运维部门提供了 {num_testers} 个不同频段的网络信号嗅探器（编号 1 到 {num_testers}）。每个嗅探器 f 对任意设备 v 的在线反馈由一个未知的布尔函数 P_f(通信链路数) 决定，该函数满足以下性质：
-- 对没有任何通信链路的“断连孤立设备”始终返回负反馈（无法嗅探）
-- 对链路数单调不减（连接路径越多，信号越强，越可能返回正反馈）
-- 至少存在一个高敏嗅探器对所有链路数大于等于 1 的设备都返回正反馈
+初始状态下，流水线被配置为一个未经验证的随机工序序列。你的目标是通过有限的调试操作，逆向推断出隐藏的黄金工艺流，并将当前的流水线完全调整为该标准顺序。
 
-你的目标是通过查询指令，精确找出所有“断连孤立设备”（通信链路数为 0 的设备节点）的集合。你可以使用以下三种指令（每次仅限一个）：
+系统后台内置了一个"良率评估值"，它代表当前流水线中有多少对工序的先后执行逻辑符合黄金工艺流的标准。当该评估值达到峰值时，表明当前流水线已达到无损耗的完全有序状态。
 
-1. 探测查询：用嗅探器 f 探测单个设备 v 的在线状态反馈。返回"正反馈"或"负反馈"。
-2. 比较查询：用嗅探器 f 比较设备 x 和 y 的信号连通性表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
-3. 计数查询：用嗅探器 f 统计设备集合 S 中有多少台设备返回正反馈。返回一个非负整数。
+每次你可以执行以下操作之一（使用 XML 格式）：
 
-当你收集足够信息后，请提交你排查出的断连孤立设备集合。若答案正确则排查成功；若错误，我会告知误报数（提交中实际在线的设备数）和漏报数（实际已断连但未提交的设备数）。
+1. **交换相邻工序**：对流水线上位置 i 和 i+1 的工序进行换位（i 从 1 开始计数，1 <= i < {n}）
+   系统仿真将反馈换位后的良率是"更整齐"（良率上升）还是"更混乱"（良率下降），并输出新序列。
+   格式：<swap>i</swap>
+   示例：<swap>3</swap> 表示将第 3 道与第 4 道工序换位
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **读取当前序列**：查看流水线当前的工序排布（不改变状态）
+   格式：<query_queue></query_queue>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+3. **查询是否达标**：询问当前流水线是否已经完全吻合黄金工艺流
+   格式：<query_ordered></query_ordered>
 
-- 探测查询（例如用嗅探器 2 探测设备 5）：
-<query_probe>v=5, f=2</query_probe>
+4. **提交最终工艺**：提交你推断出的标准装配顺序
+   格式：<answer>工序1,工序2,...,工序{n}</answer>
+   示例：<answer>A,C,B,D</answer>
 
-- 比较查询（例如用嗅探器 1 比较设备 3 和 7）：
-<query_compare>x=3, y=7, f=1</query_compare>
+满足以下任一条件即为排程成功：
+- 使当前流水线达到完全有序的标准状态，并提交一致的工艺参数
+- 直接提交与隐藏黄金工艺流完全一致的答案
 
-- 计数查询（例如用嗅探器 3 统计设备集合 {{1,2,5}}）：
-<query_count>S=1,2,5, f=3</query_count>
+- 提交的工艺参数会导致生产事故（顺序错误）
+- 调试指令语法不符合设备规范
 
-提交最终答案时，列出所有断连设备的编号（用逗号隔开，顺序不限）。如果认为没有断连设备，提交空集：
-
-<answer>isolated=1,3,5</answer>
-
-或
-
-<answer>isolated=</answer>
+为节约设备空转成本，请用最小的换位测试次数精准锁定黄金工艺流。
 """
 
     contextualized_rule_en_4 = """\
-[Industry Scenario]
-Let's execute a "Factory IoT Device Disconnection Inspection" task. Here are the rules:
+[Manufacturing Scenario]
+Welcome to the Flexible Manufacturing Control System. Currently scheduling processes for the automated production line:
 
-The system records an unknown factory control network G, where the node set V contains device nodes numbered from 1 to {n}, but the communication link set E between devices is unknown. It is known that the network has at least one normally online device (with at least one communication link), and at least one end-point device with exactly one link.
+This assembly task involves {n} core production processes, with the work order set S = {elements}. The process database stores a hidden golden workflow (i.e., a standard assembly sequence minimizing yield loss) for this batch, which is unpublished to the current operating terminal.
 
-The operations department provides {num_testers} network signal sniffers of different frequency bands (numbered 1 to {num_testers}). Each sniffer f responds to any device v based on an unknown boolean function P_f(number of links), which satisfies:
-- Returns negative feedback for "disconnected isolated devices" with no communication links
-- Monotone non-decreasing with respect to the number of links (more connection paths yield stronger signals, making positive feedback more likely)
-- At least one high-sensitivity sniffer returns positive feedback for all devices with 1 or more links
+Initially, the assembly line is configured with an unverified, randomized sequence of processes. Your goal is to reverse-engineer the hidden golden workflow through limited debugging operations and completely adjust the current assembly line to this standard order.
 
-Your goal is to precisely determine the set of all "disconnected isolated devices" (devices with 0 links) through query commands. You can use the following three types of commands (one query at a time):
+The system backend incorporates a "yield evaluation metric" representing how many pairs of processes in the current assembly line have execution logics conforming to the golden workflow standard. When this metric peaks, the current assembly line has reached a loss-free, fully ordered state.
 
-1. Probe Query: Detect the online status feedback of a single device v using sniffer f. Returns "positive" or "negative".
-2. Compare Query: Compare the signal connectivity between devices x and y using sniffer f. Returns "only x positive", "only y positive", "both positive", or "both negative".
-3. Count Query: Count how many devices in set S return positive feedback using sniffer f. Returns a non-negative integer.
+Each turn you can perform one of the following operations (using XML format):
 
-When you have gathered enough information, submit the set of disconnected isolated devices. If correct, the inspection succeeds; if wrong, I will tell you the number of false positives (online devices you included) and false negatives (actual disconnected devices you missed).
+1. **Swap adjacent processes**: Transpose processes at positions i and i+1 on the assembly line (i starts from 1, 1 <= i < {n})
+   System simulation will report whether the transposed yield is "Tidier" (yield increase) or "Messier" (yield decrease), and output the new sequence.
+   Format: <swap>i</swap>
+   Example: <swap>3</swap> means transpose the 3rd and 4th processes
 
-## Query and Answer Format (strictly required)
+2. **Read current sequence**: View the current process layout of the assembly line (does not change state)
+   Format: <query_queue></query_queue>
 
-Each query must contain only one tag. Use the following XML format:
+3. **Query if compliant**: Ask whether the current assembly line completely matches the golden workflow
+   Format: <query_ordered></query_ordered>
 
-- Probe Query (e.g., probe device 5 with sniffer 2):
-<query_probe>v=5, f=2</query_probe>
+4. **Submit final process**: Submit your deduced standard assembly sequence
+   Format: <answer>process1,process2,...,process{n}</answer>
+   Example: <answer>A,C,B,D</answer>
 
-- Compare Query (e.g., compare devices 3 and 7 with sniffer 1):
-<query_compare>x=3, y=7, f=1</query_compare>
+Scheduling is successful if any of the following is met:
+- Bring the current assembly line to the fully ordered standard state and submit consistent process parameters
+- Directly submit an answer perfectly matching the hidden golden workflow
 
-- Count Query (e.g., count device set {{1,2,5}} with sniffer 3):
-<query_count>S=1,2,5, f=3</query_count>
+- Submitted process parameters lead to a production failure (incorrect sequence)
+- Debugging command syntax violates equipment specifications
 
-When submitting the final answer, list all disconnected device IDs (comma-separated, order does not matter). If you believe there are no disconnected devices, submit an empty set:
-
-<answer>isolated=1,3,5</answer>
-
-or
-
-<answer>isolated=</answer>
+To save equipment idling costs, please precisely lock onto the golden workflow using the minimum number of transposition tests.
 """
 
     contextualized_rule_zh_5 = """\
-我们来进行一次"案件证据链效力审查"任务，规则如下：
+欢迎使用司法案卷审查辅助系统。请协助完成复杂案件的证据链梳理：
 
-法庭构建了一个未知的案件证据网络 G，其中节点集合 V 包含编号 1 到 {n} 的证据线索，但证据之间的逻辑印证关系集合 E 是未知的。已知网络中至少存在一份具备关联效力的证据（至少能与另一份证据相互印证），且至少存在一份仅有一条单线印证关系的边缘证据。
+本案包含 {n} 份核心证据材料，卷宗编号为 S = {elements}。基于警方已掌握的机密线索，系统内部已确认了这些证据在真实案发时间线上的隐藏全序（即案情发展的客观发生顺序），但因调查阶段保密你需要独立进行推理。
 
-司法系统接入了 {num_testers} 套具有不同审查标准的交叉检验程序（编号 1 到 {num_testers}）。每套程序 f 对任意证据 v 的采信反馈由一个未知的布尔函数 P_f(印证关系数) 决定，该函数满足以下性质：
-- 对没有任何逻辑印证的“无效孤证”始终返回负反馈（不予采信）
-- 对印证数单调不减（能互相印证的节点越多，证据链越完整，越可能返回正反馈）
-- 至少存在一套宽口径审查程序对所有印证关系数大于等于 1 的证据都返回正反馈
+初始状态下，你会拿到一份顺序杂乱的案卷汇总。你的目标是通过有限的卷宗比对，推断出证据的真实时间线，并使当前的案卷材料完全按照客观顺序归档排列。
 
-你的目标是通过审查指令，精确找出所有“无效孤证”（逻辑印证数为 0 的证据）的集合。你可以使用以下三种指令（每次仅限一个）：
+系统利用法理模型计算案卷的"逻辑自洽度"，它指示当前材料排序中有多少对证据的前后因果关系符合真实时间线。当自洽度达到顶峰时，当前的案卷排序即为还原真相的完全有序状态。
 
-1. 探测查询：用审查程序 f 核查单份证据 v 的采信情况。返回"正反馈"或"负反馈"。
-2. 比较查询：用审查程序 f 比较证据 x 和 y 的可信度表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
-3. 计数查询：用审查程序 f 统计证据集合 S 中有多少份证据被认为具备关联效力并返回正反馈。返回一个非负整数。
+每次你可以执行以下操作之一（使用 XML 格式）：
 
-当你收集足够信息后，请提交你审查出的无效孤证集合。若答案正确则审查成功；若错误，我会告知误报数（提交中实际有印证效力的证据数）和漏报数（实际是孤证但未提交的证据数）。
+1. **对调相邻材料**：对调案卷中位置 i 和 i+1 的两份证据材料（i 从 1 开始计数，1 <= i < {n}）
+   系统会基于机密数据库反馈调整后案卷是"更整齐"（逻辑更顺畅）还是"更混乱"（出现矛盾），并展示新的排序。
+   格式：<swap>i</swap>
+   示例：<swap>3</swap> 表示对调位置 3 和位置 4 的材料
 
-## 查询与提交答案的格式（必须严格遵守）
+2. **查阅当前案卷**：查看目前的案卷材料排序（不改变状态）
+   格式：<query_queue></query_queue>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+3. **查询是否闭环**：询问当前案卷顺序是否已完全契合真实时间线
+   格式：<query_ordered></query_ordered>
 
-- 探测查询（例如用审查程序 2 核查证据 5）：
-<query_probe>v=5, f=2</query_probe>
+4. **提交最终调查结论**：提交你推断出的真实案情时间线
+   格式：<answer>证据1,证据2,...,证据{n}</answer>
+   示例：<answer>A,C,B,D</answer>
 
-- 比较查询（例如用审查程序 1 比较证据 3 和 7）：
-<query_compare>x=3, y=7, f=1</query_compare>
+满足以下任一条件即为成功破卷：
+- 将当前案卷整理至完全契合客观真相的状态，并提交相同的材料顺序
+- 直接提交与隐藏真实时间线完全一致的调查结论
 
-- 计数查询（例如用审查程序 3 统计证据集合 {{1,2,5}}）：
-<query_count>S=1,2,5, f=3</query_count>
+- 提交的调查结论与真相存在出入
+- 梳理操作的指令格式不符合系统规范
 
-提交最终答案时，列出所有无效孤证的编号（用逗号隔开，顺序不限）。如果认为没有无效孤证，提交空集：
-
-<answer>isolated=1,3,5</answer>
-
-或
-
-<answer>isolated=</answer>
+为保证司法效率，请尽量以最少的对调次数还原事实真相。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's conduct a "Case Evidence Chain Validity Review" task. Here are the rules:
+[Legal Scenario]
+Welcome to the Judicial Case File Review Assist System. Please assist in organizing the chain of evidence for a complex case:
 
-The court structures an unknown case evidence network G, where the node set V contains evidence clues numbered from 1 to {n}, but the logical corroboration relationship set E between evidence is unknown. It is known that the network has at least one piece of valid associated evidence (corroborating with at least one other piece), and at least one marginal evidence clue with exactly one corroboration.
+This case involves {n} core evidence materials, with file identifiers S = {elements}. Based on classified clues already secured by the police, the system has internally verified the hidden total order of this evidence on the true timeline of the incident (i.e., the objective sequence of events), but you must deduce it independently due to confidentiality during the investigation phase.
 
-The judicial system incorporates {num_testers} cross-examination procedures with different review standards (numbered 1 to {num_testers}). Each procedure f responds to any evidence v based on an unknown boolean function P_f(number of corroborations), which satisfies:
-- Returns negative feedback for "invalid isolated evidence" with no corroborations (inadmissible)
-- Monotone non-decreasing with respect to the number of corroborations (more corroborating nodes make the chain stronger, increasing the likelihood of positive feedback)
-- At least one broad-standard procedure returns positive feedback for all evidence with 1 or more corroborations
+Initially, you will receive a disorganized summary of the case files. Your goal is to deduce the true timeline of evidence through limited file comparisons and archive the current case materials completely according to the objective sequence.
 
-Your goal is to precisely determine the set of all "invalid isolated evidence" (evidence with 0 corroborations) through review commands. You can use the following three types of commands (one query at a time):
+The system utilizes legal models to calculate the "logical consistency metric" of the case files, indicating how many pairs of evidence in the current sorting have preceding-succeeding causal relationships aligning with the true timeline. When consistency peaks, the current file sorting is in a fully ordered state that restores the truth.
 
-1. Probe Query: Verify the admissibility of a single piece of evidence v using procedure f. Returns "positive" or "negative".
-2. Compare Query: Compare the credibility performance between evidence x and y using procedure f. Returns "only x positive", "only y positive", "both positive", or "both negative".
-3. Count Query: Count how many pieces of evidence in set S are deemed valid and return positive feedback using procedure f. Returns a non-negative integer.
+Each turn you can perform one of the following operations (using XML format):
 
-When you have gathered enough information, submit the set of invalid isolated evidence you identified. If correct, the review succeeds; if wrong, I will tell you the number of false positives (valid evidence you included) and false negatives (actual isolated evidence you missed).
+1. **Swap adjacent materials**: Swap two evidence materials at positions i and i+1 in the case files (i starts from 1, 1 <= i < {n})
+   The system will report via the classified database whether the adjusted files are "Tidier" (smoother logic) or "Messier" (contradictions appear), and show the new sorting.
+   Format: <swap>i</swap>
+   Example: <swap>3</swap> means swap materials at positions 3 and 4
 
-## Query and Answer Format (strictly required)
+2. **Review current files**: Check the current sorting of case materials (does not change state)
+   Format: <query_queue></query_queue>
 
-Each query must contain only one tag. Use the following XML format:
+3. **Query if closed-loop**: Ask whether the current file sequence completely aligns with the true timeline
+   Format: <query_ordered></query_ordered>
 
-- Probe Query (e.g., verify evidence 5 with procedure 2):
-<query_probe>v=5, f=2</query_probe>
+4. **Submit final investigation conclusion**: Submit your deduced true timeline of the case
+   Format: <answer>evidence1,evidence2,...,evidence{n}</answer>
+   Example: <answer>A,C,B,D</answer>
 
-- Compare Query (e.g., compare evidence 3 and 7 with procedure 1):
-<query_compare>x=3, y=7, f=1</query_compare>
+Successfully breaking the case is achieved if any of the following is met:
+- Organize the current case files into a state that perfectly aligns with the objective truth and submit the identical material sequence
+- Directly submit an investigation conclusion perfectly matching the hidden true timeline
 
-- Count Query (e.g., count evidence set {{1,2,5}} with procedure 3):
-<query_count>S=1,2,5, f=3</query_count>
+- The submitted investigation conclusion contains discrepancies with the truth
+- The formatting of organizing operations violates system specifications
 
-When submitting the final answer, list all isolated evidence IDs (comma-separated, order does not matter). If you believe there is no isolated evidence, submit an empty set:
-
-<answer>isolated=1,3,5</answer>
-
-or
-
-<answer>isolated=</answer>
+To ensure judicial efficiency, please restore the objective truth with the minimum number of swaps.
 """
 
-    tags = ["answer", "query_probe", "query_compare", "query_count"]
+    tags = ["answer", "swap", "query_queue", "query_ordered"]
 
-    # 难度配置说明：
-    # 1 (简单)        - N=5节点, 2个测试器, 1个孤立节点
-    # 2 (中等偏下)    - N=7节点, 3个测试器, 2个孤立节点
-    # 3 (中等偏上)    - N=8节点, 3个测试器, 2个孤立节点，更复杂的度数分布
-    # 4 (较难)        - N=10节点, 4个测试器, 3个孤立节点
-    # 5 (难)          - N=12节点, 4个测试器, 3个孤立节点，更复杂的测试器阈值
+    reasoning_type = "归纳推理"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 5,
-                "edges": [(1, 2), (2, 3), (3, 4)],  # 节点5孤立, 节点1和4度数为1
-                "num_testers": 2,
-                "tester_thresholds": [1, 2],  # 测试器1: 度数>=1返回正; 测试器2: 度数>=2返回正
+                "n": 4,
+                "elements": "A, B, C, D",
+                "hidden_order": ["C", "A", "D", "B"],
+                "initial_queue": ["A", "B", "C", "D"],
             },
             2: {
-                "n": 7,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],  # 节点6,7孤立, 节点1和5度数为1
-                "num_testers": 3,
-                "tester_thresholds": [1, 2, 3],
+                "n": 5,
+                "elements": "A, B, C, D, E",
+                "hidden_order": ["B", "E", "A", "D", "C"],
+                "initial_queue": ["A", "B", "C", "D", "E"],
             },
             3: {
-                "n": 8,
-                "edges": [(1, 2), (1, 3), (2, 3), (3, 4), (4, 5), (5, 6)],  # 节点7,8孤立, 节点6度数为1
-                "num_testers": 3,
-                "tester_thresholds": [1, 2, 3],
+                "n": 6,
+                "elements": "A, B, C, D, E, F",
+                "hidden_order": ["D", "B", "F", "A", "E", "C"],
+                "initial_queue": ["A", "B", "C", "D", "E", "F"],
             },
             4: {
-                "n": 10,
-                "edges": [(1, 2), (2, 3), (2, 4), (3, 4), (4, 5), (5, 6), (6, 7)],  # 节点8,9,10孤立
-                "num_testers": 4,
-                "tester_thresholds": [1, 2, 2, 3],
+                "n": 7,
+                "elements": "A, B, C, D, E, F, G",
+                "hidden_order": ["E", "C", "G", "A", "F", "B", "D"],
+                "initial_queue": ["A", "B", "C", "D", "E", "F", "G"],
             },
             5: {
-                "n": 12,
-                "edges": [(1, 2), (1, 3), (2, 3), (2, 4), (3, 5), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9)],  # 节点10,11,12孤立
-                "num_testers": 4,
-                "tester_thresholds": [1, 2, 3, 3],
+                "n": 8,
+                "elements": "A, B, C, D, E, F, G, H",
+                "hidden_order": ["H", "C", "F", "A", "E", "G", "B", "D"],
+                "initial_queue": ["A", "B", "C", "D", "E", "F", "G", "H"],
             },
         },
         "en": {
             1: {
-                "n": 5,
-                "edges": [(1, 2), (2, 3), (3, 4)],
-                "num_testers": 2,
-                "tester_thresholds": [1, 2],
+                "n": 4,
+                "elements": "A, B, C, D",
+                "hidden_order": ["C", "A", "D", "B"],
+                "initial_queue": ["A", "B", "C", "D"],
             },
             2: {
-                "n": 7,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
-                "num_testers": 3,
-                "tester_thresholds": [1, 2, 3],
+                "n": 5,
+                "elements": "A, B, C, D, E",
+                "hidden_order": ["B", "E", "A", "D", "C"],
+                "initial_queue": ["A", "B", "C", "D", "E"],
             },
             3: {
-                "n": 8,
-                "edges": [(1, 2), (1, 3), (2, 3), (3, 4), (4, 5), (5, 6)],
-                "num_testers": 3,
-                "tester_thresholds": [1, 2, 3],
+                "n": 6,
+                "elements": "A, B, C, D, E, F",
+                "hidden_order": ["D", "B", "F", "A", "E", "C"],
+                "initial_queue": ["A", "B", "C", "D", "E", "F"],
             },
             4: {
-                "n": 10,
-                "edges": [(1, 2), (2, 3), (2, 4), (3, 4), (4, 5), (5, 6), (6, 7)],
-                "num_testers": 4,
-                "tester_thresholds": [1, 2, 2, 3],
+                "n": 7,
+                "elements": "A, B, C, D, E, F, G",
+                "hidden_order": ["E", "C", "G", "A", "F", "B", "D"],
+                "initial_queue": ["A", "B", "C", "D", "E", "F", "G"],
             },
             5: {
-                "n": 12,
-                "edges": [(1, 2), (1, 3), (2, 3), (2, 4), (3, 5), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9)],
-                "num_testers": 4,
-                "tester_thresholds": [1, 2, 3, 3],
+                "n": 8,
+                "elements": "A, B, C, D, E, F, G, H",
+                "hidden_order": ["H", "C", "F", "A", "E", "G", "B", "D"],
+                "initial_queue": ["A", "B", "C", "D", "E", "F", "G", "H"],
             },
         },
     }
@@ -577,10 +519,6 @@ or
         lang = self.config.language
         diff = self.config.difficulty
 
-        # 确保 difficulty 为整数类型
-        if isinstance(diff, str):
-            diff = int(diff)
-
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
         if diff not in self.DIFFICULTY_CONFIG[lang]:
@@ -588,249 +526,181 @@ or
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
-        self._game_info["num_testers"] = cfg["num_testers"]
+        self._game_info["elements"] = cfg["elements"]
         
-        # 构建图的度数字典
-        self.n = cfg["n"]
-        self.num_testers = cfg["num_testers"]
-        self.degrees = {str(i): 0 for i in range(1, self.n + 1)}
-        
-        for u, v in cfg["edges"]:
-            self.degrees[str(u)] += 1
-            self.degrees[str(v)] += 1
-        
-        # 计算真实孤立节点集合
-        self.isolated_nodes = {node for node, deg in self.degrees.items() if deg == 0}
-        
-        # 设置测试器阈值（测试器i对度数>=threshold[i-1]的节点返回正反馈）
-        self.tester_thresholds = cfg["tester_thresholds"]
+        self.hidden_order = cfg["hidden_order"]
+        self.current_queue = cfg["initial_queue"].copy()
+        self.order_map = {elem: idx for idx, elem in enumerate(self.hidden_order)}
+        self.current_tidiness = self._calculate_tidiness()
 
-    def _tester_response(self, node_id: str, tester_id: int) -> bool:
-        """
-        计算测试器对节点的响应
-        :param node_id: 节点编号（字符串）
-        :param tester_id: 测试器编号（1-indexed）
-        :return: True表示正反馈，False表示负反馈
-        """
-        if node_id not in self.degrees:
-            return False
-        
-        deg = self.degrees[node_id]
-        threshold = self.tester_thresholds[tester_id - 1]
-        return deg >= threshold
+    def _calculate_tidiness(self):
+        count = 0
+        n = len(self.current_queue)
+        for i in range(n):
+            for j in range(i + 1, n):
+                elem_i = self.current_queue[i]
+                elem_j = self.current_queue[j]
+                if self.order_map[elem_i] < self.order_map[elem_j]:
+                    count += 1
+        return count
+
+    def _is_fully_ordered(self):
+        return self.current_queue == self.hidden_order
 
     def evaluate(self, parsed_info):
-        """评估提交的答案是否正确"""
-        raw_ans = parsed_info["answer"]
+        raw_ans = parsed_info["answer"].strip()
         
-        # 解析答案格式: isolated=1,2,3 或 isolated=
-        if "isolated=" not in raw_ans:
-            return False
-        
-        isolated_str = raw_ans.split("isolated=", 1)[1].strip()
-        
-        if isolated_str == "":
-            submitted_isolated = set()
-        else:
-            try:
-                submitted_isolated = set(x.strip() for x in isolated_str.split(",") if x.strip())
-            except:
+        try:
+            submitted_order = [x.strip() for x in raw_ans.split(",")]
+            if len(submitted_order) != len(self.hidden_order):
                 return False
-        
-        # 检查是否完全匹配
-        return submitted_isolated == self.isolated_nodes
+            return submitted_order == self.hidden_order
+        except Exception:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑"""
         if self.config.language == "zh":
-            positive, negative = "正反馈", "负反馈"
-            only_x, only_y, both_pos, both_neg = "仅x正", "仅y正", "两者皆正", "两者皆负"
-            error_msg = "错误：参数格式无效或节点/测试器编号超出范围。"
+            tidier_msg = "更整齐"
+            messier_msg = "更混乱"
+            queue_prefix = "当前队列: "
+            ordered_yes = "是"
+            ordered_no = "否"
+            invalid_pos = "错误：位置超出范围。"
+            invalid_format = "错误：格式无效。"
         else:
-            positive, negative = "positive", "negative"
-            only_x, only_y, both_pos, both_neg = "only x positive", "only y positive", "both positive", "both negative"
-            error_msg = "Error: Invalid parameter format or node/tester ID out of range."
+            tidier_msg = "Tidier"
+            messier_msg = "Messier"
+            queue_prefix = "Current queue: "
+            ordered_yes = "Yes"
+            ordered_no = "No"
+            invalid_pos = "Error: Position out of range."
+            invalid_format = "Error: Invalid format."
 
-        # 探测查询
-        if "query_probe" in parsed_info:
+        if "swap" in parsed_info:
             try:
-                raw = parsed_info["query_probe"]
-                params = {}
-                for pair in raw.split(","):
-                    # [BUG FIX] 增加 strip() 检查，防止 split 产生空字符串导致 ValueError
-                    if not pair.strip():
-                        continue
-                    k, v = pair.split("=")
-                    params[k.strip()] = v.strip()
+                pos = int(parsed_info["swap"].strip())
+                if pos < 1 or pos >= len(self.current_queue):
+                    return invalid_pos
                 
-                node_id = params["v"]
-                tester_id = int(params["f"])
+                old_tidiness = self.current_tidiness
+                idx = pos - 1
+                self.current_queue[idx], self.current_queue[idx + 1] = \
+                    self.current_queue[idx + 1], self.current_queue[idx]
                 
-                if node_id not in self.degrees or tester_id < 1 or tester_id > self.num_testers:
-                    return error_msg
+                new_tidiness = self._calculate_tidiness()
+                self.current_tidiness = new_tidiness
                 
-                result = self._tester_response(node_id, tester_id)
-                return positive if result else negative
-            except:
-                return error_msg
+                if new_tidiness > old_tidiness:
+                    feedback = tidier_msg
+                else: 
+                    feedback = messier_msg
+                
+                queue_str = ", ".join(self.current_queue)
+                return f"{feedback}\n{queue_prefix}[{queue_str}]"
+                
+            except (ValueError, IndexError):
+                return invalid_format
 
-        # 比较查询
-        elif "query_compare" in parsed_info:
-            try:
-                raw = parsed_info["query_compare"]
-                params = {}
-                for pair in raw.split(","):
-                    # [BUG FIX] 增加 strip() 检查，防止 trailing comma 导致解包错误
-                    if not pair.strip():
-                        continue
-                    k, v = pair.split("=")
-                    params[k.strip()] = v.strip()
-                
-                x_id = params["x"]
-                y_id = params["y"]
-                tester_id = int(params["f"])
-                
-                if (x_id not in self.degrees or y_id not in self.degrees or 
-                    tester_id < 1 or tester_id > self.num_testers):
-                    return error_msg
-                
-                x_result = self._tester_response(x_id, tester_id)
-                y_result = self._tester_response(y_id, tester_id)
-                
-                if x_result and y_result:
-                    return both_pos
-                elif x_result and not y_result:
-                    return only_x
-                elif not x_result and y_result:
-                    return only_y
-                else:
-                    return both_neg
-            except:
-                return error_msg
+        elif "query_queue" in parsed_info:
+            queue_str = ", ".join(self.current_queue)
+            return f"{queue_prefix}[{queue_str}]"
 
-        # 计数查询
-        elif "query_count" in parsed_info:
-            try:
-                raw = parsed_info["query_count"]
-                
-                # [BUG FIX] 原代码 `raw.split(", f=")` 过于脆弱，对空格敏感且不支持 S 集合内的逗号解析。
-                # 修改：使用 Regex 提取 S 和 f 的值，更健壮地处理 "S=1,2,5, f=3" 或 "S=1,2,5,f=3" 等格式。
-                match = re.search(r'S=(.*?),\s*f=(\d+)', raw, re.IGNORECASE)
-                
-                if not match:
-                    # 尝试非标准格式或只包含逗号分割的情况（兜底）
-                    return error_msg
-
-                node_set_str = match.group(1).strip()
-                tester_id = int(match.group(2))
-                
-                if tester_id < 1 or tester_id > self.num_testers:
-                    return error_msg
-                
-                if node_set_str == "":
-                    node_set = set()
-                else:
-                    node_set = set(x.strip() for x in node_set_str.split(",") if x.strip())
-                
-                # 检查所有节点是否有效
-                for node_id in node_set:
-                    if node_id not in self.degrees:
-                        return error_msg
-                
-                # 统计正反馈数量
-                count = sum(1 for node_id in node_set if self._tester_response(node_id, tester_id))
-                return str(count)
-            except:
-                return error_msg
+        elif "query_ordered" in parsed_info:
+            return ordered_yes if self._is_fully_ordered() else ordered_no
 
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成错误答案的辅助方法"""
-        if correct.startswith("Error:") or correct.startswith("错误："):
-            return correct
-
-        # 处理纯数字（计数查询的结果）
-        if correct.isdigit():
-            val = int(correct)
-            # 避免简单+1可能偶然正确的情况，也处理0的情况
-            return str(val + 1)
-        
         if self.config.language == "zh":
-            # 中文响应映射
-            zh_flip = {
-                "正反馈": "负反馈",
-                "负反馈": "正反馈",
-                "仅x正": "仅y正",
-                "仅y正": "仅x正",
-                "两者皆正": "两者皆负",
-                "两者皆负": "两者皆正",
-            }
-            if correct in zh_flip:
-                return zh_flip[correct]
+            if "更整齐" in correct:
+                return correct.replace("更整齐", "更混乱")
+            elif "更混乱" in correct:
+                return correct.replace("更混乱", "更整齐")
+            if correct.strip() == "是":
+                return "否"
+            if correct.strip() == "否":
+                return "是"
         else:
-            # 英文响应映射
-            en_flip = {
-                "positive": "negative",
-                "negative": "positive",
-                "only x positive": "only y positive",
-                "only y positive": "only x positive",
-                "both positive": "both negative",
-                "both negative": "both positive",
-            }
-            if correct in en_flip:
-                return en_flip[correct]
+            if "Tidier" in correct:
+                return correct.replace("Tidier", "Messier")
+            elif "Messier" in correct:
+                return correct.replace("Messier", "Tidier")
+            lower_correct = correct.strip().lower()
+            if lower_correct == "yes":
+                return "No"
+            if lower_correct == "no":
+                return "Yes"
+
+        if "Current queue:" in correct or "当前队列:" in correct:
+            import re as _re
+            match = _re.search(r'\[(.+?)\]', correct)
+            if match:
+                elements = [e.strip() for e in match.group(1).split(',')]
+                elements.reverse()
+                reversed_str = ", ".join(elements)
+                return correct.replace(match.group(1), reversed_str)
+
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        注意：为避免指数爆炸，仅使用测试器1，比较查询仅枚举无序对，计数查询仅枚举较小子集。
-        """
         results = []
         
-        if not hasattr(self, "n") or not hasattr(self, "num_testers"):
-            return results
+        if self.config.language == "zh":
+            tidier_msg = "更整齐"
+            messier_msg = "更混乱"
+            queue_prefix = "当前队列: "
+            ordered_yes = "是"
+            ordered_no = "否"
+        else:
+            tidier_msg = "Tidier"
+            messier_msg = "Messier"
+            queue_prefix = "Current queue: "
+            ordered_yes = "Yes"
+            ordered_no = "No"
 
-        n = self.n
-        nodes = [str(i) for i in range(1, n + 1)]
+        backup_queue = self.current_queue.copy()
+        backup_tidiness = self.current_tidiness
 
-        # 1. 探测查询 - 仅使用第一个测试器（阈值为1，能区分孤立与非孤立）
-        # 这是信息量最大的测试器
-        for v in nodes:
-            content = f"v={v}, f=1"
-            parsed_info = {"query_probe": content}
-            answer = self._cf_core_produce(parsed_info)
-            query_str = f"<query_probe>{content}</query_probe>"
-            results.append({"query": query_str, "answer": answer})
+        n = len(self.current_queue)
 
-        # 2. 比较查询 - 仅枚举无序对，使用第一个测试器
-        for x, y in itertools.combinations(nodes, 2):
-            content = f"x={x}, y={y}, f=1"
-            parsed_info = {"query_compare": content}
-            answer = self._cf_core_produce(parsed_info)
-            query_str = f"<query_compare>{content}</query_compare>"
-            results.append({"query": query_str, "answer": answer})
+        for pos in range(1, n):
+            idx = pos - 1
+            
+            self.current_queue[idx], self.current_queue[idx + 1] = \
+                self.current_queue[idx + 1], self.current_queue[idx]
+            
+            new_tidiness = self._calculate_tidiness()
+            
+            if new_tidiness > backup_tidiness:
+                feedback = tidier_msg
+            else:
+                feedback = messier_msg
+            
+            queue_str = ", ".join(self.current_queue)
+            answer = f"{feedback}\n{queue_prefix}[{queue_str}]"
+            
+            results.append({
+                "query": f"<swap>{pos}</swap>",
+                "answer": answer
+            })
+            
+            self.current_queue = backup_queue.copy()
+            self.current_tidiness = backup_tidiness
 
-        # 3. 计数查询 - 仅枚举小子集以避免指数爆炸
-        max_subset_size = min(2, n)
-        for r in range(max_subset_size + 1):
-            for subset in itertools.combinations(nodes, r):
-                subset_str = ",".join(subset)
-                content = f"S={subset_str}, f=1"
-                parsed_info = {"query_count": content}
-                answer = self._cf_core_produce(parsed_info)
-                query_str = f"<query_count>{content}</query_count>"
-                results.append({"query": query_str, "answer": answer})
-        
-        # 也包含全集
-        subset_str = ",".join(nodes)
-        content = f"S={subset_str}, f=1"
-        parsed_info = {"query_count": content}
-        answer = self._cf_core_produce(parsed_info)
-        query_str = f"<query_count>{content}</query_count>"
-        results.append({"query": query_str, "answer": answer})
+        queue_str = ", ".join(self.current_queue)
+        results.append({
+            "query": "<query_queue></query_queue>",
+            "answer": f"{queue_prefix}[{queue_str}]"
+        })
+
+        is_ordered = self._is_fully_ordered()
+        results.append({
+            "query": "<query_ordered></query_ordered>",
+            "answer": ordered_yes if is_ordered else ordered_no
+        })
 
         return results

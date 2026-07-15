@@ -1,361 +1,585 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   集合规模：集合中元素的总数量
-# ============================================================
-
 from .base import Game
 import random
+import itertools
 
-class ModuloIdentificationGame(Game):
+class LabelSubsetQueryGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"模数识别"的推理游戏，规则如下：
+我们现在来玩一个"标签子集推理"游戏，规则如下：
 
-游戏设定了一个未知的正整数 N，范围为 1 到 {max_n}。你的目标是通过查询来确定这个数字。
+游戏设定了一个标签宇宙 U = {{Z, A, B, C, D, E, F}}。存在一个固定但未知的子集 S（S 是 U 的子集），你的任务是判断标签 Z 是否在 S 中。
 
-你可以反复进行以下查询（每次仅限一个查询）：
+系统使用一个固定但未知的反馈函数 f 来响应你的查询。该函数属于以下四种方案之一：
+- 方案A：对查询子集 H，若 Z 在 H 与 S 的交集中，返回 1；否则返回 0。
+- 方案B：对查询子集 H，若 Z 不在 H 与 S 的交集中，返回 1；否则返回 0。
+- 方案C：无论查询什么子集 H，若 Z 在 S 中，返回 1；否则返回 0。
+- 方案D：无论查询什么子集 H，若 Z 不在 S 中，返回 1；否则返回 0。
 
-**模数查询**：你可以选择一个除数 q（q 只能是 2, 3, 4, 5, 6, 7, 8, 9 中的一个），我会告诉你 N 除以 q 的余数。
+注意：当你查询子集 H，只有 H 与 S 的交集部分参与判定；不在 S 中的标签会被忽略。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+你可以进行多轮查询，每次查询提交一个子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明反馈函数的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
 
-## 询问与提交答案的格式（必须严格遵守）
+你的目标是用尽可能少的查询次数推断出正确答案。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+每次查询时，提交一个标签子集（可以为空），使用以下 XML 格式：
 
-- 模数查询（例如询问 N 除以 5 的余数）：
-<query_mod>5</query_mod>
+- 查询子集（例如查询 {{A, B, Z}}）：
+<query>A,B,Z</query>
 
-提交最终答案时，直接给出你认为的 N 值，格式如下：
+- 查询空集：
+<query></query>
 
-<answer>42</answer>
+提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
 
-注意：你需要尽可能少的查询次数来确定答案。
+<answer>scheme=A, Z_in_S=是</answer>
+
+或
+
+<answer>scheme=C, Z_in_S=否</answer>
 """
 
     game_rule_en = """\
-Let's play a "Modulo Identification" deduction game. Here are the rules:
+Let's play a "Label Subset Query" deduction game. Here are the rules:
 
-The game has set an unknown positive integer N, ranging from 1 to {max_n}. Your goal is to determine this number through queries.
+There is a label universe U = {{Z, A, B, C, D, E, F}}. There exists a fixed but unknown subset S (S is a subset of U), and your task is to determine whether label Z is in S.
 
-You can repeatedly perform the following query (one query at a time):
+The system uses a fixed but unknown feedback function f to respond to your queries. This function is one of the following four schemes:
+- Scheme A: For query subset H, return 1 if Z is in the intersection of H and S; otherwise return 0.
+- Scheme B: For query subset H, return 1 if Z is not in the intersection of H and S; otherwise return 0.
+- Scheme C: Regardless of query subset H, return 1 if Z is in S; otherwise return 0.
+- Scheme D: Regardless of query subset H, return 1 if Z is not in S; otherwise return 0.
 
-**Modulo Query**: You can choose a divisor q (q can only be one of 2, 3, 4, 5, 6, 7, 8, 9), and I will tell you the remainder when N is divided by q.
+Note: When you query subset H, only the intersection of H and S participates in the determination; labels not in S are ignored.
 
-When you have collected enough information, please submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+You can perform multiple rounds of queries. Each query submits a subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
 
-## Query and Answer Format (must be strictly followed)
+Your goal is to infer the correct answer with as few queries as possible.
 
-Each query must contain only one tag. Use the following XML format:
+When querying, submit a label subset (can be empty) using the following XML format:
 
-- Modulo Query (e.g., asking for the remainder when N is divided by 5):
-<query_mod>5</query_mod>
+- Query subset (e.g., querying {{A, B, Z}}):
+<query>A,B,Z</query>
 
-When submitting the final answer, directly provide the value of N you believe is correct, in the following format:
+- Query empty set:
+<query></query>
 
-<answer>42</answer>
+When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
 
-Note: You should use as few queries as possible to determine the answer.
+<answer>scheme=A, Z_in_S=yes</answer>
+
+or
+
+<answer>scheme=C, Z_in_S=no</answer>
 """
 
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-城市交通指挥中心监控到一辆违规的套牌车辆，其真实的内部识别码是一个正整数 N（范围 1 到 {max_n}）。你的目标是锁定该识别码。
+智慧交通调度中心正在排查路网异常。
+系统涉及一个关键路口宇宙 U = {{Z, A, B, C, D, E, F}}。目前存在一个未知发生拥堵的路口子集 S（S 是 U 的子集），你的任务是判断核心枢纽 Z 是否在拥堵子集 S 中。
 
-你可以反复调用监控探头（每次仅限一个查询）：
+监控系统使用一个固定但未知的探测函数 f 来响应你的车队调度查询。该函数属于以下四种方案之一：
+- 方案A：对派遣车队的路口子集 H，若 Z 既在被探测的 H 中又确实发生了拥堵（即 Z 在 H 与 S 的交集中），系统触发特定警报返回 1；否则返回 0。
+- 方案B：对派遣车队的路口子集 H，若 Z 不在 H 与 S 的交集中，系统触发安全信号返回 1；否则返回 0。
+- 方案C：由于探针故障，无论探测什么子集 H，只要枢纽 Z 实际拥堵（Z 在 S 中），系统始终返回 1；否则返回 0。
+- 方案D：由于探针故障，无论探测什么子集 H，只要枢纽 Z 实际通畅（Z 不在 S 中），系统始终返回 1；否则返回 0。
 
-**模数查询**：你可以调用特定频段的探头（探头型号代号 q，只能是 2, 3, 4, 5, 6, 7, 8, 9 中的一个），探头会返回识别码 N 除以 q 的余数。
+注意：当你查询子集 H，只有 H 与 S 的交集部分（即被探测且确有拥堵的路口）参与判定；未拥堵的路口会被忽略。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+你可以进行多轮查询，每次提交一个路口子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明反馈函数的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次查询时，提交一个路口子集（可以为空），使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 查询子集（例如探测 {{A, B, Z}}）：
+<query>A,B,Z</query>
 
-- 模数查询（例如询问代号为 5 的探头返回的余数）：
-<query_mod>5</query_mod>
+- 查询空集：
+<query></query>
 
-提交最终答案时，直接给出你认为的 N 值，格式如下：
+提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=是</answer>
 
-注意：你需要尽可能少的查询次数来确定答案。
+或
+
+<answer>scheme=C, Z_in_S=否</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-The city traffic command center is tracking an illegal cloned vehicle. Its true internal identification code is a positive integer N (ranging from 1 to {max_n}). Your goal is to determine this code.
+The smart traffic dispatch center is troubleshooting network anomalies.
+The system involves a universe of key intersections U = {{Z, A, B, C, D, E, F}}. There is an unknown subset S of congested intersections (S is a subset of U), and your task is to determine whether the core hub Z is in the congested subset S.
 
-You can repeatedly activate cameras (one query at a time):
+The monitoring system uses a fixed but unknown detection function f to respond to your fleet dispatch queries. This function is one of the following four schemes:
+- Scheme A: For the dispatched intersection subset H, return 1 if Z is both probed in H and actually congested (i.e., Z is in the intersection of H and S); otherwise return 0.
+- Scheme B: For the dispatched intersection subset H, return 1 if Z is not in the intersection of H and S; otherwise return 0.
+- Scheme C: Due to probe hardware faults, regardless of the queried subset H, return 1 if hub Z is actually congested (Z is in S); otherwise return 0.
+- Scheme D: Due to probe hardware faults, regardless of the queried subset H, return 1 if hub Z is not congested (Z is not in S); otherwise return 0.
 
-**Modulo Query**: You can activate specific camera models (model code q, must be one of 2, 3, 4, 5, 6, 7, 8, 9), and the camera will return the remainder when N is divided by q.
+Note: When you query subset H, only the intersection of H and S (probed and actually congested intersections) participates in the determination; uncongested intersections are ignored.
 
-When you have collected enough information, please submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+You can perform multiple rounds of queries. Each query submits a subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
 
-## Query and Answer Format (must be strictly followed)
+When querying, submit an intersection subset (can be empty) using the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query subset (e.g., probing {{A, B, Z}}):
+<query>A,B,Z</query>
 
-- Modulo Query (e.g., asking for the remainder from camera model 5):
-<query_mod>5</query_mod>
+- Query empty set:
+<query></query>
 
-When submitting the final answer, directly provide the value of N you believe is correct, in the following format:
+When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=yes</answer>
 
-Note: You should use as few queries as possible to determine the answer.
+or
+
+<answer>scheme=C, Z_in_S=no</answer>
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-疾病控制中心发现了一种未知病原体，其核心基因序列长度是一个正整数 N（范围 1 到 {max_n}）。为了合成靶向特效药，你需要确定这个序列长度。
+临床实验室正在进行靶向抗原分析。
+生化指标宇宙 U = {{Z, A, B, C, D, E, F}}。患者血液中存在一个固定但未知的阳性抗原子集 S（S 是 U 的子集），你的任务是判断关键病原体抗原 Z 是否呈阳性（即 Z 是否在 S 中）。
 
-你可以反复进行实验分析（每次仅限一个查询）：
+分析仪使用一种未知反应模式 f 来响应你的试剂盒查询。该模式属于以下四种方案之一：
+- 方案A：对检测试剂中的抗体子集 H，若 Z 发生特异性结合反应（即 Z 在 H 与 S 的交集中），引发显色并返回 1；否则返回 0。
+- 方案B：对检测试剂中的抗体子集 H，若 Z 未发生特异性结合反应（即 Z 不在 H 与 S 的交集中），引发抑制显色并返回 1；否则返回 0。
+- 方案C：存在全局本底干扰，无论加入什么抗体子集 H，只要患者体内 Z 呈阳性（Z 在 S 中），始终返回 1；否则返回 0。
+- 方案D：存在全局本底干扰，无论加入什么抗体子集 H，只要患者体内 Z 呈阴性（Z 不在 S 中），始终返回 1；否则返回 0。
 
-**模数查询**：你可以使用不同长度的探针进行杂交分析（探针长度 q，只能是 2, 3, 4, 5, 6, 7, 8, 9 中的一个），系统会返回未匹配的残余碱基数（即 N 除以 q 的余数）。
+注意：当你查询子集 H，只有 H 与 S 的交集部分（即被试剂盒覆盖且在体内呈阳性的抗原）参与判定；阴性抗原会被忽略。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+你可以进行多轮查询，每次提交一个抗体子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明反应模式的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次查询时，提交一个抗原标签子集（可以为空），使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 查询子集（例如检测 {{A, B, Z}}）：
+<query>A,B,Z</query>
 
-- 模数查询（例如询问使用长度为 5 的探针返回的余数）：
-<query_mod>5</query_mod>
+- 查询空集：
+<query></query>
 
-提交最终答案时，直接给出你认为的 N 值，格式如下：
+提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=是</answer>
 
-注意：你需要尽可能少的实验次数来确定答案。
+或
+
+<answer>scheme=C, Z_in_S=否</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-The CDC has discovered an unknown pathogen. Its core gene sequence length is a positive integer N (ranging from 1 to {max_n}). To synthesize a targeted drug, you must determine this length.
+The clinical laboratory is conducting targeted antigen analysis.
+There is a biochemical marker universe U = {{Z, A, B, C, D, E, F}}. A fixed but unknown subset S of positive antigens exists in the patient's blood (S is a subset of U), and your task is to determine whether the key pathogen antigen Z is positive (i.e., whether Z is in S).
 
-You can repeatedly perform experimental analysis (one query at a time):
+The analyzer uses an unknown reaction mode f to respond to your reagent kit queries. This mode is one of the following four schemes:
+- Scheme A: For the antibody subset H in the test kit, return 1 (coloration) if Z undergoes a specific binding reaction (i.e., Z is in the intersection of H and S); otherwise return 0.
+- Scheme B: For the antibody subset H in the test kit, return 1 (inhibitory coloration) if Z does not undergo a specific binding reaction (i.e., Z is not in the intersection of H and S); otherwise return 0.
+- Scheme C: Due to global background interference, regardless of the added antibody subset H, return 1 if Z is positive in the patient (Z is in S); otherwise return 0.
+- Scheme D: Due to global background interference, regardless of the added antibody subset H, return 1 if Z is negative in the patient (Z is not in S); otherwise return 0.
 
-**Modulo Query**: You can use probes of different lengths for hybridization analysis (probe length q, must be one of 2, 3, 4, 5, 6, 7, 8, 9). The system will return the number of unmatched residual bases (i.e., the remainder when N is divided by q).
+Note: When you query subset H, only the intersection of H and S (antigens covered by the kit and positive in the body) participates in the determination; negative antigens are ignored.
 
-When you have collected enough information, please submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+You can perform multiple rounds of queries. Each query submits a subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
 
-## Query and Answer Format (must be strictly followed)
+When querying, submit an antigen label subset (can be empty) using the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query subset (e.g., testing {{A, B, Z}}):
+<query>A,B,Z</query>
 
-- Modulo Query (e.g., asking for the remainder when using a probe of length 5):
-<query_mod>5</query_mod>
+- Query empty set:
+<query></query>
 
-When submitting the final answer, directly provide the value of N you believe is correct, in the following format:
+When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=yes</answer>
 
-Note: You should use as few experiments as possible to determine the answer.
+or
+
+<answer>scheme=C, Z_in_S=no</answer>
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-在全国中学生数学奥林匹克竞赛的密室逃脱环节，密码锁的密码是一个正整数 N（范围 1 到 {max_n}）。学生们需要解开这个密码才能通关。
+自适应学习系统正在对学生的知识漏洞进行诊断。
+课程设有一个知识模块宇宙 U = {{Z, A, B, C, D, E, F}}。该学生存在一个固定但未知的薄弱模块子集 S（S 是 U 的子集），你的任务是判断核心素养模块 Z 是否在学生的薄弱子集 S 中。
 
-你可以反复向考官提问（每次仅限一个查询）：
+系统使用一种隐蔽的评估函数 f 来响应你的测验生成请求。该函数属于以下四种方案之一：
+- 方案A：对包含知识模块子集 H 的测验卷，若 Z 被考察且学生在 Z 上表现薄弱（即 Z 在 H 与 S 的交集中），系统触发核心预警并返回 1；否则返回 0。
+- 方案B：对包含知识模块子集 H 的测验卷，若测验未暴露 Z 的薄弱点（即 Z 不在 H 与 S 的交集中），系统触发反向提醒并返回 1；否则返回 0。
+- 方案C：无论测验卷考察什么模块子集 H，只要学生确实在 Z 上存在薄弱点（Z 在 S 中），全局评估模块始终返回 1；否则返回 0。
+- 方案D：无论测验卷考察什么模块子集 H，只要学生在 Z 上没有薄弱点（Z 不在 S 中），全局评估模块始终返回 1；否则返回 0。
 
-**模数查询**：你可以向考官提供一个测试除数 q（只能是 2, 3, 4, 5, 6, 7, 8, 9 中的一个），考官会告诉你密码 N 除以 q 的余数作为提示。
+注意：当你查询测验子集 H，只有 H 与 S 的交集部分（即被考察且学生确实薄弱的模块）参与判定；学生已经掌握的模块会被忽略。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+你可以进行多轮查询，每次提交一个测验模块子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明评估函数的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次查询时，提交一个模块子集（可以为空），使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 查询子集（例如考察 {{A, B, Z}}）：
+<query>A,B,Z</query>
 
-- 模数查询（例如询问 N 除以 5 的余数）：
-<query_mod>5</query_mod>
+- 查询空集：
+<query></query>
 
-提交最终答案时，直接给出你认为的 N 值，格式如下：
+提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=是</answer>
 
-注意：你需要尽可能少的提问次数来确定答案。
+或
+
+<answer>scheme=C, Z_in_S=否</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-In the escape room segment of the National Middle School Math Olympiad, the combination lock password is a positive integer N (ranging from 1 to {max_n}). Students must crack this password to pass.
+The adaptive learning system is diagnosing a student's knowledge gaps.
+The curriculum has a knowledge module universe U = {{Z, A, B, C, D, E, F}}. The student has a fixed but unknown subset S of weak modules (S is a subset of U), and your task is to determine whether the core literacy module Z is in the weak subset S.
 
-You can repeatedly ask the examiner questions (one query at a time):
+The system uses a covert evaluation function f to respond to your quiz generation requests. This function is one of the following four schemes:
+- Scheme A: For a quiz covering module subset H, return 1 (core alert) if Z is tested and the student is weak in it (i.e., Z is in the intersection of H and S); otherwise return 0.
+- Scheme B: For a quiz covering module subset H, return 1 (reverse reminder) if the quiz does not expose a weakness in Z (i.e., Z is not in the intersection of H and S); otherwise return 0.
+- Scheme C: Regardless of the tested module subset H, the global evaluation module always returns 1 if the student is indeed weak in Z (Z is in S); otherwise return 0.
+- Scheme D: Regardless of the tested module subset H, the global evaluation module always returns 1 if the student is not weak in Z (Z is not in S); otherwise return 0.
 
-**Modulo Query**: You can provide the examiner with a test divisor q (must be one of 2, 3, 4, 5, 6, 7, 8, 9), and the examiner will give you the remainder when password N is divided by q as a hint.
+Note: When you query subset H, only the intersection of H and S (tested modules where the student is actually weak) participates in the determination; mastered modules are ignored.
 
-When you have collected enough information, please submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+You can perform multiple rounds of queries. Each query submits a module subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
 
-## Query and Answer Format (must be strictly followed)
+When querying, submit a module subset (can be empty) using the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query subset (e.g., testing {{A, B, Z}}):
+<query>A,B,Z</query>
 
-- Modulo Query (e.g., asking for the remainder when N is divided by 5):
-<query_mod>5</query_mod>
+- Query empty set:
+<query></query>
 
-When submitting the final answer, directly provide the value of N you believe is correct, in the following format:
+When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=yes</answer>
 
-Note: You should use as few questions as possible to determine the answer.
+or
+
+<answer>scheme=C, Z_in_S=no</answer>
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-在精密零件流水线上，有一批微型齿轮出现异常。异常批次的加工编号是一个正整数 N（范围 1 到 {max_n}）。为了追溯问题根源并校准机器，你需要确定这个编号。
+智能制造控制室正在对流水线进行故障排查。
+工厂流水线设有一个关键工艺站宇宙 U = {{Z, A, B, C, D, E, F}}。目前存在一个固定但未知的发生故障的站点子集 S（S 是 U 的子集），你的任务是判断核心装配站 Z 是否发生故障（即 Z 是否在 S 中）。
 
-你可以反复使用质检系统进行测试（每次仅限一个查询）：
+工业传感网络使用一个固定但未知的诊断逻辑 f 来响应你的探针查询。该逻辑属于以下四种方案之一：
+- 方案A：对激活探针的站点子集 H，若 Z 被探测且确实存在故障（即 Z 在 H 与 S 的交集中），主控制台收到异常代码返回 1；否则返回 0。
+- 方案B：对激活探针的站点子集 H，若 Z 没有出现在探测出的故障名单中（即 Z 不在 H 与 S 的交集中），主控制台收到异常代码返回 1；否则返回 0。
+- 方案C：由于硬件串线，无论探测哪些站点子集 H，只要 Z 实际存在故障（Z 在 S 中），始终返回 1；否则返回 0。
+- 方案D：由于硬件串线，无论探测哪些站点子集 H，只要 Z 实际无故障（Z 不在 S 中），始终返回 1；否则返回 0。
 
-**模数查询**：你可以使用不同规格的分组检测工具（分组大小 q，只能是 2, 3, 4, 5, 6, 7, 8, 9 中的一个），每次测试会返回该编号在分组后的位置偏移量（即 N 除以 q 的余数）。
+注意：当你查询探测子集 H，只有 H 与 S 的交集部分（即被探测且存在故障的站点）参与判定；状态正常的站点会被忽略。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，重新校准失败。
+你可以进行多轮查询，每次提交一个探测站点子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明诊断逻辑的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次查询时，提交一个站点子集（可以为空），使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 查询子集（例如探测 {{A, B, Z}}）：
+<query>A,B,Z</query>
 
-- 模数查询（例如询问使用分组大小为 5 的检测工具返回的偏移量）：
-<query_mod>5</query_mod>
+- 查询空集：
+<query></query>
 
-提交最终答案时，直接给出你认为的 N 值，格式如下：
+提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=是</answer>
 
-注意：你需要尽可能少的测试次数来确定答案。
+或
+
+<answer>scheme=C, Z_in_S=否</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-On a precision parts assembly line, a batch of micro gears has an anomaly. The processing serial number of the abnormal batch is a positive integer N (ranging from 1 to {max_n}). To trace the root cause and calibrate the machine, you need to determine this serial number.
+[Manufacturing Scenario]
+The smart manufacturing control room is troubleshooting an assembly line.
+The factory line has a key workstation universe U = {{Z, A, B, C, D, E, F}}. There is a fixed but unknown subset S of faulty stations (S is a subset of U), and your task is to determine whether the core assembly station Z has a fault (i.e., whether Z is in S).
 
-You can repeatedly use the quality control system for testing (one query at a time):
+The industrial sensor network uses a fixed but unknown diagnostic logic f to respond to your probe queries. This logic is one of the following four schemes:
+- Scheme A: For the probed station subset H, return 1 (exception code) if Z is probed and indeed faulty (i.e., Z is in the intersection of H and S); otherwise return 0.
+- Scheme B: For the probed station subset H, return 1 if Z does not appear in the probed faulty list (i.e., Z is not in the intersection of H and S); otherwise return 0.
+- Scheme C: Due to hardware crosstalk, regardless of the probed subset H, return 1 if Z is actually faulty (Z is in S); otherwise return 0.
+- Scheme D: Due to hardware crosstalk, regardless of the probed subset H, return 1 if Z is actually fault-free (Z is not in S); otherwise return 0.
 
-**Modulo Query**: You can use different grouping inspection tools (group size q, must be one of 2, 3, 4, 5, 6, 7, 8, 9). Each test returns the positional offset of the serial number within the group (i.e., the remainder when N is divided by q).
+Note: When you query subset H, only the intersection of H and S (probed and actually faulty stations) participates in the determination; normal stations are ignored.
 
-When you have collected enough information, please submit your final answer. If the answer is wrong or the format is invalid, recalibration fails.
+You can perform multiple rounds of queries. Each query submits a station subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
 
-## Query and Answer Format (must be strictly followed)
+When querying, submit a station subset (can be empty) using the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query subset (e.g., probing {{A, B, Z}}):
+<query>A,B,Z</query>
 
-- Modulo Query (e.g., asking for the offset using a grouping tool with size 5):
-<query_mod>5</query_mod>
+- Query empty set:
+<query></query>
 
-When submitting the final answer, directly provide the value of N you believe is correct, in the following format:
+When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=yes</answer>
 
-Note: You should use as few tests as possible to determine the answer.
+or
+
+<answer>scheme=C, Z_in_S=no</answer>
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-在侦办一起跨国洗钱案时，金融罪案调查科截获了一个加密的离岸账户资金流转密钥，该密钥是一个正整数 N（范围 1 到 {max_n}）。为了合法冻结账户，检方必须准确提供此密钥。
+法庭审理阶段正在对关键物证进行交叉比对。
+本案存在一个关键证据链环节宇宙 U = {{Z, A, B, C, D, E, F}}。目前案卷中存在一个固定但未知的失效或伪造证据子集 S（S 是 U 的子集），你的任务是判断决定性的“核心证据” Z 是否失效（即 Z 是否在 S 中）。
 
-你可以反复向银行合规审计系统提交传票（每次仅限一个查询）：
+交叉质证系统使用一种固定的验证逻辑 f 来响应你的质证查询。该逻辑属于以下四种方案之一：
+- 方案A：对提交法庭比对的证据子集 H，若 Z 被提交且被证实失效（即 Z 在 H 与 S 的交集中），系统抛出驳回标志并返回 1；否则返回 0。
+- 方案B：对提交法庭比对的证据子集 H，若 Z 并未作为失效证据暴露（即 Z 不在 H 与 S 的交集中），系统抛出驳回标志并返回 1；否则返回 0。
+- 方案C：在系统预判模式下，无论提交比对什么证据子集 H，只要 Z 实际上已失效（Z 在 S 中），始终返回 1；否则返回 0。
+- 方案D：在系统预判模式下，无论提交比对什么证据子集 H，只要 Z 实际上未失效（Z 不在 S 中），始终返回 1；否则返回 0。
 
-**模数查询**：要求用特定的合规校验码 q（q 只能是 2, 3, 4, 5, 6, 7, 8, 9 中的一个）对账户进行哈希取模审计，系统会返回密钥的取模余数（即 N 除以 q 的余数）。
+注意：当你查询证据子集 H，只有 H 与 S 的交集部分（即被提交且确属失效的证据）参与判定；合法有效的证据会被忽略。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+你可以进行多轮查询，每次提交一个证据子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明验证逻辑的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次查询时，提交一个证据子集（可以为空），使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 查询子集（例如提交 {{A, B, Z}}）：
+<query>A,B,Z</query>
 
-- 模数查询（例如要求合规校验码为 5 的审计余数）：
-<query_mod>5</query_mod>
+- 查询空集：
+<query></query>
 
-提交最终答案时，直接给出你认为的 N 值，格式如下：
+提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=是</answer>
 
-注意：你需要尽可能少的传票次数来确定答案。
+或
+
+<answer>scheme=C, Z_in_S=否</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-During the investigation of a transnational money laundering case, the Financial Crimes Investigation Division intercepted an encrypted offshore account fund transfer key, which is a positive integer N (ranging from 1 to {max_n}). To legally freeze the account, prosecutors must accurately provide this key.
+The court trial is conducting cross-examination on key material evidence.
+There is a universe of key evidence links U = {{Z, A, B, C, D, E, F}} for this case. In the case file, there exists a fixed but unknown subset S of invalid or forged evidence (S is a subset of U), and your task is to determine whether the crucial "core evidence" Z is invalid (i.e., whether Z is in S).
 
-You can repeatedly submit subpoenas to the bank's compliance audit system (one query at a time):
+The cross-examination system uses a fixed validation logic f to respond to your queries. This logic is one of the following four schemes:
+- Scheme A: For the evidence subset H submitted for comparison, return 1 (rejection flag) if Z is submitted and proven invalid (i.e., Z is in the intersection of H and S); otherwise return 0.
+- Scheme B: For the evidence subset H submitted for comparison, return 1 if Z is not exposed as invalid evidence (i.e., Z is not in the intersection of H and S); otherwise return 0.
+- Scheme C: In the system's pre-judgment mode, regardless of the submitted subset H, return 1 if Z is actually invalid (Z is in S); otherwise return 0.
+- Scheme D: In the system's pre-judgment mode, regardless of the submitted subset H, return 1 if Z is actually valid (Z is not in S); otherwise return 0.
 
-**Modulo Query**: You request a hash modulo audit of the account using a specific compliance verification code q (q must be one of 2, 3, 4, 5, 6, 7, 8, 9). The system will return the modulo remainder of the key (i.e., the remainder when N is divided by q).
+Note: When you query subset H, only the intersection of H and S (submitted and actually invalid evidence) participates in the determination; legally valid evidence is ignored.
 
-When you have collected enough information, please submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+You can perform multiple rounds of queries. Each query submits an evidence subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
 
-## Query and Answer Format (must be strictly followed)
+When querying, submit an evidence subset (can be empty) using the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query subset (e.g., submitting {{A, B, Z}}):
+<query>A,B,Z</query>
 
-- Modulo Query (e.g., requesting the audit remainder with compliance verification code 5):
-<query_mod>5</query_mod>
+- Query empty set:
+<query></query>
 
-When submitting the final answer, directly provide the value of N you believe is correct, in the following format:
+When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
 
-<answer>42</answer>
+<answer>scheme=A, Z_in_S=yes</answer>
 
-Note: You should use as few subpoenas as possible to determine the answer.
+or
+
+<answer>scheme=C, Z_in_S=no</answer>
 """
 
-    tags = ["query_mod", "answer"]
-    reasoning_type = "归纳推理"
+    tags = ["answer", "query"]
+    
+    reasoning_type = "溯因推理"
     data_structure = "集合"
 
+    DIFFICULTY_CONFIG = {
+        "zh": {
+            1: {
+                "S": ["Z", "A", "B"],
+                "scheme": "C",
+                "Z_in_S_answer": "是",
+            },
+            2: {
+                "S": ["A", "C", "E"],
+                "scheme": "A",
+                "Z_in_S_answer": "否",
+            },
+            3: {
+                "S": ["Z", "B", "D", "F"],
+                "scheme": "B",
+                "Z_in_S_answer": "是",
+            },
+            4: {
+                "S": ["A", "C", "E", "F"],
+                "scheme": "D",
+                "Z_in_S_answer": "否",
+            },
+            5: {
+                "S": ["Z", "A", "C", "D", "F"],
+                "scheme": "A",
+                "Z_in_S_answer": "是",
+            },
+        },
+        "en": {
+            1: {
+                "S": ["Z", "A", "B"],
+                "scheme": "C",
+                "Z_in_S_answer": "yes",
+            },
+            2: {
+                "S": ["A", "C", "E"],
+                "scheme": "A",
+                "Z_in_S_answer": "no",
+            },
+            3: {
+                "S": ["Z", "B", "D", "F"],
+                "scheme": "B",
+                "Z_in_S_answer": "yes",
+            },
+            4: {
+                "S": ["A", "C", "E", "F"],
+                "scheme": "D",
+                "Z_in_S_answer": "no",
+            },
+            5: {
+                "S": ["Z", "A", "C", "D", "F"],
+                "scheme": "A",
+                "Z_in_S_answer": "yes",
+            },
+        },
+    }
+
+    def __init__(self, config):
+        self.query_count = 0
+        super().__init__(config)
+
     def _initialize_game(self):
-        difficulty = getattr(self.config, 'difficulty', 1)
-        if isinstance(difficulty, str):
-            difficulty = int(difficulty)
+        lang = self.config.language
+        diff = self.config.difficulty
+
+        if isinstance(diff, str):
+            diff = int(diff)
+
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
+            raise KeyError(f"Unsupported difficulty: {diff}")
+
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        difficulty_map = {
-            1: 30,
-            2: 100,
-            3: 500,
-            4: 1000,
-            5: 2520,
-        }
-        self.max_n = difficulty_map.get(difficulty, 2520)
+        self.S = set(cfg["S"])
+        self.scheme = cfg["scheme"]
+        self.Z_in_S = "Z" in self.S
+        self.Z_in_S_answer = cfg["Z_in_S_answer"]
         
-        seed = getattr(self.config, 'seed', None)
-        if seed is None:
-            seed = hash(('ModuloIdentificationGame', difficulty)) & 0xFFFFFFFF
-        rng = random.Random(seed)
-        self.target_n = rng.randint(1, self.max_n)
-        self._game_info = {"max_n": self.max_n}
+        self.universe = {"Z", "A", "B", "C", "D", "E", "F"}
+        
+        self._game_info["S_size"] = len(self.S)
+
+    def _feedback_function(self, H):
+        H_intersect_S = H & self.S
+        
+        if self.scheme == "A":
+            return 1 if "Z" in H_intersect_S else 0
+        elif self.scheme == "B":
+            return 1 if "Z" not in H_intersect_S else 0
+        elif self.scheme == "C":
+            return 1 if self.Z_in_S else 0
+        elif self.scheme == "D":
+            return 1 if not self.Z_in_S else 0
+        else:
+            raise ValueError(f"Unknown scheme: {self.scheme}")
 
     def evaluate(self, parsed_info):
-        try:
-            return int(parsed_info.get("answer")) == self.target_n
-        except (ValueError, TypeError):
+        
+        raw_ans = parsed_info["answer"]
+        
+        kv_pairs = [x.strip() for x in raw_ans.split(",")]
+        ans_dict = {}
+        for kv in kv_pairs:
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                ans_dict[k.strip().lower()] = v.strip()
+        
+        if "scheme" not in ans_dict or "z_in_s" not in ans_dict:
             return False
+        
+        if ans_dict["scheme"].upper() != self.scheme.upper():
+            return False
+        
+        if ans_dict["z_in_s"].lower() != self.Z_in_S_answer.lower():
+            return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        if "query_mod" in parsed_info:
-            try:
-                q = int(parsed_info["query_mod"])
-                if q in [2, 3, 4, 5, 6, 7, 8, 9]:
-                    return str(self.target_n % q)
-                else:
-                    return "无效的除数" if self.config.language == "zh" else "Invalid divisor"
-            except ValueError:
-                return "参数错误" if self.config.language == "zh" else "Parameter error"
-        return "无效的查询" if self.config.language == "zh" else "Invalid query"
+        if "query" in parsed_info:
+            query_str = parsed_info["query"].strip()
+            
+            if query_str == "":
+                H = set()
+            else:
+                labels = [x.strip().upper() for x in query_str.split(",") if x.strip()]
+                for label in labels:
+                    if label not in self.universe:
+                        if self.config.language == "zh":
+                            return f"错误：标签 {label} 不在标签宇宙中。"
+                        else:
+                            return f"Error: Label {label} is not in the universe."
+                H = set(labels)
+            
+            feedback = self._feedback_function(H)
+            
+            self.query_count += 1
+            
+            return str(feedback)
+        else:
+            raise ValueError("No valid query tag found.")
 
-    def get_all_possible_queries(self) -> list:
-        queries = []
-        for q in range(2, 10):
-            queries.append({
-                "query":  f"<query_mod>{q}</query_mod>",
-                "answer": str(self.target_n % q),
-            })
-        return queries
-
-    def _cf_make_wrong(self, correct):
-        try:
-            val = int(correct)
-            wrong = val + 1 if val == 0 else val - 1
-            return str(wrong)
-        except ValueError:
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct == "0":
+            return "1"
+        if correct == "1":
             return "0"
+        
+        if correct.lstrip('-').isdigit():
+            return str(int(correct) + 1)
+
+        if "是" in correct:
+            return correct.replace("是", "否")
+        if "否" in correct:
+            return correct.replace("否", "是")
+        
+        lower_correct = correct.lower()
+        if "yes" in lower_correct:
+            if "Yes" in correct: return correct.replace("Yes", "No")
+            if "YES" in correct: return correct.replace("YES", "NO")
+            if "yes" in correct: return correct.replace("yes", "no")
+            return correct.replace("Yes", "No").replace("yes", "no")
+        
+        if "no" in lower_correct:
+            if "No" in correct: return correct.replace("No", "Yes")
+            if "NO" in correct: return correct.replace("NO", "YES")
+            if "no" in correct: return correct.replace("no", "yes")
+            return correct.replace("No", "Yes").replace("no", "yes")
+
+        return correct + "_WRONG"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        sorted_universe = sorted(list(self.universe))
+        
+        for r in range(len(sorted_universe) + 1):
+            for subset_tuple in itertools.combinations(sorted_universe, r):
+                H = set(subset_tuple)
+                
+                query_content = ",".join(subset_tuple)
+                
+                feedback_val = self._feedback_function(H)
+                
+                queries.append({
+                    "query": f"<query>{query_content}</query>",
+                    "answer": str(feedback_val)
+                })
+        
+        return queries

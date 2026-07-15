@@ -1,524 +1,958 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   条件首末位：满足某条件的第一个/最后一个元素在哪个位置
-# ============================================================
-
 from .base import Game
-import math
+import random
 
-
-class BoundaryDeductionGame(Game):
+class TreeParameterIdentificationGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"边界推理"游戏，规则如下：
+我们现在来玩一个"交互式树参数识别"游戏，规则如下：
 
-游戏设定了一个有序索引集合 1 到 {n}。存在一个未知的边界位置 B，该边界将集合分为两部分：
-- 所有小于 B 的位置，值为 False
-- 所有大于等于 B 的位置，值为 True
+游戏设定了一棵固定的、有限的有根树。节点总数为 N（未知）。根节点 ID 为 1，所有节点用不重复的整数 ID 标记，范围为 1 到 N。
 
-你的目标是通过提问找出边界位置 B 的准确值。你可以进行以下两种操作：
+对于每个节点 i，定义 c(i) 为其子节点数：
+- 叶节点满足 c(i) = 0
+- 非叶节点满足 c(i) 大于 0
 
-1. 观察型提问：询问从位置 1 到位置 k 的范围内是否存在 True 值
-   - 如果 k 大于等于边界 B，回答"是"
-   - 如果 k 小于边界 B，回答"否"
+游戏提供以下公理供你推理：
+- 树的边数为 N - 1
+- 所有节点的子节点数之和等于 N - 1
+- 叶节点总数 L 加上非叶节点数 I 等于 N
 
-2. 最终宣告：当你确定边界位置后，提交你的答案
+初始状态：你仅知道根节点 ID=1 存在，其余节点未知。
 
-注意：观察型提问的次数是有限的，请尽可能高效地找出边界位置。若提交的答案错误或格式不符，游戏失败。
+你的目标是通过查询确定叶节点的总数 L。
 
-## 询问与提交答案的格式（必须严格遵守）
+每轮你可以提出以下查询（每次只能包含一个查询标签）：
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+1. 询问总节点数：
+<query_total></query_total>
 
-- 观察型提问（例如询问位置 5）：
-<query_observe>5</query_observe>
+2. 查询某个节点的子节点信息（仅限已知但未查询过的节点）：
+<query_node>节点ID</query_node>
 
-- 提交最终答案（例如边界位置为 7）：
-<answer>7</answer>
+3. 复查已查询节点的记录：
+<query_record>节点ID</query_record>
+
+4. 查询当前已发现的所有节点ID：
+<query_known></query_known>
+
+5. 查询已查询过的节点数量：
+<query_explored_count></query_explored_count>
+
+6. 查询已查询节点的子节点数总和：
+<query_children_sum></query_children_sum>
+
+当你确定答案后，使用以下格式提交：
+<answer>叶节点总数</answer>
+
+例如：
+<answer>5</answer>
+
+注意：答案只有一次提交机会，请确保你的推理正确后再提交。
 """
 
     game_rule_en = """\
-Let's play a "Boundary Deduction" game. Here are the rules:
+Let's play a "Tree Parameter Identification" game with the following rules:
 
-The game has an ordered index set from 1 to {n}. There exists an unknown boundary position B that divides the set into two parts:
-- All positions less than B have the value False
-- All positions greater than or equal to B have the value True
+There is a fixed, finite rooted tree. The total number of nodes is N (unknown). The root node has ID 1, and all nodes are labeled with unique integer IDs ranging from 1 to N.
 
-Your goal is to find the exact boundary position B through queries. You can perform the following two types of operations:
+For each node i, define c(i) as its number of children:
+- Leaf nodes satisfy c(i) = 0
+- Non-leaf nodes satisfy c(i) greater than 0
 
-1. Observation Query: Ask whether there exists a True value in the range from position 1 to position k
-   - If k is greater than or equal to boundary B, answer "Yes"
-   - If k is less than boundary B, answer "No"
+The following axioms are provided for reasoning:
+- The number of edges is N - 1
+- The sum of all nodes' children counts equals N - 1
+- The number of leaf nodes L plus the number of internal nodes I equals N
 
-2. Final Declaration: When you have determined the boundary position, submit your answer
+Initial state: You only know that the root node ID=1 exists; other nodes are unknown.
 
-Note: The number of observation queries is limited, so please find the boundary position as efficiently as possible. If the submitted answer is incorrect or the format is invalid, the game fails.
+Your goal is to determine the total number of leaf nodes L through queries.
 
-## Query and Answer Format (must be strictly followed)
+Each turn you can make one of the following queries (only one query tag per turn):
 
-Each turn must contain only one operation tag. Use the following XML format:
+1. Ask for the total number of nodes:
+<query_total></query_total>
 
-- Observation Query (e.g., asking about position 5):
-<query_observe>5</query_observe>
+2. Query a node's children information (only for known but not yet queried nodes):
+<query_node>NodeID</query_node>
 
-- Submit Final Answer (e.g., boundary position is 7):
-<answer>7</answer>
+3. Review the record of an already queried node:
+<query_record>NodeID</query_record>
+
+4. Query all currently known node IDs:
+<query_known></query_known>
+
+5. Query the count of explored nodes:
+<query_explored_count></query_explored_count>
+
+6. Query the sum of children counts of explored nodes:
+<query_children_sum></query_children_sum>
+
+When you are ready to submit your answer, use:
+<answer>NumberOfLeafNodes</answer>
+
+For example:
+<answer>5</answer>
+
+Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
 """
 
     contextualized_rule_zh_1 = """\
-欢迎进入智能交通调度系统。
+我们现在来进行"交通线网末端站点排查"系统操作，规则如下：
 
-我们监控的一条主干道被划分为连续的监测路段，编号从 1 到 {n}。系统检测到由于某处发生交通事故，导致形成了一个拥堵分界点 B。
-- 在路段 B 之前的路段（即编号小于 B），交通状况畅通（视为 False）。
-- 从路段 B 开始及之后的所有路段（即编号大于等于 B），均发生严重连环拥堵（视为 True）。
+系统映射了一个区域的交通线网，该线网呈严格的单向分支树状结构分布。站点总数为 N（未知）。中心交通枢纽站 ID 为 1，所有站点用不重复的整数 ID 标记，范围为 1 到 N。
 
-你的任务是通过最少次数的无人机巡查，精准定位拥堵起始路段 B 的编号，以便派遣交警处理。你可以进行以下两种系统指令：
+对于每个站点 i，定义 c(i) 为其直接连接的下级站点数：
+- 末端终点站（叶节点）满足 c(i) = 0
+- 中转枢纽站（非叶节点）满足 c(i) 大于 0
 
-1. 无人机巡查（观察型提问）：派遣无人机沿路巡查从路段 1 到路段 k 的范围，询问该范围内是否拍到了拥堵画面。
-   - 如果巡查范围覆盖或超过了分界点 B（即 k 大于等于 B），系统反馈"是"（发现拥堵）。
-   - 如果巡查范围完全在畅通路段（即 k 小于 B），系统反馈"否"（未发现拥堵）。
+系统提供以下公理供你推理：
+- 线网的连接路段（边）数为 N - 1
+- 所有站点的下级站点数之和等于 N - 1
+- 末端终点站总数 L 加上中转枢纽站数 I 等于 N
 
-2. 事故定位（最终宣告）：当你确定了拥堵起始路段的位置后，提交该路段编号。
+初始状态：你仅知道中心枢纽站 ID=1 存在，其余站点未知。
+（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的站点和下级站点）
 
-注意：受电池电量限制，无人机巡查次数有限，请高效排查。若提交的事故路段错误或指令格式不符，调度任务将失败。
+你的目标是通过调用查询指令，确定末端终点站（叶节点）的总数 L。
 
-## 系统指令与提交格式（必须严格遵守）
+每轮你可以提出以下查询（每次只能包含一个查询标签）：
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+1. 询问总站点数：
+<query_total></query_total>
 
-- 无人机巡查（例如巡查至第 5 路段）：
-<query_observe>5</query_observe>
+2. 查询某个站点的下级站点信息（仅限已知但未查询过的站点）：
+<query_node>站点ID</query_node>
 
-- 提交事故路段（例如拥堵始于第 7 路段）：
-<answer>7</answer>
+3. 复查已查询站点的记录：
+<query_record>站点ID</query_record>
+
+4. 查询当前已发现的所有站点ID：
+<query_known></query_known>
+
+5. 查询已排查过的站点数量：
+<query_explored_count></query_explored_count>
+
+6. 查询已排查站点的下级站点数总和：
+<query_children_sum></query_children_sum>
+
+当你确定答案后，使用以下格式提交：
+<answer>末端终点站总数</answer>
+
+例如：
+<answer>5</answer>
+
+注意：答案只有一次提交机会，请确保你的推理正确后再提交。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the Intelligent Traffic Dispatch System.
+[Transportation Scenario]
+Let's conduct a "Transport Network Terminal Station Identification" operation with the following rules:
 
-A main arterial road we are monitoring is divided into sequential segments indexed from 1 to {n}. The system detects that due to a traffic incident, a congestion boundary B has formed.
-- All road segments before boundary B (index less than B) are clear and flowing normally (False).
-- Starting from segment B and all subsequent segments (index greater than or equal to B), severe chain-reaction congestion has occurred (True).
+The system maps a regional transport network distributed in a strictly directional branching tree structure. The total number of stations is N (unknown). The central transport hub has ID 1, and all stations are labeled with unique integer IDs ranging from 1 to N.
 
-Your task is to accurately pinpoint the index of the starting congestion segment B using the minimum number of drone patrols, so that traffic police can be dispatched. You can perform the following two system commands:
+For each station i, define c(i) as its number of directly connected downstream stations (children):
+- Terminal stations (leaf nodes) satisfy c(i) = 0
+- Transit hubs (internal nodes) satisfy c(i) greater than 0
 
-1. Drone Patrol (Observation Query): Deploy a drone to patrol the range from segment 1 to segment k, and ask whether congested conditions were captured in this range.
-   - If the patrol range reaches or passes the boundary B (k >= B), the system answers "Yes" (congestion found).
-   - If the patrol range is entirely within the clear segments (k < B), the system answers "No" (no congestion).
+The following axioms are provided for reasoning:
+- The number of connecting routes (edges) is N - 1
+- The sum of all stations' downstream station counts equals N - 1
+- The number of terminal stations L plus the number of transit hubs I equals N
 
-2. Incident Localization (Final Declaration): Once you have determined the exact starting segment of the congestion, submit its index.
+Initial state: You only know that the central hub ID=1 exists; other stations are unknown.
+(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to stations and downstream stations respectively.)
 
-Note: Due to battery constraints, drone patrol queries are limited. Please identify the incident segment efficiently. If the submitted segment is incorrect or the format is invalid, the dispatch mission fails.
+Your goal is to determine the total number of terminal stations L through queries.
 
-## Command and Submission Format (must be strictly followed)
+Each turn you can make one of the following queries (only one query tag per turn):
 
-Each turn must contain only one operation tag. Use the following XML format:
+1. Ask for the total number of stations:
+<query_total></query_total>
 
-- Drone Patrol (e.g., patrolling up to segment 5):
-<query_observe>5</query_observe>
+2. Query a station's downstream information (only for known but not yet queried stations):
+<query_node>StationID</query_node>
 
-- Submit Incident Segment (e.g., congestion starts at segment 7):
-<answer>7</answer>
+3. Review the record of an already queried station:
+<query_record>StationID</query_record>
+
+4. Query all currently known station IDs:
+<query_known></query_known>
+
+5. Query the count of explored stations:
+<query_explored_count></query_explored_count>
+
+6. Query the sum of downstream station counts of explored stations:
+<query_children_sum></query_children_sum>
+
+When you are ready to submit your answer, use:
+<answer>NumberOfTerminalStations</answer>
+
+For example:
+<answer>5</answer>
+
+Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用临床靶向筛查系统。
+我们现在来进行"病毒传播链末端追踪"系统操作，规则如下：
 
-患者的一条主要血管被划分为连续的监测节点，编号从 1 到 {n}。病理分析表明，存在一个病变起始节点 B。
-- 在节点 B 之前的部位（编号小于 B），组织细胞反应正常（视为 False）。
-- 从节点 B 开始及之后的所有节点（编号大于等于 B），均表现出病理性阻塞或异常反应（视为 True）。
+流行病学调查发现了一起树状聚集性疫情。感染者总数为 N（未知）。零号病人 ID 为 1，所有感染者用不重复的整数 ID 标记，范围为 1 到 N。
 
-你的目标是通过微创造影排查，精准定位病变起始节点 B 的位置，以制定手术方案。你可以执行以下两种操作：
+对于每个感染者 i，定义 c(i) 为其直接传染的下级感染者数：
+- 末端感染者（叶节点，未引发二次传播）满足 c(i) = 0
+- 传播者（非叶节点）满足 c(i) 大于 0
 
-1. 造影扫描（观察型提问）：对从节点 1 到节点 k 的血管段注入造影剂并扫描，询问该范围内是否检测到异常反应。
-   - 如果扫描范围触及或越过了病变起点 B（即 k 大于等于 B），系统反馈"是"（检测到异常）。
-   - 如果扫描范围完全处于健康组织（即 k 小于 B），系统反馈"否"（一切正常）。
+系统提供以下公理供你推理：
+- 传播事件（边）数为 N - 1
+- 所有感染者的直接传染人数之和等于 N - 1
+- 末端感染者总数 L 加上传播者数 I 等于 N
 
-2. 确诊病灶（最终宣告）：当你确定病变起始节点后，提交该节点编号。
+初始状态：你仅知道零号病人 ID=1 存在，其余感染者未知。
+（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的感染者和被传染者）
 
-注意：为防止造影剂过量，扫描次数有严格的上限，请以最高效率找出病灶。若提交的诊断错误或格式不规范，系统将判定医疗失误。
+你的目标是通过调用查询指令，确定末端感染者（叶节点）的总数 L。
 
-## 操作与提交格式（必须严格遵守）
+每轮你可以提出以下查询（每次只能包含一个查询标签）：
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+1. 询问总感染者数：
+<query_total></query_total>
 
-- 造影扫描（例如扫描至节点 5）：
-<query_observe>5</query_observe>
+2. 查询某个感染者的下级传染信息（仅限已知但未查询过的感染者）：
+<query_node>感染者ID</query_node>
 
-- 提交确诊节点（例如病灶始于节点 7）：
-<answer>7</answer>
+3. 复查已查询感染者的记录：
+<query_record>感染者ID</query_record>
+
+4. 查询当前已发现的所有感染者ID：
+<query_known></query_known>
+
+5. 查询已流调过的感染者数量：
+<query_explored_count></query_explored_count>
+
+6. 查询已流调感染者的直接传染人数总和：
+<query_children_sum></query_children_sum>
+
+当你确定答案后，使用以下格式提交：
+<answer>末端感染者总数</answer>
+
+例如：
+<answer>5</answer>
+
+注意：答案只有一次提交机会，请确保你的推理正确后再提交。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the Clinical Targeted Screening System.
+[Healthcare Scenario]
+Let's conduct a "Viral Transmission Chain Terminal Tracing" operation with the following rules:
 
-A major blood vessel of the patient is divided into sequential monitoring nodes, indexed from 1 to {n}. Pathological analysis indicates there is a lesion starting node B.
-- Tissues before node B (index less than B) show normal cellular responses (False).
-- Starting from node B and all subsequent nodes (index greater than or equal to B), pathological obstruction or abnormal reactions are present (True).
+Epidemiological investigation has identified a tree-like cluster outbreak. The total number of infected patients is N (unknown). Patient Zero has ID 1, and all patients are labeled with unique integer IDs ranging from 1 to N.
 
-Your goal is to accurately pinpoint the lesion starting node B through minimally invasive contrast imaging to formulate a surgical plan. You can perform two types of operations:
+For each patient i, define c(i) as the number of individuals they directly infected (children):
+- Terminal patients (leaf nodes, caused no secondary transmission) satisfy c(i) = 0
+- Spreaders (internal nodes) satisfy c(i) greater than 0
 
-1. Contrast Imaging (Observation Query): Inject contrast agent and scan the vessel segment from node 1 to node k, asking if abnormal reactions are detected in this range.
-   - If the scan range reaches or exceeds the lesion starting point B (k >= B), the system answers "Yes" (abnormality detected).
-   - If the scan range is entirely within healthy tissue (k < B), the system answers "No" (all normal).
+The following axioms are provided for reasoning:
+- The number of transmission events (edges) is N - 1
+- The sum of all patients' directly infected counts equals N - 1
+- The number of terminal patients L plus the number of spreaders I equals N
 
-2. Diagnosis Confirmation (Final Declaration): Once you have determined the lesion starting node, submit its index.
+Initial state: You only know that Patient Zero ID=1 exists; other patients are unknown.
+(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to patients and their infectees respectively.)
 
-Note: To prevent contrast agent overdose, the number of scans is strictly limited. Please locate the lesion with maximum efficiency. If the submitted diagnosis is incorrect or the format is invalid, it will be considered a medical error.
+Your goal is to determine the total number of terminal patients L through queries.
 
-## Operation and Submission Format (must be strictly followed)
+Each turn you can make one of the following queries (only one query tag per turn):
 
-Each turn must contain only one operation tag. Use the following XML format:
+1. Ask for the total number of patients:
+<query_total></query_total>
 
-- Contrast Imaging (e.g., scanning up to node 5):
-<query_observe>5</query_observe>
+2. Query a patient's downstream transmission information (only for known but not yet queried patients):
+<query_node>PatientID</query_node>
 
-- Submit Diagnosed Node (e.g., lesion starts at node 7):
-<answer>7</answer>
+3. Review the record of an already queried patient:
+<query_record>PatientID</query_record>
+
+4. Query all currently known patient IDs:
+<query_known></query_known>
+
+5. Query the count of investigated patients:
+<query_explored_count></query_explored_count>
+
+6. Query the sum of transmission counts of investigated patients:
+<query_children_sum></query_children_sum>
+
+When you are ready to submit your answer, use:
+<answer>NumberOfTerminalPatients</answer>
+
+For example:
+<answer>5</answer>
+
+Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用自适应认知图谱系统。
+我们现在来进行"学科知识图谱末端节点评估"，规则如下：
 
-本次测试包含一系列难度严格递增的题目，编号从 1 到 {n}。根据教育学模型，学生的知识掌握度存在一个确切的认知边界题号 B。
-- 对于编号小于 B 的题目，学生都能完全理解并正确作答（视为 False）。
-- 从编号 B 开始及其之后的所有更难题目，超出了学生的掌握范围，均会出现作答错误（视为 True）。
+一门核心学科的知识点构成了严格的有根树状前置依赖图谱。知识点总数为 N（未知）。最底层的核心基础概念 ID 为 1，所有知识点用不重复的整数 ID 标记，范围为 1 到 N。
 
-你的目标是通过抽查答题卡，精准找出该学生的认知边界题号 B。你可以进行以下两种操作：
+对于每个知识点 i，定义 c(i) 为直接以其为前置依赖的后续知识点数：
+- 终极知识点（叶节点，无后续依赖）满足 c(i) = 0
+- 基础/中间知识点（非叶节点）满足 c(i) 大于 0
 
-1. 答题卡抽查（观察型提问）：批改从第 1 题到第 k 题的答卷，询问这一区间内是否出现了作答错误。
-   - 如果批改范围包含了认知边界 B 及以上的题目（即 k 大于等于 B），系统反馈"是"（发现错误）。
-   - 如果批改范围仅包含学生已掌握的简单题（即 k 小于 B），系统反馈"否"（全对，无错误）。
+系统提供以下公理供你推理：
+- 知识点间的依赖关系（边）数为 N - 1
+- 所有知识点的后续依赖知识点数之和等于 N - 1
+- 终极知识点总数 L 加上基础/中间知识点数 I 等于 N
 
-2. 边界判定（最终宣告）：当你准确定位到学生的认知边界后，提交该题号。
+初始状态：你仅知道核心基础概念 ID=1 存在，其余知识点未知。
+（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的前置知识点和后续知识点）
 
-注意：为了提高评估效率，允许抽查的次数是有限的。若提交的认知边界错误或系统指令格式不符，评估任务将失败。
+你的目标是通过调用查询指令，确定终极知识点（叶节点）的总数 L。
 
-## 抽查与提交格式（必须严格遵守）
+每轮你可以提出以下查询（每次只能包含一个查询标签）：
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+1. 询问总知识点数：
+<query_total></query_total>
 
-- 答题卡抽查（例如批阅至第 5 题）：
-<query_observe>5</query_observe>
+2. 查询某个知识点的后续依赖信息（仅限已知但未查询过的知识点）：
+<query_node>知识点ID</query_node>
 
-- 提交认知边界（例如边界题号为 7）：
-<answer>7</answer>
+3. 复查已查询知识点的记录：
+<query_record>知识点ID</query_record>
+
+4. 查询当前已发现的所有知识点ID：
+<query_known></query_known>
+
+5. 查询已评估过的知识点数量：
+<query_explored_count></query_explored_count>
+
+6. 查询已评估知识点的直接后续依赖数总和：
+<query_children_sum></query_children_sum>
+
+当你确定答案后，使用以下格式提交：
+<answer>终极知识点总数</answer>
+
+例如：
+<answer>5</answer>
+
+注意：答案只有一次提交机会，请确保你的推理正确后再提交。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Adaptive Cognitive Mapping System.
+Let's evaluate the "Disciplinary Knowledge Graph Terminal Nodes" with the following rules:
 
-This assessment contains a series of questions with strictly increasing difficulty, indexed from 1 to {n}. According to the educational model, the student's knowledge mastery has a specific cognitive boundary question B.
-- For questions before B (index less than B), the student fully understands and answers them correctly (error status is False).
-- Starting from question B and all subsequent harder questions, they exceed the student's mastery level, resulting in incorrect answers (error status is True).
+The concepts of a core discipline form a strict rooted tree of prerequisite dependencies. The total number of knowledge concepts is N (unknown). The foundational core concept has ID 1, and all concepts are labeled with unique integer IDs ranging from 1 to N.
 
-Your goal is to accurately find the student's cognitive boundary B by spot-checking the answer sheets. You can perform the following two operations:
+For each concept i, define c(i) as the number of subsequent concepts that directly depend on it (children):
+- Terminal concepts (leaf nodes, having no subsequent dependencies) satisfy c(i) = 0
+- Foundational/intermediate concepts (internal nodes) satisfy c(i) greater than 0
 
-1. Answer Sheet Spot-check (Observation Query): Grade the responses from question 1 to question k, and ask whether any errors occurred within this range.
-   - If the graded range includes the boundary B or beyond (k >= B), the system answers "Yes" (errors found).
-   - If the graded range only contains simple questions the student has mastered (k < B), the system answers "No" (all correct, no errors).
+The following axioms are provided for reasoning:
+- The number of dependency relationships (edges) is N - 1
+- The sum of all concepts' subsequent dependent concept counts equals N - 1
+- The number of terminal concepts L plus the number of intermediate concepts I equals N
 
-2. Boundary Determination (Final Declaration): Once you have pinpointed the student's cognitive boundary, submit the question number.
+Initial state: You only know that the foundational concept ID=1 exists; other concepts are unknown.
+(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to concepts and their dependent concepts respectively.)
 
-Note: To improve assessment efficiency, the number of spot-checks is limited. If the submitted boundary is incorrect or the command format is invalid, the assessment task fails.
+Your goal is to determine the total number of terminal concepts L through queries.
 
-## Spot-check and Submission Format (must be strictly followed)
+Each turn you can make one of the following queries (only one query tag per turn):
 
-Each turn must contain only one operation tag. Use the following XML format:
+1. Ask for the total number of concepts:
+<query_total></query_total>
 
-- Answer Sheet Spot-check (e.g., grading up to question 5):
-<query_observe>5</query_observe>
+2. Query a concept's subsequent dependency information (only for known but not yet queried concepts):
+<query_node>ConceptID</query_node>
 
-- Submit Cognitive Boundary (e.g., boundary question is 7):
-<answer>7</answer>
+3. Review the record of an already queried concept:
+<query_record>ConceptID</query_record>
+
+4. Query all currently known concept IDs:
+<query_known></query_known>
+
+5. Query the count of evaluated concepts:
+<query_explored_count></query_explored_count>
+
+6. Query the sum of subsequent dependencies of evaluated concepts:
+<query_children_sum></query_children_sum>
+
+When you are ready to submit your answer, use:
+<answer>NumberOfTerminalConcepts</answer>
+
+For example:
+<answer>5</answer>
+
+Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
 """
 
     contextualized_rule_zh_4 = """\
-欢迎访问工业流水线故障追踪系统。
+我们现在来进行"产品BOM(物料清单)底层零件核算"，规则如下：
 
-本厂的自动化流水线包含按顺序执行的加工工序，编号从 1 到 {n}。质检部门报告，某道工序的设备发生偏移（故障点 B），导致连锁反应。
-- 在故障工序 B 之前的环节（编号小于 B），加工出的半成品均符合标准（瑕疵状态为 False）。
-- 从工序 B 开始，受故障设备影响，后续所有工序产出的产品均带有特定的超差瑕疵（瑕疵状态为 True）。
+一款复杂产品的BOM构成了一棵标准的装配树。组件总数为 N（未知）。最终成品 ID 为 1，所有组件用不重复的整数 ID 标记，范围为 1 到 N。
 
-你的目标是通过在流水线上设置临时抽检点，快速定位出故障的起始工序 B。你可以进行以下两种操作：
+对于每个组件 i，定义 c(i) 为其直接包含的子零件/子组件数：
+- 底层基础零件（叶节点，不可再分）满足 c(i) = 0
+- 复合组件（非叶节点）满足 c(i) 大于 0
 
-1. 抽样检测（观察型提问）：在第 k 道工序后进行抽样（检验从工序 1 到 k 的累积加工结果），询问其中是否检测到了超差瑕疵。
-   - 如果抽检点位于故障点 B 之后或正好在 B 处（即 k 大于等于 B），系统反馈"是"（发现瑕疵）。
-   - 如果抽检点完全在正常工序阶段（即 k 小于 B），系统反馈"否"（产品合格）。
+系统提供以下公理供你推理：
+- 装配拆解关系（边）数为 N - 1
+- 所有组件直接包含的子零件数之和等于 N - 1
+- 底层基础零件总数 L 加上复合组件数 I 等于 N
 
-2. 锁定故障源（最终宣告）：当你确定了导致问题的原始工序后，提交该工序编号以便维修。
+初始状态：你仅知道最终成品 ID=1 存在，其余组件未知。
+（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的组件和子零件）
 
-注意：每次抽检都需要暂停局部流水线，因此抽检次数有严格限制。若提交的故障点错误或指令不规范，排故任务失败。
+你的目标是通过调用查询指令，确定底层基础零件（叶节点）的总数 L。
 
-## 抽检与报修格式（必须严格遵守）
+每轮你可以提出以下查询（每次只能包含一个查询标签）：
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+1. 询问总组件数：
+<query_total></query_total>
 
-- 抽样检测（例如在第 5 道工序后抽检）：
-<query_observe>5</query_observe>
+2. 查询某个组件的子零件信息（仅限已知但未查询过的组件）：
+<query_node>组件ID</query_node>
 
-- 提交故障工序（例如故障源于第 7 道工序）：
-<answer>7</answer>
+3. 复查已查询组件的记录：
+<query_record>组件ID</query_record>
+
+4. 查询当前已发现的所有组件ID：
+<query_known></query_known>
+
+5. 查询已核算过的组件数量：
+<query_explored_count></query_explored_count>
+
+6. 查询已核算组件的子零件数总和：
+<query_children_sum></query_children_sum>
+
+当你确定答案后，使用以下格式提交：
+<answer>底层基础零件总数</answer>
+
+例如：
+<answer>5</answer>
+
+注意：答案只有一次提交机会，请确保你的推理正确后再提交。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the Industrial Assembly Line Fault Tracking System.
+[Manufacturing/Industry Scenario]
+Let's conduct a "Product BOM Base Component Audit" with the following rules:
 
-Our automated assembly line consists of sequential manufacturing processes, indexed from 1 to {n}. The quality control department reports that equipment at a specific process B has malfunctioned (fault point B), causing a chain reaction.
-- For processes before B (index less than B), the semi-finished products meet the quality standards (defect status is False).
-- Starting from process B, affected by the faulty equipment, all subsequent processes produce products with specific out-of-tolerance defects (defect status is True).
+A complex product's Bill of Materials (BOM) forms a standard assembly tree. The total number of components is N (unknown). The final product has ID 1, and all components are labeled with unique integer IDs ranging from 1 to N.
 
-Your goal is to quickly locate the originating faulty process B by setting up temporary sampling points on the assembly line. You can perform two operations:
+For each component i, define c(i) as the number of sub-components/parts it directly contains (children):
+- Base raw materials (leaf nodes, cannot be further disassembled) satisfy c(i) = 0
+- Sub-assemblies (internal nodes) satisfy c(i) greater than 0
 
-1. Sampling Inspection (Observation Query): Sample after the k-th process (inspecting the cumulative result from process 1 to k) and ask if out-of-tolerance defects are detected.
-   - If the sampling point is at or after the fault point B (k >= B), the system answers "Yes" (defect found).
-   - If the sampling point is entirely within the normal process stages (k < B), the system answers "No" (products qualified).
+The following axioms are provided for reasoning:
+- The number of assembly relationships (edges) is N - 1
+- The sum of all components' sub-component counts equals N - 1
+- The number of base raw materials L plus the number of sub-assemblies I equals N
 
-2. Fault Source Lock-in (Final Declaration): Once you have determined the original process causing the issue, submit its index for maintenance.
+Initial state: You only know that the final product ID=1 exists; other components are unknown.
+(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to components and sub-components respectively.)
 
-Note: Since each inspection requires pausing a section of the line, sampling queries are strictly limited. If the submitted fault point is incorrect or the command is invalid, the troubleshooting mission fails.
+Your goal is to determine the total number of base raw materials L through queries.
 
-## Inspection and Maintenance Submission Format (must be strictly followed)
+Each turn you can make one of the following queries (only one query tag per turn):
 
-Each turn must contain only one operation tag. Use the following XML format:
+1. Ask for the total number of components:
+<query_total></query_total>
 
-- Sampling Inspection (e.g., sampling after process 5):
-<query_observe>5</query_observe>
+2. Query a component's sub-component information (only for known but not yet queried components):
+<query_node>ComponentID</query_node>
 
-- Submit Faulty Process (e.g., fault originates at process 7):
-<answer>7</answer>
+3. Review the record of an already queried component:
+<query_record>ComponentID</query_record>
+
+4. Query all currently known component IDs:
+<query_known></query_known>
+
+5. Query the count of audited components:
+<query_explored_count></query_explored_count>
+
+6. Query the sum of sub-component counts of audited components:
+<query_children_sum></query_children_sum>
+
+When you are ready to submit your answer, use:
+<answer>NumberOfBaseComponents</answer>
+
+For example:
+<answer>5</answer>
+
+Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用智能法务卷宗审计系统。
+我们现在来进行"企业股权穿透与底层实体调查"，规则如下：
 
-本案涉及一份长达 {n} 页的商业合同，页面按条款时间顺序编号从 1 到 {n}。经举报，该合同被人在某一页（篡改起始页 B）开始恶意植入了隐藏的非法霸王条款。
-- 在页面 B 之前的内容（页码小于 B），所有条款均合规合法（非法状态为 False）。
-- 从页面 B 开始及之后的补充页（页码大于等于 B），均包含了衍生出的非法条款内容（非法状态为 True）。
+某跨国集团具有严格树状的层级控股结构。关联企业总数为 N（未知）。顶层控股母公司 ID 为 1，所有企业用不重复的整数 ID 标记，范围为 1 到 N。
 
-作为法务审计员，你需要通过关键词检索，找出篡改发生的起始页码 B。你可以进行以下两种操作：
+对于每个企业 i，定义 c(i) 为其直接控股的子公司数：
+- 底层运营实体（叶节点，无下属公司）满足 c(i) = 0
+- 中间控股公司（非叶节点）满足 c(i) 大于 0
 
-1. 卷宗检索（观察型提问）：使用系统检索从第 1 页到第 k 页的内容，询问该区间是否命中了非法条款的特征词。
-   - 如果检索范围覆盖了被篡改的页面（即 k 大于等于 B），系统反馈"是"（命中非法内容）。
-   - 如果检索范围完全是合规的早期页面（即 k 小于 B），系统反馈"否"（内容合规）。
+系统提供以下公理供你推理：
+- 控股关系（边）数为 N - 1
+- 所有企业的控股子公司数之和等于 N - 1
+- 底层运营实体总数 L 加上中间控股公司数 I 等于 N
 
-2. 举证指控（最终宣告）：当你锁定第一处被篡改的页码后，提交该页码作为法庭证据。
+初始状态：你仅知道顶层控股母公司 ID=1 存在，其余企业未知。
+（注：为与系统底层查询接口兼容，系统反馈信息中将统一使用“节点”和“子节点”作为标准术语，分别对应本场景中的母公司和子公司）
 
-注意：由于系统算力限制，高强度检索的次数是有限的。若提交的证据页码错误或格式不符合法务标准，审计将宣告失败。
+你的目标是通过调用查询指令，查清底层运营实体（叶节点）的总数 L。
 
-## 检索与举证格式（必须严格遵守）
+每轮你可以提出以下查询（每次只能包含一个查询标签）：
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+1. 询问总企业数：
+<query_total></query_total>
 
-- 卷宗检索（例如检索前 5 页）：
-<query_observe>5</query_observe>
+2. 查询某个企业的下属公司信息（仅限已知但未查询过的企业）：
+<query_node>企业ID</query_node>
 
-- 提交非法起始页（例如篡改始于第 7 页）：
-<answer>7</answer>
+3. 复查已查询企业的记录：
+<query_record>企业ID</query_record>
+
+4. 查询当前已发现的所有企业ID：
+<query_known></query_known>
+
+5. 查询已调查过的企业数量：
+<query_explored_count></query_explored_count>
+
+6. 查询已调查企业的直接控股子公司数总和：
+<query_children_sum></query_children_sum>
+
+当你确定答案后，使用以下格式提交：
+<answer>底层运营实体总数</answer>
+
+例如：
+<answer>5</answer>
+
+注意：答案只有一次提交机会，请确保你的推理正确后再提交。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the Intelligent Legal Case Audit System.
+[Law Scenario]
+Let's conduct a "Corporate Equity Penetration and Subsidiary Investigation" with the following rules:
 
-This case involves a {n}-page commercial contract, with pages indexed chronologically from 1 to {n}. A whistleblower claims that hidden, illegal unfair terms were maliciously inserted starting from a specific page B.
-- All content before page B (index less than B) is fully compliant and legal (illegal status is False).
-- Starting from page B and all subsequent supplementary pages (index greater than or equal to B), the content contains derivative illegal terms (illegal status is True).
+A multinational conglomerate has a strictly tree-like hierarchical holding structure. The total number of affiliated entities is N (unknown). The ultimate holding company has ID 1, and all entities are labeled with unique integer IDs ranging from 1 to N.
 
-As a legal auditor, you must find the starting page B where the tampering occurred through keyword retrieval. You can perform the following two operations:
+For each entity i, define c(i) as the number of subsidiaries it directly controls (children):
+- Operating subsidiaries (leaf nodes, with no further subsidiaries) satisfy c(i) = 0
+- Intermediate holding companies (internal nodes) satisfy c(i) greater than 0
 
-1. Case File Retrieval (Observation Query): Use the system to scan the content from page 1 to page k, asking if this range matches the characteristics of the illegal terms.
-   - If the retrieval range covers the tampered pages (k >= B), the system answers "Yes" (illegal content matched).
-   - If the retrieval range consists entirely of early compliant pages (k < B), the system answers "No" (content compliant).
+The following axioms are provided for reasoning:
+- The number of control relationships (edges) is N - 1
+- The sum of all entities' subsidiary counts equals N - 1
+- The number of operating subsidiaries L plus the number of intermediate holding companies I equals N
 
-2. Evidence Submission (Final Declaration): Once you have locked in the first tampered page, submit its index as court evidence.
+Initial state: You only know that the ultimate holding company ID=1 exists; other entities are unknown.
+(Note: To maintain compatibility with the underlying query interface, system feedback messages will uniformly use the standard terms "node" and "children" to refer to parent entities and subsidiaries respectively.)
 
-Note: Due to system computing limits, high-intensity retrieval queries are limited. If the submitted evidence page is incorrect or the format does not meet legal standards, the audit will be declared a failure.
+Your goal is to determine the total number of operating subsidiaries L through queries.
 
-## Retrieval and Evidence Submission Format (must be strictly followed)
+Each turn you can make one of the following queries (only one query tag per turn):
 
-Each turn must contain only one operation tag. Use the following XML format:
+1. Ask for the total number of entities:
+<query_total></query_total>
 
-- Case File Retrieval (e.g., scanning the first 5 pages):
-<query_observe>5</query_observe>
+2. Query an entity's subsidiary information (only for known but not yet queried entities):
+<query_node>EntityID</query_node>
 
-- Submit Illegal Starting Page (e.g., tampering starts at page 7):
-<answer>7</answer>
+3. Review the record of an already queried entity:
+<query_record>EntityID</query_record>
+
+4. Query all currently known entity IDs:
+<query_known></query_known>
+
+5. Query the count of investigated entities:
+<query_explored_count></query_explored_count>
+
+6. Query the sum of subsidiary counts of investigated entities:
+<query_children_sum></query_children_sum>
+
+When you are ready to submit your answer, use:
+<answer>NumberOfOperatingSubsidiaries</answer>
+
+For example:
+<answer>5</answer>
+
+Note: You only have one chance to submit the answer. Make sure your reasoning is correct before submission.
 """
 
-    tags = ["answer", "query_observe"]
+    tags = ["answer", "query_total", "query_node", "query_record", "query_known", 
+            "query_explored_count", "query_children_sum"]
     
     reasoning_type = "演绎推理"
-    data_structure = "序列"
-
-    # 难度配置说明：
-    # 1 (简单)       - N=8,  B=5,  Q=5 (log2(8)+2=5)
-    # 2 (中等偏下)   - N=16, B=11, Q=6 (log2(16)+2=6)
-    # 3 (中等偏上)   - N=32, B=20, Q=7 (log2(32)+2=7)
-    # 4 (较难)       - N=64, B=47, Q=8 (log2(64)+2=8)
-    # 5 (难)         - N=128,B=89, Q=9 (log2(128)+2=9)
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {"n": 8, "boundary": 5},
-            2: {"n": 16, "boundary": 11},
-            3: {"n": 32, "boundary": 20},
-            4: {"n": 64, "boundary": 47},
-            5: {"n": 128, "boundary": 89},
+        1: {
+            "n": 7,
+            "tree": {
+                1: [2, 3],
+                2: [4, 5],
+                3: [6, 7],
+                4: [],
+                5: [],
+                6: [],
+                7: []
+            },
+            "leaf_count": 4
         },
-        "en": {
-            1: {"n": 8, "boundary": 5},
-            2: {"n": 16, "boundary": 11},
-            3: {"n": 32, "boundary": 20},
-            4: {"n": 64, "boundary": 47},
-            5: {"n": 128, "boundary": 89},
+        2: {
+            "n": 10,
+            "tree": {
+                1: [2, 3, 4],
+                2: [5, 6],
+                3: [7],
+                4: [8, 9, 10],
+                5: [],
+                6: [],
+                7: [],
+                8: [],
+                9: [],
+                10: []
+            },
+            "leaf_count": 6
         },
+        3: {
+            "n": 15,
+            "tree": {
+                1: [2, 3, 4],
+                2: [5, 6, 7],
+                3: [8, 9],
+                4: [10],
+                5: [11, 12],
+                6: [],
+                7: [13],
+                8: [],
+                9: [14, 15],
+                10: [],
+                11: [],
+                12: [],
+                13: [],
+                14: [],
+                15: []
+            },
+            "leaf_count": 8
+        },
+        4: {
+            "n": 20,
+            "tree": {
+                1: [2, 3, 4, 5],
+                2: [6, 7],
+                3: [8, 9, 10],
+                4: [11],
+                5: [12, 13],
+                6: [14, 15],
+                7: [],
+                8: [16],
+                9: [],
+                10: [17, 18],
+                11: [19],
+                12: [],
+                13: [20],
+                14: [],
+                15: [],
+                16: [],
+                17: [],
+                18: [],
+                19: [],
+                20: []
+            },
+            "leaf_count": 10
+        },
+        5: {
+            "n": 30,
+            "tree": {
+                1: [2, 3, 4],
+                2: [5, 6, 7, 8],
+                3: [9, 10],
+                4: [11, 12, 13],
+                5: [14, 15],
+                6: [16],
+                7: [17, 18, 19],
+                8: [],
+                9: [20, 21],
+                10: [22],
+                11: [23, 24],
+                12: [],
+                13: [25, 26],
+                14: [],
+                15: [27],
+                16: [28],
+                17: [],
+                18: [],
+                19: [29, 30],
+                20: [],
+                21: [],
+                22: [],
+                23: [],
+                24: [],
+                25: [],
+                26: [],
+                27: [],
+                28: [],
+                29: [],
+                30: []
+            },
+            "leaf_count": 16
+        }
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏配置和内部状态"""
-        lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
-        # 防御性转换：确保 difficulty 是整数
-        if isinstance(diff, str):
-            diff = int(diff)
-
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        cfg = self.DIFFICULTY_CONFIG[diff]
         self._game_info["n"] = cfg["n"]
         
-        # 设置边界位置（Ground Truth）
-        self.boundary = cfg["boundary"]
+        self.tree = cfg["tree"]
+        self.n = cfg["n"]
+        self.leaf_count = cfg["leaf_count"]
         
-        # 计算最大允许的观察次数：Q = ceil(log2(N)) + 2
-        self.max_queries = math.ceil(math.log2(cfg["n"])) + 2
+        self.known_nodes = {1}
+        self.queried_nodes = set()
         
-        # 当前已使用的观察次数
-        self.query_count = 0
+        self.query_cache = {}
 
     def evaluate(self, parsed_info):
-        """
-        评估最终答案是否正确
-        答案格式：<answer>x</answer>，其中 x 是边界位置
-        """
         try:
-            answer = parsed_info["answer"].strip()
-            # 尝试将答案解析为整数
-            declared_boundary = int(answer)
-            
-            # 检查答案是否在有效范围内
-            if declared_boundary < 1 or declared_boundary > self._game_info["n"]:
-                return False
-            
-            # 检查答案是否正确
-            return declared_boundary == self.boundary
-            
-        except (ValueError, KeyError):
+            answer = int(parsed_info["answer"].strip())
+            return answer == self.leaf_count
+        except:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """
-        原始的业务逻辑，从 produce_response 提取而来
-        （基类的 produce_response 会调用此方法）
-        """
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_limit = f"观察次数已达上限（{self.max_queries}次），无法继续观察。请直接提交你的最终答案。"
-            error_range = f"错误：位置超出有效范围 [1, {self._game_info['n']}]。"
+            return self._produce_response_zh(parsed_info)
         else:
-            yes_res, no_res = "Yes", "No"
-            error_limit = f"Observation query limit ({self.max_queries}) reached. No more observations allowed. Please submit your final answer."
-            error_range = f"Error: Position out of valid range [1, {self._game_info['n']}]."
-
-        if "query_observe" in parsed_info:
-            # 检查是否超过最大查询次数 —— 返回提示而非抛异常
-            if self.query_count >= self.max_queries:
-                return error_limit
-            
-            try:
-                k = int(parsed_info["query_observe"].strip())
-                
-                # 检查位置是否在有效范围内
-                if k < 1 or k > self._game_info["n"]:
-                    return error_range
-                
-                # 增加查询计数
-                self.query_count += 1
-                
-                # 根据边界规则返回结果
-                # 如果 k >= B，说明范围 [1, k] 中存在 True（从 B 开始都是 True）
-                # 如果 k < B，说明范围 [1, k] 中全是 False
-                if k >= self.boundary:
-                    return yes_res
-                else:
-                    return no_res
-                    
-            except ValueError:
-                if self.config.language == "zh":
-                    return "错误：无效的位置格式，请提供一个整数。"
-                else:
-                    return "Error: Invalid position format, please provide an integer."
-        else:
-            raise ValueError("No valid query tag found.")
+            return self._produce_response_en(parsed_info)
 
     def _cf_make_wrong(self, correct):
-        """
-        根据正确答案生成一个明显不同的错误答案
-        """
-        # 关键词替换（中文）
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
+        import re
         
-        # 关键词替换（英文，忽略大小写但保持原格式）
-        lower_correct = correct.lower()
-        if lower_correct == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if lower_correct == "no":
-            return "Yes" if correct[0].isupper() else "yes"
+        def _alter_number(match):
+            num = int(match.group(0))
+            offset = random.choice([-2, -1, 1, 2])
+            new_num = max(0, num + offset)
+            if new_num == num:
+                new_num = num + 1
+            return str(new_num)
+        
+        altered = re.sub(r'\d+', _alter_number, correct, count=1)
+        if altered == correct:
+            if self.config.language == "zh":
+                return correct + "（附加信息：该节点可能还有隐藏子节点。）"
+            else:
+                return correct + " (Additional info: this node may have hidden children.)"
+        return altered
+
+    def _produce_response_zh(self, parsed_info):
+        if "query_total" in parsed_info:
+            return f"总节点数 N = {self.n}。"
+        
+        elif "query_node" in parsed_info:
+            try:
+                node_id = int(parsed_info["query_node"].strip())
+                
+                if node_id not in self.known_nodes:
+                    return f"错误：节点 {node_id} 尚未被发现，无法查询。"
+                
+                if node_id in self.queried_nodes:
+                    return f"错误：节点 {node_id} 已经查询过，请使用复查记录操作。"
+                
+                if node_id not in self.tree:
+                    return f"错误：节点 {node_id} 不存在。"
+                
+                children = self.tree[node_id]
+                c_i = len(children)
+                
+                self.queried_nodes.add(node_id)
+                self.query_cache[node_id] = (c_i, children)
+                self.known_nodes.update(children)
+                
+                if c_i == 0:
+                    return f"节点 {node_id} 的子节点数 c({node_id}) = 0；它是叶节点，无子节点。"
+                else:
+                    children_str = ", ".join(map(str, children))
+                    return f"节点 {node_id} 的子节点数 c({node_id}) = {c_i}；子节点ID列表：{children_str}。"
             
-        # 都不匹配，追加 _WRONG
-        return correct + "_WRONG"
+            except ValueError:
+                return "错误：节点ID必须是整数。"
+        
+        elif "query_record" in parsed_info:
+            try:
+                node_id = int(parsed_info["query_record"].strip())
+                
+                if node_id not in self.queried_nodes:
+                    return f"节点 {node_id} 尚未查询，无记录。"
+                
+                c_i, children = self.query_cache[node_id]
+                if c_i == 0:
+                    return f"节点 {node_id} 的记录：c({node_id}) = 0；它是叶节点，无子节点。"
+                else:
+                    children_str = ", ".join(map(str, children))
+                    return f"节点 {node_id} 的记录：c({node_id}) = {c_i}；子节点ID列表：{children_str}。"
+            
+            except ValueError:
+                return "错误：节点ID必须是整数。"
+        
+        elif "query_known" in parsed_info:
+            known_list = sorted(list(self.known_nodes))
+            known_str = ", ".join(map(str, known_list))
+            return f"当前已发现的节点ID：{known_str}。"
+        
+        elif "query_explored_count" in parsed_info:
+            return f"当前已查询的节点数为 {len(self.queried_nodes)}。"
+        
+        elif "query_children_sum" in parsed_info:
+            total_sum = sum(c_i for c_i, _ in self.query_cache.values())
+            return f"已查询节点的子节点数总和为 {total_sum}。"
+        
+        else:
+            raise ValueError("无效的查询标签。")
+
+    def _produce_response_en(self, parsed_info):
+        if "query_total" in parsed_info:
+            return f"Total number of nodes N = {self.n}."
+        
+        elif "query_node" in parsed_info:
+            try:
+                node_id = int(parsed_info["query_node"].strip())
+                
+                if node_id not in self.known_nodes:
+                    return f"Error: Node {node_id} has not been discovered yet and cannot be queried."
+                
+                if node_id in self.queried_nodes:
+                    return f"Error: Node {node_id} has already been queried. Please use query_record to review."
+                
+                if node_id not in self.tree:
+                    return f"Error: Node {node_id} does not exist."
+                
+                children = self.tree[node_id]
+                c_i = len(children)
+                
+                self.queried_nodes.add(node_id)
+                self.query_cache[node_id] = (c_i, children)
+                self.known_nodes.update(children)
+                
+                if c_i == 0:
+                    return f"Node {node_id} has c({node_id}) = 0; it is a leaf node with no children."
+                else:
+                    children_str = ", ".join(map(str, children))
+                    return f"Node {node_id} has c({node_id}) = {c_i}; children IDs: {children_str}."
+            
+            except ValueError:
+                return "Error: Node ID must be an integer."
+        
+        elif "query_record" in parsed_info:
+            try:
+                node_id = int(parsed_info["query_record"].strip())
+                
+                if node_id not in self.queried_nodes:
+                    return f"Node {node_id} has not been queried yet; no record available."
+                
+                c_i, children = self.query_cache[node_id]
+                if c_i == 0:
+                    return f"Node {node_id} record: c({node_id}) = 0; it is a leaf node with no children."
+                else:
+                    children_str = ", ".join(map(str, children))
+                    return f"Node {node_id} record: c({node_id}) = {c_i}; children IDs: {children_str}."
+            
+            except ValueError:
+                return "Error: Node ID must be an integer."
+        
+        elif "query_known" in parsed_info:
+            known_list = sorted(list(self.known_nodes))
+            known_str = ", ".join(map(str, known_list))
+            return f"Currently known node IDs: {known_str}."
+        
+        elif "query_explored_count" in parsed_info:
+            return f"Number of explored nodes: {len(self.queried_nodes)}."
+        
+        elif "query_children_sum" in parsed_info:
+            total_sum = sum(c_i for c_i, _ in self.query_cache.values())
+            return f"Sum of children counts of explored nodes: {total_sum}."
+        
+        else:
+            raise ValueError("Invalid query tag.")
 
     def get_all_possible_queries(self):
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        possible_queries = []
-        n = self._game_info["n"]
+        results = []
         
-        # 预定义回答文本
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
+        def run_safe(tag, content, setup_fn=None):
+            saved_known = self.known_nodes.copy()
+            saved_queried = self.queried_nodes.copy()
+            saved_cache = self.query_cache.copy()
             
-        for k in range(1, n + 1):
-            # 逻辑核心：如果 k >= B，返回 Yes，否则返回 No
-            if k >= self.boundary:
-                ans = yes_res
-            else:
-                ans = no_res
+            try:
+                if setup_fn:
+                    setup_fn()
+                
+                parsed_info = {tag: str(content)}
+                
+                if self.config.language == "zh":
+                    ans = self._produce_response_zh(parsed_info)
+                else:
+                    ans = self._produce_response_en(parsed_info)
+                
+                query_str = f"<{tag}>{content}</{tag}>"
+                return {"query": query_str, "answer": ans}
+                
+            except Exception:
+                return None
+            finally:
+                self.known_nodes = saved_known
+                self.queried_nodes = saved_queried
+                self.query_cache = saved_cache
+
+        res = run_safe("query_total", "")
+        if res: results.append(res)
+        
+        for i in range(1, self.n + 1):
+            def setup_node_query(node_id=i):
+                self.known_nodes.add(node_id)
+                if node_id in self.queried_nodes:
+                    self.queried_nodes.remove(node_id)
             
-            entry = {
-                "query": f"<query_observe>{k}</query_observe>",
-                "answer": ans
-            }
-            possible_queries.append(entry)
+            res = run_safe("query_node", i, setup_node_query)
+            if res: results.append(res)
             
-        return possible_queries
+        for i in range(1, self.n + 1):
+            def setup_record_query(node_id=i):
+                self.queried_nodes.add(node_id)
+                children = self.tree[node_id]
+                c_i = len(children)
+                self.query_cache[node_id] = (c_i, children)
+                
+            res = run_safe("query_record", i, setup_record_query)
+            if res: results.append(res)
+            
+        def setup_all_known():
+            self.known_nodes = set(range(1, self.n + 1))
+        res = run_safe("query_known", "", setup_all_known)
+        if res: results.append(res)
+        
+        def setup_all_explored_count():
+            self.queried_nodes = set(range(1, self.n + 1))
+        res = run_safe("query_explored_count", "", setup_all_explored_count)
+        if res: results.append(res)
+        
+        def setup_all_children_sum():
+            self.queried_nodes = set(range(1, self.n + 1))
+            for node_id in range(1, self.n + 1):
+                children = self.tree[node_id]
+                self.query_cache[node_id] = (len(children), children)
+        res = run_safe("query_children_sum", "", setup_all_children_sum)
+        if res: results.append(res)
+        
+        return results

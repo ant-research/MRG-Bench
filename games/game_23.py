@@ -1,520 +1,451 @@
-from .base import Game
 import random
+import re
+from .base import Game
 
-class TotalOrderDiscoveryGame(Game):
+class TreeDistanceGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"全序推断"的游戏，规则如下：
+我们来玩一个"树结构距离推理"游戏，规则如下：
 
-游戏设定了一个包含 {n} 个元素的集合，编号为 1 到 {n}。这些元素存在一个未知的严格全序关系（每个元素都有唯一的排名，没有并列）。
+存在一棵含 {n} 个顶点的无权、连通、无环图（树），顶点标号为 1, 2, ..., {n}。树的具体边集结构是保密的，但已经固定不变。
 
-你的目标是通过有限次数的比较查询，推断出集合中的最小元素或最大元素。
+我已经选定了两个不同的目标顶点 A 和 B，它们的标号分别是 {a} 和 {b}。
 
-你可以进行以下两类操作：
+在树结构中，任意两个顶点 u 和 v 之间的距离定义为连接它们的唯一路径上的边数，记作 dist(u, v)。
 
-1. **比较查询**：询问两个不同元素 a 和 b 的先后关系。我会告诉你哪个元素在全序中更靠前（排名更小）。每次查询会消耗一次查询次数。
+你的目标是：推断出顶点 A 和 B 之间的距离，即 dist(A, B) 的值。
 
-2. **终止宣告**（可选其一，不消耗查询次数）：
-   - 宣告最小元素：宣告某个元素是全序中排名第一的元素。
-   - 宣告最大元素：宣告某个元素是全序中排名最后的元素。
+你可以反复向我提问，询问任意两个不同顶点之间的距离。但有以下限制：
 
-**约束条件**：
-- 比较查询的总次数不能超过 {max_queries} 次。
-- 必须在查询次数用尽前做出正确的终止宣告才算成功。
-- 如果宣告错误或查询次数超限后未宣告，游戏失败。
+1. 提问格式：询问顶点 u 和 v 的距离（u 和 v 必须不同）
+2. 限制条件：你不能直接询问 A 和 B 之间的距离
+3. 你需要尽可能少的提问次数来推断答案
 
-## 查询与宣告格式
+对于有效的提问，我会返回这两个顶点之间的距离值。
+对于无效的提问（例如 u 等于 v、顶点编号不存在、或询问的是 A 和 B），我会返回错误信息。
 
-每次只能进行一个操作，使用以下 XML 格式：
+提问时使用以下 XML 格式：
 
-- 比较查询（例如比较元素 3 和 5）：
-<query_compare>3,5</query_compare>
+询问顶点 u 和 v 的距离（例如询问顶点 2 和 5）：
+<query>2,5</query>
 
-- 宣告最小元素（例如宣告元素 2 是最小元素）：
-<answer>type=min, element=2</answer>
-
-- 宣告最大元素（例如宣告元素 7 是最大元素）：
-<answer>type=max, element=7</answer>
-
-注意：终止宣告会立即结束游戏并判定成败。
+提交最终答案时，给出你推断的 dist(A, B) 值：
+<answer>3</answer>
 """
 
     game_rule_en = """\
-Let's play a "Total Order Discovery" game. Here are the rules:
+Let's play a "Tree Distance Inference" game. Here are the rules:
 
-The game is set on a collection of {n} elements, numbered from 1 to {n}. These elements have an unknown strict total order (each element has a unique rank with no ties).
+There exists an unweighted, connected, acyclic graph (tree) with {n} vertices, labeled 1, 2, ..., {n}. The specific edge structure of the tree is secret but fixed.
 
-Your goal is to infer either the minimum element or the maximum element in this total order, using a limited number of comparison queries.
+I have selected two different target vertices A and B, with labels {a} and {b} respectively.
 
-You can perform the following two types of operations:
+In a tree structure, the distance between any two vertices u and v is defined as the number of edges on the unique path connecting them, denoted as dist(u, v).
 
-1. **Comparison Query**: Ask about the relative order of two different elements a and b. I will tell you which element comes earlier (has a smaller rank) in the total order. Each query consumes one query count.
+Your goal is: to infer the distance between vertices A and B, i.e., the value of dist(A, B).
 
-2. **Termination Declaration** (choose one, does not consume query count):
-   - Declare Minimum: Declare that a specific element is ranked first in the total order.
-   - Declare Maximum: Declare that a specific element is ranked last in the total order.
+You can repeatedly ask me questions to inquire about the distance between any two different vertices. However, there are the following restrictions:
 
-**Constraints**:
-- The total number of comparison queries cannot exceed {max_queries}.
-- You must make a correct termination declaration before running out of queries to succeed.
-- If the declaration is wrong or you exceed the query limit without declaring, the game fails.
+1. Query format: Ask about the distance between vertices u and v (u and v must be different)
+2. Restriction: You cannot directly ask about the distance between A and B
+3. You should use as few queries as possible to infer the answer
 
-## Query and Declaration Format
+For valid queries, I will return the distance value between the two vertices.
+For invalid queries (e.g., u equals v, vertex ID does not exist, or querying A and B), I will return an error message.
 
-Each turn allows only one operation. Use the following XML format:
+When querying, use the following XML format:
 
-- Comparison Query (e.g., comparing elements 3 and 5):
-<query_compare>3,5</query_compare>
+To query the distance between vertices u and v (e.g., querying vertices 2 and 5):
+<query>2,5</query>
 
-- Declare Minimum (e.g., declaring element 2 as the minimum):
-<answer>type=min, element=2</answer>
-
-- Declare Maximum (e.g., declaring element 7 as the maximum):
-<answer>type=max, element=7</answer>
-
-Note: A termination declaration immediately ends the game and determines success or failure.
+When submitting the final answer, provide your inferred value of dist(A, B):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用城市交通路口拥堵度评估系统。
+我们来玩一个"轨道交通网络距离推理"游戏，规则如下：
 
-系统监控了 {n} 个关键交通路口，编号为 1 到 {n}。这些路口当前的拥堵程度存在一个未知的严格全序关系（每个路口都有唯一的拥堵排名，没有并列）。
+存在一个含 {n} 个站点的无环连通轨道交通网络（树状结构），站点编号为 1, 2, ..., {n}。具体的线路图是保密的，但已经固定不变。
 
-你的目标是通过有限次数的对比查询，推断出最畅通（拥堵排名第一）或最拥堵（拥堵排名最后）的路口。
+我已经选定了两个特定的目标站点 A 和 B，它们的编号分别是 {a} 和 {b}。
 
-你可以进行以下两类操作：
+在交通网络中，任意两个站点 u 和 v 之间的距离定义为连接它们的唯一乘车路径上经过的区间数（边数），记作 dist(u, v)。
 
-1. **比较查询**：询问两个不同路口 a 和 b 的拥堵情况。我会告诉你哪个路口相对更畅通（拥堵排名更小，即更靠前）。每次查询会消耗一次查询次数。
+你的目标是：推断出站点 A 和 B 之间的区间数量，即 dist(A, B) 的值。
 
-2. **终止宣告**（可选其一，不消耗查询次数）：
-   - 宣告最畅通路口：宣告某个路口是排名第一（最畅通）的路口。
-   - 宣告最拥堵路口：宣告某个路口是排名最后（最拥堵）的路口。
+你可以反复向我提问，询问任意两个不同站点之间的距离。但有以下限制：
 
-**约束条件**：
-- 比较查询的总次数不能超过 {max_queries} 次。
-- 必须在查询次数用尽前做出正确的终止宣告才算成功。
-- 如果宣告错误或查询次数超限后未宣告，排查任务失败。
+1. 提问格式：询问站点 u 和 v 的距离（u 和 v 必须不同）
+2. 限制条件：你不能直接询问 A 和 B 之间的距离
+3. 你需要尽可能少的提问次数来推断答案
 
-## 查询与宣告格式
+对于有效的提问，我会返回这两个站点之间的区间距离值。
+对于无效的提问（例如 u 等于 v、站点编号不存在、或询问的是 A 和 B），我会返回错误信息。
 
-每次只能进行一个操作，使用以下 XML 格式：
+提问时使用以下 XML 格式：
 
-- 比较查询（例如比较路口 3 和 5）：
-<query_compare>3,5</query_compare>
+询问站点 u 和 v 的距离（例如询问站点 2 和 5）：
+<query>2,5</query>
 
-- 宣告最畅通路口（对应 type=min，例如宣告路口 2 最畅通）：
-<answer>type=min, element=2</answer>
-
-- 宣告最拥堵路口（对应 type=max，例如宣告路口 7 最拥堵）：
-<answer>type=max, element=7</answer>
-
-注意：终止宣告会立即结束排查并判定成败。
+提交最终答案时，给出你推断的 dist(A, B) 值：
+<answer>3</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the Urban Traffic Intersection Congestion Assessment System.
+Let's play an "Urban Transit Network Distance Inference" game. Here are the rules:
 
-The system monitors {n} key traffic intersections, numbered from 1 to {n}. The current congestion levels of these intersections have an unknown strict total order (each intersection has a unique congestion rank with no ties).
+There exists an acyclic, connected transit network (tree structure) with {n} stations, labeled 1, 2, ..., {n}. The specific route map is secret but fixed.
 
-Your goal is to infer either the least congested intersection (ranked first) or the most congested intersection (ranked last) using a limited number of comparison queries.
+I have selected two different target stations A and B, with labels {a} and {b} respectively.
 
-You can perform the following two types of operations:
+In this transit network, the distance between any two stations u and v is defined as the number of track segments (edges) on the unique travel path connecting them, denoted as dist(u, v).
 
-1. **Comparison Query**: Ask about the congestion of two different intersections a and b. I will tell you which intersection is less congested (has a smaller rank, i.e., comes earlier). Each query consumes one query count.
+Your goal is: to infer the number of segments between stations A and B, i.e., the value of dist(A, B).
 
-2. **Termination Declaration** (choose one, does not consume query count):
-   - Declare Least Congested: Declare that a specific intersection is ranked first (least congested).
-   - Declare Most Congested: Declare that a specific intersection is ranked last (most congested).
+You can repeatedly ask me questions to inquire about the distance between any two different stations. However, there are the following restrictions:
 
-**Constraints**:
-- The total number of comparison queries cannot exceed {max_queries}.
-- You must make a correct termination declaration before running out of queries to succeed.
-- If the declaration is wrong or you exceed the query limit without declaring, the task fails.
+1. Query format: Ask about the distance between stations u and v (u and v must be different)
+2. Restriction: You cannot directly ask about the distance between A and B
+3. You should use as few queries as possible to infer the answer
 
-## Query and Declaration Format
+For valid queries, I will return the distance value between the two stations.
+For invalid queries (e.g., u equals v, station ID does not exist, or querying A and B), I will return an error message.
 
-Each turn allows only one operation. Use the following XML format:
+When querying, use the following XML format:
 
-- Comparison Query (e.g., comparing intersections 3 and 5):
-<query_compare>3,5</query_compare>
+To query the distance between stations u and v (e.g., querying stations 2 and 5):
+<query>2,5</query>
 
-- Declare Least Congested (corresponds to type=min, e.g., declaring intersection 2 is the least congested):
-<answer>type=min, element=2</answer>
-
-- Declare Most Congested (corresponds to type=max, e.g., declaring intersection 7 is the most congested):
-<answer>type=max, element=7</answer>
-
-Note: A termination declaration immediately ends the task and determines success or failure.
+When submitting the final answer, provide your inferred value of dist(A, B):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎进入急诊科患者分诊系统。
+我们来玩一个"流行病传播链距离推理"游戏，规则如下：
 
-当前候诊室有 {n} 名待诊患者，编号为 1 到 {n}。这些患者的病情紧急程度存在一个未知的严格全序关系（每名患者都有唯一的紧急度排名，没有并列）。
+存在一条含 {n} 个病例的无环交叉连通传播链（树状图），病例编号为 1, 2, ..., {n}。具体的传染链路是保密的，但已经固定不变。
 
-你的目标是通过有限次数的病情对比查询，推断出病情最紧急（排名第一）或病情最轻微（排名最后）的患者。
+我已经选定了两个关键病例 A 和 B，它们的编号分别是 {a} 和 {b}。
 
-你可以进行以下两类操作：
+在传播链中，任意两个病例 u 和 v 之间的距离定义为连接他们的唯一传播路径上的传染代数（边数），记作 dist(u, v)。
 
-1. **比较查询**：询问两名不同患者 a 和 b 的病情。我会告诉你哪名患者的病情更紧急（紧急度排名更小，即更靠前）。每次查询会消耗一次诊断次数。
+你的目标是：推断出病例 A 和 B 之间的传染代数距离，即 dist(A, B) 的值。
 
-2. **终止宣告**（可选其一，不消耗诊断次数）：
-   - 宣告最紧急患者：宣告某名患者是排名第一（最紧急）的患者。
-   - 宣告最轻微患者：宣告某名患者是排名最后（最轻微）的患者。
+你可以反复向我提问，询问任意两个不同病例之间的距离。但有以下限制：
 
-**约束条件**：
-- 比较查询的总次数不能超过 {max_queries} 次。
-- 必须在诊断次数用尽前做出正确的终止宣告才算成功。
-- 如果宣告错误或查询次数超限后未宣告，分诊失败。
+1. 提问格式：询问病例 u 和 v 的距离（u 和 v 必须不同）
+2. 限制条件：你不能直接询问 A 和 B 之间的距离
+3. 你需要尽可能少的提问次数来推断答案
 
-## 查询与宣告格式
+对于有效的提问，我会返回这两个病例之间的传染代数距离。
+对于无效的提问（例如 u 等于 v、病例编号不存在、或询问的是 A 和 B），我会返回错误信息。
 
-每次只能进行一个操作，使用以下 XML 格式：
+提问时使用以下 XML 格式：
 
-- 比较查询（例如比较患者 3 和 5）：
-<query_compare>3,5</query_compare>
+询问病例 u 和 v 的距离（例如询问病例 2 和 5）：
+<query>2,5</query>
 
-- 宣告最紧急患者（对应 type=min，例如宣告患者 2 最紧急）：
-<answer>type=min, element=2</answer>
-
-- 宣告最轻微患者（对应 type=max，例如宣告患者 7 最轻微）：
-<answer>type=max, element=7</answer>
-
-注意：终止宣告会立即结束分诊并判定成败。
+提交最终答案时，给出你推断的 dist(A, B) 值：
+<answer>3</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the Emergency Department Patient Triage System.
+Let's play an "Epidemiological Transmission Chain Inference" game. Here are the rules:
 
-There are currently {n} patients waiting, numbered from 1 to {n}. The urgency of these patients' conditions follows an unknown strict total order (each patient has a unique urgency rank with no ties).
+There exists an acyclic, connected transmission network (tree) with {n} patient cases, labeled 1, 2, ..., {n}. The specific transmission linkage is secret but fixed.
 
-Your goal is to infer either the most urgent patient (ranked first) or the least urgent patient (ranked last) using a limited number of comparison queries.
+I have selected two key cases A and B, with labels {a} and {b} respectively.
 
-You can perform the following two types of operations:
+In the transmission chain, the distance between any two cases u and v is defined as the number of transmission generations (edges) on the unique tracing path connecting them, denoted as dist(u, v).
 
-1. **Comparison Query**: Ask about the condition of two different patients a and b. I will tell you which patient's condition is more urgent (has a smaller rank, i.e., comes earlier). Each query consumes one diagnostic count.
+Your goal is: to infer the transmission generations between cases A and B, i.e., the value of dist(A, B).
 
-2. **Termination Declaration** (choose one, does not consume diagnostic count):
-   - Declare Most Urgent: Declare that a specific patient is ranked first (most urgent).
-   - Declare Least Urgent: Declare that a specific patient is ranked last (least urgent).
+You can repeatedly ask me questions to inquire about the distance between any two different cases. However, there are the following restrictions:
 
-**Constraints**:
-- The total number of comparison queries cannot exceed {max_queries}.
-- You must make a correct termination declaration before running out of diagnostic queries to succeed.
-- If the declaration is wrong or you exceed the query limit without declaring, the triage fails.
+1. Query format: Ask about the distance between cases u and v (u and v must be different)
+2. Restriction: You cannot directly ask about the distance between A and B
+3. You should use as few queries as possible to infer the answer
 
-## Query and Declaration Format
+For valid queries, I will return the transmission generation value between the two cases.
+For invalid queries (e.g., u equals v, case ID does not exist, or querying A and B), I will return an error message.
 
-Each turn allows only one operation. Use the following XML format:
+When querying, use the following XML format:
 
-- Comparison Query (e.g., comparing patients 3 and 5):
-<query_compare>3,5</query_compare>
+To query the distance between cases u and v (e.g., querying cases 2 and 5):
+<query>2,5</query>
 
-- Declare Most Urgent (corresponds to type=min, e.g., declaring patient 2 is the most urgent):
-<answer>type=min, element=2</answer>
-
-- Declare Least Urgent (corresponds to type=max, e.g., declaring patient 7 is the least urgent):
-<answer>type=max, element=7</answer>
-
-Note: A termination declaration immediately ends the triage and determines success or failure.
+When submitting the final answer, provide your inferred value of dist(A, B):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用学术成绩匿名评估系统。
+我们来玩一个"知识图谱依赖距离推理"游戏，规则如下：
 
-本期评估包含 {n} 份匿名试卷，编号为 1 到 {n}。这些试卷的成绩存在一个未知的严格全序关系（每份试卷都有唯一的成绩排名，没有并列）。
+存在一个含 {n} 个知识点的无环连通前置依赖图谱（树形结构），知识点编号为 1, 2, ..., {n}。具体的依赖路径是保密的，但已经固定不变。
 
-你的目标是通过有限次数的成绩对比查询，推断出成绩最优（排名第一）或成绩最差（排名最后）的试卷。
+我已经选定了两个核心知识点 A 和 B，它们的编号分别是 {a} 和 {b}。
 
-你可以进行以下两类操作：
+在知识图谱中，任意两个知识点 u 和 v 之间的距离定义为连接它们的唯一学习路径上所需的学习步数（边数），记作 dist(u, v)。
 
-1. **比较查询**：询问两份不同试卷 a 和 b 的成绩表现。我会告诉你哪份试卷的成绩更优异（排名更小，即更靠前）。每次查询会消耗一次评估次数。
+你的目标是：推断出知识点 A 和 B 之间的学习步数距离，即 dist(A, B) 的值。
 
-2. **终止宣告**（可选其一，不消耗评估次数）：
-   - 宣告最优试卷：宣告某份试卷是排名第一（成绩最优）的试卷。
-   - 宣告最差试卷：宣告某份试卷是排名最后（成绩最差）的试卷。
+你可以反复向我提问，询问任意两个不同知识点之间的距离。但有以下限制：
 
-**约束条件**：
-- 比较查询的总次数不能超过 {max_queries} 次。
-- 必须在评估次数用尽前做出正确的终止宣告才算成功。
-- 如果宣告错误或查询次数超限后未宣告，评估任务失败。
+1. 提问格式：询问知识点 u 和 v 的距离（u 和 v 必须不同）
+2. 限制条件：你不能直接询问 A 和 B 之间的距离
+3. 你需要尽可能少的提问次数来推断答案
 
-## 查询与宣告格式
+对于有效的提问，我会返回这两个知识点之间的学习步数。
+对于无效的提问（例如 u 等于 v、知识点编号不存在、或询问的是 A 和 B），我会返回错误信息。
 
-每次只能进行一个操作，使用以下 XML 格式：
+提问时使用以下 XML 格式：
 
-- 比较查询（例如比较试卷 3 和 5）：
-<query_compare>3,5</query_compare>
+询问知识点 u 和 v 的距离（例如询问知识点 2 和 5）：
+<query>2,5</query>
 
-- 宣告最优试卷（对应 type=min，例如宣告试卷 2 最优）：
-<answer>type=min, element=2</answer>
-
-- 宣告最差试卷（对应 type=max，例如宣告试卷 7 最差）：
-<answer>type=max, element=7</answer>
-
-注意：终止宣告会立即结束评估并判定成败。
+提交最终答案时，给出你推断的 dist(A, B) 值：
+<answer>3</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Anonymous Academic Performance Assessment System.
+Let's play a "Knowledge Graph Dependency Inference" game. Here are the rules:
 
-This assessment involves {n} anonymous exam papers, numbered from 1 to {n}. The scores of these papers have an unknown strict total order (each paper has a unique score rank with no ties).
+There exists an acyclic, connected prerequisite knowledge graph (tree) with {n} concepts, labeled 1, 2, ..., {n}. The specific learning pathway is secret but fixed.
 
-Your goal is to infer either the highest-scoring paper (ranked first) or the lowest-scoring paper (ranked last) using a limited number of comparison queries.
+I have selected two core concepts A and B, with labels {a} and {b} respectively.
 
-You can perform the following two types of operations:
+In the knowledge graph, the distance between any two concepts u and v is defined as the number of learning steps (edges) on the unique learning path connecting them, denoted as dist(u, v).
 
-1. **Comparison Query**: Ask about the performance of two different papers a and b. I will tell you which paper has a better score (has a smaller rank, i.e., comes earlier). Each query consumes one assessment count.
+Your goal is: to infer the number of learning steps between concepts A and B, i.e., the value of dist(A, B).
 
-2. **Termination Declaration** (choose one, does not consume assessment count):
-   - Declare Highest-Scoring: Declare that a specific paper is ranked first (highest score).
-   - Declare Lowest-Scoring: Declare that a specific paper is ranked last (lowest score).
+You can repeatedly ask me questions to inquire about the distance between any two different concepts. However, there are the following restrictions:
 
-**Constraints**:
-- The total number of comparison queries cannot exceed {max_queries}.
-- You must make a correct termination declaration before running out of assessment queries to succeed.
-- If the declaration is wrong or you exceed the query limit without declaring, the assessment fails.
+1. Query format: Ask about the distance between concepts u and v (u and v must be different)
+2. Restriction: You cannot directly ask about the distance between A and B
+3. You should use as few queries as possible to infer the answer
 
-## Query and Declaration Format
+For valid queries, I will return the learning step value between the two concepts.
+For invalid queries (e.g., u equals v, concept ID does not exist, or querying A and B), I will return an error message.
 
-Each turn allows only one operation. Use the following XML format:
+When querying, use the following XML format:
 
-- Comparison Query (e.g., comparing papers 3 and 5):
-<query_compare>3,5</query_compare>
+To query the distance between concepts u and v (e.g., querying concepts 2 and 5):
+<query>2,5</query>
 
-- Declare Highest-Scoring (corresponds to type=min, e.g., declaring paper 2 is the highest-scoring):
-<answer>type=min, element=2</answer>
-
-- Declare Lowest-Scoring (corresponds to type=max, e.g., declaring paper 7 is the lowest-scoring):
-<answer>type=max, element=7</answer>
-
-Note: A termination declaration immediately ends the assessment and determines success or failure.
+When submitting the final answer, provide your inferred value of dist(A, B):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎使用工业流水线质量控制系统。
+我们来玩一个"产品装配层级距离推理"游戏，规则如下：
 
-当前批次共有 {n} 个生产组件，编号为 1 到 {n}。这些组件的加工精度存在一个未知的严格全序关系（每个组件都有唯一的精度排名，没有并列）。
+存在一棵含 {n} 个装配部件的无环连通物料清单(BOM)树，部件编号为 1, 2, ..., {n}。具体的组装依赖层级是保密的，但已经固定不变。
 
-你的目标是通过有限次数的精度抽检对比，推断出精度最高（排名第一）或精度最低（排名最后）的组件。
+我已经选定了两个特定的关键部件 A 和 B，它们的编号分别是 {a} 和 {b}。
 
-你可以进行以下两类操作：
+在装配结构中，任意两个部件 u 和 v 之间的距离定义为连接它们的唯一装配路径上的层级差（边数），记作 dist(u, v)。
 
-1. **比较查询**：抽检对比两个不同组件 a 和 b。我会告诉你哪个组件的精度更高（排名更小，即更靠前）。每次查询会消耗一次抽检次数。
+你的目标是：推断出部件 A 和 B 之间的装配层级距离，即 dist(A, B) 的值。
 
-2. **终止宣告**（可选其一，不消耗抽检次数）：
-   - 宣告最高精度组件：宣告某个组件是排名第一（精度最高）的组件。
-   - 宣告最低精度组件：宣告某个组件是排名最后（精度最低）的组件。
+你可以反复向我提问，询问任意两个不同部件之间的距离。但有以下限制：
 
-**约束条件**：
-- 比较查询的总次数不能超过 {max_queries} 次。
-- 必须在抽检次数用尽前做出正确的终止宣告才算成功。
-- 如果宣告错误或查询次数超限后未宣告，质控任务失败。
+1. 提问格式：询问部件 u 和 v 的距离（u 和 v 必须不同）
+2. 限制条件：你不能直接询问 A 和 B 之间的距离
+3. 你需要尽可能少的提问次数来推断答案
 
-## 查询与宣告格式
+对于有效的提问，我会返回这两个部件之间的层级差。
+对于无效的提问（例如 u 等于 v、部件编号不存在、或询问的是 A 和 B），我会返回错误信息。
 
-每次只能进行一个操作，使用以下 XML 格式：
+提问时使用以下 XML 格式：
 
-- 比较查询（例如对比组件 3 和 5）：
-<query_compare>3,5</query_compare>
+询问部件 u 和 v 的距离（例如询问部件 2 和 5）：
+<query>2,5</query>
 
-- 宣告最高精度组件（对应 type=min，例如宣告组件 2 精度最高）：
-<answer>type=min, element=2</answer>
-
-- 宣告最低精度组件（对应 type=max，例如宣告组件 7 精度最低）：
-<answer>type=max, element=7</answer>
-
-注意：终止宣告会立即结束质控并判定成败。
+提交最终答案时，给出你推断的 dist(A, B) 值：
+<answer>3</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Welcome to the Industrial Assembly Line Quality Control System.
+Let's play a "Product Assembly Hierarchy Inference" game. Here are the rules:
 
-The current batch consists of {n} production components, numbered from 1 to {n}. The processing precision of these components has an unknown strict total order (each component has a unique precision rank with no ties).
+There exists an acyclic, connected Bill of Materials (BOM) tree with {n} assembly components, labeled 1, 2, ..., {n}. The specific assembly dependency hierarchy is secret but fixed.
 
-Your goal is to infer either the most precise component (ranked first) or the least precise component (ranked last) using a limited number of precision comparison queries.
+I have selected two key components A and B, with labels {a} and {b} respectively.
 
-You can perform the following two types of operations:
+In the assembly structure, the distance between any two components u and v is defined as the hierarchical difference (number of edges) on the unique assembly path connecting them, denoted as dist(u, v).
 
-1. **Comparison Query**: Compare the precision of two different components a and b. I will tell you which component has higher precision (has a smaller rank, i.e., comes earlier). Each query consumes one inspection count.
+Your goal is: to infer the hierarchical difference between components A and B, i.e., the value of dist(A, B).
 
-2. **Termination Declaration** (choose one, does not consume inspection count):
-   - Declare Most Precise: Declare that a specific component is ranked first (highest precision).
-   - Declare Least Precise: Declare that a specific component is ranked last (lowest precision).
+You can repeatedly ask me questions to inquire about the distance between any two different components. However, there are the following restrictions:
 
-**Constraints**:
-- The total number of comparison queries cannot exceed {max_queries}.
-- You must make a correct termination declaration before running out of inspection queries to succeed.
-- If the declaration is wrong or you exceed the query limit without declaring, the quality control task fails.
+1. Query format: Ask about the distance between components u and v (u and v must be different)
+2. Restriction: You cannot directly ask about the distance between A and B
+3. You should use as few queries as possible to infer the answer
 
-## Query and Declaration Format
+For valid queries, I will return the hierarchical difference value between the two components.
+For invalid queries (e.g., u equals v, component ID does not exist, or querying A and B), I will return an error message.
 
-Each turn allows only one operation. Use the following XML format:
+When querying, use the following XML format:
 
-- Comparison Query (e.g., comparing components 3 and 5):
-<query_compare>3,5</query_compare>
+To query the distance between components u and v (e.g., querying components 2 and 5):
+<query>2,5</query>
 
-- Declare Most Precise (corresponds to type=min, e.g., declaring component 2 is the most precise):
-<answer>type=min, element=2</answer>
-
-- Declare Least Precise (corresponds to type=max, e.g., declaring component 7 is the least precise):
-<answer>type=max, element=7</answer>
-
-Note: A termination declaration immediately ends the quality control task and determines success or failure.
+When submitting the final answer, provide your inferred value of dist(A, B):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用法务证据证明力分析系统。
+我们来玩一个"法律条款衍生跨度推理"游戏，规则如下：
 
-本案目前收集了 {n} 份关键证据，编号为 1 到 {n}。这些证据的证明力大小存在一个未知的严格全序关系（每份证据都有唯一的证明力排名，没有并列）。
+存在一个含 {n} 条法律规定的无环连通解释体系（树状结构），条款编号为 1, 2, ..., {n}。具体的衍生引用关系是保密的，但已经固定不变。
 
-你的目标是通过有限次数的法理对比查询，推断出证明力最强（排名第一）或证明力最弱（排名最后）的证据。
+我已经选定了两条重点法条 A 和 B，它们的编号分别是 {a} 和 {b}。
 
-你可以进行以下两类操作：
+在法律体系中，任意两条法条 u 和 v 之间的距离定义为连接它们的唯一衍生引用路径上的解释跨度（边数），记作 dist(u, v)。
 
-1. **比较查询**：询问两份不同证据 a 和 b 的效力。我会告诉你哪份证据的证明力更强（排名更小，即更靠前）。每次查询会消耗一次核查次数。
+你的目标是：推断出法条 A 和 B 之间的解释跨度距离，即 dist(A, B) 的值。
 
-2. **终止宣告**（可选其一，不消耗核查次数）：
-   - 宣告最强证据：宣告某份证据是排名第一（证明力最强）的证据。
-   - 宣告最弱证据：宣告某份证据是排名最后（证明力最弱）的证据。
+你可以反复向我提问，询问任意两条不同法条之间的距离。但有以下限制：
 
-**约束条件**：
-- 比较查询的总次数不能超过 {max_queries} 次。
-- 必须在核查次数用尽前做出正确的终止宣告才算成功。
-- 如果宣告错误或查询次数超限后未宣告，证据分析失败。
+1. 提问格式：询问法条 u 和 v 的距离（u 和 v 必须不同）
+2. 限制条件：你不能直接询问 A 和 B 之间的距离
+3. 你需要尽可能少的提问次数来推断答案
 
-## 查询与宣告格式
+对于有效的提问，我会返回这两条法条之间的解释跨度值。
+对于无效的提问（例如 u 等于 v、条款编号不存在、或询问的是 A 和 B），我会返回错误信息。
 
-每次只能进行一个操作，使用以下 XML 格式：
+提问时使用以下 XML 格式：
 
-- 比较查询（例如对比证据 3 和 5）：
-<query_compare>3,5</query_compare>
+询问法条 u 和 v 的距离（例如询问法条 2 和 5）：
+<query>2,5</query>
 
-- 宣告最强证据（对应 type=min，例如宣告证据 2 证明力最强）：
-<answer>type=min, element=2</answer>
-
-- 宣告最弱证据（对应 type=max，例如宣告证据 7 证明力最弱）：
-<answer>type=max, element=7</answer>
-
-注意：终止宣告会立即结束证据分析并判定成败。
+提交最终答案时，给出你推断的 dist(A, B) 值：
+<answer>3</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the Legal Evidence Probative Value Analysis System.
+[Legal Scenario]
+Let's play a "Legal Article Derivation Inference" game. Here are the rules:
 
-There are currently {n} key pieces of evidence collected for this case, numbered from 1 to {n}. The probative value of these evidence items follows an unknown strict total order (each item has a unique probative rank with no ties).
+There exists an acyclic, connected legal interpretation framework (tree) with {n} articles, labeled 1, 2, ..., {n}. The specific derivative citation structure is secret but fixed.
 
-Your goal is to infer either the evidence with the strongest probative value (ranked first) or the weakest probative value (ranked last) using a limited number of comparative queries.
+I have selected two key legal articles A and B, with labels {a} and {b} respectively.
 
-You can perform the following two types of operations:
+In the legal framework, the distance between any two articles u and v is defined as the number of interpretative steps (edges) on the unique derivation path connecting them, denoted as dist(u, v).
 
-1. **Comparison Query**: Ask about the efficacy of two different evidence items a and b. I will tell you which item has stronger probative value (has a smaller rank, i.e., comes earlier). Each query consumes one verification count.
+Your goal is: to infer the interpretative steps between articles A and B, i.e., the value of dist(A, B).
 
-2. **Termination Declaration** (choose one, does not consume verification count):
-   - Declare Strongest Evidence: Declare that a specific evidence item is ranked first (strongest probative value).
-   - Declare Weakest Evidence: Declare that a specific evidence item is ranked last (weakest probative value).
+You can repeatedly ask me questions to inquire about the distance between any two different articles. However, there are the following restrictions:
 
-**Constraints**:
-- The total number of comparison queries cannot exceed {max_queries}.
-- You must make a correct termination declaration before running out of verification queries to succeed.
-- If the declaration is wrong or you exceed the query limit without declaring, the evidence analysis fails.
+1. Query format: Ask about the distance between articles u and v (u and v must be different)
+2. Restriction: You cannot directly ask about the distance between A and B
+3. You should use as few queries as possible to infer the answer
 
-## Query and Declaration Format
+For valid queries, I will return the interpretative steps value between the two articles.
+For invalid queries (e.g., u equals v, article ID does not exist, or querying A and B), I will return an error message.
 
-Each turn allows only one operation. Use the following XML format:
+When querying, use the following XML format:
 
-- Comparison Query (e.g., comparing evidence items 3 and 5):
-<query_compare>3,5</query_compare>
+To query the distance between articles u and v (e.g., querying articles 2 and 5):
+<query>2,5</query>
 
-- Declare Strongest Evidence (corresponds to type=min, e.g., declaring evidence 2 is the strongest):
-<answer>type=min, element=2</answer>
-
-- Declare Weakest Evidence (corresponds to type=max, e.g., declaring evidence 7 is the weakest):
-<answer>type=max, element=7</answer>
-
-Note: A termination declaration immediately ends the evidence analysis and determines success or failure.
+When submitting the final answer, provide your inferred value of dist(A, B):
+<answer>3</answer>
 """
 
-    tags = ["answer", "query_compare"]
+    tags = ["answer", "query"]
     
     reasoning_type = "演绎推理"
-    data_structure = "序列"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
                 "n": 5,
-                "max_queries": 4,
-                "order": [3, 1, 5, 2, 4],  # 对应排名：1:3, 2:1, 3:5, 4:2, 5:4
-                "target_type": "min",
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
+                "a": 1,
+                "b": 5,
+                "expected_dist": 4,
             },
             2: {
-                "n": 8,
-                "max_queries": 7,
-                "order": [5, 2, 7, 1, 8, 3, 6, 4],
-                "target_type": "max",
+                "n": 7,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
+                "a": 4,
+                "b": 7,
+                "expected_dist": 4,
             },
             3: {
                 "n": 10,
-                "max_queries": 9,
-                "order": [6, 3, 9, 1, 7, 4, 10, 2, 8, 5],
-                "target_type": "min",
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (5, 8), (6, 9), (6, 10)],
+                "a": 7,
+                "b": 10,
+                "expected_dist": 6,
             },
             4: {
                 "n": 15,
-                "max_queries": 14,
-                "order": [8, 12, 4, 15, 2, 10, 6, 13, 1, 9, 5, 14, 3, 11, 7],
-                "target_type": "max",
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (5, 9), 
+                          (6, 10), (7, 11), (8, 12), (9, 13), (10, 14), (11, 15)],
+                "a": 12,
+                "b": 15,
+                "expected_dist": 8,
             },
             5: {
                 "n": 20,
-                "max_queries": 19,
-                "order": [11, 5, 18, 3, 14, 9, 20, 1, 16, 7, 12, 4, 19, 6, 15, 2, 17, 8, 13, 10],
-                "target_type": "min",
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (4, 9),
+                          (5, 10), (6, 11), (7, 12), (8, 13), (9, 14), (10, 15), (11, 16),
+                          (12, 17), (13, 18), (14, 19), (15, 20)],
+                "a": 18,
+                "b": 20,
+                "expected_dist": 8,
             },
         },
         "en": {
             1: {
                 "n": 5,
-                "max_queries": 4,
-                "order": [3, 1, 5, 2, 4],
-                "target_type": "min",
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
+                "a": 1,
+                "b": 5,
+                "expected_dist": 4,
             },
             2: {
-                "n": 8,
-                "max_queries": 7,
-                "order": [5, 2, 7, 1, 8, 3, 6, 4],
-                "target_type": "max",
+                "n": 7,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
+                "a": 4,
+                "b": 7,
+                "expected_dist": 4,
             },
             3: {
                 "n": 10,
-                "max_queries": 9,
-                "order": [6, 3, 9, 1, 7, 4, 10, 2, 8, 5],
-                "target_type": "min",
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (5, 8), (6, 9), (6, 10)],
+                "a": 7,
+                "b": 10,
+                "expected_dist": 6,
             },
             4: {
                 "n": 15,
-                "max_queries": 14,
-                "order": [8, 12, 4, 15, 2, 10, 6, 13, 1, 9, 5, 14, 3, 11, 7],
-                "target_type": "max",
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (5, 9), 
+                          (6, 10), (7, 11), (8, 12), (9, 13), (10, 14), (11, 15)],
+                "a": 12,
+                "b": 15,
+                "expected_dist": 8,
             },
             5: {
                 "n": 20,
-                "max_queries": 19,
-                "order": [11, 5, 18, 3, 14, 9, 20, 1, 16, 7, 12, 4, 19, 6, 15, 2, 17, 8, 13, 10],
-                "target_type": "min",
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (4, 9),
+                          (5, 10), (6, 11), (7, 12), (8, 13), (9, 14), (10, 15), (11, 16),
+                          (12, 17), (13, 18), (14, 19), (15, 20)],
+                "a": 18,
+                "b": 20,
+                "expected_dist": 8,
             },
         },
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 初始化查询计数器
-        self._over_limit_warnings = 0
         super().__init__(config)
 
     def _initialize_game(self):
@@ -527,150 +458,159 @@ Note: A termination declaration immediately ends the evidence analysis and deter
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        n = cfg["n"]
-        max_queries = cfg["max_queries"]
-        target_type = cfg["target_type"]
-
-        # 使用预定义的确定性排列，保证基准可复现
-        order = cfg["order"]
-
-        self._game_info["n"] = n
-        self._game_info["max_queries"] = max_queries
         
-        self.order = order
-        self.max_queries = max_queries
-        self.target_type = target_type
+        self._game_info["n"] = cfg["n"]
+        self._game_info["a"] = cfg["a"]
+        self._game_info["b"] = cfg["b"]
         
-        if self.target_type == "min":
-            self.correct_answer = str(self.order.index(1) + 1)
-        else:
-            self.correct_answer = str(self.order.index(n) + 1)
+        self.n = cfg["n"]
+        self.vertex_a = cfg["a"]
+        self.vertex_b = cfg["b"]
+        self.edges = cfg["edges"]
+        self.expected_dist = cfg["expected_dist"]
+        
+        self.adj = {i: [] for i in range(1, self.n + 1)}
+        for u, v in self.edges:
+            self.adj[u].append(v)
+            self.adj[v].append(u)
+        
+        self._compute_all_distances()
         
         self.query_count = 0
+        self.max_queries = 2 * (self.n - 2)
+
+    def _compute_all_distances(self):
+        self.dist_matrix = {}
+        
+        for start in range(1, self.n + 1):
+            visited = {start: 0}
+            queue = [start]
+            head = 0
+            
+            while head < len(queue):
+                u = queue[head]
+                head += 1
+                
+                for v in self.adj[u]:
+                    if v not in visited:
+                        visited[v] = visited[u] + 1
+                        queue.append(v)
+            
+            for end in range(1, self.n + 1):
+                self.dist_matrix[(start, end)] = visited[end]
+
+    def _get_distance(self, u, v):
+        if u == v:
+            return 0
+        return self.dist_matrix.get((u, v), self.dist_matrix.get((v, u), -1))
 
     def evaluate(self, parsed_info):
-        # 检查查询次数是否超限
-        if self.query_count > self.max_queries:
-            return False
-        
-        # 解析答案: type=min/max, element=X
-        raw_ans = parsed_info["answer"]
-        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
-        ans_dict = {}
-        for kv in kv_pairs:
-            k, v = kv.split("=", 1)
-            ans_dict[k.strip()] = v.strip()
-        
-        if "type" not in ans_dict or "element" not in ans_dict:
-            return False
-        
-        declared_type = ans_dict["type"]
-        declared_element = ans_dict["element"]
-
-        if declared_type == "min":
-            # 排名为 1 的元素
-            correct = str(self.order.index(1) + 1)
-            return declared_element == correct
-        elif declared_type == "max":
-            # 排名为 N 的元素
-            correct = str(self.order.index(self._game_info["n"]) + 1)
-            return declared_element == correct
-        else:
+        try:
+            answer_str = parsed_info["answer"].strip()
+            answer = int(answer_str)
+            
+            return answer == self.expected_dist
+        except (ValueError, KeyError):
             return False
 
     def _cf_core_produce(self, parsed_info):
-        # 只有 query_compare 一种查询类型
-        if "query_compare" not in parsed_info:
-            raise ValueError("No valid query tag found.")
-        
-        # 检查查询次数是否已超限
-        if self.query_count >= self.max_queries:
-            self._over_limit_warnings += 1
-            if self._over_limit_warnings >= 3:
-                # 连续多次超限后强制失败
-                self.state.set_state("failed", "repeated queries after limit exceeded")
-                if self.config.language == "zh":
-                    return "游戏结束：多次超限查询后仍未提交答案。"
-                else:
-                    return "Game over: Failed to submit answer after repeated queries beyond limit."
-            
+        if "query" not in parsed_info:
             if self.config.language == "zh":
-                err_msg = f"错误：查询次数已达上限 {self.max_queries} 次，请提交最终答案。"
+                return "错误：无效的查询格式。"
             else:
-                err_msg = f"Error: Query limit of {self.max_queries} reached. Please submit your final answer."
-            return err_msg
+                return "Error: Invalid query format."
         
         try:
-            raw = parsed_info["query_compare"]
-            parts = [x.strip() for x in raw.split(",")]
+            query_str = parsed_info["query"].strip()
+            parts = [x.strip() for x in query_str.split(",")]
+            
             if len(parts) != 2:
-                raise ValueError("Need exactly two elements")
+                raise ValueError("Query must contain exactly two vertex IDs")
             
-            id1, id2 = parts
+            u = int(parts[0])
+            v = int(parts[1])
             
-            # 验证元素编号有效性
-            if not id1.isdigit() or not id2.isdigit():
-                raise ValueError("Invalid element ID")
+            if u == v:
+                if self.config.language == "zh":
+                    return "无效：查询的两个顶点不能相同。"
+                else:
+                    return "INVALID: Query vertices must be different (same node)."
             
-            idx1, idx2 = int(id1), int(id2)
+            if u < 1 or u > self.n or v < 1 or v > self.n:
+                if self.config.language == "zh":
+                    return "无效：顶点编号超出范围。"
+                else:
+                    return "INVALID: Vertex ID out of range (unknown node)."
             
-            if idx1 < 1 or idx1 > self._game_info["n"] or idx2 < 1 or idx2 > self._game_info["n"]:
-                raise ValueError("Element ID out of range")
+            if {u, v} == {self.vertex_a, self.vertex_b}:
+                if self.config.language == "zh":
+                    return "无效：不能直接查询目标顶点 A 和 B 之间的距离。"
+                else:
+                    return "INVALID: Cannot directly query the distance between target vertices A and B (pair is forbidden)."
             
-            if idx1 == idx2:
-                raise ValueError("Cannot compare an element with itself")
-            
-            # 查询计数+1
             self.query_count += 1
             
-            # 比较排名：order[idx-1] 是元素 idx 的排名
-            rank1 = self.order[idx1 - 1]
-            rank2 = self.order[idx2 - 1]
+            if self.query_count > self.max_queries:
+                if self.config.language == "zh":
+                    self.state.set_state("failed", f"超过最大查询次数限制 {self.max_queries}")
+                    return f"失败：已超过最大查询次数 {self.max_queries}。"
+                else:
+                    self.state.set_state("failed", f"Exceeded maximum query limit {self.max_queries}")
+                    return f"Failed: Exceeded maximum query limit of {self.max_queries}."
             
-            # 返回排名更小（更靠前）的元素
-            if rank1 < rank2:
-                return id1
+            distance = self._get_distance(u, v)
+            
+            if self.config.language == "zh":
+                return f"顶点 {u} 和 {v} 之间的距离为 {distance}。"
             else:
-                return id2
+                return f"DIST {u} {v} = {distance}"
             
+        except ValueError as e:
+            if self.config.language == "zh":
+                return f"错误：查询格式无效。请使用格式 <query>u,v</query>，其中 u 和 v 是顶点编号。"
+            else:
+                return f"Error: Invalid query format. Please use format <query>u,v</query> where u and v are vertex IDs."
         except Exception as e:
             if self.config.language == "zh":
-                return f"错误：查询格式无效或元素编号错误。({str(e)})"
+                return f"错误：{str(e)}"
             else:
-                return f"Error: Invalid query format or element ID. ({str(e)})"
+                return f"Error: {str(e)}"
 
     def _cf_make_wrong(self, correct: str) -> str:
-        # correct 正常情况下是纯数字字符串，代表比较查询中排名更小的元素编号
-        n = self._game_info["n"]
+        if self.config.language == "zh":
+            match = re.search(r'距离为\s*(\d+)', correct)
+            if match:
+                real_dist = int(match.group(1))
+                wrong_dist = real_dist + random.choice([1, 2, -1]) if real_dist > 1 else real_dist + random.choice([1, 2])
+                return correct[:match.start(1)] + str(wrong_dist) + correct[match.end(1):]
+        else:
+            match = re.search(r'=\s*(\d+)', correct)
+            if match:
+                real_dist = int(match.group(1))
+                wrong_dist = real_dist + random.choice([1, 2, -1]) if real_dist > 1 else real_dist + random.choice([1, 2])
+                return correct[:match.start(1)] + str(wrong_dist) + correct[match.end(1):]
         
-        # 尝试解析为数字
-        try:
-            correct_int = int(correct)
-            if 1 <= correct_int <= n:
-                # 返回一个不同的有效元素编号
-                wrong = correct_int + 1 if correct_int < n else correct_int - 1
-                return str(wrong)
-        except ValueError:
-            pass
-        
-        # 如果不是有效数字（如错误消息），返回一个随机有效元素
-        return str(random.randint(1, n))
+        return correct + " [WRONG]"
 
     def get_all_possible_queries(self) -> list[dict]:
-        n = self._game_info["n"]
-        queries = []
-        for i in range(1, n + 1):
-            for j in range(i + 1, n + 1):
-                rank1 = self.order[i - 1]
-                rank2 = self.order[j - 1]
+        results = []
+        for u in range(1, self.n + 1):
+            for v in range(u + 1, self.n + 1):
+                if {u, v} == {self.vertex_a, self.vertex_b}:
+                    continue
                 
-                if rank1 < rank2:
-                    ans = str(i)
+                query_content = f"<query>{u},{v}</query>"
+                
+                distance = self._get_distance(u, v)
+                
+                if self.config.language == "zh":
+                    answer_str = f"顶点 {u} 和 {v} 之间的距离为 {distance}。"
                 else:
-                    ans = str(j)
+                    answer_str = f"DIST {u} {v} = {distance}"
                 
-                queries.append({
-                    "query": f"<query_compare>{i},{j}</query_compare>",
-                    "answer": ans
+                results.append({
+                    "query": query_content,
+                    "answer": answer_str
                 })
-        return queries
+        
+        return results

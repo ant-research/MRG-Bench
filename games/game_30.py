@@ -1,483 +1,536 @@
-from .base import Game
 import re
+import random
+from typing import List, Tuple, Set, Dict
+from .base import Game
 
-
-class HiddenSequenceSumGame(Game):
+class GraphPathQueryGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"隐含序列求和"的推理游戏，规则如下：
+我们来玩一个"图边权推理"游戏，规则如下：
 
-游戏设定了一个长度为 {n} 的有序二元序列，序列中每个位置的值只能是 0 或 1。你的目标是推断出这个序列中所有 1 的总数。
+游戏设定了一个无向连通图，包含 {n} 个节点（编号 1 到 {n}）和若干条边。图的结构（即节点和边的连接关系）是公开的：
+{edges_info}
 
-你可以进行以下两类操作：
+目标边：{target_edge}
 
-1. 区间和查询：选择一个起点位置 l（整数），我会返回从位置 l 开始、连续 {k} 个元素的和。注意：
-   - 起点 l 的有效范围是 1 到 {max_start}（即 {n} - {k} + 1）
-   - 如果起点超出有效范围，将返回错误提示，但该次查询仍会计入查询次数
-   - 返回值是一个 0 到 {k} 之间的整数
+每条边都有一个未知的正整数权重，权重范围在 [{L}, {U}] 之间。你的目标是推断出目标边的权重。
 
-2. 最终申报：当你认为已经收集到足够信息后，可以提交你对序列中 1 的总数的答案。
+1. **路径查询**：你可以询问一条路径上所有边的权重之和。
+   - 路径必须至少包含 2 条边（即至少 3 个节点）。
+   - 路径上的边必须在图中存在。
+   - 路径必须是简单路径（除非首尾节点相同形成简单环，否则中间节点不能重复）。
+   - 如果首尾节点相同，则构成简单环（除首尾外节点不重复，且至少包含 3 条边）。
 
-约束条件：
-- 你的总查询次数（包括有效和无效查询）不能超过 {max_queries} 次
-- 在进行最终申报前，你必须至少完成 2 次有效的区间和查询
-- 如果申报答案错误、查询超过限制次数、或在查询次数不足时提前申报，游戏将失败
+2. **提交答案**：当你有足够信心时，提交目标边的权重。
+   - 你必须至少完成 3 次有效查询后才能提交答案。
+   - 你最多可以进行 {Q} 次有效查询。
+   - 答案错误则游戏失败。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。
 
-每次只能进行一个操作。请使用以下 XML 格式：
+- **路径查询**（例如查询路径 1->2->3->4）：
+<query_path>1,2,3,4</query_path>
 
-- 区间和查询（例如查询起点为 5 的区间）：
-<query_range>5</query_range>
+- **提交答案**（例如认为目标边权重为 5）：
+<answer>5</answer>
 
-- 提交最终答案（例如认为总和是 8）：
-<answer>8</answer>
-
-请合理规划你的查询策略，用尽可能少的次数找到正确答案。
+注意：
+- 路径节点用英文逗号分隔，节点编号必须在 1 到 {n} 之间。
+- 非法查询（边不存在、路径不简单、长度不足等）不会返回有效信息，也不会影响查询次数，但仍请仔细检查。
+- 你需要通过尽可能少的查询次数推断出目标边的权重。
 """
 
     game_rule_en = """\
-Let's play a "Hidden Sequence Sum" deduction game. Here are the rules:
+Let's play a "Graph Edge Weight Inference" game. Here are the rules:
 
-There is an ordered binary sequence of length {n}, where each position contains either 0 or 1. Your goal is to infer the total count of 1s in this sequence.
+The game is set on an undirected connected graph with {n} nodes (numbered 1 to {n}) and several edges. The graph structure (i.e., which nodes are connected by edges) is public:
+{edges_info}
 
-You can perform two types of operations:
+Target edge: {target_edge}
 
-1. Range Sum Query: Choose a starting position l (integer), and I will return the sum of {k} consecutive elements starting from position l. Note:
-   - The valid range for starting position l is 1 to {max_start} (i.e., {n} - {k} + 1)
-   - If the starting position is out of range, an error message will be returned, but it still counts toward your query limit
-   - The return value is an integer between 0 and {k}
+Each edge has an unknown positive integer weight in the range [{L}, {U}]. Your goal is to infer the weight of the target edge.
 
-2. Final Answer Submission: When you believe you have gathered enough information, submit your answer for the total count of 1s in the sequence.
+1. **Path Query**: You can ask for the sum of weights of all edges on a path.
+   - The path must contain at least 2 edges (i.e., at least 3 nodes).
+   - All edges in the path must exist in the graph.
+   - The path must be simple (no repeated intermediate nodes, unless the first and last nodes are the same forming a simple cycle).
+   - If the first and last nodes are the same, it forms a simple cycle (no repeated nodes except endpoints, at least 3 edges).
 
-Constraints:
-- Your total number of queries (including valid and invalid ones) cannot exceed {max_queries}
-- Before submitting your final answer, you must complete at least 2 valid range sum queries
-- The game fails if your answer is incorrect, you exceed the query limit, or you submit prematurely with insufficient queries
+2. **Submit Answer**: When you are confident, submit the weight of the target edge.
+   - You must complete at least 3 valid queries before submitting.
+   - You can perform at most {Q} valid queries.
+   - An incorrect answer results in game failure.
 
-## Query and Answer Format (strictly required)
+Each operation must contain only one tag.
 
-You can only perform one operation at a time. Use the following XML format:
+- **Path Query** (e.g., query path 1->2->3->4):
+<query_path>1,2,3,4</query_path>
 
-- Range Sum Query (e.g., querying range starting at position 5):
-<query_range>5</query_range>
+- **Submit Answer** (e.g., if you think the target edge weight is 5):
+<answer>5</answer>
 
-- Submit Final Answer (e.g., if you believe the total is 8):
-<answer>8</answer>
-
-Plan your query strategy wisely to find the correct answer with as few queries as possible.
+Notes:
+- Path nodes are separated by commas, node IDs must be between 1 and {n}.
+- Invalid queries (non-existent edges, non-simple paths, insufficient length, etc.) will not return valid information and will not count towards your query limit, but please still check carefully.
+- You need to infer the target edge weight with as few queries as possible.
 """
 
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-我们来执行一项"交通拥堵态势排查"任务，规则如下：
+欢迎使用“智能交通路网耗时分析系统”。我们将对城市核心路网的通行效率进行评估。
 
-一条主干道被划分为 {n} 个连续的监测路段，每个路段的状态仅为拥堵（1）或畅通（0）。你的目标是推断出这条道路上拥堵路段的总数。
+系统接入了一个连通路网，包含 {n} 个交通枢纽（编号 1 到 {n}）和若干条互联公路。路网结构（即枢纽和公路的连接关系）是公开的：
+{edges_info}
 
-你可以进行以下两类操作：
+目标待测路段：{target_edge}
 
-1. 无人机区间巡查：选择一个起始路段编号 l（整数），我会返回从路段 l 开始、连续 {k} 个路段中的拥堵路段数量。注意：
-   - 起始编号 l 的有效范围是 1 到 {max_start}（即 {n} - {k} + 1）
-   - 如果起始编号超出有效范围，无人机将返回错误提示，但该次指令仍会计入调度次数
-   - 返回值是一个 0 到 {k} 之间的整数
+每条公路的实际通行耗时（分钟）为未知正整数，耗时范围在 [{L}, {U}] 之间。你的目标是推断出目标路段的准确耗时。
 
-2. 最终态势研判：当你认为已经收集到足够信息后，可以提交你对整条道路拥堵路段总数的最终报告。
+1. **行程查询**：你可以询问一条连续行程路线上所有公路的耗时之和。
+   - 行程必须至少包含 2 条公路（即至少经过 3 个枢纽）。
+   - 行程上的公路必须在路网中存在。
+   - 行程必须是简单路径（除非首尾枢纽相同形成简单环路，否则中间枢纽不能重复经过）。
+   - 如果首尾枢纽相同，则构成简单环路（除首尾外枢纽不重复，且至少包含 3 条公路）。
 
-约束条件：
-- 你的总调度次数（包括有效和无效巡查）不能超过 {max_queries} 次
-- 在进行最终研判前，你必须至少完成 2 次有效的无人机区间巡查
-- 如果研判报告错误、调度超过限制次数、或在巡查次数不足时提前研判，任务将失败
+2. **提交评估**：当你有足够信心时，提交目标路段的耗时评估结果。
+   - 你必须至少完成 3 次有效查询后才能提交答案。
+   - 你最多可以进行 {Q} 次有效查询。
+   - 结果错误则评估失败。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。
 
-每次只能进行一个操作。请使用以下 XML 格式：
+- **行程查询**（例如查询行程 1->2->3->4）：
+<query_path>1,2,3,4</query_path>
 
-- 无人机区间巡查（例如从第 5 路段开始巡查）：
-<query_range>5</query_range>
+- **提交评估**（例如认为目标路段耗时为 5 分钟）：
+<answer>5</answer>
 
-- 提交最终态势研判（例如认为拥堵路段总数是 8）：
-<answer>8</answer>
-
-请合理规划你的巡查策略，用尽可能少的调度次数准确完成态势排查。
+注意：
+- 行程枢纽用英文逗号分隔，枢纽编号必须在 1 到 {n} 之间。
+- 非法查询（公路不存在、行程不简单、长度不足等）不会返回有效信息，也不会影响查询次数，但仍请仔细检查。
+- 你需要通过尽可能少的查询次数推断出目标路段的耗时。
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Let's execute a "Traffic Congestion Profiling" task. Here are the rules:
+[Traffic Scenario]
+Welcome to the "Intelligent Traffic Network Transit Time Analysis System". We are evaluating the transit efficiency of the core urban road network.
 
-A main highway is divided into {n} consecutive monitoring segments. Each segment is either congested (1) or clear (0). Your goal is to infer the total number of congested segments on this road.
+The system features a connected road network with {n} traffic hubs (numbered 1 to {n}) and several interconnected highways. The network structure (i.e., the connections between hubs and highways) is public:
+{edges_info}
 
-You can perform two types of operations:
+Target highway for evaluation: {target_edge}
 
-1. Drone Range Inspection: Choose a starting segment number l (integer), and I will return the number of congested segments in {k} consecutive segments starting from segment l. Note:
-   - The valid range for starting segment l is 1 to {max_start} (i.e., {n} - {k} + 1)
-   - If the starting segment is out of range, the drone will return an error message, but it still counts toward your dispatch limit
-   - The return value is an integer between 0 and {k}
+Each highway has an unknown positive integer transit time (in minutes) in the range [{L}, {U}]. Your goal is to infer the exact transit time of the target highway.
 
-2. Final Situation Assessment: When you believe you have gathered enough information, submit your final report for the total number of congested segments.
+1. **Route Query**: You can ask for the sum of transit times of all highways on a continuous route.
+   - The route must contain at least 2 highways (i.e., at least 3 hubs).
+   - All highways in the route must exist in the network.
+   - The route must be a simple path (no repeated intermediate hubs, unless the first and last hubs are the same forming a simple cycle).
+   - If the first and last hubs are the same, it forms a simple cycle (no repeated hubs except endpoints, at least 3 highways).
 
-Constraints:
-- Your total number of dispatches (including valid and invalid inspections) cannot exceed {max_queries}
-- Before submitting your final assessment, you must complete at least 2 valid drone range inspections
-- The task fails if your assessment is incorrect, you exceed the dispatch limit, or you submit prematurely with insufficient inspections
+2. **Submit Evaluation**: When you are confident, submit the transit time of the target highway.
+   - You must complete at least 3 valid queries before submitting.
+   - You can perform at most {Q} valid queries.
+   - An incorrect answer results in evaluation failure.
 
-## Query and Answer Format (strictly required)
+Each operation must contain only one tag.
 
-You can only perform one operation at a time. Use the following XML format:
+- **Route Query** (e.g., query route 1->2->3->4):
+<query_path>1,2,3,4</query_path>
 
-- Drone Range Inspection (e.g., inspecting range starting at segment 5):
-<query_range>5</query_range>
+- **Submit Evaluation** (e.g., if you think the target highway transit time is 5 minutes):
+<answer>5</answer>
 
-- Submit Final Assessment (e.g., if you believe the total congested segments is 8):
-<answer>8</answer>
-
-Plan your inspection strategy wisely to complete the profiling accurately with as few dispatches as possible.
+Notes:
+- Route hubs are separated by commas, hub IDs must be between 1 and {n}.
+- Invalid queries (non-existent highways, non-simple routes, insufficient length, etc.) will not return valid information and will not count towards your query limit, but please still check carefully.
+- You need to infer the target highway transit time with as few queries as possible.
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-我们来执行一项"基因突变靶点筛查"任务，规则如下：
+欢迎使用“医疗生化传导分析系统”。本系统用于测定人体特定生理代谢通路的反应延迟。
 
-患者的一段关键靶基因序列包含了 {n} 个连续的检测位点，每个位点的状态仅为突变（1）或正常（0）。你的目标是推断出该序列中突变位点的总数。
+系统中建立了一个生化网络模型，包含 {n} 个生化指标/器官（编号 1 到 {n}）及若干条代谢通路。网络结构是公开的：
+{edges_info}
 
-你可以进行以下两类操作：
+目标测定通路：{target_edge}
 
-1. 靶向区间测序：选择一个起始位点编号 l（整数），我会返回从位点 l 开始、连续 {k} 个位点中的突变数量。注意：
-   - 起始编号 l 的有效范围是 1 到 {max_start}（即 {n} - {k} + 1）
-   - 如果起始编号超出有效范围，检测设备将报错，但该次操作仍会计入试剂消耗次数
-   - 返回值是一个 0 到 {k} 之间的整数
+每条代谢通路的反应延迟（毫秒）为未知正整数，范围在 [{L}, {U}] 之间。你的任务是精确推断出目标通路的反应延迟。
 
-2. 最终临床报告：当你认为已经收集到足够的测序信息后，可以提交你对序列中突变位点总数的最终结论。
+1. **链路查询**：你可以询问一条连续的级联反应链路上所有通路的延迟总和。
+   - 链路必须至少包含 2 条通路（即至少涉及 3 个指标）。
+   - 链路上的通路必须在网络中存在。
+   - 链路必须是简单路径（除非首尾指标相同形成简单循环通路，否则中间指标不能重复）。
+   - 如果首尾指标相同，则构成简单循环通路（除首尾外指标不重复，且至少包含 3 条通路）。
 
-约束条件：
-- 你的总测序次数（包括有效和无效测序）不能超过 {max_queries} 次
-- 在出具最终临床报告前，你必须至少完成 2 次有效的靶向区间测序
-- 如果报告结论错误、测序超过限制次数、或在测序次数不足时提前出具报告，筛查任务将失败
+2. **提交诊断**：当你有足够信心时，提交目标通路的反应延迟结果。
+   - 你必须至少完成 3 次有效查询后才能提交答案。
+   - 你最多可以进行 {Q} 次有效查询。
+   - 结果错误则诊断失败。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。
 
-每次只能进行一个操作。请使用以下 XML 格式：
+- **链路查询**（例如查询链路 1->2->3->4）：
+<query_path>1,2,3,4</query_path>
 
-- 靶向区间测序（例如从第 5 位点开始测序）：
-<query_range>5</query_range>
+- **提交诊断**（例如认为目标通路延迟为 5 毫秒）：
+<answer>5</answer>
 
-- 提交最终临床报告（例如认为突变位点总数是 8）：
-<answer>8</answer>
-
-请合理规划你的测序策略，用尽可能少的试剂消耗准确找到临床答案。
+注意：
+- 链路指标用英文逗号分隔，编号必须在 1 到 {n} 之间。
+- 非法查询（通路不存在、链路不简单、长度不足等）不会返回有效信息，也不会影响查询次数，但仍请仔细检查。
+- 你需要通过尽可能少的查询次数推断出目标通路的反应延迟。
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Let's perform a "Genetic Mutation Loci Screening" task. Here are the rules:
+[Medical Scenario]
+Welcome to the "Medical Biochemical Conduction Analysis System". This system is used to determine the reaction delay of specific physiological metabolic pathways.
 
-A patient's critical target gene sequence contains {n} consecutive testing loci, where each locus is either mutated (1) or normal (0). Your goal is to infer the total number of mutated loci in this sequence.
+The system features a biochemical network model with {n} biochemical indicators/organs (numbered 1 to {n}) and several metabolic pathways. The network structure is public:
+{edges_info}
 
-You can perform two types of operations:
+Target pathway for determination: {target_edge}
 
-1. Targeted Range Sequencing: Choose a starting locus number l (integer), and I will return the count of mutated loci within {k} consecutive loci starting from locus l. Note:
-   - The valid range for starting locus l is 1 to {max_start} (i.e., {n} - {k} + 1)
-   - If the starting locus is out of range, the testing equipment will return an error, but it still counts toward your reagent consumption limit
-   - The return value is an integer between 0 and {k}
+The reaction delay (in milliseconds) of each metabolic pathway is an unknown positive integer in the range [{L}, {U}]. Your task is to accurately infer the reaction delay of the target pathway.
 
-2. Final Clinical Report: When you believe you have gathered enough sequencing information, submit your final conclusion for the total number of mutated loci in the sequence.
+1. **Link Query**: You can ask for the total delay of all pathways on a continuous cascade reaction link.
+   - The link must contain at least 2 pathways (i.e., at least 3 indicators).
+   - All pathways in the link must exist in the network.
+   - The link must be a simple path (no repeated intermediate indicators, unless the first and last indicators are the same forming a simple cycle).
+   - If the first and last indicators are the same, it forms a simple cycle (no repeated indicators except endpoints, at least 3 pathways).
 
-Constraints:
-- Your total number of sequencing tests (including valid and invalid ones) cannot exceed {max_queries}
-- Before issuing your final clinical report, you must complete at least 2 valid targeted range sequencing tests
-- The task fails if your conclusion is incorrect, you exceed the testing limit, or you issue the report prematurely with insufficient testing
+2. **Submit Diagnosis**: When you are confident, submit the reaction delay of the target pathway.
+   - You must complete at least 3 valid queries before submitting.
+   - You can perform at most {Q} valid queries.
+   - An incorrect answer results in diagnosis failure.
 
-## Query and Answer Format (strictly required)
+Each operation must contain only one tag.
 
-You can only perform one operation at a time. Use the following XML format:
+- **Link Query** (e.g., query link 1->2->3->4):
+<query_path>1,2,3,4</query_path>
 
-- Targeted Range Sequencing (e.g., sequencing range starting at locus 5):
-<query_range>5</query_range>
+- **Submit Diagnosis** (e.g., if you think the target pathway delay is 5 ms):
+<answer>5</answer>
 
-- Submit Final Clinical Report (e.g., if you believe the total mutated loci is 8):
-<answer>8</answer>
-
-Plan your sequencing strategy wisely to accurately reach a clinical conclusion with minimal reagent consumption.
+Notes:
+- Link indicators are separated by commas, IDs must be between 1 and {n}.
+- Invalid queries (non-existent pathways, non-simple links, insufficient length, etc.) will not return valid information and will not count towards your query limit, but please still check carefully.
+- You need to infer the target pathway reaction delay with as few queries as possible.
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-我们来执行一项"知识盲区精准诊断"任务，规则如下：
+欢迎使用“教育图谱学时规划系统”。本系统协助评估完成进阶学习所需的标准时间。
 
-某学科的核心课程被划分为 {n} 个连续的知识模块，学生对每个模块的掌握状态仅为存在盲区（1）或已掌握（0）。你的目标是推断出该学生存在盲区的知识模块总数。
+系统载入了知识图谱，包含 {n} 个知识模块（编号 1 到 {n}）及若干条学习关联路径。图谱结构是公开的：
+{edges_info}
 
-你可以进行以下两类操作：
+目标评估路径：{target_edge}
 
-1. 区间形成性测试：选择一个起始模块编号 l（整数），我会返回从模块 l 开始、连续 {k} 个模块中存在盲区的数量。注意：
-   - 起始编号 l 的有效范围是 1 到 {max_start}（即 {n} - {k} + 1）
-   - 如果起始编号超出有效范围，系统将返回错误提示，但该次测试仍会计入测试次数
-   - 返回值是一个 0 到 {k} 之间的整数
+掌握每条学习关联路径所需的标准学时（小时）为未知正整数，范围在 [{L}, {U}] 之间。你的任务是推断出目标路径的确切学时。
 
-2. 最终学情评估：当你认为已经收集到足够的数据后，可以提交你对该生知识盲区总数的最终评估。
+1. **轨迹查询**：你可以询问一条连续学习轨迹上所有路径的学时总和。
+   - 轨迹必须至少包含 2 条学习路径（即至少覆盖 3 个知识模块）。
+   - 轨迹上的路径必须在图谱中存在。
+   - 轨迹必须是简单路径（除非首尾模块相同形成简单闭环复习，否则中间模块不能重复）。
+   - 如果首尾模块相同，则构成简单闭环复习（除首尾外模块不重复，且至少包含 3 条路径）。
 
-约束条件：
-- 你的总测试次数（包括有效和无效测试）不能超过 {max_queries} 次
-- 在进行最终学情评估前，你必须至少完成 2 次有效的区间形成性测试
-- 如果评估结果错误、测试超过限制次数、或在测试次数不足时提前评估，诊断任务将失败
+2. **提交规划**：当你有足够信心时，提交目标路径的学时评估结果。
+   - 你必须至少完成 3 次有效查询后才能提交答案。
+   - 你最多可以进行 {Q} 次有效查询。
+   - 结果错误则规划失败。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。
 
-每次只能进行一个操作。请使用以下 XML 格式：
+- **轨迹查询**（例如查询轨迹 1->2->3->4）：
+<query_path>1,2,3,4</query_path>
 
-- 区间形成性测试（例如从第 5 模块开始测试）：
-<query_range>5</query_range>
+- **提交规划**（例如认为目标路径需 5 小时）：
+<answer>5</answer>
 
-- 提交最终学情评估（例如认为知识盲区总数是 8）：
-<answer>8</answer>
-
-请合理规划你的测试策略，用尽可能少的测试次数准确完成学情诊断，以减轻学生负担。
+注意：
+- 轨迹模块用英文逗号分隔，编号必须在 1 到 {n} 之间。
+- 非法查询（路径不存在、轨迹不简单、跨度不足等）不会返回有效信息，也不会影响查询次数，但仍请仔细检查。
+- 你需要通过尽可能少的查询次数推断出目标路径的学时。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's conduct a "Knowledge Gap Precision Diagnosis" task. Here are the rules:
+Welcome to the "Educational Knowledge Graph Study Time Planning System". This system assists in evaluating the standard time required to complete advanced learning.
 
-A core curriculum is divided into {n} consecutive knowledge modules. The student's mastery status for each module is either unmastered (1) or mastered (0). Your goal is to infer the total number of unmastered knowledge modules for this student.
+The system loads a knowledge graph with {n} knowledge modules (numbered 1 to {n}) and several learning association paths. The graph structure is public:
+{edges_info}
 
-You can perform two types of operations:
+Target path for evaluation: {target_edge}
 
-1. Range Formative Assessment: Choose a starting module number l (integer), and I will return the number of unmastered modules within {k} consecutive modules starting from module l. Note:
-   - The valid range for starting module l is 1 to {max_start} (i.e., {n} - {k} + 1)
-   - If the starting module is out of range, the system will return an error prompt, but it still counts toward your assessment limit
-   - The return value is an integer between 0 and {k}
+The standard study time (in hours) required to master each learning association path is an unknown positive integer in the range [{L}, {U}]. Your task is to infer the exact study time of the target path.
 
-2. Final Academic Evaluation: When you believe you have gathered enough data, submit your final evaluation of the total number of unmastered modules.
+1. **Trajectory Query**: You can ask for the total study time of all paths on a continuous learning trajectory.
+   - The trajectory must contain at least 2 paths (i.e., at least 3 modules).
+   - All paths in the trajectory must exist in the graph.
+   - The trajectory must be a simple path (no repeated intermediate modules, unless the first and last modules are the same forming a simple review cycle).
+   - If the first and last modules are the same, it forms a simple review cycle (no repeated modules except endpoints, at least 3 paths).
 
-Constraints:
-- Your total number of assessments (including valid and invalid ones) cannot exceed {max_queries}
-- Before submitting your final academic evaluation, you must complete at least 2 valid range formative assessments
-- The task fails if your evaluation is incorrect, you exceed the assessment limit, or you evaluate prematurely with insufficient assessments
+2. **Submit Plan**: When you are confident, submit the study time evaluation of the target path.
+   - You must complete at least 3 valid queries before submitting.
+   - You can perform at most {Q} valid queries.
+   - An incorrect answer results in planning failure.
 
-## Query and Answer Format (strictly required)
+Each operation must contain only one tag.
 
-You can only perform one operation at a time. Use the following XML format:
+- **Trajectory Query** (e.g., query trajectory 1->2->3->4):
+<query_path>1,2,3,4</query_path>
 
-- Range Formative Assessment (e.g., assessing range starting at module 5):
-<query_range>5</query_range>
+- **Submit Plan** (e.g., if you think the target path requires 5 hours):
+<answer>5</answer>
 
-- Submit Final Academic Evaluation (e.g., if you believe the total unmastered modules is 8):
-<answer>8</answer>
-
-Plan your assessment strategy wisely to accurately diagnose the academic status with as few assessments as possible to reduce the student's burden.
+Notes:
+- Trajectory modules are separated by commas, IDs must be between 1 and {n}.
+- Invalid queries (non-existent paths, non-simple trajectories, insufficient span, etc.) will not return valid information and will not count towards your query limit, but please still check carefully.
+- You need to infer the target path study time with as few queries as possible.
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-我们来执行一项"流水线产品质量抽检"任务，规则如下：
+欢迎使用“工业流水线能耗监测系统”。本系统专门用于监控生产车间各流转环节的能源消耗。
 
-生产线上有一批包含 {n} 个连续工件的流水线批次，每个工件的质量状态仅为次品（1）或合格（0）。你的目标是推断出这批工件中次品的总数。
+系统中配置了一个车间流水线模型，包含 {n} 个生产工位（编号 1 到 {n}）和若干条传输流水线。模型结构是公开的：
+{edges_info}
 
-你可以进行以下两类操作：
+目标监测流水线：{target_edge}
 
-1. 区间批量光检：选择一个起始工件编号 l（整数），我会返回从工件 l 开始、连续 {k} 个工件中的次品数量。注意：
-   - 起始编号 l 的有效范围是 1 到 {max_start}（即 {n} - {k} + 1）
-   - 如果起始编号超出有效范围，检测设备将报警，但该次扫描仍会计入设备损耗次数
-   - 返回值是一个 0 到 {k} 之间的整数
+每条传输流水线的流转能耗（千瓦时）为未知正整数，范围在 [{L}, {U}] 之间。你的任务是推测出目标流水线的准确能耗。
 
-2. 最终质检签批：当你认为已经收集到足够的抽检数据后，可以提交你对整批工件次品总数的最终质检结论。
+1. **流程查询**：你可以询问一条连续工艺流程上所有流水线的能耗总计。
+   - 流程必须至少包含 2 条流水线（即经过至少 3 个生产工位）。
+   - 流程上的流水线必须在模型中存在。
+   - 流程必须是简单路径（除非首尾工位相同形成简单循环加工，否则中间工位不能重复经过）。
+   - 如果首尾工位相同，则构成简单循环加工（除首尾外工位不重复，且至少包含 3 条流水线）。
 
-约束条件：
-- 你的总扫描次数（包括有效和无效扫描）不能超过 {max_queries} 次
-- 在进行最终质检签批前，你必须至少完成 2 次有效的区间批量光检
-- 如果质检结论错误、扫描超过限制次数、或在扫描次数不足时提前签批，质检任务将失败
+2. **提交监测**：当你有足够信心时，提交目标流水线的能耗数据。
+   - 你必须至少完成 3 次有效查询后才能提交答案。
+   - 你最多可以进行 {Q} 次有效查询。
+   - 结果错误则监测失败。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。
 
-每次只能进行一个操作。请使用以下 XML 格式：
+- **流程查询**（例如查询流程 1->2->3->4）：
+<query_path>1,2,3,4</query_path>
 
-- 区间批量光检（例如从第 5 工件开始扫描）：
-<query_range>5</query_range>
+- **提交监测**（例如认为目标流水线能耗为 5 千瓦时）：
+<answer>5</answer>
 
-- 提交最终质检签批（例如认为次品总数是 8）：
-<answer>8</answer>
-
-请合理规划你的抽检策略，用尽可能少的设备扫描次数准确完成质量排查。
+注意：
+- 流程工位用英文逗号分隔，编号必须在 1 到 {n} 之间。
+- 非法查询（流水线不存在、流程不简单、长度不足等）不会返回有效信息，也不会影响查询次数，但仍请仔细检查。
+- 你需要通过尽可能少的查询次数推断出目标流水线的能耗。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industry Scenario]
-Let's perform an "Assembly Line Quality Sampling" task. Here are the rules:
+Welcome to the "Industrial Assembly Line Energy Monitoring System". This system is dedicated to monitoring the energy consumption of transfer steps in the production workshop.
 
-An assembly line has produced a batch of {n} consecutive components, where each component's quality status is either defective (1) or qualified (0). Your goal is to infer the total number of defective components in this batch.
+The system is configured with a workshop assembly model, containing {n} production stations (numbered 1 to {n}) and several transfer assembly lines. The model structure is public:
+{edges_info}
 
-You can perform two types of operations:
+Target assembly line for monitoring: {target_edge}
 
-1. Range Batch Optical Inspection: Choose a starting component number l (integer), and I will return the number of defective components within {k} consecutive components starting from component l. Note:
-   - The valid range for starting component l is 1 to {max_start} (i.e., {n} - {k} + 1)
-   - If the starting component is out of range, the inspection equipment will trigger an alarm, but it still counts toward your scan limit
-   - The return value is an integer between 0 and {k}
+The transfer energy consumption (in kWh) of each assembly line is an unknown positive integer in the range [{L}, {U}]. Your task is to deduce the exact energy consumption of the target assembly line.
 
-2. Final Quality Certification: When you believe you have gathered enough sampling data, submit your final conclusion on the total number of defective components for the entire batch.
+1. **Flow Query**: You can ask for the total energy consumption of all assembly lines on a continuous process flow.
+   - The flow must contain at least 2 assembly lines (i.e., passing through at least 3 stations).
+   - All assembly lines in the flow must exist in the model.
+   - The flow must be a simple path (no repeated intermediate stations, unless the first and last stations are the same forming a simple cyclic process).
+   - If the first and last stations are the same, it forms a simple cyclic process (no repeated stations except endpoints, at least 3 assembly lines).
 
-Constraints:
-- Your total number of scans (including valid and invalid ones) cannot exceed {max_queries}
-- Before issuing your final quality certification, you must complete at least 2 valid range batch optical inspections
-- The task fails if your conclusion is incorrect, you exceed the scan limit, or you certify prematurely with insufficient scans
+2. **Submit Monitoring**: When you are confident, submit the energy consumption data of the target assembly line.
+   - You must complete at least 3 valid queries before submitting.
+   - You can perform at most {Q} valid queries.
+   - An incorrect answer results in monitoring failure.
 
-## Query and Answer Format (strictly required)
+Each operation must contain only one tag.
 
-You can only perform one operation at a time. Use the following XML format:
+- **Flow Query** (e.g., query flow 1->2->3->4):
+<query_path>1,2,3,4</query_path>
 
-- Range Batch Optical Inspection (e.g., scanning range starting at component 5):
-<query_range>5</query_range>
+- **Submit Monitoring** (e.g., if you think the target energy consumption is 5 kWh):
+<answer>5</answer>
 
-- Submit Final Quality Certification (e.g., if you believe the total defective components is 8):
-<answer>8</answer>
-
-Plan your sampling strategy wisely to accurately complete the quality screening with as few equipment scans as possible.
+Notes:
+- Flow stations are separated by commas, IDs must be between 1 and {n}.
+- Invalid queries (non-existent assembly lines, non-simple flows, insufficient length, etc.) will not return valid information and will not count towards your query limit, but please still check carefully.
+- You need to infer the target assembly line energy consumption with as few queries as possible.
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-我们来执行一项"商业合同合规性审查"任务，规则如下：
+欢迎使用“司法程序流转周期审计系统”。本系统负责核查案件在各法律程序阶段间的流转效率。
 
-一份复杂的商业合同包含了 {n} 个连续的条款，每个条款的合规状态仅为存在法律风险（1）或合法合规（0）。你的目标是推断出这份合同中存在风险的条款总数。
+系统记录了一套司法流转网络，包含 {n} 个法律程序阶段（编号 1 到 {n}）及若干个案件流转环节。网络结构是公开的：
+{edges_info}
 
-你可以进行以下两类操作：
+目标审计环节：{target_edge}
 
-1. 条款区间审查：选择一个起始条款编号 l（整数），我会返回从条款 l 开始、连续 {k} 个条款中的风险条款数量。注意：
-   - 起始编号 l 的有效范围是 1 到 {max_start}（即 {n} - {k} + 1）
-   - 如果起始编号超出有效范围，审查系统将报错，但该次操作仍会计入审查调用次数
-   - 返回值是一个 0 到 {k} 之间的整数
+每个案件流转环节的审查周期（天）为未知正整数，周期范围在 [{L}, {U}] 之间。你的使命是查明目标环节的具体审查天数。
 
-2. 最终法律意见书：当你认为已经收集到足够的审查证据后，可以提交你对合同风险条款总数的最终认定结论。
+1. **序列查询**：你可以调阅一段连续司法流转序列上所有环节的审查周期总和。
+   - 序列必须至少包含 2 个流转环节（即覆盖至少 3 个程序阶段）。
+   - 序列上的环节必须在网络中存在。
+   - 序列必须是简单路径（除非首尾阶段相同形成简单发回重审，否则中间阶段不能重复进入）。
+   - 如果首尾阶段相同，则构成简单发回重审（除首尾外阶段不重复，且至少包含 3 个环节）。
 
-约束条件：
-- 你的总审查次数（包括有效和无效审查）不能超过 {max_queries} 次
-- 在出具最终法律意见书前，你必须至少完成 2 次有效的条款区间审查
-- 如果认定结论错误、审查超过限制次数、或在审查次数不足时提前出具意见书，审查任务将失败
+2. **提交审计**：当你有足够确凿的证据时，提交目标环节的周期结论。
+   - 你必须至少完成 3 次有效查询后才能提交答案。
+   - 你最多可以发起 {Q} 次有效查询。
+   - 结论错误则审计失败。
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。
 
-每次只能进行一个操作。请使用以下 XML 格式：
+- **序列查询**（例如调阅序列 1->2->3->4）：
+<query_path>1,2,3,4</query_path>
 
-- 条款区间审查（例如从第 5 条款开始审查）：
-<query_range>5</query_range>
+- **提交审计**（例如认定目标环节周期为 5 天）：
+<answer>5</answer>
 
-- 提交最终法律意见书（例如认为风险条款总数是 8）：
-<answer>8</answer>
-
-请合理规划你的尽调策略，用尽可能少的审查资源准确完成合同合规排查。
+注意：
+- 序列阶段用英文逗号分隔，阶段编号必须在 1 到 {n} 之间。
+- 非法查询（环节不存在、序列不简单、跨度不足等）不会返回有效信息，也不会占用查询额度，但仍请仔细检查。
+- 你需要通过尽可能少的查询次数查明目标环节的审查周期。
 """
 
     contextualized_rule_en_5 = """\
 [Law Scenario]
-Let's conduct a "Commercial Contract Compliance Review" task. Here are the rules:
+Welcome to the "Judicial Process Transfer Cycle Audit System". This system is responsible for verifying the transfer efficiency of cases between various legal procedure stages.
 
-A lengthy commercial contract contains {n} consecutive clauses, where the compliance status of each clause is either at legal risk (1) or legally compliant (0). Your goal is to infer the total number of risky clauses in this contract.
+The system records a judicial transfer network, containing {n} legal procedure stages (numbered 1 to {n}) and several case transfer steps. The network structure is public:
+{edges_info}
 
-You can perform two types of operations:
+Target step for audit: {target_edge}
 
-1. Range Clause Due Diligence: Choose a starting clause number l (integer), and I will return the number of risky clauses within {k} consecutive clauses starting from clause l. Note:
-   - The valid range for starting clause l is 1 to {max_start} (i.e., {n} - {k} + 1)
-   - If the starting clause is out of range, the review system will report an error, but it still counts toward your review billable limit
-   - The return value is an integer between 0 and {k}
+The review cycle (in days) of each case transfer step is an unknown positive integer in the range [{L}, {U}]. Your mission is to ascertain the exact review days of the target step.
 
-2. Final Legal Opinion: When you believe you have gathered enough review evidence, submit your final conclusion on the total number of risky clauses in the contract.
+1. **Sequence Query**: You can request the total review cycle of all steps on a continuous judicial transfer sequence.
+   - The sequence must contain at least 2 transfer steps (i.e., covering at least 3 stages).
+   - All steps in the sequence must exist in the network.
+   - The sequence must be a simple path (no repeated intermediate stages, unless the first and last stages are the same forming a simple remand for retrial).
+   - If the first and last stages are the same, it forms a simple remand for retrial (no repeated stages except endpoints, at least 3 steps).
 
-Constraints:
-- Your total number of reviews (including valid and invalid ones) cannot exceed {max_queries}
-- Before issuing your final legal opinion, you must complete at least 2 valid range clause due diligence operations
-- The task fails if your conclusion is incorrect, you exceed the review limit, or you issue the opinion prematurely with insufficient reviews
+2. **Submit Audit**: When you have sufficiently conclusive evidence, submit the cycle conclusion of the target step.
+   - You must complete at least 3 valid queries before submitting.
+   - You can initiate at most {Q} valid queries.
+   - An incorrect conclusion results in audit failure.
 
-## Query and Answer Format (strictly required)
+Each operation must contain only one tag.
 
-You can only perform one operation at a time. Use the following XML format:
+- **Sequence Query** (e.g., request sequence 1->2->3->4):
+<query_path>1,2,3,4</query_path>
 
-- Range Clause Due Diligence (e.g., reviewing range starting at clause 5):
-<query_range>5</query_range>
+- **Submit Audit** (e.g., if you conclude the target step cycle is 5 days):
+<answer>5</answer>
 
-- Submit Final Legal Opinion (e.g., if you believe the total risky clauses is 8):
-<answer>8</answer>
-
-Plan your due diligence strategy wisely to accurately complete the contract compliance screening with minimal review resources.
+Notes:
+- Sequence stages are separated by commas, stage IDs must be between 1 and {n}.
+- Invalid queries (non-existent steps, non-simple sequences, insufficient span, etc.) will not return valid information and will not consume your query quota, but please still check carefully.
+- You need to ascertain the target step review cycle with as few queries as possible.
 """
 
-    tags = ["answer", "query_range"]
+    tags = ["answer", "query_path"]
     
     reasoning_type = "演绎推理"
-    data_structure = "序列"
-
-    # 难度配置说明：
-    # 1 (简单)       - N=10, K=5, Q_max=2，最简单的完全覆盖
-    # 2 (中等偏下)   - N=12, K=4, Q_max=3，需要简单规划
-    # 3 (中等偏上)   - N=16, K=4, Q_max=4，标准分块查询
-    # 4 (较难)       - N=20, K=5, Q_max=4，需要优化查询位置
-    # 5 (难)         - N=24, K=6, Q_max=4，紧凑的查询预算
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 10,
-                "k": 5,
-                "sequence": "1,0,1,1,0,0,1,0,1,1",  # sum=6
+                "n": 4,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 1), (1, 3)],
+                "target_edge": (1, 3),
+                "weights": {(1, 2): 3, (2, 3): 4, (3, 4): 5, (4, 1): 2, (1, 3): 6},
+                "L": 1, "U": 9, "Q": 15
             },
             2: {
-                "n": 12,
-                "k": 4,
-                "sequence": "1,1,0,1,0,1,1,0,0,1,0,1",  # sum=7
+                "n": 5,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 1), (1, 3), (3, 5)],
+                "target_edge": (3, 5),
+                "weights": {(1, 2): 2, (2, 3): 5, (3, 4): 3, (4, 5): 7, (5, 1): 4, (1, 3): 6, (3, 5): 8},
+                "L": 1, "U": 9, "Q": 18
             },
             3: {
-                "n": 16,
-                "k": 4,
-                "sequence": "1,0,1,1,0,0,1,0,1,1,0,1,0,1,1,0",  # sum=9
+                "n": 6,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 1), (1, 3), (3, 5), (2, 4), (4, 6)],
+                "target_edge": (2, 4),
+                "weights": {(1, 2): 3, (2, 3): 5, (3, 4): 4, (4, 5): 6, (5, 6): 2, (6, 1): 7, 
+                           (1, 3): 8, (3, 5): 9, (2, 4): 5, (4, 6): 3},
+                "L": 1, "U": 9, "Q": 20
             },
             4: {
-                "n": 20,
-                "k": 5,
-                "sequence": "1,1,0,1,0,0,1,1,0,1,0,1,0,0,1,1,0,1,0,1",  # sum=11
+                "n": 7,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 1), 
+                         (1, 3), (3, 5), (5, 7), (2, 4), (4, 6), (6, 1)],
+                "target_edge": (4, 6),
+                "weights": {(1, 2): 4, (2, 3): 6, (3, 4): 3, (4, 5): 7, (5, 6): 5, (6, 7): 8, (7, 1): 2,
+                           (1, 3): 9, (3, 5): 4, (5, 7): 6, (2, 4): 5, (4, 6): 7, (6, 1): 3},
+                "L": 1, "U": 9, "Q": 22
             },
             5: {
-                "n": 24,
-                "k": 6,
-                "sequence": "1,0,1,1,0,1,0,1,0,1,1,0,1,0,0,1,1,0,1,0,1,1,0,1",  # sum=14
-            },
+                "n": 8,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 1),
+                         (1, 3), (3, 5), (5, 7), (7, 1), (2, 4), (4, 6), (6, 8), (8, 2), (1, 5), (2, 6)],
+                "target_edge": (1, 5),
+                "weights": {(1, 2): 5, (2, 3): 7, (3, 4): 4, (4, 5): 6, (5, 6): 8, (6, 7): 3, (7, 8): 5, (8, 1): 9,
+                           (1, 3): 6, (3, 5): 7, (5, 7): 4, (7, 1): 8, (2, 4): 5, (4, 6): 9, (6, 8): 6, (8, 2): 4,
+                           (1, 5): 7, (2, 6): 8},
+                "L": 1, "U": 9, "Q": 25
+            }
         },
         "en": {
             1: {
-                "n": 10,
-                "k": 5,
-                "sequence": "1,0,1,1,0,0,1,0,1,1",
+                "n": 4,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 1), (1, 3)],
+                "target_edge": (1, 3),
+                "weights": {(1, 2): 3, (2, 3): 4, (3, 4): 5, (4, 1): 2, (1, 3): 6},
+                "L": 1, "U": 9, "Q": 15
             },
             2: {
-                "n": 12,
-                "k": 4,
-                "sequence": "1,1,0,1,0,1,1,0,0,1,0,1",
+                "n": 5,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 1), (1, 3), (3, 5)],
+                "target_edge": (3, 5),
+                "weights": {(1, 2): 2, (2, 3): 5, (3, 4): 3, (4, 5): 7, (5, 1): 4, (1, 3): 6, (3, 5): 8},
+                "L": 1, "U": 9, "Q": 18
             },
             3: {
-                "n": 16,
-                "k": 4,
-                "sequence": "1,0,1,1,0,0,1,0,1,1,0,1,0,1,1,0",
+                "n": 6,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 1), (1, 3), (3, 5), (2, 4), (4, 6)],
+                "target_edge": (2, 4),
+                "weights": {(1, 2): 3, (2, 3): 5, (3, 4): 4, (4, 5): 6, (5, 6): 2, (6, 1): 7, 
+                           (1, 3): 8, (3, 5): 9, (2, 4): 5, (4, 6): 3},
+                "L": 1, "U": 9, "Q": 20
             },
             4: {
-                "n": 20,
-                "k": 5,
-                "sequence": "1,1,0,1,0,0,1,1,0,1,0,1,0,0,1,1,0,1,0,1",
+                "n": 7,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 1), 
+                         (1, 3), (3, 5), (5, 7), (2, 4), (4, 6), (6, 1)],
+                "target_edge": (4, 6),
+                "weights": {(1, 2): 4, (2, 3): 6, (3, 4): 3, (4, 5): 7, (5, 6): 5, (6, 7): 8, (7, 1): 2,
+                           (1, 3): 9, (3, 5): 4, (5, 7): 6, (2, 4): 5, (4, 6): 7, (6, 1): 3},
+                "L": 1, "U": 9, "Q": 22
             },
             5: {
-                "n": 24,
-                "k": 6,
-                "sequence": "1,0,1,1,0,1,0,1,0,1,1,0,1,0,0,1,1,0,1,0,1,1,0,1",
-            },
-        },
+                "n": 8,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 1),
+                         (1, 3), (3, 5), (5, 7), (7, 1), (2, 4), (4, 6), (6, 8), (8, 2), (1, 5), (2, 6)],
+                "target_edge": (1, 5),
+                "weights": {(1, 2): 5, (2, 3): 7, (3, 4): 4, (4, 5): 6, (5, 6): 8, (6, 7): 3, (7, 8): 5, (8, 1): 9,
+                           (1, 3): 6, (3, 5): 7, (5, 7): 4, (7, 1): 8, (2, 4): 5, (4, 6): 9, (6, 8): 6, (8, 2): 4,
+                           (1, 5): 7, (2, 6): 8},
+                "L": 1, "U": 9, "Q": 25
+            }
+        }
     }
 
     def __init__(self, config):
-        # 先设置占位符，等待 _initialize_game 填充
-        self._game_info = {}
-        self.query_count = 0
         self.valid_query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏参数和序列"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -486,175 +539,209 @@ Plan your due diligence strategy wisely to accurately complete the contract comp
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 解析序列
-        self.sequence = [int(x.strip()) for x in cfg["sequence"].split(",")]
-        self.n = cfg["n"]
-        self.k = cfg["k"]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["L"] = cfg["L"]
+        self._game_info["U"] = cfg["U"]
+        self._game_info["Q"] = cfg["Q"]
         
-        # 验证配置合法性
-        if len(self.sequence) != self.n:
-            raise ValueError(f"Sequence length mismatch: expected {self.n}, got {len(self.sequence)}")
-        if self.k > self.n or self.n % self.k != 0:
-            raise ValueError(f"Invalid K={self.k} for N={self.n}")
+        self.edges = cfg["edges"]
+        self.target_edge = cfg["target_edge"]
+        self.weights = cfg["weights"]
         
-        # 计算真实答案（序列中1的总数）
-        self.target_sum = sum(self.sequence)
+        self.edge_set = set()
+        for u, v in self.edges:
+            self.edge_set.add((u, v))
+            self.edge_set.add((v, u))
+            if (u, v) in self.weights:
+                self.weights[(v, u)] = self.weights[(u, v)]
+            elif (v, u) in self.weights:
+                self.weights[(u, v)] = self.weights[(v, u)]
         
-        # 计算最大查询次数和最大起点
-        self.max_queries = self.n // self.k
-        self.max_start = self.n - self.k + 1
+        edges_str_list = [f"({u}, {v})" for u, v in sorted(self.edges)]
+        if lang == "zh":
+            self._game_info["edges_info"] = "边：" + ", ".join(edges_str_list)
+            self._game_info["target_edge"] = f"({self.target_edge[0]}, {self.target_edge[1]})"
+        else:
+            self._game_info["edges_info"] = "Edges: " + ", ".join(edges_str_list)
+            self._game_info["target_edge"] = f"({self.target_edge[0]}, {self.target_edge[1]})"
+
+    def _is_valid_path(self, path: List[int]) -> Tuple[bool, str]:
+        lang = self.config.language
         
-        # 填充游戏信息用于格式化规则文本
-        self._game_info = {
-            "n": self.n,
-            "k": self.k,
-            "max_queries": self.max_queries,
-            "max_start": self.max_start,
-        }
+        if len(path) < 3:
+            if lang == "zh":
+                return False, "路径长度不足，至少需要3个节点（2条边）"
+            else:
+                return False, "Path too short, at least 3 nodes (2 edges) required"
         
-        # 初始化查询计数
-        self.query_count = 0
-        self.valid_query_count = 0
+        n = self._game_info["n"]
+        for node in path:
+            if node < 1 or node > n:
+                if lang == "zh":
+                    return False, f"节点 {node} 超出范围 [1, {n}]"
+                else:
+                    return False, f"Node {node} out of range [1, {n}]"
+        
+        for i in range(len(path) - 1):
+            if (path[i], path[i+1]) not in self.edge_set:
+                if lang == "zh":
+                    return False, f"边 ({path[i]}, {path[i+1]}) 不存在"
+                else:
+                    return False, f"Edge ({path[i]}, {path[i+1]}) does not exist"
+        
+        is_cycle = (path[0] == path[-1])
+        if is_cycle:
+            middle_nodes = path[1:-1]
+            if len(middle_nodes) != len(set(middle_nodes)):
+                if lang == "zh":
+                    return False, "路径不是简单环（中间节点有重复）"
+                else:
+                    return False, "Path is not a simple cycle (repeated intermediate nodes)"
+        else:
+            if len(path) != len(set(path)):
+                if lang == "zh":
+                    return False, "路径不是简单路径（节点有重复）"
+                else:
+                    return False, "Path is not simple (repeated nodes)"
+        
+        return True, ""
+
+    def _calculate_path_weight(self, path: List[int]) -> int:
+        total = 0
+        for i in range(len(path) - 1):
+            edge = (path[i], path[i+1])
+            total += self.weights[edge]
+        return total
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        # 检查是否满足最小查询次数要求
-        if self.valid_query_count < 2:
-            return False
+        lang = self.config.language
+        
+        if self.valid_query_count < 3:
+            if lang == "zh":
+                raise ValueError(f"至少需要3次有效查询后才能提交答案，当前有效查询次数：{self.valid_query_count}")
+            else:
+                raise ValueError(f"At least 3 valid queries required before submitting, current: {self.valid_query_count}")
         
         try:
             answer = int(parsed_info["answer"].strip())
-            return answer == self.target_sum
-        except (ValueError, KeyError):
-            return False
+        except ValueError:
+            if lang == "zh":
+                raise ValueError("答案格式错误，必须是整数")
+            else:
+                raise ValueError("Invalid answer format, must be an integer")
+        
+        target_weight = self.weights.get(self.target_edge) or self.weights.get((self.target_edge[1], self.target_edge[0]))
+        
+        return answer == target_weight
 
     def _cf_core_produce(self, parsed_info):
-        """原始的处理查询并生成响应逻辑"""
-        # 检查是否超过查询限制
-        if self.query_count >= self.max_queries:
-            if self.config.language == "zh":
-                raise ValueError(f"查询次数已达上限 {self.max_queries} 次。")
+        lang = self.config.language
+        
+        if "query_path" not in parsed_info:
+            if lang == "zh":
+                return "错误：未找到有效的查询标签"
             else:
-                raise ValueError(f"Query limit of {self.max_queries} has been reached.")
+                return "Error: No valid query tag found"
         
-        # 处理区间和查询
-        if "query_range" in parsed_info:
-            self.query_count += 1
-            
-            try:
-                start_pos = int(parsed_info["query_range"].strip())
-            except ValueError:
-                if self.config.language == "zh":
-                    return f"无效查询：起点位置必须是整数。（已使用 {self.query_count}/{self.max_queries} 次查询）"
-                else:
-                    return f"Invalid query: starting position must be an integer. (Query {self.query_count}/{self.max_queries} used)"
-            
-            # 检查起点是否在有效范围内
-            if start_pos < 1 or start_pos > self.max_start:
-                if self.config.language == "zh":
-                    return f"无效查询：起点 {start_pos} 超出有效范围 [1, {self.max_start}]。（已使用 {self.query_count}/{self.max_queries} 次查询）"
-                else:
-                    return f"Invalid query: starting position {start_pos} is out of valid range [1, {self.max_start}]. (Query {self.query_count}/{self.max_queries} used)"
-            
-            # 计算区间和（注意：位置从1开始，但数组索引从0开始）
-            range_sum = sum(self.sequence[start_pos - 1 : start_pos - 1 + self.k])
-            self.valid_query_count += 1
-            
-            if self.config.language == "zh":
-                return f"{range_sum}（已使用 {self.query_count}/{self.max_queries} 次查询）"
+        if self.valid_query_count >= self._game_info["Q"]:
+            if lang == "zh":
+                return f"错误：已达到最大查询次数限制 {self._game_info['Q']}"
             else:
-                return f"{range_sum} (Query {self.query_count}/{self.max_queries} used)"
+                return f"Error: Maximum query limit {self._game_info['Q']} reached"
         
-        else:
-            # 不应该到达这里，因为 parse 已经验证了标签
-            if self.config.language == "zh":
-                raise ValueError("无效的操作：未找到有效的查询标签。")
-            else:
-                raise ValueError("Invalid operation: no valid query tag found.")
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
-        # 遍历所有合法的起点位置
-        # 有效范围是 [1, max_start]
-        for start_pos in range(1, self.max_start + 1):
-            # 直接计算区间和，不通过 _cf_core_produce 以避免副作用（如增加查询计数）
-            # 注意：位置从1开始，但数组索引从0开始
-            range_sum = sum(self.sequence[start_pos - 1 : start_pos - 1 + self.k])
-            
-            # 构造返回值
-            # query 对应 parsed_info["query_range"] 的值
-            # answer 为该次查询的正确数值结果字符串
-            queries.append({
-                "query": str(start_pos),
-                "answer": str(range_sum)
-            })
-            
-        return queries
-
-    def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        # 若 correct 是纯整数字符串
-        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
-            return str(int(correct) + 1)
-        
-        # 替换关键词（中文）
-        if "是" in correct:
-            return correct.replace("是", "否")
-        if "否" in correct:
-            return correct.replace("否", "是")
-        
-        # 替换关键词（英文，忽略大小写但保持原格式不太容易完全精确，这里按常见情况处理）
-        # 简单处理：如果完全匹配 "Yes" 或 "No"
-        if correct.lower() == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if correct.lower() == "no":
-            return "Yes" if correct[0].isupper() else "yes"
-            
-        # 都不匹配，追加 _WRONG
-        return correct + "_WRONG"
-
-    def step(self, response: str) -> "GameState":
-        """重写 step 方法以添加额外的验证逻辑"""
         try:
-            parsed_info = self.parse(response)
-            
-            if "answer" in parsed_info:
-                # 检查是否满足最小查询次数
-                if self.valid_query_count < 2:
-                    if self.config.language == "zh":
-                        self.state.set_state("failed", "insufficient queries")
-                        self.state.add_message("user", f"提交失败：在提交最终答案前，你必须至少完成 2 次有效的区间和查询。当前有效查询次数：{self.valid_query_count}")
-                    else:
-                        self.state.set_state("failed", "insufficient queries")
-                        self.state.add_message("user", f"Submission failed: you must complete at least 2 valid range sum queries before submitting. Current valid queries: {self.valid_query_count}")
-                    return self.state
-                
-                # 评估答案
-                is_success = self.evaluate(parsed_info)
-                if is_success:
-                    res = "答案正确！" if self.config.language == "zh" else "Correct answer!"
-                    self.state.set_state("success", "success")
-                    self.state.add_message("user", res)
-                else:
-                    res = f"答案错误。正确答案是 {self.target_sum}。" if self.config.language == "zh" else f"Incorrect answer. The correct answer is {self.target_sum}."
-                    self.state.set_state("failed", "incorrect answer")
-                    self.state.add_message("user", res)
+            path_str = parsed_info["query_path"].strip()
+            path = [int(x.strip()) for x in path_str.split(",")]
+        except:
+            if lang == "zh":
+                return "错误：路径格式无效，应为用逗号分隔的节点编号"
             else:
-                # 处理查询
-                game_response = self.produce_response(parsed_info)
-                self.state.add_message("user", game_response)
-                
-        except Exception as e:
-            self.state.set_state("failed", str(e))
+                return "Error: Invalid path format, should be comma-separated node IDs"
         
-        return self.state
+        is_valid, error_msg = self._is_valid_path(path)
+        if not is_valid:
+            if lang == "zh":
+                return f"无效查询：{error_msg}"
+            else:
+                return f"Invalid query: {error_msg}"
+        
+        self.valid_query_count += 1
+        
+        weight_sum = self._calculate_path_weight(path)
+        
+        if lang == "zh":
+            return f"路径权重和：{weight_sum}（有效查询次数：{self.valid_query_count}/{self._game_info['Q']}）"
+        else:
+            return f"Path weight sum: {weight_sum} (Valid queries: {self.valid_query_count}/{self._game_info['Q']})"
+
+    def get_all_possible_queries(self) -> List[Dict]:
+        results = []
+        n = self._game_info["n"]
+        lang = self.config.language
+        
+        adj = {i: [] for i in range(1, n + 1)}
+        for u, v in self.edge_set:
+            adj[u].append(v)
+            
+        def dfs(current_path):
+            if len(results) > 10000:
+                return
+                
+            curr_node = current_path[-1]
+            
+            if len(current_path) >= 3:
+                path_str = ",".join(map(str, current_path))
+                weight_sum = self._calculate_path_weight(current_path)
+                
+                if lang == "zh":
+                    ans = f"路径权重和：{weight_sum}"
+                else:
+                    ans = f"Path weight sum: {weight_sum}"
+                
+                results.append({
+                    "query": f"<query_path>{path_str}</query_path>",
+                    "answer": ans
+                })
+            
+            for neighbor in adj[curr_node]:
+                if neighbor == current_path[0]:
+                    if len(current_path) >= 3:
+                        cycle_path = current_path + [neighbor]
+                        path_str = ",".join(map(str, cycle_path))
+                        weight_sum = self._calculate_path_weight(cycle_path)
+                        
+                        if lang == "zh":
+                            ans = f"路径权重和：{weight_sum}"
+                        else:
+                            ans = f"Path weight sum: {weight_sum}"
+                        
+                        results.append({
+                            "query": f"<query_path>{path_str}</query_path>",
+                            "answer": ans
+                        })
+                
+                elif neighbor not in current_path:
+                    dfs(current_path + [neighbor])
+        
+        for start_node in range(1, n + 1):
+            dfs([start_node])
+            
+        return results
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        import re as _re
+        
+        
+        num_match = _re.search(r'(?:Path weight sum|路径权重和)[：:]\s*(\d+)', correct)
+        if num_match:
+            original_val = int(num_match.group(1))
+            wrong_val = original_val + random.choice([1, 2, -1, -2])
+            if wrong_val < self._game_info["L"]:
+                wrong_val = original_val + 2
+            return correct.replace(str(original_val), str(wrong_val), 1)
+        
+        stripped = correct.strip()
+        if stripped.isdigit() or (stripped.startswith('-') and stripped[1:].isdigit()):
+            return str(int(stripped) + 1)
+        
+        return correct + " [INCORRECT]"

@@ -1,924 +1,657 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   节点属性：某给定节点的属性值是什么
-# ============================================================
-
-import re
-from typing import Dict, List, Tuple, Set
 from .base import Game
+import re
+import itertools
+import random as _random
 
-
-class TreeAttributeGame(Game):
+class EquivalenceClassGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"树节点属性推理"游戏。规则如下：
+我们现在来玩一个"等价类划分推理"游戏，规则如下：
 
-## 游戏设定
+游戏设定了一个有限集合 S = {{1, 2, ..., {n}}}。这个集合被一个未知的等价关系划分为若干个不相交的等价类。等价关系满足自反性、对称性和传递性，每个元素恰好属于一个等价类。
 
-给定一棵有根树，共有 {n} 个节点，编号为 1 到 {n}，根节点为 {root}。
+你的目标是通过查询推断出完整的等价类划分。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据真实设定如实回答：
 
-对于任一节点 u，定义以下特征：
-- Depth(u)：节点 u 到根节点的边数（根节点为 0）
-- Child(u)：节点 u 的直接子节点数量
-- Subtree(u)：以 u 为根的子树节点总数（包含 u 自身）
-- Leaf(u)：以 u 为根的子树中叶子节点（无子节点的节点）的数量
+1. 两元素等价判定（类型 A）：询问编号 i 和 j 是否属于同一等价类（要求 i 小于 j）。回答"是"或"否"。
+2. 子集内等价类数量（类型 B）：询问给定子集中包含多少个不同的等价类。回答一个整数。
+3. 子集中与锚等价的数量（类型 C）：询问给定子集中有多少个元素与指定的锚元素属于同一等价类（含锚本身）。回答一个整数。
 
-记特征向量 x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u))，其每个分量在模 5 意义下取值（即取值范围为 0 到 4）。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-存在一个隐藏的参数向量 c = (c0, c1, c2, c3, c4)，每个分量也在模 5 意义下取值。节点的属性值定义为：
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 游戏目标
+- 两元素等价判定（例如问编号 2 和 5 是否等价）：
+<query_pair>2,5</query_pair>
 
-已指定目标节点为 {target}。你的任务是推断出目标节点的属性值 Attr({target})。
+- 子集内等价类数量（例如问子集 {{1,3,5}} 中有多少个等价类）：
+<query_subset_count>1,3,5</query_subset_count>
 
-## 可用操作
+- 子集中与锚等价的数量（例如问子集 {{2,4,6,8}} 中有多少个与锚 4 等价）：
+<query_anchor>4|2,4,6,8</query_anchor>
 
-你可以进行以下两种查询：
+提交最终答案时，必须列出所有等价类，每个等价类用花括号包围，编号用逗号隔开且按递增顺序排列，等价类之间用竖线隔开，格式如下：
 
-1. **特征查询**（不计入查询次数）：查询任意节点 u 的特征值，返回 (Depth(u), Child(u), Subtree(u), Leaf(u))。
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **属性查询**（计入查询次数）：查询任意节点 u（u 不能是目标节点 {target}）的属性值，返回 Attr(u)，取值为 0 到 4 之间的整数。你最多可以进行 {max_queries} 次属性查询。
-
-## 查询格式
-
-- 特征查询（例如查询节点 3）：
-<query_feature>3</query_feature>
-
-- 属性查询（例如查询节点 5）：
-<query_attribute>5</query_attribute>
-
-## 提交答案
-
-当你收集到足够信息后，提交你对目标节点属性值的预测（必须是 0 到 4 之间的整数）：
-
-<answer>2</answer>
-
-注意：
-- 树的结构在游戏开始时已知（你可以通过特征查询获取）
-- 属性查询有次数限制，请谨慎使用
-- 不能对目标节点进行属性查询
-- 答案格式错误或答案错误都会导致游戏失败
+注意：等价类的顺序不影响判定，但每个等价类内的编号必须递增排列。
 """
 
     game_rule_en = """\
-Let's play a "Tree Node Attribute Inference" game. Here are the rules:
+Let's play an "Equivalence Class Partition Inference" game. Here are the rules:
 
-## Game Setup
+There is a finite set S = {{1, 2, ..., {n}}}. This set is partitioned by an unknown equivalence relation into several disjoint equivalence classes. The equivalence relation satisfies reflexivity, symmetry, and transitivity, and each element belongs to exactly one equivalence class.
 
-Given a rooted tree with {n} nodes, numbered from 1 to {n}, with root node {root}.
+Your goal is to infer the complete equivalence class partition through queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully:
 
-For any node u, we define the following features:
-- Depth(u): Number of edges from node u to the root (root has depth 0)
-- Child(u): Number of direct children of node u
-- Subtree(u): Total number of nodes in the subtree rooted at u (including u itself)
-- Leaf(u): Number of leaf nodes (nodes with no children) in the subtree rooted at u
+1. Pairwise Equivalence Check (Type A): Ask if elements i and j belong to the same equivalence class (requires i less than j). Answer "Yes" or "No".
+2. Subset Class Count (Type B): Ask how many distinct equivalence classes exist in a given subset. Answer an integer.
+3. Anchor Equivalence Count (Type C): Ask how many elements in a given subset belong to the same equivalence class as a specified anchor element (including the anchor itself). Answer an integer.
 
-Let the feature vector x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u)), where each component is taken modulo 5 (values from 0 to 4).
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-There exists a hidden parameter vector c = (c0, c1, c2, c3, c4), with each component also in modulo 5. The attribute value of a node is defined as:
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+Each query must contain only one tag. Use the following XML format:
 
-## Game Objective
+- Pairwise Equivalence Check (e.g., asking if 2 and 5 are equivalent):
+<query_pair>2,5</query_pair>
 
-The target node is {target}. Your task is to infer the attribute value Attr({target}).
+- Subset Class Count (e.g., asking how many classes in subset {{1,3,5}}):
+<query_subset_count>1,3,5</query_subset_count>
 
-## Available Operations
+- Anchor Equivalence Count (e.g., asking how many in subset {{2,4,6,8}} are equivalent to anchor 4):
+<query_anchor>4|2,4,6,8</query_anchor>
 
-You can perform the following two types of queries:
+When submitting the final answer, list all equivalence classes with each class enclosed in curly braces, elements comma-separated in ascending order, and classes separated by vertical bars:
 
-1. **Feature Query** (does not count toward query limit): Query the feature values of any node u, returns (Depth(u), Child(u), Subtree(u), Leaf(u)).
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **Attribute Query** (counts toward query limit): Query the attribute value of any node u (u cannot be the target node {target}), returns Attr(u), an integer from 0 to 4. You can perform at most {max_queries} attribute queries.
-
-## Query Format
-
-- Feature Query (e.g., querying node 3):
-<query_feature>3</query_feature>
-
-- Attribute Query (e.g., querying node 5):
-<query_attribute>5</query_attribute>
-
-## Submit Answer
-
-When you have gathered enough information, submit your prediction for the target node's attribute value (must be an integer from 0 to 4):
-
-<answer>2</answer>
-
-Note:
-- The tree structure is known at the start of the game (you can obtain it via feature queries)
-- Attribute queries have a limit, use them wisely
-- You cannot query the target node's attribute
-- Invalid format or incorrect answer will result in game failure
+Note: The order of classes does not matter, but elements within each class must be in ascending order.
 """
 
     contextualized_rule_zh_1 = """\
-我们要进行一次城市路网的拥堵评级推演。规则如下：
+欢迎进入智能交通运输调度系统。我们正在进行"车队归属划分推理"分析，排查规则如下：
 
-## 评估设定
+系统记录了一个由 {{1, 2, ..., {n}}} 组成的车辆集合 S。由于中枢故障，车队编组信息丢失。已知这些车辆原本被划分为若干个互不相交的车队。同一车队内的车辆归属关系满足自反性、对称性和传递性，每辆车恰好属于一个单独的车队。
 
-给定一个树形交通路网，共有 {n} 个路口，编号为 1 到 {n}，市中心主枢纽为根节点 {root}。
+你的目标是通过数据查询推断出完整的车队编组。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
 
-对于任一路口 u，定义以下拓扑特征：
-- Depth(u)：路口 u 到主枢纽的道路级数（根节点为 0）
-- Child(u)：路口 u 直接连接的下级路口数量
-- Subtree(u)：以 u 为起点的路网分支中路口总数（包含 u 自身）
-- Leaf(u)：以 u 为起点的分支中尽头路口（无下级路口）的数量
+1. 两车同队判定（类型 A）：询问车辆编号 i 和 j 是否属于同一车队（要求 i 小于 j）。回答"是"或"否"。
+2. 车队数量统计（类型 B）：询问给定车辆子集中包含多少个不同的车队。回答一个整数。
+3. 同队车辆计数（类型 C）：询问给定车辆子集中有多少辆车与指定的锚点车辆属于同一车队（含锚点本身）。回答一个整数。
 
-记特征向量 x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u))，其每个分量在模 5 意义下取值（即取值范围为 0 到 4）。
+当你收集足够信息后，请提交最终的车队编组答案。若答案错误或格式不符，排查任务失败。
 
-存在一个隐藏的系统参数向量 c = (c0, c1, c2, c3, c4)，每个分量也在模 5 意义下取值。路口的拥堵指数评级（属性值）定义为：
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 评估目标
+- 两车同队判定（例如问车辆 2 和 5 是否同队）：
+<query_pair>2,5</query_pair>
 
-已指定目标路口为 {target}。你的任务是推断出目标路口的拥堵指数评级 Attr({target})。
+- 车队数量统计（例如问车辆子集 {{1,3,5}} 中涉及多少个车队）：
+<query_subset_count>1,3,5</query_subset_count>
 
-## 可用操作
+- 同队车辆计数（例如问车辆子集 {{2,4,6,8}} 中有多少辆与锚点车 4 同队）：
+<query_anchor>4|2,4,6,8</query_anchor>
 
-你可以进行以下两种查询：
+提交最终答案时，必须列出所有车队，每个车队用花括号包围，编号用逗号隔开且按递增顺序排列，车队之间用竖线隔开，格式如下：
 
-1. **特征查询**（不计入查询次数）：查询任意路口 u 的拓扑特征值，返回 (Depth(u), Child(u), Subtree(u), Leaf(u))。
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **属性查询**（计入查询次数）：查询任意路口 u（u 不能是目标路口 {target}）的拥堵指数评级，返回 Attr(u)，取值为 0 到 4 之间的整数。你最多可以进行 {max_queries} 次属性查询。
-
-## 查询格式
-
-- 特征查询（例如查询路口 3）：
-<query_feature>3</query_feature>
-
-- 属性查询（例如查询路口 5）：
-<query_attribute>5</query_attribute>
-
-## 提交答案
-
-当你收集到足够信息后，提交你对目标路口拥堵评级的预测（必须是 0 到 4 之间的整数）：
-
-<answer>2</answer>
-
-注意：
-- 路网拓扑结构在评估开始时已知（你可以通过特征查询获取）
-- 属性查询有次数限制，请谨慎使用
-- 不能对目标路口进行属性查询
-- 答案格式错误或答案错误都会导致评估失败
+注意：车队的排列顺序不影响判定，但每个车队内的车辆编号必须递增排列。
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-We are conducting a congestion rating inference for an urban road network. Here are the rules:
+Welcome to the Intelligent Transportation Dispatch System. We are conducting a "Fleet Affiliation Partition Inference" analysis. The diagnostic rules are as follows:
 
-## Assessment Setup
+The system recorded a fleet of vehicles S = {{1, 2, ..., {n}}}. Due to a mainframe fault, the fleet grouping data has been lost. It is known that these vehicles are partitioned into several disjoint transit fleets. The fleet affiliation satisfies reflexivity, symmetry, and transitivity, and each vehicle belongs to exactly one fleet.
 
-Given a tree-structured road network with {n} intersections, numbered from 1 to {n}, with the city center main hub as the root node {root}.
+Your goal is to infer the complete fleet grouping through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
 
-For any intersection u, we define the following topological features:
-- Depth(u): Number of road levels from intersection u to the main hub (root has depth 0)
-- Child(u): Number of direct lower-level intersections connected to u
-- Subtree(u): Total number of intersections in the network branch starting at u (including u itself)
-- Leaf(u): Number of dead-end intersections (with no lower-level connections) in the branch starting at u
+1. Pairwise Fleet Check (Type A): Ask if vehicle i and j belong to the same fleet (requires i less than j). Answer "Yes" or "No".
+2. Subset Fleet Count (Type B): Ask how many distinct fleets exist in a given subset of vehicles. Answer an integer.
+3. Anchor Fleet Count (Type C): Ask how many vehicles in a given subset belong to the same fleet as a specified anchor vehicle (including the anchor itself). Answer an integer.
 
-Let the feature vector x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u)), where each component is taken modulo 5 (values from 0 to 4).
+When you have enough information, submit your final fleet grouping. If the answer is wrong or the format is invalid, the diagnostic task fails.
 
-There exists a hidden system parameter vector c = (c0, c1, c2, c3, c4), with each component also in modulo 5. The congestion index rating (attribute value) of an intersection is defined as:
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+Each query must contain only one tag. Use the following XML format:
 
-## Assessment Objective
+- Pairwise Fleet Check (e.g., asking if vehicles 2 and 5 are in the same fleet):
+<query_pair>2,5</query_pair>
 
-The target intersection is {target}. Your task is to infer the congestion index rating Attr({target}) for the target intersection.
+- Subset Fleet Count (e.g., asking how many fleets are in subset {{1,3,5}}):
+<query_subset_count>1,3,5</query_subset_count>
 
-## Available Operations
+- Anchor Fleet Count (e.g., asking how many in subset {{2,4,6,8}} share a fleet with anchor 4):
+<query_anchor>4|2,4,6,8</query_anchor>
 
-You can perform the following two types of queries:
+When submitting the final answer, list all fleets with each group enclosed in curly braces, elements comma-separated in ascending order, and groups separated by vertical bars:
 
-1. **Feature Query** (does not count toward query limit): Query the topological feature values of any intersection u, returns (Depth(u), Child(u), Subtree(u), Leaf(u)).
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **Attribute Query** (counts toward query limit): Query the congestion index rating of any intersection u (u cannot be the target intersection {target}), returns Attr(u), an integer from 0 to 4. You can perform at most {max_queries} attribute queries.
-
-## Query Format
-
-- Feature Query (e.g., querying intersection 3):
-<query_feature>3</query_feature>
-
-- Attribute Query (e.g., querying intersection 5):
-<query_attribute>5</query_attribute>
-
-## Submit Answer
-
-When you have gathered enough information, submit your prediction for the target intersection's congestion rating (must be an integer from 0 to 4):
-
-<answer>2</answer>
-
-Note:
-- The network topology is known at the start of the assessment (you can obtain it via feature queries)
-- Attribute queries have a limit, use them wisely
-- You cannot query the target intersection's rating
-- Invalid format or incorrect answer will result in assessment failure
+Note: The order of fleets does not matter, but vehicle IDs within each fleet must be in ascending order.
 """
 
     contextualized_rule_zh_2 = """\
-我们要进行一次病毒传播链的风险评级推演。规则如下：
+欢迎进入流行病学调查系统。我们正在进行"病毒毒株划分推理"分析，排查规则如下：
 
-## 评估设定
+系统记录了一个由 {{1, 2, ..., {n}}} 组成的患者集合 S。由于数据混淆，毒株类型的映射信息丢失。已知这些患者感染了若干种互不相交的病毒毒株。同源感染关系满足自反性、对称性和传递性，每位患者恰好感染一种毒株。
 
-给定一个树形传播链，共有 {n} 名感染者，编号为 1 到 {n}，零号病人为根节点 {root}。
+你的目标是通过数据查询推断出完整的毒株群体划分。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
 
-对于任一患者 u，定义以下传播特征：
-- Depth(u)：患者 u 距离零号病人的传播代数（根节点为 0）
-- Child(u)：患者 u 直接传染的人数
-- Subtree(u)：以 u 为源头的后续感染总人数（包含 u 自身）
-- Leaf(u)：以 u 为源头的传播链中终端患者（未进一步传染他人）的数量
+1. 感染同源判定（类型 A）：询问患者编号 i 和 j 是否感染同种毒株（要求 i 小于 j）。回答"是"或"否"。
+2. 毒株种类统计（类型 B）：询问给定患者子集中包含多少种不同的毒株。回答一个整数。
+3. 同源患者计数（类型 C）：询问给定患者子集中有多少人与指定的锚点患者感染了同种毒株（含锚点本身）。回答一个整数。
 
-记特征向量 x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u))，其每个分量在模 5 意义下取值（即取值范围为 0 到 4）。
+当你收集足够信息后，请提交最终的毒株群体划分答案。若答案错误或格式不符，排查任务失败。
 
-存在一个隐藏的病毒突变参数向量 c = (c0, c1, c2, c3, c4)，每个分量也在模 5 意义下取值。患者的变异风险等级（属性值）定义为：
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 评估目标
+- 感染同源判定（例如问患者 2 和 5 是否感染同种毒株）：
+<query_pair>2,5</query_pair>
 
-已指定目标患者为 {target}。你的任务是推断出目标患者的变异风险等级 Attr({target})。
+- 毒株种类统计（例如问患者子集 {{1,3,5}} 中涉及多少种毒株）：
+<query_subset_count>1,3,5</query_subset_count>
 
-## 可用操作
+- 同源患者计数（例如问患者子集 {{2,4,6,8}} 中有多少人与锚点患者 4 感染同源）：
+<query_anchor>4|2,4,6,8</query_anchor>
 
-你可以进行以下两种查询：
+提交最终答案时，必须列出所有毒株群体，每个群体用花括号包围，编号用逗号隔开且按递增顺序排列，群体之间用竖线隔开，格式如下：
 
-1. **特征查询**（不计入查询次数）：查询任意患者 u 的传播特征值，返回 (Depth(u), Child(u), Subtree(u), Leaf(u))。
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **属性查询**（计入查询次数）：查询任意患者 u（u 不能是目标患者 {target}）的变异风险等级，返回 Attr(u)，取值为 0 到 4 之间的整数。你最多可以进行 {max_queries} 次属性查询。
-
-## 查询格式
-
-- 特征查询（例如查询患者 3）：
-<query_feature>3</query_feature>
-
-- 属性查询（例如查询患者 5）：
-<query_attribute>5</query_attribute>
-
-## 提交答案
-
-当你收集到足够信息后，提交你对目标患者风险等级的预测（必须是 0 到 4 之间的整数）：
-
-<answer>2</answer>
-
-注意：
-- 传播链结构在评估开始时已知（你可以通过特征查询获取）
-- 属性查询有次数限制，请谨慎使用
-- 不能对目标患者进行属性查询
-- 答案格式错误或答案错误都会导致评估失败
+注意：群体的排列顺序不影响判定，但每个群体内的患者编号必须递增排列。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-We are conducting a risk rating inference for a virus transmission chain. Here are the rules:
+[Healthcare Scenario]
+Welcome to the Epidemiological Investigation System. We are conducting a "Virus Strain Partition Inference" analysis. The diagnostic rules are as follows:
 
-## Assessment Setup
+The system recorded a set of patients S = {{1, 2, ..., {n}}}. Due to data obfuscation, the mapping of strain types has been lost. It is known that these patients are infected by several disjoint virus strains. The homologous infection relation satisfies reflexivity, symmetry, and transitivity, and each patient is infected with exactly one strain.
 
-Given a tree-structured transmission chain with {n} infected individuals, numbered from 1 to {n}, with patient zero as the root node {root}.
+Your goal is to infer the complete virus strain partition through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
 
-For any patient u, we define the following transmission features:
-- Depth(u): Number of transmission generations from patient zero to patient u (root has depth 0)
-- Child(u): Number of individuals directly infected by patient u
-- Subtree(u): Total number of subsequent infections originating from u (including u itself)
-- Leaf(u): Number of terminal patients (who did not infect anyone else) in the transmission chain originating from u
+1. Pairwise Homology Check (Type A): Ask if patient i and j are infected with the same strain (requires i less than j). Answer "Yes" or "No".
+2. Subset Strain Count (Type B): Ask how many distinct virus strains exist in a given subset of patients. Answer an integer.
+3. Anchor Homology Count (Type C): Ask how many patients in a given subset are infected with the same strain as a specified anchor patient (including the anchor itself). Answer an integer.
 
-Let the feature vector x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u)), where each component is taken modulo 5 (values from 0 to 4).
+When you have enough information, submit your final strain partition. If the answer is wrong or the format is invalid, the diagnostic task fails.
 
-There exists a hidden viral mutation parameter vector c = (c0, c1, c2, c3, c4), with each component also in modulo 5. The mutation risk rating (attribute value) of a patient is defined as:
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+Each query must contain only one tag. Use the following XML format:
 
-## Assessment Objective
+- Pairwise Homology Check (e.g., asking if patients 2 and 5 share a strain):
+<query_pair>2,5</query_pair>
 
-The target patient is {target}. Your task is to infer the mutation risk rating Attr({target}) for the target patient.
+- Subset Strain Count (e.g., asking how many strains are in subset {{1,3,5}}):
+<query_subset_count>1,3,5</query_subset_count>
 
-## Available Operations
+- Anchor Homology Count (e.g., asking how many in subset {{2,4,6,8}} share a strain with anchor 4):
+<query_anchor>4|2,4,6,8</query_anchor>
 
-You can perform the following two types of queries:
+When submitting the final answer, list all strain groups with each group enclosed in curly braces, elements comma-separated in ascending order, and groups separated by vertical bars:
 
-1. **Feature Query** (does not count toward query limit): Query the transmission feature values of any patient u, returns (Depth(u), Child(u), Subtree(u), Leaf(u)).
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **Attribute Query** (counts toward query limit): Query the mutation risk rating of any patient u (u cannot be the target patient {target}), returns Attr(u), an integer from 0 to 4. You can perform at most {max_queries} attribute queries.
-
-## Query Format
-
-- Feature Query (e.g., querying patient 3):
-<query_feature>3</query_feature>
-
-- Attribute Query (e.g., querying patient 5):
-<query_attribute>5</query_attribute>
-
-## Submit Answer
-
-When you have gathered enough information, submit your prediction for the target patient's risk rating (must be an integer from 0 to 4):
-
-<answer>2</answer>
-
-Note:
-- The transmission chain structure is known at the start of the assessment (you can obtain it via feature queries)
-- Attribute queries have a limit, use them wisely
-- You cannot query the target patient's rating
-- Invalid format or incorrect answer will result in assessment failure
+Note: The order of groups does not matter, but patient IDs within each group must be in ascending order.
 """
 
     contextualized_rule_zh_3 = """\
-我们要进行一次知识图谱的核心难度推演。规则如下：
+欢迎进入教学编组管理系统。我们正在进行"研究小组划分推理"分析，排查规则如下：
 
-## 评估设定
+系统记录了一个由 {{1, 2, ..., {n}}} 组成的学生集合 S。由于数据迁移，编组映射信息丢失。已知这些学生被分入了若干个互不相交的课题研究小组。同组关系满足自反性、对称性和传递性，每位学生恰好属于一个研究小组。
 
-给定一个树形知识结构，共有 {n} 个知识点，编号为 1 到 {n}，学科核心概念为根节点 {root}。
+你的目标是通过数据查询推断出完整的研究小组名单。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
 
-对于任一知识点 u，定义以下结构特征：
-- Depth(u)：知识点 u 距离核心概念的层级深度（根节点为 0）
-- Child(u)：知识点 u 直接包含的子知识点数量
-- Subtree(u)：以 u 为前置的知识分支中知识点总数（包含 u 自身）
-- Leaf(u)：以 u 为前置的分支中基础知识点（无进一步细分）的数量
+1. 同组判定（类型 A）：询问学生编号 i 和 j 是否在同一个研究小组（要求 i 小于 j）。回答"是"或"否"。
+2. 小组数量统计（类型 B）：询问给定学生子集中包含多少个不同的研究小组。回答一个整数。
+3. 同组学生计数（类型 C）：询问给定学生子集中有多少人与指定的锚点学生同属一个小组（含锚点本身）。回答一个整数。
 
-记特征向量 x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u))，其每个分量在模 5 意义下取值（即取值范围为 0 到 4）。
+当你收集足够信息后，请提交最终的研究小组名单答案。若答案错误或格式不符，排查任务失败。
 
-存在一个隐藏的难度评估参数向量 c = (c0, c1, c2, c3, c4)，每个分量也在模 5 意义下取值。知识点的考核难度星级（属性值）定义为：
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 评估目标
+- 同组判定（例如问学生 2 和 5 是否同组）：
+<query_pair>2,5</query_pair>
 
-已指定目标知识点为 {target}。你的任务是推断出目标知识点的考核难度星级 Attr({target})。
+- 小组数量统计（例如问学生子集 {{1,3,5}} 中涉及多少个小组）：
+<query_subset_count>1,3,5</query_subset_count>
 
-## 可用操作
+- 同组学生计数（例如问学生子集 {{2,4,6,8}} 中有多少人与锚点学生 4 同组）：
+<query_anchor>4|2,4,6,8</query_anchor>
 
-你可以进行以下两种查询：
+提交最终答案时，必须列出所有研究小组，每个小组用花括号包围，编号用逗号隔开且按递增顺序排列，小组之间用竖线隔开，格式如下：
 
-1. **特征查询**（不计入查询次数）：查询任意知识点 u 的结构特征值，返回 (Depth(u), Child(u), Subtree(u), Leaf(u))。
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **属性查询**（计入查询次数）：查询任意知识点 u（u 不能是目标知识点 {target}）的考核难度星级，返回 Attr(u)，取值为 0 到 4 之间的整数。你最多可以进行 {max_queries} 次属性查询。
-
-## 查询格式
-
-- 特征查询（例如查询知识点 3）：
-<query_feature>3</query_feature>
-
-- 属性查询（例如查询知识点 5）：
-<query_attribute>5</query_attribute>
-
-## 提交答案
-
-当你收集到足够信息后，提交你对目标知识点难度星级的预测（必须是 0 到 4 之间的整数）：
-
-<answer>2</answer>
-
-注意：
-- 知识图谱结构在评估开始时已知（你可以通过特征查询获取）
-- 属性查询有次数限制，请谨慎使用
-- 不能对目标知识点进行属性查询
-- 答案格式错误或答案错误都会导致评估失败
+注意：小组的排列顺序不影响判定，但每个小组内的学生编号必须递增排列。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-We are conducting a core difficulty inference for a knowledge graph. Here are the rules:
+Welcome to the Educational Grouping Management System. We are conducting a "Research Group Partition Inference" analysis. The diagnostic rules are as follows:
 
-## Assessment Setup
+The system recorded a set of students S = {{1, 2, ..., {n}}}. Due to data migration, the grouping mapping has been lost. It is known that these students are assigned to several disjoint research groups. The co-grouping relation satisfies reflexivity, symmetry, and transitivity, and each student belongs to exactly one research group.
 
-Given a tree-structured knowledge graph with {n} knowledge points, numbered from 1 to {n}, with the discipline's core concept as the root node {root}.
+Your goal is to infer the complete research grouping through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
 
-For any knowledge point u, we define the following structural features:
-- Depth(u): The hierarchical depth from the core concept to knowledge point u (root has depth 0)
-- Child(u): Number of sub-knowledge points directly contained by u
-- Subtree(u): Total number of knowledge points in the branch starting from u (including u itself)
-- Leaf(u): Number of fundamental knowledge points (with no further subdivisions) in the branch starting from u
+1. Pairwise Group Check (Type A): Ask if student i and j belong to the same research group (requires i less than j). Answer "Yes" or "No".
+2. Subset Group Count (Type B): Ask how many distinct research groups exist in a given subset of students. Answer an integer.
+3. Anchor Group Count (Type C): Ask how many students in a given subset belong to the same research group as a specified anchor student (including the anchor itself). Answer an integer.
 
-Let the feature vector x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u)), where each component is taken modulo 5 (values from 0 to 4).
+When you have enough information, submit your final group lists. If the answer is wrong or the format is invalid, the diagnostic task fails.
 
-There exists a hidden difficulty evaluation parameter vector c = (c0, c1, c2, c3, c4), with each component also in modulo 5. The assessment difficulty star rating (attribute value) of a knowledge point is defined as:
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+Each query must contain only one tag. Use the following XML format:
 
-## Assessment Objective
+- Pairwise Group Check (e.g., asking if students 2 and 5 are in the same group):
+<query_pair>2,5</query_pair>
 
-The target knowledge point is {target}. Your task is to infer the assessment difficulty star rating Attr({target}) for the target knowledge point.
+- Subset Group Count (e.g., asking how many groups are represented in subset {{1,3,5}}):
+<query_subset_count>1,3,5</query_subset_count>
 
-## Available Operations
+- Anchor Group Count (e.g., asking how many in subset {{2,4,6,8}} share a group with anchor 4):
+<query_anchor>4|2,4,6,8</query_anchor>
 
-You can perform the following two types of queries:
+When submitting the final answer, list all groups with each group enclosed in curly braces, elements comma-separated in ascending order, and groups separated by vertical bars:
 
-1. **Feature Query** (does not count toward query limit): Query the structural feature values of any knowledge point u, returns (Depth(u), Child(u), Subtree(u), Leaf(u)).
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **Attribute Query** (counts toward query limit): Query the assessment difficulty star rating of any knowledge point u (u cannot be the target knowledge point {target}), returns Attr(u), an integer from 0 to 4. You can perform at most {max_queries} attribute queries.
-
-## Query Format
-
-- Feature Query (e.g., querying knowledge point 3):
-<query_feature>3</query_feature>
-
-- Attribute Query (e.g., querying knowledge point 5):
-<query_attribute>5</query_attribute>
-
-## Submit Answer
-
-When you have gathered enough information, submit your prediction for the target knowledge point's difficulty star rating (must be an integer from 0 to 4):
-
-<answer>2</answer>
-
-Note:
-- The knowledge graph structure is known at the start of the assessment (you can obtain it via feature queries)
-- Attribute queries have a limit, use them wisely
-- You cannot query the target knowledge point's rating
-- Invalid format or incorrect answer will result in assessment failure
+Note: The order of groups does not matter, but student IDs within each group must be in ascending order.
 """
 
     contextualized_rule_zh_4 = """\
-我们要进行一次产品物料清单(BOM)的供应链风险推演。规则如下：
+欢迎进入工业质量溯源系统。我们正在进行"生产批次划分推理"分析，排查规则如下：
 
-## 评估设定
+系统记录了一个由 {{1, 2, ..., {n}}} 组成的零件集合 S。由于标签磨损，批次溯源信息丢失。已知这些零件来自于若干个互不相交的生产批次。同批次关系满足自反性、对称性和传递性，每个零件恰好属于一个生产批次。
 
-给定一个树形产品装配结构，共有 {n} 个组件，编号为 1 到 {n}，最终成品为根节点 {root}。
+你的目标是通过数据查询推断出完整的生产批次划分。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
 
-对于任一组件 u，定义以下装配特征：
-- Depth(u)：组件 u 在装配层级中的深度（根节点为 0）
-- Child(u)：组装组件 u 直接需要的子组件数量
-- Subtree(u)：以组件 u 为根的装配分支中所有组件总数（包含 u 自身）
-- Leaf(u)：以组件 u 为根的分支中不可再分的基础零件数量
+1. 同批次判定（类型 A）：询问零件编号 i 和 j 是否属于同一生产批次（要求 i 小于 j）。回答"是"或"否"。
+2. 批次数量统计（类型 B）：询问给定零件子集中包含多少个不同的生产批次。回答一个整数。
+3. 同批次零件计数（类型 C）：询问给定零件子集中有多少个零件与指定的锚点零件属于同一批次（含锚点本身）。回答一个整数。
 
-记特征向量 x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u))，其每个分量在模 5 意义下取值（即取值范围为 0 到 4）。
+当你收集足够信息后，请提交最终的生产批次答案。若答案错误或格式不符，排查任务失败。
 
-存在一个隐藏的供应链风险参数向量 c = (c0, c1, c2, c3, c4)，每个分量也在模 5 意义下取值。组件的供应链风险等级（属性值）定义为：
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 评估目标
+- 同批次判定（例如问零件 2 和 5 是否同批次）：
+<query_pair>2,5</query_pair>
 
-已指定目标组件为 {target}。你的任务是推断出目标组件的供应链风险等级 Attr({target})。
+- 批次数量统计（例如问零件子集 {{1,3,5}} 中涉及多少个批次）：
+<query_subset_count>1,3,5</query_subset_count>
 
-## 可用操作
+- 同批次零件计数（例如问零件子集 {{2,4,6,8}} 中有多少个零件与锚点零件 4 同批次）：
+<query_anchor>4|2,4,6,8</query_anchor>
 
-你可以进行以下两种查询：
+提交最终答案时，必须列出所有批次，每个批次用花括号包围，编号用逗号隔开且按递增顺序排列，批次之间用竖线隔开，格式如下：
 
-1. **特征查询**（不计入查询次数）：查询任意组件 u 的装配特征值，返回 (Depth(u), Child(u), Subtree(u), Leaf(u))。
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **属性查询**（计入查询次数）：查询任意组件 u（u 不能是目标组件 {target}）的供应链风险等级，返回 Attr(u)，取值为 0 到 4 之间的整数。你最多可以进行 {max_queries} 次属性查询。
-
-## 查询格式
-
-- 特征查询（例如查询组件 3）：
-<query_feature>3</query_feature>
-
-- 属性查询（例如查询组件 5）：
-<query_attribute>5</query_attribute>
-
-## 提交答案
-
-当你收集到足够信息后，提交你对目标组件风险等级的预测（必须是 0 到 4 之间的整数）：
-
-<answer>2</answer>
-
-注意：
-- 产品装配结构在评估开始时已知（你可以通过特征查询获取）
-- 属性查询有次数限制，请谨慎使用
-- 不能对目标组件进行属性查询
-- 答案格式错误或答案错误都会导致评估失败
+注意：批次的排列顺序不影响判定，但每个批次内的零件编号必须递增排列。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-We are conducting a supply chain risk inference for a product Bill of Materials (BOM). Here are the rules:
+Welcome to the Industrial Quality Traceability System. We are conducting a "Production Batch Partition Inference" analysis. The diagnostic rules are as follows:
 
-## Assessment Setup
+The system recorded a set of components S = {{1, 2, ..., {n}}}. Due to label wear, the batch traceability data has been lost. It is known that these components originate from several disjoint production batches. The co-batch relation satisfies reflexivity, symmetry, and transitivity, and each component belongs to exactly one production batch.
 
-Given a tree-structured product assembly structure with {n} components, numbered from 1 to {n}, with the final product as the root node {root}.
+Your goal is to infer the complete production batch grouping through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
 
-For any component u, we define the following assembly features:
-- Depth(u): The depth of component u in the assembly hierarchy (root has depth 0)
-- Child(u): Number of sub-components directly required to assemble u
-- Subtree(u): Total number of components in the assembly branch rooted at u (including u itself)
-- Leaf(u): Number of indivisible basic parts in the branch rooted at u
+1. Pairwise Batch Check (Type A): Ask if component i and j belong to the same production batch (requires i less than j). Answer "Yes" or "No".
+2. Subset Batch Count (Type B): Ask how many distinct production batches exist in a given subset of components. Answer an integer.
+3. Anchor Batch Count (Type C): Ask how many components in a given subset belong to the same batch as a specified anchor component (including the anchor itself). Answer an integer.
 
-Let the feature vector x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u)), where each component is taken modulo 5 (values from 0 to 4).
+When you have enough information, submit your final batch grouping. If the answer is wrong or the format is invalid, the diagnostic task fails.
 
-There exists a hidden supply chain risk parameter vector c = (c0, c1, c2, c3, c4), with each component also in modulo 5. The supply chain risk rating (attribute value) of a component is defined as:
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+Each query must contain only one tag. Use the following XML format:
 
-## Assessment Objective
+- Pairwise Batch Check (e.g., asking if components 2 and 5 are from the same batch):
+<query_pair>2,5</query_pair>
 
-The target component is {target}. Your task is to infer the supply chain risk rating Attr({target}) for the target component.
+- Subset Batch Count (e.g., asking how many batches are represented in subset {{1,3,5}}):
+<query_subset_count>1,3,5</query_subset_count>
 
-## Available Operations
+- Anchor Batch Count (e.g., asking how many in subset {{2,4,6,8}} share a batch with anchor 4):
+<query_anchor>4|2,4,6,8</query_anchor>
 
-You can perform the following two types of queries:
+When submitting the final answer, list all batches with each batch enclosed in curly braces, elements comma-separated in ascending order, and batches separated by vertical bars:
 
-1. **Feature Query** (does not count toward query limit): Query the assembly feature values of any component u, returns (Depth(u), Child(u), Subtree(u), Leaf(u)).
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **Attribute Query** (counts toward query limit): Query the supply chain risk rating of any component u (u cannot be the target component {target}), returns Attr(u), an integer from 0 to 4. You can perform at most {max_queries} attribute queries.
-
-## Query Format
-
-- Feature Query (e.g., querying component 3):
-<query_feature>3</query_feature>
-
-- Attribute Query (e.g., querying component 5):
-<query_attribute>5</query_attribute>
-
-## Submit Answer
-
-When you have gathered enough information, submit your prediction for the target component's risk rating (must be an integer from 0 to 4):
-
-<answer>2</answer>
-
-Note:
-- The product assembly structure is known at the start of the assessment (you can obtain it via feature queries)
-- Attribute queries have a limit, use them wisely
-- You cannot query the target component's rating
-- Invalid format or incorrect answer will result in assessment failure
+Note: The order of batches does not matter, but component IDs within each batch must be in ascending order.
 """
 
     contextualized_rule_zh_5 = """\
-我们要进行一次公司股权架构穿透的审查优先级推演。规则如下：
+欢迎进入司法案件并案分析系统。我们正在进行"系列并案划分推理"分析，排查规则如下：
 
-## 评估设定
+系统记录了一个由 {{1, 2, ..., {n}}} 组成的案卷集合 S。由于档案重组，关联并案信息丢失。已知这些案卷被归并为若干个互不相交的系列并案。同案关系满足自反性、对称性和传递性，每份案卷恰好属于一个系列并案。
 
-给定一个树形股权控制结构，共有 {n} 个实体，编号为 1 到 {n}，最终母公司为根节点 {root}。
+你的目标是通过数据查询推断出完整的系列并案划分。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
 
-对于任一实体 u，定义以下穿透特征：
-- Depth(u)：实体 u 距离母公司的投资链层级（根节点为 0）
-- Child(u)：实体 u 直接投资的子实体数量
-- Subtree(u)：实体 u 控制的投资分支中所有实体总数（包含 u 自身）
-- Leaf(u)：实体 u 控制的分支中无对外投资的底层实体数量
+1. 同案判定（类型 A）：询问案卷编号 i 和 j 是否属于同一个系列并案（要求 i 小于 j）。回答"是"或"否"。
+2. 并案数量统计（类型 B）：询问给定案卷子集中包含多少个不同的系列并案。回答一个整数。
+3. 同案案卷计数（类型 C）：询问给定案卷子集中有多少份案卷与指定的锚点主案卷属于同一并案（含锚点本身）。回答一个整数。
 
-记特征向量 x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u))，其每个分量在模 5 意义下取值（即取值范围为 0 到 4）。
+当你收集足够信息后，请提交最终的系列并案答案。若答案错误或格式不符，排查任务失败。
 
-存在一个隐藏的合规审查参数向量 c = (c0, c1, c2, c3, c4)，每个分量也在模 5 意义下取值。实体的合规审查优先级（属性值）定义为：
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 评估目标
+- 同案判定（例如问案卷 2 和 5 是否同案）：
+<query_pair>2,5</query_pair>
 
-已指定目标实体为 {target}。你的任务是推断出目标实体的合规审查优先级 Attr({target})。
+- 并案数量统计（例如问案卷子集 {{1,3,5}} 中涉及多少个并案）：
+<query_subset_count>1,3,5</query_subset_count>
 
-## 可用操作
+- 同案案卷计数（例如问案卷子集 {{2,4,6,8}} 中有多少份与锚点案卷 4 同案）：
+<query_anchor>4|2,4,6,8</query_anchor>
 
-你可以进行以下两种查询：
+提交最终答案时，必须列出所有系列并案，每个并案用花括号包围，编号用逗号隔开且按递增顺序排列，并案之间用竖线隔开，格式如下：
 
-1. **特征查询**（不计入查询次数）：查询任意实体 u 的穿透特征值，返回 (Depth(u), Child(u), Subtree(u), Leaf(u))。
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **属性查询**（计入查询次数）：查询任意实体 u（u 不能是目标实体 {target}）的合规审查优先级，返回 Attr(u)，取值为 0 到 4 之间的整数。你最多可以进行 {max_queries} 次属性查询。
-
-## 查询格式
-
-- 特征查询（例如查询实体 3）：
-<query_feature>3</query_feature>
-
-- 属性查询（例如查询实体 5）：
-<query_attribute>5</query_attribute>
-
-## 提交答案
-
-当你收集到足够信息后，提交你对目标实体审查优先级的预测（必须是 0 到 4 之间的整数）：
-
-<answer>2</answer>
-
-注意：
-- 股权控制结构在评估开始时已知（你可以通过特征查询获取）
-- 属性查询有次数限制，请谨慎使用
-- 不能对目标实体进行属性查询
-- 答案格式错误或答案错误都会导致评估失败
+注意：并案的排列顺序不影响判定，但每个并案内的案卷编号必须递增排列。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-We are conducting a compliance review priority inference for a corporate equity structure. Here are the rules:
+[Law Scenario]
+Welcome to the Judicial Case Consolidation System. We are conducting a "Consolidated Proceeding Partition Inference" analysis. The diagnostic rules are as follows:
 
-## Assessment Setup
+The system recorded a set of legal dossiers S = {{1, 2, ..., {n}}}. Due to archival restructuring, the consolidation mapping has been lost. It is known that these dossiers are merged into several disjoint consolidated cases. The consolidation relation satisfies reflexivity, symmetry, and transitivity, and each dossier belongs to exactly one consolidated case.
 
-Given a tree-structured equity control network with {n} entities, numbered from 1 to {n}, with the ultimate parent company as the root node {root}.
+Your goal is to infer the complete consolidation grouping through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
 
-For any entity u, we define the following penetration features:
-- Depth(u): The investment chain level from the parent company to entity u (root has depth 0)
-- Child(u): Number of subsidiary entities directly invested in by u
-- Subtree(u): Total number of entities in the investment branch controlled by u (including u itself)
-- Leaf(u): Number of bottom-level entities (with no outward investments) in the branch controlled by u
+1. Pairwise Consolidation Check (Type A): Ask if dossier i and j belong to the same consolidated case (requires i less than j). Answer "Yes" or "No".
+2. Subset Case Count (Type B): Ask how many distinct consolidated cases exist in a given subset of dossiers. Answer an integer.
+3. Anchor Dossier Count (Type C): Ask how many dossiers in a given subset belong to the same consolidated case as a specified anchor dossier (including the anchor itself). Answer an integer.
 
-Let the feature vector x(u) = (1, Depth(u), Child(u), Subtree(u), Leaf(u)), where each component is taken modulo 5 (values from 0 to 4).
+When you have enough information, submit your final consolidation grouping. If the answer is wrong or the format is invalid, the diagnostic task fails.
 
-There exists a hidden compliance review parameter vector c = (c0, c1, c2, c3, c4), with each component also in modulo 5. The compliance review priority (attribute value) of an entity is defined as:
-Attr(u) = (c0 × 1 + c1 × Depth(u) + c2 × Child(u) + c3 × Subtree(u) + c4 × Leaf(u)) mod 5
+Each query must contain only one tag. Use the following XML format:
 
-## Assessment Objective
+- Pairwise Consolidation Check (e.g., asking if dossiers 2 and 5 belong to the same case):
+<query_pair>2,5</query_pair>
 
-The target entity is {target}. Your task is to infer the compliance review priority Attr({target}) for the target entity.
+- Subset Case Count (e.g., asking how many consolidated cases are represented in subset {{1,3,5}}):
+<query_subset_count>1,3,5</query_subset_count>
 
-## Available Operations
+- Anchor Dossier Count (e.g., asking how many in subset {{2,4,6,8}} share a case with anchor 4):
+<query_anchor>4|2,4,6,8</query_anchor>
 
-You can perform the following two types of queries:
+When submitting the final answer, list all consolidated cases with each case enclosed in curly braces, elements comma-separated in ascending order, and cases separated by vertical bars:
 
-1. **Feature Query** (does not count toward query limit): Query the penetration feature values of any entity u, returns (Depth(u), Child(u), Subtree(u), Leaf(u)).
+<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
 
-2. **Attribute Query** (counts toward query limit): Query the compliance review priority of any entity u (u cannot be the target entity {target}), returns Attr(u), an integer from 0 to 4. You can perform at most {max_queries} attribute queries.
-
-## Query Format
-
-- Feature Query (e.g., querying entity 3):
-<query_feature>3</query_feature>
-
-- Attribute Query (e.g., querying entity 5):
-<query_attribute>5</query_attribute>
-
-## Submit Answer
-
-When you have gathered enough information, submit your prediction for the target entity's review priority (must be an integer from 0 to 4):
-
-<answer>2</answer>
-
-Note:
-- The equity control structure is known at the start of the assessment (you can obtain it via feature queries)
-- Attribute queries have a limit, use them wisely
-- You cannot query the target entity's priority
-- Invalid format or incorrect answer will result in assessment failure
+Note: The order of consolidated cases does not matter, but dossier IDs within each case must be in ascending order.
 """
 
-    user_prompt_zh = "游戏开始，你可以开始查询了。"
-    user_prompt_en = "Game started. You may begin querying."
+    tags = ["answer", "query_pair", "query_subset_count", "query_anchor"]
 
-    tags = ["answer", "query_feature", "query_attribute"]
-    
-    # 新增类属性
-    reasoning_type = "归纳推理"
-    data_structure = "树"
-
-    # 难度配置：
-    # 1 (简单)      - N=5, 小树, Q=7
-    # 2 (中等偏下)  - N=7, 稍复杂, Q=6
-    # 3 (中等偏上)  - N=10, 更复杂, Q=6
-    # 4 (较难)      - N=12, 复杂树, Q=5
-    # 5 (难)        - N=15, 最复杂, Q=5
+    reasoning_type = "演绎推理"
+    data_structure = "集合"
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "n": 5,
-            "root": 1,
-            "target": 4,
-            "max_queries": 7,
-            # 树结构: 1 -> 2, 3; 2 -> 4, 5
-            "edges": [(1, 2), (1, 3), (2, 4), (2, 5)],
-            "params": [1, 2, 3, 1, 4],  # c0, c1, c2, c3, c4 (mod 5)
+        "zh": {
+            1: {
+                "n": 4,
+                "partition": [[1, 2], [3, 4]],
+            },
+            2: {
+                "n": 6,
+                "partition": [[1, 3], [2, 5], [4, 6]],
+            },
+            3: {
+                "n": 8,
+                "partition": [[1, 4, 7], [2, 5], [3, 6, 8]],
+            },
+            4: {
+                "n": 10,
+                "partition": [[1, 5], [2, 6, 9], [3, 7], [4, 8, 10]],
+            },
+            5: {
+                "n": 12,
+                "partition": [[1, 7], [2, 8, 11], [3, 9], [4, 10], [5, 6, 12]],
+            },
         },
-        2: {
-            "n": 7,
-            "root": 1,
-            "target": 5,
-            "max_queries": 6,
-            # 树结构: 1 -> 2, 3; 2 -> 4, 5; 3 -> 6, 7
-            "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
-            "params": [2, 1, 4, 2, 3],
-        },
-        3: {
-            "n": 10,
-            "root": 1,
-            "target": 7,
-            "max_queries": 6,
-            # 树结构: 1 -> 2, 3, 4; 2 -> 5, 6; 3 -> 7; 4 -> 8, 9, 10
-            "edges": [(1, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 7), (4, 8), (4, 9), (4, 10)],
-            "params": [3, 2, 1, 3, 2],
-        },
-        4: {
-            "n": 12,
-            "root": 1,
-            "target": 9,
-            "max_queries": 5,
-            # 树结构: 1 -> 2, 3; 2 -> 4, 5, 6; 3 -> 7, 8; 5 -> 9, 10; 7 -> 11, 12
-            "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (2, 6), (3, 7), (3, 8), (5, 9), (5, 10), (7, 11), (7, 12)],
-            "params": [4, 3, 2, 1, 4],
-        },
-        5: {
-            "n": 15,
-            "root": 1,
-            "target": 12,
-            "max_queries": 5,
-            # 树结构: 1 -> 2, 3, 4; 2 -> 5, 6; 3 -> 7, 8, 9; 4 -> 10; 6 -> 11, 12; 8 -> 13; 10 -> 14, 15
-            "edges": [(1, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 7), (3, 8), (3, 9), 
-                     (4, 10), (6, 11), (6, 12), (8, 13), (10, 14), (10, 15)],
-            "params": [1, 4, 3, 2, 1],
+        "en": {
+            1: {
+                "n": 4,
+                "partition": [[1, 2], [3, 4]],
+            },
+            2: {
+                "n": 6,
+                "partition": [[1, 3], [2, 5], [4, 6]],
+            },
+            3: {
+                "n": 8,
+                "partition": [[1, 4, 7], [2, 5], [3, 6, 8]],
+            },
+            4: {
+                "n": 10,
+                "partition": [[1, 5], [2, 6, 9], [3, 7], [4, 8, 10]],
+            },
+            5: {
+                "n": 12,
+                "partition": [[1, 7], [2, 8, 11], [3, 9], [4, 10], [5, 6, 12]],
+            },
         },
     }
 
     def __init__(self, config):
         super().__init__(config)
 
+    @staticmethod
+    def _generate_partition(n, num_classes, seed=42):
+        rng = _random.Random(seed)
+        elements = list(range(1, n + 1))
+        rng.shuffle(elements)
+        partition = [[] for _ in range(num_classes)]
+        for i, elem in enumerate(elements):
+            partition[i % num_classes].append(elem)
+        for cls in partition:
+            cls.sort()
+        return partition
+
     def _initialize_game(self):
+        lang = self.config.language
         diff = int(self.config.difficulty)
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
-        self._game_info["root"] = cfg["root"]
-        self._game_info["target"] = cfg["target"]
-        self._game_info["max_queries"] = cfg["max_queries"]
+        
+        num_classes = len(cfg["partition"])
+        self.partition = self._generate_partition(cfg["n"], num_classes, seed=diff * 1000 + cfg["n"])
+        
+        self.element_to_class = {}
+        for class_id, equiv_class in enumerate(self.partition):
+            for elem in equiv_class:
+                self.element_to_class[elem] = class_id
 
-        # 构建树结构
-        self.n = cfg["n"]
-        self.root = cfg["root"]
-        self.target = cfg["target"]
-        self.max_queries = cfg["max_queries"]
-        self.params = cfg["params"]  # c0, c1, c2, c3, c4
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        n = self._game_info["n"]
+        full_set = range(1, n + 1)
         
-        # 构建邻接表
-        self.children: Dict[int, List[int]] = {i: [] for i in range(1, self.n + 1)}
-        for parent, child in cfg["edges"]:
-            self.children[parent].append(child)
-        
-        # 计算所有节点的特征
-        self.features: Dict[int, Tuple[int, int, int, int, int]] = {}  # node -> (1, depth, child, subtree, leaf)
-        self._compute_features()
-        
-        # 计算所有节点的真实属性值
-        self.attributes: Dict[int, int] = {}
-        for node in range(1, self.n + 1):
-            feat = self.features[node]
-            attr = sum(self.params[i] * feat[i] for i in range(5)) % 5
-            self.attributes[node] = attr
-        
-        # 查询计数器
-        self.attribute_query_count = 0
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
 
-    def _compute_features(self):
-        """计算所有节点的特征：depth, child_count, subtree_size, leaf_count"""
-        # DFS 计算深度
-        depths = {}
-        
-        def compute_depth(node, parent, d):
-            depths[node] = d
-            for child in self.children[node]:
-                if child != parent:
-                    compute_depth(child, node, d + 1)
-        
-        compute_depth(self.root, -1, 0)
-        
-        # DFS 计算子树大小和叶子数
-        subtree_sizes = {}
-        leaf_counts = {}
-        
-        def compute_subtree(node):
-            size = 1
-            leaves = 0
-            child_count = len(self.children[node])
+        for i, j in itertools.combinations(full_set, 2):
+            query_content = f"{i},{j}"
+            is_same_class = self.element_to_class[i] == self.element_to_class[j]
+            ans = yes_res if is_same_class else no_res
             
-            if child_count == 0:
-                leaves = 1
-            else:
-                for child in self.children[node]:
-                    child_size, child_leaves = compute_subtree(child)
-                    size += child_size
-                    leaves += child_leaves
-            
-            subtree_sizes[node] = size
-            leaf_counts[node] = leaves
-            return size, leaves
-        
-        compute_subtree(self.root)
-        
-        # 组装特征向量
-        for node in range(1, self.n + 1):
-            depth = depths[node] % 5
-            child_count = len(self.children[node]) % 5
-            subtree = subtree_sizes[node] % 5
-            leaf = leaf_counts[node] % 5
-            self.features[node] = (1, depth, child_count, subtree, leaf)
+            queries.append({
+                "query": f"<query_pair>{query_content}</query_pair>",
+                "answer": ans
+            })
+
+        max_subset_size = min(4, n)
+        for r in range(1, max_subset_size + 1):
+            for subset in itertools.combinations(full_set, r):
+                subset_list = list(subset)
+                subset_str = ",".join(map(str, subset_list))
+                
+                classes_in_subset = set(self.element_to_class[x] for x in subset_list)
+                ans_b = str(len(classes_in_subset))
+                
+                queries.append({
+                    "query": f"<query_subset_count>{subset_str}</query_subset_count>",
+                    "answer": ans_b
+                })
+                
+                for anchor in subset_list:
+                    anchor_class = self.element_to_class[anchor]
+                    count = sum(1 for x in subset_list if self.element_to_class[x] == anchor_class)
+                    ans_c = str(count)
+                    
+                    queries.append({
+                        "query": f"<query_anchor>{anchor}|{subset_str}</query_anchor>",
+                        "answer": ans_c
+                    })
+                    
+        return queries
 
     def evaluate(self, parsed_info):
-        """评估答案是否正确"""
+        raw_ans = parsed_info["answer"].strip()
+        
         try:
-            answer = int(parsed_info["answer"].strip())
-            if answer < 0 or answer > 4:
+            pattern = r'\{([^}]+)\}'
+            matches = re.findall(pattern, raw_ans)
+            
+            if not matches:
                 return False
-            return answer == self.attributes[self.target]
-        except (ValueError, KeyError):
+            
+            submitted_partition = []
+            all_elements = set()
+            
+            for match in matches:
+                elements = [int(x.strip()) for x in match.split(',') if x.strip()]
+                if not elements:
+                    return False
+                
+                for elem in elements:
+                    if elem in all_elements:
+                        return False
+                    all_elements.add(elem)
+                
+                submitted_partition.append(sorted(elements))
+            
+            if all_elements != set(range(1, self._game_info["n"] + 1)):
+                return False
+            
+            submitted_partition_normalized = sorted([sorted(cls) for cls in submitted_partition])
+            correct_partition_normalized = sorted([sorted(cls) for cls in self.partition])
+            
+            return submitted_partition_normalized == correct_partition_normalized
+            
+        except Exception:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """根据查询类型返回相应结果 (原始业务逻辑)"""
-        is_zh = self.config.language == "zh"
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            invalid_res = "无效查询"
+        else:
+            yes_res, no_res = "Yes", "No"
+            invalid_res = "Invalid query"
+
+        if "query_pair" in parsed_info:
+            return self._handle_pair_query(parsed_info["query_pair"], yes_res, no_res, invalid_res)
         
-        # 检查是否同时包含两种查询
-        has_feature = "query_feature" in parsed_info
-        has_attribute = "query_attribute" in parsed_info
+        elif "query_subset_count" in parsed_info:
+            return self._handle_subset_count_query(parsed_info["query_subset_count"], invalid_res)
         
-        if has_feature and has_attribute:
-            return ("错误：每次只能进行一种查询，请分开发送。" if is_zh 
-                    else "Error: Only one query type per turn. Please send them separately.")
-        
-        # 特征查询
-        if has_feature:
-            try:
-                node = int(parsed_info["query_feature"].strip())
-                if node < 1 or node > self.n:
-                    return "错误：节点编号超出范围。" if is_zh else "Error: Node ID out of range."
-                
-                feat = self.features[node]
-                # 返回 (Depth, Child, Subtree, Leaf)，不包括第一个常数项
-                result = f"Depth={feat[1]}, Child={feat[2]}, Subtree={feat[3]}, Leaf={feat[4]}"
-                return result
-            except (ValueError, KeyError):
-                return "错误：无效的节点编号。" if is_zh else "Error: Invalid node ID."
-        
-        # 属性查询
-        elif has_attribute:
-            try:
-                node = int(parsed_info["query_attribute"].strip())
-                
-                # 检查是否是目标节点
-                if node == self.target:
-                    return "错误：不能查询目标节点的属性。" if is_zh else "Error: Cannot query target node's attribute."
-                
-                if node < 1 or node > self.n:
-                    return "错误：节点编号超出范围。" if is_zh else "Error: Node ID out of range."
-                
-                # 检查查询次数
-                if self.attribute_query_count >= self.max_queries:
-                    raise ValueError(
-                        "错误：超出最大查询次数。" if is_zh else "Error: Exceeded maximum number of queries."
-                    )
-                
-                self.attribute_query_count += 1
-                attr = self.attributes[node]
-                
-                # 添加剩余查询次数提示
-                remaining = self.max_queries - self.attribute_query_count
-                result = f"Attr({node})={attr}"
-                if remaining > 0:
-                    suffix = f"（剩余查询次数：{remaining}）" if is_zh else f" (Remaining queries: {remaining})"
-                    result += suffix
-                else:
-                    suffix = "（已用完所有查询次数）" if is_zh else " (All queries used)"
-                    result += suffix
-                
-                return result
-                
-            except (ValueError, KeyError) as e:
-                if "超出" in str(e) or "Exceeded" in str(e):
-                    raise
-                return "错误：无效的节点编号。" if is_zh else "Error: Invalid node ID."
+        elif "query_anchor" in parsed_info:
+            return self._handle_anchor_query(parsed_info["query_anchor"], invalid_res)
         
         else:
             raise ValueError("No valid query tag found.")
 
-    def get_all_possible_queries(self) -> List[Dict[str, str]]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        results = []
-        is_zh = self.config.language == "zh"
-
-        # 1. 特征查询
-        for node in range(1, self.n + 1):
-            # 构造查询XML
-            query_content = f"<query_feature>{node}</query_feature>"
-            
-            # 计算答案 (直接取值)
-            feat = self.features[node]
-            # 格式: Depth=d, Child=c, Subtree=s, Leaf=l
-            ans = f"Depth={feat[1]}, Child={feat[2]}, Subtree={feat[3]}, Leaf={feat[4]}"
-            
-            results.append({"query": query_content, "answer": ans})
-
-        # 2. 属性查询
-        simulated_count = 0
-            
-        for node in range(1, self.n + 1):
-            # 目标节点不可查询
-            if node == self.target:
-                continue
-                
-            # 构造查询XML
-            query_content = f"<query_attribute>{node}</query_attribute>"
-            
-            simulated_count += 1
-            remaining = self.max_queries - simulated_count
-            
-            if remaining > 0:
-                suffix = f"（剩余查询次数：{remaining}）" if is_zh else f" (Remaining queries: {remaining})"
-            else:
-                suffix = "（已用完所有查询次数）" if is_zh else " (All queries used)"
-                
-            # 计算答案
-            attr = self.attributes[node]
-            ans = f"Attr({node})={attr}{suffix}"
-            
-            results.append({"query": query_content, "answer": ans})
-            
-        return results
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """生成错误答案"""
-        import re as _re
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        # 尝试匹配属性查询结果: Attr(n)=v
-        attr_match = _re.search(r'Attr\(\d+\)=(\d+)', correct)
-        if attr_match:
-            original_val = int(attr_match.group(1))
-            wrong_val = (original_val + 1) % 5
-            return correct.replace(f"={original_val}", f"={wrong_val}", 1)
+        if self.config.language == "zh":
+            if correct == "是":
+                return "否"
+            elif correct == "否":
+                return "是"
+        else:
+            if correct.lower() == "yes":
+                return "No"
+            elif correct.lower() == "no":
+                return "Yes"
         
-        # 尝试匹配特征查询结果: Depth=d, Child=c, Subtree=s, Leaf=l
-        feat_match = _re.search(r'Depth=(\d+)', correct)
-        if feat_match:
-            original_depth = int(feat_match.group(1))
-            wrong_depth = (original_depth + 1) % 5
-            return correct.replace(f"Depth={original_depth}", f"Depth={wrong_depth}", 1)
-        
-        # 兜底
         return correct + "_WRONG"
+
+    def _handle_pair_query(self, query_str, yes_res, no_res, invalid_res):
+        try:
+            parts = [x.strip() for x in query_str.split(',')]
+            if len(parts) != 2:
+                return invalid_res
+            
+            i, j = int(parts[0]), int(parts[1])
+            
+            if i < 1 or i > self._game_info["n"] or j < 1 or j > self._game_info["n"]:
+                return invalid_res
+            if i >= j:
+                return invalid_res
+            
+            return yes_res if self.element_to_class[i] == self.element_to_class[j] else no_res
+            
+        except Exception:
+            return invalid_res
+
+    def _handle_subset_count_query(self, query_str, invalid_res):
+        try:
+            elements = [int(x.strip()) for x in query_str.split(',') if x.strip()]
+            
+            if not elements:
+                return invalid_res
+            
+            if len(elements) != len(set(elements)):
+                return invalid_res
+            
+            for elem in elements:
+                if elem < 1 or elem > self._game_info["n"]:
+                    return invalid_res
+            
+            classes = set(self.element_to_class[elem] for elem in elements)
+            return str(len(classes))
+            
+        except Exception:
+            return invalid_res
+
+    def _handle_anchor_query(self, query_str, invalid_res):
+        try:
+            parts = query_str.split('|')
+            if len(parts) != 2:
+                return invalid_res
+            
+            anchor = int(parts[0].strip())
+            elements = [int(x.strip()) for x in parts[1].split(',') if x.strip()]
+            
+            if not elements:
+                return invalid_res
+            
+            if len(elements) != len(set(elements)):
+                return invalid_res
+            
+            for elem in elements:
+                if elem < 1 or elem > self._game_info["n"]:
+                    return invalid_res
+            
+            if anchor < 1 or anchor > self._game_info["n"]:
+                return invalid_res
+            
+            anchor_class = self.element_to_class[anchor]
+            count = sum(1 for elem in elements if self.element_to_class[elem] == anchor_class)
+            return str(count)
+            
+        except Exception:
+            return invalid_res
+

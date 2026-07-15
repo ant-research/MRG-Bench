@@ -1,446 +1,601 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   全局可达：某节点是否能到达图中所有其他节点
-# ============================================================
-
 from .base import Game
 import random
+import itertools
 
+class SequencePatternGame(Game):
 
-class DirectedGraphReachabilityGame(Game):
+    reasoning_type = "归纳推理"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们来玩一个"有向图可达性推断"游戏，规则如下：
+我们现在来玩一个"序列识别"推理游戏，规则如下：
 
-游戏设定了一个整数 N = {n}，顶点集合为 {{0, 1, ..., N-1}}，所有运算按模 N 进行。
+游戏设定了一个隐藏的字符序列 S，由字母表 {{R, G, B, Y}} 中的字符组成，长度为 {n}。
 
-存在一个未知但固定的偏移集合 S，它是 {{1, 2, ..., N-1}} 的子集。对于任意顶点 u，当且仅当 (v - u) mod N 属于 S 时，存在有向边 u -> v。这个结构在所有顶点上完全一致，不存在其他边。
+这个序列有一个特殊性质：它是由某个"基础块" M0 重复拼接而成的。例如，如果基础块是 "RGB"，序列就是 "RGBRGBRGB..."。基础块的长度 T 未知，但满足以下条件：
+- T 大于等于 2 且小于等于 {t_max}
+- 基础块 M0 是序列 S 的最小重复单元（不存在更短的周期）
+- 序列长度 {n} 正好是 T 的整数倍
 
-可达性定义：从起点到终点可以经由零条或多条有向边连通。零条边表示顶点可达自身。
+你的目标是通过提问推断出这个基础块 M0 及其长度 T。
 
-你的目标是：判定是否存在某个顶点 w，使得从 w 出发可以到达所有顶点 {{0, 1, ..., N-1}}；若存在，给出任意一个这样的顶点编号。
+每次你可以提交一个"判定查询"，格式如下：
+- 指定一个区间 [L, R]（L 和 R 都是位置编号，从 1 到 {n}）
+- 提供一个候选字符串 X（长度至少为 2）
 
-你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实设定如实回答：
+我会告诉你：在区间 [L, R] 内，是否存在某个位置开始的子串恰好等于 X。
+- 如果存在，回答"是"
+- 如果不存在，回答"否"
 
-1. Probe(u, v)：询问是否存在边 u -> v。回答"是"或"否"。
-2. Route(u, [a1, a2, ..., ak])：从 u 按序尝试走到 a1、a2、...、ak。回答：
-   - 若全部单跳存在："成功，终点 ak"
-   - 否则："失败：第 i 步（从 x 到 ai）不存在"，并给出当前停留顶点 x 与失败步数 i
-3. Outdeg(u)：询问顶点 u 的出度。回答一个整数。
-4. Reach(u, L)：询问从 u 出发在至多 L 跳内可达的不同顶点数量。回答一个整数。
+注意：
+- 区间必须足够容纳候选串（R - L + 1 必须大于等于 X 的长度），否则答案必为"否"
+- 我只会告诉你"是"或"否"，不会告诉你具体位置、出现次数或其他信息
+- 请尽可能少地使用提问次数
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+提问时使用以下 XML 格式：
 
-## 询问与提交答案的格式（必须严格遵守）
+<query>L,R,X</query>
 
-每次只能包含一个标签。请使用以下 XML 格式：
+其中 L 和 R 是区间端点（整数），X 是候选字符串（只包含 R、G、B、Y）。
 
-- Probe 查询（例如询问边 0 -> 1）：
-<query_probe>0,1</query_probe>
+例如，查询区间 [1, 10] 内是否存在子串 "RGB"：
+<query>1,10,RGB</query>
 
-- Route 查询（例如从 0 经过 [1,2,3]）：
-<query_route>0,[1,2,3]</query_route>
+当你准备好提交最终答案时，使用以下格式：
 
-- Outdeg 查询（例如询问顶点 0）：
-<query_outdeg>0</query_outdeg>
+<answer>M0</answer>
 
-- Reach 查询（例如从顶点 0 出发最多 3 跳）：
-<query_reach>0,3</query_reach>
+其中 M0 是你推断出的基础块字符串。
 
-提交最终答案时，必须说明是否存在可达全体的顶点，格式如下：
-
-- 若存在，给出一个示例顶点（例如顶点 0）：
-<answer>exists, vertex=0</answer>
-
-- 若不存在：
-<answer>not_exists</answer>
+例如：
+<answer>RGB</answer>
 """
 
     game_rule_en = """\
-Let's play a "Directed Graph Reachability Inference" game. Here are the rules:
+Let's play a "Sequence Pattern Recognition" deduction game. Here are the rules:
 
-The game sets an integer N = {n}, with a vertex set {{0, 1, ..., N-1}}, and all operations are modulo N.
+There is a hidden character sequence S composed of letters from the alphabet {{R, G, B, Y}}, with a length of {n}.
 
-There exists an unknown but fixed offset set S, which is a subset of {{1, 2, ..., N-1}}. For any vertex u, there exists a directed edge u -> v if and only if (v - u) mod N belongs to S. This structure is completely consistent across all vertices, and no other edges exist.
+This sequence has a special property: it is formed by repeating a "base block" M0. For example, if the base block is "RGB", the sequence would be "RGBRGBRGB...". The length T of the base block is unknown, but satisfies the following conditions:
+- T is greater than or equal to 2 and less than or equal to {t_max}
+- The base block M0 is the minimal repeating unit of sequence S (no shorter period exists)
+- The sequence length {n} is exactly a multiple of T
 
-Reachability definition: From a starting point to an endpoint, you can connect via zero or more directed edges. Zero edges means a vertex can reach itself.
+Your goal is to infer the base block M0 and its length T through queries.
 
-Your goal is: Determine whether there exists a vertex w such that all vertices {{0, 1, ..., N-1}} are reachable from w; if so, provide any one such vertex number.
+Each time you can submit a "decision query" in the following format:
+- Specify an interval [L, R] (L and R are position indices from 1 to {n})
+- Provide a candidate string X (length at least 2)
 
-You can repeatedly ask me the following queries (one query per turn), and I will answer truthfully based on the actual setup:
+I will tell you: whether there exists a substring starting at some position within interval [L, R] that exactly equals X.
+- If it exists, answer "Yes"
+- If it doesn't exist, answer "No"
 
-1. Probe(u, v): Ask if there exists an edge u -> v. Answer "Yes" or "No".
-2. Route(u, [a1, a2, ..., ak]): Try to walk from u sequentially to a1, a2, ..., ak. Answer:
-   - If all single hops exist: "Success, endpoint ak"
-   - Otherwise: "Failed: step i (from x to ai) does not exist", with current vertex x and failed step i
-3. Outdeg(u): Ask for the out-degree of vertex u. Answer an integer.
-4. Reach(u, L): Ask for the number of distinct vertices reachable from u within at most L hops. Answer an integer.
+Note:
+- The interval must be large enough to contain the candidate string (R - L + 1 must be greater than or equal to the length of X), otherwise the answer will be "No"
+- I will only tell you "Yes" or "No", without revealing specific positions, occurrence counts, or other information
+- Please use as few queries as possible
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+For queries, use the following XML format:
 
-## Query and Answer Format (strictly required)
+<query>L,R,X</query>
 
-Each query must contain only one tag. Use the following XML format:
+Where L and R are interval endpoints (integers), and X is the candidate string (containing only R, G, B, Y).
 
-- Probe query (e.g., asking about edge 0 -> 1):
-<query_probe>0,1</query_probe>
+For example, to query whether substring "RGB" exists in interval [1, 10]:
+<query>1,10,RGB</query>
 
-- Route query (e.g., from 0 through [1,2,3]):
-<query_route>0,[1,2,3]</query_route>
+When you are ready to submit your final answer, use the following format:
 
-- Outdeg query (e.g., asking about vertex 0):
-<query_outdeg>0</query_outdeg>
+<answer>M0</answer>
 
-- Reach query (e.g., from vertex 0 within at most 3 hops):
-<query_reach>0,3</query_reach>
+Where M0 is the base block string you inferred.
 
-When submitting the final answer, specify whether a vertex that reaches all exists:
-
-- If exists, provide an example vertex (e.g., vertex 0):
-<answer>exists, vertex=0</answer>
-
-- If not exists:
-<answer>not_exists</answer>
+For example:
+<answer>RGB</answer>
 """
 
     contextualized_rule_zh_1 = """\
-【交通网络枢纽排查】
-本地区包含 N = {n} 个物流中转站，编号为 {{0, 1, ..., N-1}}。目前正在规划一种标准化的单向直飞航线。
+我们现在来进行一项"交通信号周期识别"排查任务，规则如下：
 
-根据规划，存在一个未知但固定的航线偏移量集合 S。对于任意中转站 u，仅当 (v - u) mod N 属于集合 S 时，才存在一条从 u 直飞 v 的单向航线。这种环形网络的拓扑在所有站点上完全一致。
+交通控制系统记录了一段长度为 {n} 的交通信号相位序列 S，由 {{R, G, B, Y}} 四种状态代码组成（分别代表红灯、绿灯、公交专用灯、黄灯）。
 
-“可达性”意味着从一个中转站出发，可以通过零次或多次航班中转到达目标站点。
+该路口的信号灯有一个强制循环特性：它是按照某个最小的"基础周期" M0 不断往复执行拼接而成的。例如，如果基础周期是 "RGB"，整个时间轴序列就是 "RGBRGBRGB..."。基础周期 M0 的步长 T 未知，但满足以下条件：
+- T 大于等于 2 且小于等于 {t_max}
+- 基础周期 M0 是序列 S 的最小重复单元（不存在更短的循环逻辑）
+- 总时长 {n} 正好是 T 的整数倍
 
-你的任务是：找出是否存在一个“核心枢纽站” w，使得从 w 出发能够将货物投递到所有的 {{0, 1, ..., N-1}} 个站点。如果存在，请给出一个符合条件的站点编号。
+你的目标是通过向系统查询，推断出这个基础信号周期 M0 及其步长 T。
 
-你可以通过以下指令向调度中心查询信息：
-1. Probe(u, v)：查询是否存在从站点 u 直飞 v 的航线。
-2. Route(u, [a1, a2, ..., ak])：尝试安排货物从 u 依次经停 a1, a2, ..., ak。
-3. Outdeg(u)：查询站点 u 拥有的直飞出发航线总数。
-4. Reach(u, L)：查询从站点 u 出发，在不超过 L 个航段（跳）内能够覆盖的站点总数。
+每次你可以提交一个"相位区间验证"，格式如下：
+- 指定一个时间区间 [L, R]（L 和 R 都是时间步编号，从 1 到 {n}）
+- 提供一个候选相位串 X（长度至少为 2）
 
-收集到足够信息后，请提交结果。
+系统会告诉你：在区间 [L, R] 内，是否存在某个时间点开始的连续片段恰好等于 X。
+- 如果存在，回答"是"
+- 如果不存在，回答"否"
 
-## 询问与提交格式要求
+注意：
+- 区间必须足够容纳候选串（R - L + 1 必须大于等于 X 的长度），否则答案必为"否"
+- 系统只会返回"是"或"否"，不会告知具体发生位置、出现次数等详细日志
+- 请尽可能少地使用查询次数
 
-每次仅包含一个 XML 标签：
-- Probe 查询：<query_probe>0,1</query_probe>
-- Route 查询：<query_route>0,[1,2,3]</query_route>
-- Outdeg 查询：<query_outdeg>0</query_outdeg>
-- Reach 查询：<query_reach>0,3</query_reach>
+提问时使用以下 XML 格式：
 
-最终答案提交：
-- 若存在核心枢纽，给出一个示例：<answer>exists, vertex=0</answer>
-- 若不存在：<answer>not_exists</answer>
+<query>L,R,X</query>
+
+其中 L 和 R 是区间端点（整数），X 是候选相位串（只包含 R、G、B、Y）。
+
+例如，查询时间区间 [1, 10] 内是否出现了连续相位 "RGB"：
+<query>1,10,RGB</query>
+
+当你准备好提交最终排查结果时，使用以下格式：
+
+<answer>M0</answer>
+
+其中 M0 是你推断出的基础周期串。
+
+例如：
+<answer>RGB</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Logistics Scenario]
-This region contains N = {n} logistics transit stations, numbered {{0, 1, ..., N-1}}. A standardized one-way direct flight network is being planned.
+[Traffic Scenario]
+Let's conduct a "Traffic Signal Cycle Recognition" diagnostic task. Here are the rules:
 
-According to the plan, there is an unknown but fixed set of route offsets S. For any station u, a direct one-way flight from u to v exists if and only if (v - u) mod N belongs to set S. This circular network topology is completely uniform across all stations.
+The traffic control system has recorded a traffic signal phase sequence S with a length of {n}, composed of status codes {{R, G, B, Y}} (representing Red, Green, Bus-only, and Yellow lights respectively).
 
-"Reachability" means that cargo originating from a station can be delivered to a destination station via zero or multiple connecting flights.
+This intersection's signals have a mandatory loop property: they are formed by continuously repeating a minimal "base cycle" M0. For example, if the base cycle is "RGB", the entire timeline sequence would be "RGBRGBRGB...". The length T of the base cycle is unknown, but satisfies the following conditions:
+- T is greater than or equal to 2 and less than or equal to {t_max}
+- The base cycle M0 is the minimal repeating unit of sequence S (no shorter cycle logic exists)
+- The total duration {n} is exactly a multiple of T
 
-Your task is to determine if there exists a "core hub" station w such that cargo can be delivered from w to all {{0, 1, ..., N-1}} stations. If so, provide the ID of any one such station.
+Your goal is to infer the base signal cycle M0 and its length T through system queries.
 
-You can query the dispatch center for information using the following commands:
-1. Probe(u, v): Query if there is a direct flight from station u to v.
-2. Route(u, [a1, a2, ..., ak]): Attempt to route cargo from u sequentially through a1, a2, ..., ak.
-3. Outdeg(u): Query the total number of outbound direct flights from station u.
-4. Reach(u, L): Query the number of distinct stations that can be reached from u within a maximum of L flight segments (hops).
+Each time you can submit a "phase interval verification" in the following format:
+- Specify a time interval [L, R] (L and R are time step indices from 1 to {n})
+- Provide a candidate phase string X (length at least 2)
 
-Once you have gathered enough information, submit your final result.
+The system will tell you: whether there exists a continuous segment starting at some point within interval [L, R] that exactly equals X.
+- If it exists, answer "Yes"
+- If it doesn't exist, answer "No"
 
-## Query and Answer Format
+Note:
+- The interval must be large enough to contain the candidate string (R - L + 1 must be greater than or equal to the length of X), otherwise the answer will be "No"
+- The system will only tell you "Yes" or "No", without revealing specific occurrence positions, counts, or other detailed logs
+- Please use as few queries as possible
 
-Each query must contain exactly one XML tag:
-- Probe query: <query_probe>0,1</query_probe>
-- Route query: <query_route>0,[1,2,3]</query_route>
-- Outdeg query: <query_outdeg>0</query_outdeg>
-- Reach query: <query_reach>0,3</query_reach>
+For queries, use the following XML format:
 
-Final answer submission:
-- If a core hub exists, provide an example: <answer>exists, vertex=0</answer>
-- If not exists: <answer>not_exists</answer>
+<query>L,R,X</query>
+
+Where L and R are interval endpoints (integers), and X is the candidate phase string (containing only R, G, B, Y).
+
+For example, to query whether the continuous phase "RGB" occurred in time interval [1, 10]:
+<query>1,10,RGB</query>
+
+When you are ready to submit your final diagnostic result, use the following format:
+
+<answer>M0</answer>
+
+Where M0 is the base cycle string you inferred.
+
+For example:
+<answer>RGB</answer>
 """
 
     contextualized_rule_zh_2 = """\
-【医疗感染源流调追踪】
-在一座拥有 N = {n} 个科室（编号为 {{0, 1, ..., N-1}}）的大型隔离医院中，我们正在调查某种通过气流单向传播的病原体。
+我们现在来进行一项"基因序列基序识别"分析任务，规则如下：
 
-医院的单向通风系统遵循一个固定的偏移规律集合 S。对于任意科室 u，仅当 (v - u) mod N 属于集合 S 时，存在一条从 u 到 v 的单向气流通道。所有科室的通风设计均完全一致。
+检测设备提取了一段长度为 {n} 的大分子链序列 S，由 {{R, G, B, Y}} 四类特定生物标志物代码组成。
 
-“可达性”意味着病原体可以通过零条或多条单向通风管道进行跨科室传播。
+该分子链具有高度规律性：它是由于某个核心"基因基序" M0 连续复制拼接而成的。例如，如果核心基序是 "RGB"，整个分子链就是 "RGBRGBRGB..."。基序 M0 的长度 T 未知，但满足以下条件：
+- T 大于等于 2 且小于等于 {t_max}
+- 核心基序 M0 是序列 S 的最小表达单元（不存在更短的有效重复片段）
+- 序列总长 {n} 正好是 T 的整数倍
 
-你的任务是：判断是否存在一个“总污染源”科室 w，一旦该科室被污染，病原体将通过气流系统传播到所有 {{0, 1, ..., N-1}} 个科室。如果存在，请提供任意一个可能的科室编号。
+你的目标是通过定向探测，推断出这个核心基因基序 M0 及其长度 T。
 
-你可以向工程部提出以下流调排查：
-1. Probe(u, v)：检测是否存在从科室 u 直达科室 v 的气流通道。
-2. Route(u, [a1, a2, ..., ak])：追踪从 u 开始，依次流经 a1, a2, ..., ak 的气流路径是否连通。
-3. Outdeg(u)：查询从科室 u 直接吹向其他科室的管道数量。
-4. Reach(u, L)：查询从科室 u 的气流在最多跨越 L 个管道节点后能波及的不同科室总数。
+每次你可以提交一个"片段探针验证"，格式如下：
+- 指定一个测序区间 [L, R]（L 和 R 都是位点编号，从 1 到 {n}）
+- 提供一个候选靶向序列 X（长度至少为 2）
 
-收集信息后，请提交追踪结论。
+仪器会告诉你：在区间 [L, R] 内，是否存在某个位点开始的连续片段恰好与 X 匹配。
+- 如果存在，回答"是"
+- 如果不存在，回答"否"
 
-## 询问与提交格式要求
+注意：
+- 区间必须足够容纳靶向序列（R - L + 1 必须大于等于 X 的长度），否则答案必为"否"
+- 仪器只会返回"是"或"否"，不会提供具体结合位点、荧光强度等其他参数
+- 请尽可能少地消耗探测次数
 
-每次仅限一个 XML 标签：
-- Probe 查询：<query_probe>0,1</query_probe>
-- Route 查询：<query_route>0,[1,2,3]</query_route>
-- Outdeg 查询：<query_outdeg>0</query_outdeg>
-- Reach 查询：<query_reach>0,3</query_reach>
+提问时使用以下 XML 格式：
 
-最终答案提交：
-- 若存在总污染源，给出一个示例科室：<answer>exists, vertex=0</answer>
-- 若不存在：<answer>not_exists</answer>
+<query>L,R,X</query>
+
+其中 L 和 R 是区间端点（整数），X 是候选靶向序列（只包含 R、G、B、Y）。
+
+例如，探测位点区间 [1, 10] 内是否存在靶向片段 "RGB"：
+<query>1,10,RGB</query>
+
+当你准备好提交最终测序结果时，使用以下格式：
+
+<answer>M0</answer>
+
+其中 M0 是你推断出的核心基序。
+
+例如：
+<answer>RGB</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Infection Tracing Scenario]
-In a large isolation hospital with N = {n} departments (numbered {{0, 1, ..., N-1}}), we are investigating a pathogen that spreads via one-way airflow.
+[Medical Scenario]
+Let's conduct a "Genetic Motif Recognition" analysis task. Here are the rules:
 
-The hospital's one-way ventilation system follows a fixed set of offset rules S. For any department u, a one-way airflow duct from u to v exists if and only if (v - u) mod N belongs to set S. This ventilation design is perfectly uniform across all departments.
+The testing equipment has extracted a macromolecular chain sequence S with a length of {n}, composed of four specific biomarker codes {{R, G, B, Y}}.
 
-"Reachability" implies that the pathogen can spread across departments via zero or multiple one-way ventilation ducts.
+This molecular chain has high regularity: it is formed by continuously replicating a core "gene motif" M0. For example, if the core motif is "RGB", the entire chain would be "RGBRGBRGB...". The length T of motif M0 is unknown, but satisfies the following conditions:
+- T is greater than or equal to 2 and less than or equal to {t_max}
+- The core motif M0 is the minimal expression unit of sequence S (no shorter valid repeating segment exists)
+- The total chain length {n} is exactly a multiple of T
 
-Your task is to determine whether there exists a "primary contamination source" department w such that if contaminated, the pathogen would spread to all {{0, 1, ..., N-1}} departments. If so, provide the ID of any such department.
+Your goal is to infer the core gene motif M0 and its length T through targeted probing.
 
-You can request the following tracing checks from the engineering team:
-1. Probe(u, v): Detect if there is a direct airflow duct from department u to v.
-2. Route(u, [a1, a2, ..., ak]): Trace if the airflow path from u sequentially through a1, a2, ..., ak is connected.
-3. Outdeg(u): Query the number of direct outward ducts blowing from department u.
-4. Reach(u, L): Query the total number of distinct departments the airflow from u can affect within at most L duct nodes.
+Each time you can submit a "segment probe verification" in the following format:
+- Specify a sequencing interval [L, R] (L and R are locus indices from 1 to {n})
+- Provide a candidate target sequence X (length at least 2)
 
-Once you have gathered sufficient information, submit your conclusion.
+The instrument will tell you: whether there exists a continuous segment starting at some locus within interval [L, R] that exactly matches X.
+- If it exists, answer "Yes"
+- If it doesn't exist, answer "No"
 
-## Query and Answer Format
+Note:
+- The interval must be large enough to contain the target sequence (R - L + 1 must be greater than or equal to the length of X), otherwise the answer will be "No"
+- The instrument will only tell you "Yes" or "No", without providing specific binding loci, fluorescence intensity, or other parameters
+- Please use as few probe attempts as possible
 
-Each query must contain exactly one XML tag:
-- Probe query: <query_probe>0,1</query_probe>
-- Route query: <query_route>0,[1,2,3]</query_route>
-- Outdeg query: <query_outdeg>0</query_outdeg>
-- Reach query: <query_reach>0,3</query_reach>
+For queries, use the following XML format:
 
-Final answer submission:
-- If a primary source exists, provide an example: <answer>exists, vertex=0</answer>
-- If not exists: <answer>not_exists</answer>
+<query>L,R,X</query>
+
+Where L and R are interval endpoints (integers), and X is the candidate target sequence (containing only R, G, B, Y).
+
+For example, to probe whether target segment "RGB" exists within locus interval [1, 10]:
+<query>1,10,RGB</query>
+
+When you are ready to submit your final sequencing result, use the following format:
+
+<answer>M0</answer>
+
+Where M0 is the core motif you inferred.
+
+For example:
+<answer>RGB</answer>
 """
 
     contextualized_rule_zh_3 = """\
-【教育先修课体系设计】
-我们正在建立一个包含 N = {n} 个知识模块的课程体系，模块编号为 {{0, 1, ..., N-1}}。
+我们现在来进行一项"教学模块周期识别"评估任务，规则如下：
 
-课程之间存在单向的先修依赖关系，这些关系由一个固定的偏移规则集合 S 决定。对于任意模块 u，仅当 (v - u) mod N 属于集合 S 时，模块 u 是模块 v 的直接先修课（即学完 u 即可解锁 v）。这一结构模式在整个知识体系中全局一致。
+教务系统记录了一套长度为 {n} 的标准化教学活动序列 S，由 {{R, G, B, Y}} 四种活动代码组成（分别代表阅读、小组、板书、延展活动）。
 
-“可达性”指的是可以通过一条或多条先修依赖链，依次解锁后续课程。
+该课程设计遵循严格的循环逻辑：它是由某个最小的"基础教学模块" M0 重复排布而成的。例如，如果基础模块是 "RGB"，整个学期序列就是 "RGBRGBRGB..."。基础模块 M0 的课时数 T 未知，但满足以下条件：
+- T 大于等于 2 且小于等于 {t_max}
+- 基础模块 M0 是序列 S 的最小重复教学单元（不存在更短的循环排课）
+- 总课时序列长度 {n} 正好是 T 的整数倍
 
-你的任务是：判断是否存在一门“核心导论课” w，使得学生只要从这门课开始学习，最终就能逐步解锁并学完全部 {{0, 1, ..., N-1}} 个模块。若存在，请给出任意一门这样的课程编号。
+你的目标是通过评估查询，推断出这个基础教学模块 M0 及其课时数 T。
 
-你可以向教务系统发起以下查询：
-1. Probe(u, v)：询问模块 u 是否是模块 v 的直接先修课。
-2. Route(u, [a1, a2, ..., ak])：验证一条从 u 开始，依次解锁 a1, a2, ..., ak 的学习路径。
-3. Outdeg(u)：询问以模块 u 为直接先修课的后续模块数量。
-4. Reach(u, L)：询问从模块 u 开始，最多经过 L 层先修解锁链，总共能开放多少个模块。
+每次你可以提交一个"教案区间比对"，格式如下：
+- 指定一个课时区间 [L, R]（L 和 R 都是课时编号，从 1 到 {n}）
+- 提供一个候选活动串 X（长度至少为 2）
 
-信息充分后，请提交你的教研分析结论。
+系统会告诉你：在区间 [L, R] 内，是否存在某个课时开始的连续教学安排恰好等于 X。
+- 如果存在，回答"是"
+- 如果不存在，回答"否"
 
-## 询问与提交格式要求
+注意：
+- 区间必须足够容纳候选活动串（R - L + 1 必须大于等于 X 的长度），否则答案必为"否"
+- 系统只会返回"是"或"否"，不会告知具体发生课时、重复开展次数等其他信息
+- 请尽可能少地使用查询次数
 
-每次提交仅限一个 XML 标签：
-- Probe 查询：<query_probe>0,1</query_probe>
-- Route 查询：<query_route>0,[1,2,3]</query_route>
-- Outdeg 查询：<query_outdeg>0</query_outdeg>
-- Reach 查询：<query_reach>0,3</query_reach>
+提问时使用以下 XML 格式：
 
-最终答案提交：
-- 若存在核心导论课，给出课程编号：<answer>exists, vertex=0</answer>
-- 若不存在：<answer>not_exists</answer>
+<query>L,R,X</query>
+
+其中 L 和 R 是区间端点（整数），X 是候选活动串（只包含 R、G、B、Y）。
+
+例如，查询课时区间 [1, 10] 内是否执行了连续活动 "RGB"：
+<query>1,10,RGB</query>
+
+当你准备好提交最终评估结论时，使用以下格式：
+
+<answer>M0</answer>
+
+其中 M0 是你推断出的基础教学模块串。
+
+例如：
+<answer>RGB</answer>
 """
 
     contextualized_rule_en_3 = """\
-[Educational Prerequisite System Scenario]
-We are building a curriculum system comprising N = {n} knowledge modules, numbered {{0, 1, ..., N-1}}.
+[Education Scenario]
+Let's conduct a "Teaching Module Cycle Recognition" assessment task. Here are the rules:
 
-There are one-way prerequisite dependencies between modules, governed by a fixed set of offset rules S. For any module u, u is a direct prerequisite for v (i.e., completing u unlocks v) if and only if (v - u) mod N belongs to set S. This structural pattern is globally consistent across the entire curriculum.
+The academic system has recorded a standardized learning activity sequence S of length {n}, composed of activity codes {{R, G, B, Y}} (representing Reading, Group work, Board work, and Yielding/Extension activities).
 
-"Reachability" means that subsequent courses can be sequentially unlocked through zero or more prerequisite dependency chains.
+This curriculum design follows a strict cyclical logic: it is formed by repeatedly scheduling a minimal "base teaching module" M0. For example, if the base module is "RGB", the entire semester sequence would be "RGBRGBRGB...". The number of periods T for module M0 is unknown, but satisfies the following conditions:
+- T is greater than or equal to 2 and less than or equal to {t_max}
+- The base module M0 is the minimal repeating teaching unit of sequence S (no shorter cyclical schedule exists)
+- The total sequence length {n} is exactly a multiple of T
 
-Your task is to determine if there exists a "core introductory course" w such that starting from this course, a student can eventually unlock and study all {{0, 1, ..., N-1}} modules. If so, provide the ID of any one such course.
+Your goal is to infer the base teaching module M0 and its length T through assessment queries.
 
-You can query the academic system using the following commands:
-1. Probe(u, v): Query if module u is a direct prerequisite for module v.
-2. Route(u, [a1, a2, ..., ak]): Verify a study path starting from u and sequentially unlocking a1, a2, ..., ak.
-3. Outdeg(u): Query the number of subsequent modules that have module u as their direct prerequisite.
-4. Reach(u, L): Query the total number of distinct modules that can be unlocked starting from u within at most L dependency layers.
+Each time you can submit a "lesson plan interval comparison" in the following format:
+- Specify a period interval [L, R] (L and R are period indices from 1 to {n})
+- Provide a candidate activity string X (length at least 2)
 
-Submit your pedagogical conclusion once you have enough information.
+The system will tell you: whether there exists a continuous teaching schedule starting at some period within interval [L, R] that exactly equals X.
+- If it exists, answer "Yes"
+- If it doesn't exist, answer "No"
 
-## Query and Answer Format
+Note:
+- The interval must be large enough to contain the candidate activity string (R - L + 1 must be greater than or equal to the length of X), otherwise the answer will be "No"
+- The system will only return "Yes" or "No", without revealing specific occurrence periods, execution frequencies, or other information
+- Please use as few query attempts as possible
 
-Each query must contain exactly one XML tag:
-- Probe query: <query_probe>0,1</query_probe>
-- Route query: <query_route>0,[1,2,3]</query_route>
-- Outdeg query: <query_outdeg>0</query_outdeg>
-- Reach query: <query_reach>0,3</query_reach>
+For queries, use the following XML format:
 
-Final answer submission:
-- If a core introductory course exists, provide an example: <answer>exists, vertex=0</answer>
-- If not exists: <answer>not_exists</answer>
+<query>L,R,X</query>
+
+Where L and R are interval endpoints (integers), and X is the candidate activity string (containing only R, G, B, Y).
+
+For example, to query whether the continuous activity "RGB" was executed within period interval [1, 10]:
+<query>1,10,RGB</query>
+
+When you are ready to submit your final assessment conclusion, use the following format:
+
+<answer>M0</answer>
+
+Where M0 is the base teaching module string you inferred.
+
+For example:
+<answer>RGB</answer>
 """
 
     contextualized_rule_zh_4 = """\
-【工业流水线物料流转】
-在一个自动化车间内，部署了 N = {n} 个加工工站，编号为 {{0, 1, ..., N-1}}。这些工站由一系列单向物料传送带相连。
+我们现在来进行一项"流水线工序周期识别"排错任务，规则如下：
 
-由于标准化装配要求，传送带的连接服从一个固定的偏移集合 S。对于任意工站 u，当且仅当 (v - u) mod N 属于集合 S 时，存在一条从 u 流向 v 的单向传送带。所有工站的物料输出逻辑完全一致。
+工厂流水线正在执行一段长度为 {n} 的连续作业序列 S，由 {{R, G, B, Y}} 四种工序指令组成（分别代表铆接、打磨、组装、检验）。
 
-“可达性”是指物料可以从一个工站被放入，经过一条或多条传送带接力，最终抵达目标工站。
+该产线的自动化程序有一个强制标准：它是由一个最小的"标准循环工序" M0 往复执行构成的。例如，如果循环工序是 "RGB"，整条流水线的动作序列就是 "RGBRGBRGB..."。循环工序 M0 的指令数 T 未知，但满足以下条件：
+- T 大于等于 2 且小于等于 {t_max}
+- 标准循环工序 M0 是序列 S 的最小重复生产单元（不存在更短的动作循环）
+- 总作业长度 {n} 正好是 T 的整数倍
 
-你的任务是：诊断是否存在一个“总控投料站” w，使得将原材料投入 w 后，物料能够顺着流水线被输送至所有的 {{0, 1, ..., N-1}} 个工站。如果存在，请指出任意一个这样的投料站编号。
+你的目标是通过设备调试查询，推断出这个标准循环工序 M0 及其指令数 T。
 
-你可以向中控系统发起以下探测指令：
-1. Probe(u, v)：探测是否存在从工站 u 直达工站 v 的单向传送带。
-2. Route(u, [a1, a2, ..., ak])：模拟物料从 u 投放，能否依次流转经过 a1, a2, ..., ak。
-3. Outdeg(u)：查询工站 u 连接出的直接传送带数量。
-4. Reach(u, L)：查询从工站 u 投料，经过最多 L 次传送带接力，物料能够抵达的不同工站数量。
+每次你可以提交一个"作业区间校验"，格式如下：
+- 指定一个流水位区间 [L, R]（L 和 R 都是流水位编号，从 1 到 {n}）
+- 提供一个候选指令串 X（长度至少为 2）
 
-排查完毕后，请提交诊断报告。
+中控台会告诉你：在区间 [L, R] 内，是否存在某个位置开始的连续加工动作恰好等于 X。
+- 如果存在，回答"是"
+- 如果不存在，回答"否"
 
-## 询问与提交格式要求
+注意：
+- 区间必须足够容纳候选指令串（R - L + 1 必须大于等于 X 的长度），否则答案必为"否"
+- 中控台只会返回"是"或"否"，不会告知具体发生工位、合格率等其他制造数据
+- 请尽可能少地使用调试查询次数
 
-单次只能发送一个 XML 标签：
-- Probe 探测：<query_probe>0,1</query_probe>
-- Route 模拟：<query_route>0,[1,2,3]</query_route>
-- Outdeg 统计：<query_outdeg>0</query_outdeg>
-- Reach 统计：<query_reach>0,3</query_reach>
+提问时使用以下 XML 格式：
 
-最终答案提交：
-- 若存在总控投料站，给出站点编号：<answer>exists, vertex=0</answer>
-- 若不存在：<answer>not_exists</answer>
+<query>L,R,X</query>
+
+其中 L 和 R 是区间端点（整数），X 是候选指令串（只包含 R、G、B、Y）。
+
+例如，查询流水位区间 [1, 10] 内是否执行了连续动作 "RGB"：
+<query>1,10,RGB</query>
+
+当你准备好提交最终排错报告时，使用以下格式：
+
+<answer>M0</answer>
+
+其中 M0 是你推断出的标准循环工序串。
+
+例如：
+<answer>RGB</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Industrial Assembly Line Scenario]
-In an automated workshop, N = {n} processing stations are deployed, numbered {{0, 1, ..., N-1}}. These stations are connected by a series of one-way material conveyor belts.
+[Manufacturing Scenario]
+Let's conduct an "Assembly Line Process Cycle Recognition" troubleshooting task. Here are the rules:
 
-Due to standardized assembly requirements, the conveyor connections follow a fixed offset set S. For any station u, a one-way conveyor belt from u to v exists if and only if (v - u) mod N belongs to set S. This material output logic is perfectly uniform across all stations.
+The factory assembly line is executing a continuous operation sequence S of length {n}, composed of process instruction codes {{R, G, B, Y}} (representing Riveting, Grinding, Bending, and Yielding/Testing).
 
-"Reachability" means that materials introduced at a station can be transported to a target station via zero or multiple relay conveyor belts.
+This automated production line has a strict standard: it is formed by repeatedly executing a minimal "standard production cycle" M0. For example, if the production cycle is "RGB", the entire assembly line action sequence would be "RGBRGBRGB...". The number of instructions T in cycle M0 is unknown, but satisfies the following conditions:
+- T is greater than or equal to 2 and less than or equal to {t_max}
+- The standard production cycle M0 is the minimal repeating production unit of sequence S (no shorter action loop exists)
+- The total operation length {n} is exactly a multiple of T
 
-Your task is to diagnose whether there exists a "master feeding station" w such that raw materials fed into w can be transported along the assembly line to all {{0, 1, ..., N-1}} stations. If so, indicate the ID of any one such feeding station.
+Your goal is to infer the standard production cycle M0 and its instruction count T through equipment debugging queries.
 
-You can issue the following probing commands to the central control system:
-1. Probe(u, v): Detect if there is a direct one-way conveyor belt from station u to v.
-2. Route(u, [a1, a2, ..., ak]): Simulate whether material fed at u can sequentially flow through a1, a2, ..., ak.
-3. Outdeg(u): Query the number of outbound conveyor belts connected from station u.
-4. Reach(u, L): Query the total number of distinct stations materials can reach from station u within at most L conveyor relays.
+Each time you can submit an "operation interval validation" in the following format:
+- Specify an assembly station interval [L, R] (L and R are station indices from 1 to {n})
+- Provide a candidate instruction string X (length at least 2)
 
-Submit your diagnostic report once the inspection is complete.
+The central console will tell you: whether there exists a continuous processing action starting at some station within interval [L, R] that exactly equals X.
+- If it exists, answer "Yes"
+- If it doesn't exist, answer "No"
 
-## Query and Answer Format
+Note:
+- The interval must be large enough to contain the candidate instruction string (R - L + 1 must be greater than or equal to the length of X), otherwise the answer will be "No"
+- The central console will only return "Yes" or "No", without revealing specific executing stations, yield rates, or other manufacturing data
+- Please use as few debugging queries as possible
 
-Each query must contain exactly one XML tag:
-- Probe query: <query_probe>0,1</query_probe>
-- Route query: <query_route>0,[1,2,3]</query_route>
-- Outdeg query: <query_outdeg>0</query_outdeg>
-- Reach query: <query_reach>0,3</query_reach>
+For queries, use the following XML format:
 
-Final answer submission:
-- If a master feeding station exists, provide an example: <answer>exists, vertex=0</answer>
-- If not exists: <answer>not_exists</answer>
+<query>L,R,X</query>
+
+Where L and R are interval endpoints (integers), and X is the candidate instruction string (containing only R, G, B, Y).
+
+For example, to query whether the continuous action "RGB" was executed within station interval [1, 10]:
+<query>1,10,RGB</query>
+
+When you are ready to submit your final troubleshooting report, use the following format:
+
+<answer>M0</answer>
+
+Where M0 is the standard production cycle string you inferred.
+
+For example:
+<answer>RGB</answer>
 """
 
     contextualized_rule_zh_5 = """\
-【法律条款引用溯源】
-一份新颁布的法典包含 N = {n} 个法理节点（条款），编号为 {{0, 1, ..., N-1}}。这些条款之间存在严格的单向引用关系。
+我们现在来进行一项"合规审查程序识别"审计任务，规则如下：
 
-法典的编纂采用了一种结构化的引用逻辑，即固定的偏移集合 S。对于任意条款 u，当且仅当 (v - u) mod N 属于集合 S 时，条款 u 会明确直接引用条款 v 作为下位释明。这一法律逻辑框架在所有条款上保持一致。
+案卷系统中记录了一套长度为 {n} 的审计流转序列 S，由 {{R, G, B, Y}} 四类审查节点代码组成（分别代表复核、授权、封存、移交）。
 
-“可达性”是指从一个条款出发，可以通过零次或多次递归引用，推演出另一个条款的内容。
+该审计流程具有严格的周期性标准：它是由某个最小的"基础合规闭环" M0 重复执行构成的。例如，如果合规闭环是 "RGB"，整个案卷流转就是 "RGBRGBRGB..."。合规闭环 M0 的步骤数 T 未知，但满足以下条件：
+- T 大于等于 2 且小于等于 {t_max}
+- 基础合规闭环 M0 是序列 S 的最小重复操作单元（不存在更短的有效审查周期）
+- 总节点数 {n} 正好是 T 的整数倍
 
-你的职责是：分析是否存在一个“基础法理条款” w，使得只要确立了条款 w，就能通过层层引用逻辑涵盖并解释所有的 {{0, 1, ..., N-1}} 个法理节点。如果存在，请提供任意一个此类条款的编号。
+你的目标是通过调阅查询，推断出这个基础合规闭环 M0 及其步骤数 T。
 
-你可以向法务数据库检索以下关联信息：
-1. Probe(u, v)：查询条款 u 是否直接引用了条款 v。
-2. Route(u, [a1, a2, ..., ak])：验证从条款 u 出发，能否按照 a1, a2, ..., ak 的顺序进行合法引用推演。
-3. Outdeg(u)：查询条款 u 直接引用了多少个其他条款。
-4. Reach(u, L)：查询从条款 u 展开，最多经过 L 层引用深度，能够覆盖到的不同条款总数。
+每次你可以提交一个"程序区间审查"，格式如下：
+- 指定一个节点区间 [L, R]（L 和 R 都是流转节点编号，从 1 到 {n}）
+- 提供一个候选流程串 X（长度至少为 2）
 
-完成法理推演后，请提交你的法务分析结论。
+审计系统会告诉你：在区间 [L, R] 内，是否存在某个节点开始的连续流转动作恰好等于 X。
+- 如果存在，回答"是"
+- 如果不存在，回答"否"
 
-## 询问与提交格式要求
+注意：
+- 区间必须足够容纳候选流程串（R - L + 1 必须大于等于 X 的长度），否则答案必为"否"
+- 系统只会返回"是"或"否"，不会告知具体发生案卷号、责任人等其他法务信息
+- 请尽可能少地发起调阅查询
 
-每次检索需提供唯一的 XML 标签：
-- Probe 检索：<query_probe>0,1</query_probe>
-- Route 检索：<query_route>0,[1,2,3]</query_route>
-- Outdeg 检索：<query_outdeg>0</query_outdeg>
-- Reach 检索：<query_reach>0,3</query_reach>
+提问时使用以下 XML 格式：
 
-最终答案提交：
-- 若存在基础法理条款，给出条款编号：<answer>exists, vertex=0</answer>
-- 若不存在：<answer>not_exists</answer>
+<query>L,R,X</query>
+
+其中 L 和 R 是区间端点（整数），X 是候选流程串（只包含 R、G、B、Y）。
+
+例如，查询流转节点区间 [1, 10] 内是否存在连续程序 "RGB"：
+<query>1,10,RGB</query>
+
+当你准备好提交最终审计结果时，使用以下格式：
+
+<answer>M0</answer>
+
+其中 M0 是你推断出的基础合规闭环串。
+
+例如：
+<answer>RGB</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Code Citation Tracing Scenario]
-A newly promulgated legal code contains N = {n} jurisprudential nodes (clauses), numbered {{0, 1, ..., N-1}}. These clauses exhibit a strict one-way citation relationship.
+[Legal Scenario]
+Let's conduct a "Compliance Review Process Recognition" audit task. Here are the rules:
 
-The drafting of the code employs a structured citation logic determined by a fixed offset set S. For any clause u, clause u explicitly cites clause v as its subordinate interpretation if and only if (v - u) mod N belongs to set S. This legal logic framework remains consistent across all clauses.
+The case management system has recorded an audit workflow sequence S of length {n}, composed of review node codes {{R, G, B, Y}} (representing Review, Grant, Ban, and Yield/Transfer).
 
-"Reachability" refers to the ability to deduce the content of a target clause starting from an initial clause through zero or multiple recursive citations.
+This auditing process has a strict periodic standard: it is formed by repeatedly executing a minimal "base compliance loop" M0. For example, if the compliance loop is "RGB", the entire case workflow would be "RGBRGBRGB...". The number of steps T in loop M0 is unknown, but satisfies the following conditions:
+- T is greater than or equal to 2 and less than or equal to {t_max}
+- The base compliance loop M0 is the minimal repeating operational unit of sequence S (no shorter valid review cycle exists)
+- The total node count {n} is exactly a multiple of T
 
-Your duty is to analyze whether there exists a "fundamental jurisprudential clause" w such that establishing clause w allows for the interpretation of all {{0, 1, ..., N-1}} jurisprudential nodes through cascaded citation logic. If so, provide the ID of any such clause.
+Your goal is to infer the base compliance loop M0 and its step count T through record queries.
 
-You can retrieve the following relational data from the legal database:
-1. Probe(u, v): Query if clause u directly cites clause v.
-2. Route(u, [a1, a2, ..., ak]): Verify if a legitimate citation deduction can proceed from clause u sequentially through a1, a2, ..., ak.
-3. Outdeg(u): Query the number of other clauses directly cited by clause u.
-4. Reach(u, L): Query the total number of distinct clauses covered starting from clause u within a maximum citation depth of L.
+Each time you can submit a "procedure interval review" in the following format:
+- Specify a node interval [L, R] (L and R are workflow node indices from 1 to {n})
+- Provide a candidate process string X (length at least 2)
 
-Submit your legal analysis conclusion upon completing the deduction.
+The auditing system will tell you: whether there exists a continuous workflow action starting at some node within interval [L, R] that exactly equals X.
+- If it exists, answer "Yes"
+- If it doesn't exist, answer "No"
 
-## Query and Answer Format
+Note:
+- The interval must be large enough to contain the candidate process string (R - L + 1 must be greater than or equal to the length of X), otherwise the answer will be "No"
+- The system will only return "Yes" or "No", without revealing specific case numbers, responsible persons, or other legal information
+- Please initiate as few record queries as possible
 
-Each retrieval must contain exactly one XML tag:
-- Probe query: <query_probe>0,1</query_probe>
-- Route query: <query_route>0,[1,2,3]</query_route>
-- Outdeg query: <query_outdeg>0</query_outdeg>
-- Reach query: <query_reach>0,3</query_reach>
+For queries, use the following XML format:
 
-Final answer submission:
-- If a fundamental jurisprudential clause exists, provide an example: <answer>exists, vertex=0</answer>
-- If not exists: <answer>not_exists</answer>
+<query>L,R,X</query>
+
+Where L and R are interval endpoints (integers), and X is the candidate process string (containing only R, G, B, Y).
+
+For example, to query whether the continuous procedure "RGB" exists within node interval [1, 10]:
+<query>1,10,RGB</query>
+
+When you are ready to submit your final audit result, use the following format:
+
+<answer>M0</answer>
+
+Where M0 is the base compliance loop string you inferred.
+
+For example:
+<answer>RGB</answer>
 """
 
-    tags = ["answer", "query_probe", "query_route", "query_outdeg", "query_reach"]
-    
-    reasoning_type = "归纳推理"
-    data_structure = "图"
-
-    # 难度配置说明：
-    # 1 (简单) - N=5, S={1}, 存在可达全体的顶点（任意顶点都可达全体）
-    # 2 (中等偏下) - N=6, S={1,2}, 存在可达全体的顶点
-    # 3 (中等偏上) - N=8, S={2,3}, 存在可达全体的顶点
-    # 4 (较难) - N=10, S={2,4}, 不存在可达全体的顶点
-    # 5 (难) - N=12, S={3,6}, 不存在可达全体的顶点
+    tags = ["answer", "query"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {"n": 5, "offsets": [1]},
-            2: {"n": 6, "offsets": [1, 2]},
-            3: {"n": 8, "offsets": [2, 3]},
-            4: {"n": 10, "offsets": [2, 4]},
-            5: {"n": 12, "offsets": [3, 6]},
+            1: {
+                "n": 12,
+                "t_max": 6,
+                "base_block": "RG",
+            },
+            2: {
+                "n": 15,
+                "t_max": 7,
+                "base_block": "RGB",
+            },
+            3: {
+                "n": 20,
+                "t_max": 10,
+                "base_block": "RGYB",
+            },
+            4: {
+                "n": 25,
+                "t_max": 12,
+                "base_block": "RGBYR",
+            },
+            5: {
+                "n": 30,
+                "t_max": 15,
+                "base_block": "RGBYYR",
+            },
         },
         "en": {
-            1: {"n": 5, "offsets": [1]},
-            2: {"n": 6, "offsets": [1, 2]},
-            3: {"n": 8, "offsets": [2, 3]},
-            4: {"n": 10, "offsets": [2, 4]},
-            5: {"n": 12, "offsets": [3, 6]},
+            1: {
+                "n": 12,
+                "t_max": 6,
+                "base_block": "RG",
+            },
+            2: {
+                "n": 15,
+                "t_max": 7,
+                "base_block": "RGB",
+            },
+            3: {
+                "n": 20,
+                "t_max": 10,
+                "base_block": "RGYB",
+            },
+            4: {
+                "n": 25,
+                "t_max": 12,
+                "base_block": "RGBYR",
+            },
+            5: {
+                "n": 30,
+                "t_max": 15,
+                "base_block": "RGBYYR",
+            },
         },
     }
 
@@ -449,7 +604,10 @@ Final answer submission:
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
+
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -457,110 +615,154 @@ Final answer submission:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self.n = cfg["n"]
-        self.offsets = set(cfg["offsets"])  # 偏移集合 S
         
-        self._game_info["n"] = self.n
+        self._game_info["n"] = cfg["n"]
+        self._game_info["t_max"] = cfg["t_max"]
         
-        # 预计算：从每个顶点出发可达的所有顶点
-        self.reachable = {}
-        for u in range(self.n):
-            self.reachable[u] = self._compute_reachable(u)
+        block = cfg["base_block"]
+        block_len = len(block)
         
-        # 判断是否存在可达全体的顶点
-        self.universal_vertices = []
-        for u in range(self.n):
-            if len(self.reachable[u]) == self.n:
-                self.universal_vertices.append(u)
+        for sub_len in range(1, block_len):
+            if block_len % sub_len == 0:
+                sub_block = block[:sub_len]
+                if sub_block * (block_len // sub_len) == block:
+                    raise ValueError(
+                        f"Configured base_block '{block}' is not minimal: "
+                        f"it has a shorter period '{sub_block}'"
+                    )
         
-        self.exists_universal = len(self.universal_vertices) > 0
-
-    def _compute_reachable(self, start):
-        """使用 BFS 计算从 start 可达的所有顶点"""
-        visited = set([start])
-        queue = [start]
+        self.base_block = block
+        self.t = len(self.base_block)
         
-        while queue:
-            u = queue.pop(0)
-            for offset in self.offsets:
-                v = (u + offset) % self.n
-                if v not in visited:
-                    visited.add(v)
-                    queue.append(v)
+        if cfg["n"] % self.t != 0:
+            raise ValueError(f"N={cfg['n']} must be a multiple of T={self.t}")
         
-        return visited
-
-    def _has_edge(self, u, v):
-        """判断是否存在边 u -> v"""
-        offset = (v - u) % self.n
-        return offset in self.offsets
-
-    def _compute_reachable_within_hops(self, start, max_hops):
-        """计算从 start 在至多 max_hops 跳内可达的顶点数"""
-        if max_hops < 0:
-            return 0
+        self.k = cfg["n"] // self.t
+        self.hidden_sequence = self.base_block * self.k
         
-        visited = set([start])
-        current_level = {start}
-        
-        for hop in range(max_hops):
-            next_level = set()
-            for u in current_level:
-                for offset in self.offsets:
-                    v = (u + offset) % self.n
-                    if v not in visited:
-                        visited.add(v)
-                        next_level.add(v)
-            current_level = next_level
-            if not current_level:
-                break
-        
-        return len(visited)
+        assert len(self.hidden_sequence) == cfg["n"], "Sequence length mismatch"
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        submitted_block = parsed_info["answer"].strip()
         
-        # 解析答案
-        if raw_ans.startswith("not_exists"):
-            # 模型声称不存在
-            return not self.exists_universal
-        elif raw_ans.startswith("exists"):
-            # 模型声称存在，需要提供顶点
-            try:
-                parts = raw_ans.split(",")
-                vertex_part = None
-                for part in parts:
-                    if "vertex=" in part:
-                        vertex_part = part.split("=")[1].strip()
-                        break
-                
-                if vertex_part is None:
-                    return False
-                
-                vertex = int(vertex_part)
-                
-                # 检查顶点是否在范围内
-                if vertex < 0 or vertex >= self.n:
-                    return False
-                
-                # 检查该顶点是否确实可达全体
-                return len(self.reachable[vertex]) == self.n
-            except:
-                return False
-        else:
+        if submitted_block != self.base_block:
             return False
+        
+        return True
 
-    def _cf_make_wrong(self, correct: str) -> str:
+    def _cf_core_produce(self, parsed_info):
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_format = "错误：查询格式无效。请使用格式 <query>L,R,X</query>"
+            error_range = "错误：区间超出范围或无效。"
+            error_string = "错误：候选串只能包含字母 R、G、B、Y。"
+            error_length = "错误：候选串长度必须至少为 2。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid query format. Please use format <query>L,R,X</query>"
+            error_range = "Error: Interval out of range or invalid."
+            error_string = "Error: Candidate string can only contain letters R, G, B, Y."
+            error_length = "Error: Candidate string length must be at least 2."
+
+        if "query" not in parsed_info:
+            raise ValueError("No valid query tag found.")
+        
+        query_content = parsed_info["query"].strip()
+        parts = query_content.split(",", 2)
+        
+        if len(parts) != 3:
+            return error_format
+        
+        l_str, r_str, x = parts
+        
+        try:
+            L = int(l_str.strip())
+            R = int(r_str.strip())
+        except ValueError:
+            return error_format
+        
+        X = x.strip()
+        
+        if not all(c in "RGBY" for c in X):
+            return error_string
+        
+        if len(X) < 2:
+            return error_length
+        
+        if L < 1 or R > self._game_info["n"] or L > R:
+            return error_range
+        
+        if R - L + 1 < len(X):
+            return no_res
+        
+        interval_start = L - 1
+        interval_end = R
+        
+        substring = self.hidden_sequence[interval_start:interval_end]
+        
+        if X in substring:
+            return yes_res
+        else:
+            return no_res
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        n = self._game_info["n"]
+        vocab = ['R', 'G', 'B', 'Y']
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+            
+        candidate_xs = []
+        for length in [2, 3]:
+            for p in itertools.product(vocab, repeat=length):
+                candidate_xs.append("".join(p))
+        
+        for X in candidate_xs:
+            interval_substring = self.hidden_sequence
+            ans = yes_res if X in interval_substring else no_res
+            results.append({
+                "query": f"<query>1,{n},{X}</query>",
+                "answer": ans
+            })
+        
+        t = self.t
+        for start_block in range(self.k):
+            L = start_block * t + 1
+            R = min(L + 2 * t - 1, n)
+            interval_substring = self.hidden_sequence[L-1:R]
+            for X in candidate_xs:
+                if R - L + 1 < len(X):
+                    continue
+                ans = yes_res if X in interval_substring else no_res
+                results.append({
+                    "query": f"<query>{L},{R},{X}</query>",
+                    "answer": ans
+                })
+        
+        seen = set()
+        deduped = []
+        for item in results:
+            key = (item["query"], item["answer"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(item)
+        
+        return deduped
+
+    def _cf_make_wrong(self, correct):
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        # 关键词替换
         mapping = {
             "是": "否",
             "否": "是",
             "Yes": "No",
             "No": "Yes",
+            "YES": "NO",
+            "NO": "YES",
             "yes": "no",
             "no": "yes"
         }
@@ -568,123 +770,4 @@ Final answer submission:
         if correct in mapping:
             return mapping[correct]
         
-        if "成功" in correct or "Success" in correct:
-            return "失败：第 1 步不存在" if self.config.language == "zh" else "Failed: step 1 does not exist"
-        
-        if "失败" in correct or "Failed" in correct:
-            return "成功，终点 0" if self.config.language == "zh" else "Success, endpoint 0"
-        
         return correct + "_WRONG"
-
-    def _cf_core_produce(self, parsed_info):
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
-
-        try:
-            # Probe 查询
-            if "query_probe" in parsed_info:
-                raw = parsed_info["query_probe"].strip()
-                u, v = [int(x.strip()) for x in raw.split(",")]
-                
-                if u < 0 or u >= self.n or v < 0 or v >= self.n:
-                    return "错误：顶点编号超出范围。" if self.config.language == "zh" else "Error: Vertex number out of range."
-                
-                return yes_res if self._has_edge(u, v) else no_res
-
-            # Route 查询
-            elif "query_route" in parsed_info:
-                raw = parsed_info["query_route"].strip()
-                # 解析格式：u,[a1,a2,...,ak]，容忍空格
-                parts = raw.split("[", 1)
-                if len(parts) != 2:
-                    return "错误：格式无效。" if self.config.language == "zh" else "Error: Invalid format."
-                
-                u_str = parts[0].strip().rstrip(",")
-                u = int(u_str.strip())
-                
-                path_str = parts[1].strip().rstrip("]")
-                path = [int(x.strip()) for x in path_str.split(",") if x.strip()]
-                
-                if u < 0 or u >= self.n:
-                    return "错误：起点编号超出范围。" if self.config.language == "zh" else "Error: Start vertex out of range."
-                
-                current = u
-                for i, next_vertex in enumerate(path, 1):
-                    if next_vertex < 0 or next_vertex >= self.n:
-                        return "错误：路径中顶点编号超出范围。" if self.config.language == "zh" else "Error: Vertex in path out of range."
-                    
-                    if not self._has_edge(current, next_vertex):
-                        if self.config.language == "zh":
-                            return f"失败：第 {i} 步（从 {current} 到 {next_vertex}）不存在"
-                        else:
-                            return f"Failed: step {i} (from {current} to {next_vertex}) does not exist"
-                    current = next_vertex
-                
-                if self.config.language == "zh":
-                    return f"成功，终点 {current}"
-                else:
-                    return f"Success, endpoint {current}"
-
-            # Outdeg 查询
-            elif "query_outdeg" in parsed_info:
-                u = int(parsed_info["query_outdeg"].strip())
-                
-                if u < 0 or u >= self.n:
-                    return "错误：顶点编号超出范围。" if self.config.language == "zh" else "Error: Vertex number out of range."
-                
-                return str(len(self.offsets))
-
-            # Reach 查询
-            elif "query_reach" in parsed_info:
-                raw = parsed_info["query_reach"].strip()
-                u, L = [int(x.strip()) for x in raw.split(",")]
-                
-                if u < 0 or u >= self.n:
-                    return "错误：顶点编号超出范围。" if self.config.language == "zh" else "Error: Vertex number out of range."
-                
-                if L < 0:
-                    return "错误：跳数不能为负。" if self.config.language == "zh" else "Error: Hops cannot be negative."
-                
-                count = self._compute_reachable_within_hops(u, L)
-                return str(count)
-
-            else:
-                raise ValueError("No valid query tag found.")
-                
-        except Exception as e:
-            return f"错误：{str(e)}" if self.config.language == "zh" else f"Error: {str(e)}"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        本游戏的核心是推断图的连接规则（偏移集合 S），最基础且完备的查询是 Probe（探测边）。
-        由于返回格式要求单一的 "query" 键，此处仅枚举所有可能的 Probe 查询。
-        
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # Probe 查询内容 "u,v"
-                "answer": str,   # 对应的回答 "Yes"/"No" 或 "是"/"否"
-            }
-        """
-        queries = []
-        
-        # 枚举所有可能的 Probe(u, v) 查询
-        for u in range(self.n):
-            for v in range(self.n):
-                content = f"{u},{v}"
-                
-                # 构造 parsed_info 模拟 Probe 查询
-                parsed_info = {"query_probe": content}
-                
-                # 直接调用核心逻辑获取真实答案，避免副作用
-                answer = self._cf_core_produce(parsed_info)
-                
-                queries.append({
-                    "query": f"<query_probe>{content}</query_probe>",
-                    "answer": answer
-                })
-        
-        return queries

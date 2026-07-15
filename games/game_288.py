@@ -1,869 +1,823 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   两点距离：两个给定节点之间的距离（边数）是多少
-# ============================================================
-
 from .base import Game
-import random
+import re
+import random as _random
 
-class HiddenDistancePatternGame(Game):
+class SetQueryBlackBoxGame(Game):
+
+    reasoning_type = "溯因推理"
+    data_structure = "集合"
 
     game_rule_zh = """\
-我们来玩一个"隐藏距离模式"的推理游戏，规则如下：
+我们现在来玩一个"集合查询黑箱"的推理游戏，规则如下：
 
-游戏设定了一个固定的无向树 T，包含以下节点和边：
-- 节点：A, B, C, D, E, F, G, H, I
-- 边：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+游戏设定了一个有限全集 U，包含 N 个元素（N 的值未知且大于等于 0）。在这个全集中，存在两个固定但未知的子集 S 和 T。
 
-距离定义：对任意节点对 (X,Y)，d(X,Y) 为其在 T 上的最短路径长度（边数）。
+你可以通过集合表达式来构造查询，集合表达式的构造规则如下：
+- 基本元素：空集 empty、全集 U、子集 S、子集 T
+- 运算符：并集 union、交集 intersect、补集 complement
+- 表达式示例：
+  - (union S T) 表示 S 和 T 的并集
+  - (intersect S T) 表示 S 和 T 的交集
+  - (complement S) 表示 S 相对于 U 的补集
+  - (intersect (union S T) (complement S)) 表示复合运算
 
-系统内部已固定（但对你隐藏）以下两个要素：
-1. 一个读数模式 f，从以下4种中选择其一：
-   - 模式I：返回值 r 等于 d
-   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
-   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
-   - 模式IV：r 等于 d 减 1 与 0 中的较大值
+每轮你可以提交一对集合表达式 (X, Y)，系统会返回一个非负整数作为应答。
 
-2. 一个隐藏目标对 Pk，从以下4对中选择其一：
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+系统的应答模式在整个游戏过程中保持不变，但具体是以下哪一种模式是未知的：
+- 模式 A：返回 X 和 Y 的并集的元素个数
+- 模式 B：返回 X 和 Y 的交集的元素个数
+- 模式 C：返回 X 和 Y 的对称差的元素个数（即只属于其中一个集合的元素个数）
+- 模式 D：返回 X 的元素个数加上 Y 的元素个数
 
-你的任务是通过交互查询推断出：
-1. 实际使用的读数模式（I/II/III/IV）
-2. 隐藏目标对的编号（P1/P2/P3/P4）
-3. 该目标对的真实距离值
+你的目标是通过尽可能少的查询，同时推断出：
+1. 系统的应答模式（A、B、C 或 D）
+2. S 和 T 的并集的元素个数
 
-你可以进行以下类型的查询：
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-1. 校准查询：提交任意节点对 (X,Y)，系统返回经过模式 f 处理后的读数 r。你需要至少完成2次校准查询。
+每次查询需要提供两个集合表达式 expr1 和 expr2。表达式使用前缀表示法，格式如下：
 
-2. 目标对读数请求：在完成至少2次校准查询后，可以请求获取隐藏目标对的读数 r_target。此类查询至多只能进行1次。
+- 基本集合：empty、U、S、T
+- 并集运算：(union E1 E2)
+- 交集运算：(intersect E1 E2)
+- 补集运算：(complement E)
 
-3. 最终提交：提交你推断的模式、目标对编号和真实距离。三项必须全部正确才算成功。
+查询格式：
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
 
-## 查询与提交格式（严格要求）
+提交最终答案时，需要说明应答模式（A、B、C 或 D）和 S 与 T 并集的元素个数，格式如下：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
-
-- 校准查询（例如查询节点 A 和 F 之间的距离）：
-<query_calibrate>A,F</query_calibrate>
-
-- 目标对读数请求（内容为空）：
-<query_target></query_target>
-
-- 最终提交（依次给出模式、目标对编号、真实距离）：
-<answer>mode=I, pair=P1, distance=4</answer>
-
-注意事项：
-- 必须至少完成2次校准查询后才能请求目标对读数
-- 目标对读数请求至多只能进行1次
-- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
-- 违反规则或答案错误将导致游戏失败
+<answer>mode=A, count=5</answer>
 """
 
     game_rule_en = """\
-Let's play a "Hidden Distance Pattern" deduction game. Here are the rules:
+Let's play a "Set Query Black Box" deduction game. Here are the rules:
 
-The game has a fixed undirected tree T with the following nodes and edges:
-- Nodes: A, B, C, D, E, F, G, H, I
-- Edges: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+The game defines a finite universal set U containing N elements (N is unknown and greater than or equal to 0). Within this universal set, there exist two fixed but unknown subsets S and T.
 
-Distance definition: For any node pair (X,Y), d(X,Y) is the shortest path length (number of edges) in T.
+You can construct queries using set expressions. The construction rules for set expressions are:
+- Basic elements: empty set (empty), universal set (U), subset S, subset T
+- Operators: union, intersect, complement
+- Expression examples:
+  - (union S T) represents the union of S and T
+  - (intersect S T) represents the intersection of S and T
+  - (complement S) represents the complement of S relative to U
+  - (intersect (union S T) (complement S)) represents composite operations
 
-The system has internally fixed (but hidden from you) two elements:
-1. A reading pattern f, chosen from the following 4 types:
-   - Mode I: return value r equals d
-   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
-   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
-   - Mode IV: r equals the maximum of d minus 1 and 0
+Each round you can submit a pair of set expressions (X, Y), and the system will return a non-negative integer as the response.
 
-2. A hidden target pair Pk, chosen from the following 4 pairs:
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+The system's response mode remains constant throughout the game, but which of the following modes it is remains unknown:
+- Mode A: Returns the number of elements in the union of X and Y
+- Mode B: Returns the number of elements in the intersection of X and Y
+- Mode C: Returns the number of elements in the symmetric difference of X and Y (elements in exactly one of the sets)
+- Mode D: Returns the number of elements in X plus the number of elements in Y
 
-Your task is to infer through interactive queries:
-1. The actual reading pattern (I/II/III/IV)
-2. The hidden target pair number (P1/P2/P3/P4)
-3. The true distance value of that target pair
+Your goal is to infer, through as few queries as possible:
+1. The system's response mode (A, B, C, or D)
+2. The number of elements in the union of S and T
 
-You can perform the following types of queries:
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-1. Calibration Query: Submit any node pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 calibration queries.
+Each query requires two set expressions expr1 and expr2. Expressions use prefix notation with the following format:
 
-2. Target Reading Request: After completing at least 2 calibration queries, you can request the reading r_target of the hidden target pair. This query can be performed at most once.
+- Basic sets: empty, U, S, T
+- Union operation: (union E1 E2)
+- Intersection operation: (intersect E1 E2)
+- Complement operation: (complement E)
 
-3. Final Submission: Submit your inferred pattern, target pair number, and true distance. All three must be correct to succeed.
+Query format:
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
 
-## Query and Submission Format (strictly required)
+When submitting the final answer, specify the response mode (A, B, C, or D) and the number of elements in the union of S and T:
 
-Each query must contain only one tag, using the following XML format:
-
-- Calibration Query (e.g., querying distance between nodes A and F):
-<query_calibrate>A,F</query_calibrate>
-
-- Target Reading Request (empty content):
-<query_target></query_target>
-
-- Final Submission (provide pattern, pair number, and true distance):
-<answer>mode=I, pair=P1, distance=4</answer>
-
-Notes:
-- You must complete at least 2 calibration queries before requesting target reading
-- Target reading request can be performed at most once
-- Node names must be chosen from A, B, C, D, E, F, G, H, I
-- Violating rules or incorrect answers will result in game failure
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用“路网传感器标定系统”。
-本系统管理的交通枢纽路网 T 包含以下枢纽节点和直达路段：
-- 枢纽节点：A, B, C, D, E, F, G, H, I
-- 直达路段：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+欢迎使用智能交通路网诊断系统。为了排查城市路网状态，我们需要进行一次盲测推断。
 
-站间距定义：任意枢纽对 (X,Y) 之间的 d(X,Y) 为两者在路网上的最短路段数。
+系统接入了一个城市路网的全部监控节点全集 U，共包含 N 个节点（N 的值未知且大于等于 0）。在这些节点中，存在两个固定但未知的子集：
+- 子集 S：当前发生严重拥堵的监控节点集合。
+- 子集 T：当前发生交通事故的监控节点集合。
 
-系统内部已设定了两个隐藏参数，需要你通过探测来逆向推导：
-1. 传感器计费模式 f，从以下4种中选择其一：
-   - 模式I：计费读数 r 等于实际路段数 d
-   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
-   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
-   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即起步减免）
+你可以通过集合表达式来向交通诊断系统构造查询，集合表达式的构造规则如下：
+- 基本元素：空集 empty、全集 U、子集 S、子集 T
+- 运算符：并集 union、交集 intersect、补集 complement
+- 表达式示例：
+  - (union S T) 表示 S 和 T 的并集（即拥堵或有事故的节点）
+  - (intersect S T) 表示 S 和 T 的交集（既拥堵又有事故的节点）
+  - (complement S) 表示 S 相对于 U 的补集（即未拥堵的节点）
+  - (intersect (union S T) (complement S)) 表示复合运算
 
-2. 一条隐藏的特殊物流线 Pk，从以下4组中选择其一：
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+每轮你可以提交一对集合表达式 (X, Y)，系统会返回一个非负整数作为应答。
 
-你的任务是通过交互查询推断出：
-1. 实际使用的计费模式（I/II/III/IV）
-2. 特殊物流线的编号（P1/P2/P3/P4）
-3. 该特殊物流线的真实路段数
+系统接口的应答模式在整个排查过程中保持不变，但具体是以下哪一种模式是未知的：
+- 模式 A：返回 X 和 Y 的并集的节点个数
+- 模式 B：返回 X 和 Y 的交集的节点个数
+- 模式 C：返回 X 和 Y 的对称差的节点个数（即只属于其中一个集合的节点个数）
+- 模式 D：返回 X 的节点个数加上 Y 的节点个数
 
-你可以进行以下类型的查询：
-1. 路线测试（校准查询）：提交任意枢纽对 (X,Y)，系统返回经过模式 f 处理后的计费读数 r。你需要至少完成2次路线测试。
-2. 特殊线读数请求：在完成至少2次路线测试后，可以请求获取隐藏特殊物流线的计费读数 r_target。此类查询至多只能进行1次。
-3. 最终提交：提交你推断的计费模式、物流线编号和真实路段数。三项必须全部正确才算成功。
+你的目标是通过尽可能少的查询，同时推断出：
+1. 系统的应答模式（A、B、C 或 D）
+2. 发生严重拥堵或交通事故的节点总数（即 S 和 T 的并集的元素个数）
 
-## 查询与提交格式（严格要求）
-每次查询只能包含一个标签，使用以下 XML 格式：
-- 路线测试（例如查询枢纽 A 和 F）：
-<query_calibrate>A,F</query_calibrate>
-- 特殊线读数请求（内容为空）：
-<query_target></query_target>
-- 最终提交（依次给出模式、物流线编号、真实路段数）：
-<answer>mode=I, pair=P1, distance=4</answer>
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，排查失败。
 
-注意事项：
-- 必须至少完成2次路线测试后才能请求特殊线读数
-- 特殊线读数请求至多只能进行1次
-- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
-- 违反规则或答案错误将导致测试失败
+每次查询需要提供两个集合表达式 expr1 和 expr2。表达式使用前缀表示法，格式如下：
+
+- 基本集合：empty、U、S、T
+- 并集运算：(union E1 E2)
+- 交集运算：(intersect E1 E2)
+- 补集运算：(complement E)
+
+查询格式：
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+提交最终答案时，需要说明应答模式（A、B、C 或 D）和 S 与 T 并集的元素个数，格式如下：
+
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Road Network Sensor Calibration System".
+Welcome to the Intelligent Traffic Network Diagnostic System. To troubleshoot the city's road network, we need to conduct a blind inference test.
 
-The managed traffic hub network T contains the following hub nodes and direct routes:
-- Hubs: A, B, C, D, E, F, G, H, I
-- Direct routes: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+The system is connected to a universal set U of all monitoring nodes in the city network, containing N nodes (N is unknown and greater than or equal to 0). Within this set, there exist two fixed but unknown subsets:
+- Subset S: The set of nodes currently experiencing severe congestion.
+- Subset T: The set of nodes currently reporting traffic accidents.
 
-Distance definition: For any hub pair (X,Y), d(X,Y) is the shortest number of route segments in T.
+You can construct queries to the diagnostic system using set expressions. The construction rules for set expressions are:
+- Basic elements: empty set (empty), universal set (U), subset S, subset T
+- Operators: union, intersect, complement
+- Expression examples:
+  - (union S T) represents the union of S and T (nodes congested or with accidents)
+  - (intersect S T) represents the intersection of S and T (nodes both congested and with accidents)
+  - (complement S) represents the complement of S relative to U (uncongested nodes)
+  - (intersect (union S T) (complement S)) represents composite operations
 
-The system has internally fixed two hidden elements:
-1. A billing pattern f, chosen from the following 4 types:
-   - Mode I: reading r equals actual distance d
-   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
-   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
-   - Mode IV: r equals the maximum of d minus 1 and 0
+Each round you can submit a pair of set expressions (X, Y), and the system will return a non-negative integer as the response.
 
-2. A hidden special logistics line Pk, chosen from the following 4 pairs:
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+The system interface's response mode remains constant throughout the troubleshooting process, but which of the following modes it is remains unknown:
+- Mode A: Returns the number of nodes in the union of X and Y
+- Mode B: Returns the number of nodes in the intersection of X and Y
+- Mode C: Returns the number of nodes in the symmetric difference of X and Y (nodes in exactly one of the sets)
+- Mode D: Returns the number of nodes in X plus the number of nodes in Y
 
-Your task is to infer through interactive queries:
-1. The actual billing pattern (I/II/III/IV)
-2. The special logistics line number (P1/P2/P3/P4)
-3. The true route segment distance of that line
+Your goal is to infer, through as few queries as possible:
+1. The system's response mode (A, B, C, or D)
+2. The total number of nodes experiencing either severe congestion or traffic accidents (i.e., the number of elements in the union of S and T)
 
-You can perform the following queries:
-1. Route Test (Calibration Query): Submit any hub pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 route tests.
-2. Special Line Reading Request: After completing at least 2 route tests, you can request the reading r_target of the hidden special line. This can be performed at most once.
-3. Final Submission: Submit your inferred pattern, line number, and true distance. All three must be correct to succeed.
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the troubleshooting fails.
 
-## Query and Submission Format (strictly required)
-Each query must contain only one tag, using the following XML format:
-- Route Test (e.g., test hubs A and F):
-<query_calibrate>A,F</query_calibrate>
-- Special Line Reading Request (empty content):
-<query_target></query_target>
-- Final Submission:
-<answer>mode=I, pair=P1, distance=4</answer>
+Each query requires two set expressions expr1 and expr2. Expressions use prefix notation with the following format:
 
-Notes:
-- You must complete at least 2 route tests before requesting the special line reading.
-- Special line reading request can be performed at most once.
-- Hub names must be chosen from A, B, C, D, E, F, G, H, I.
-- Violating rules or incorrect answers will result in failure.
+- Basic sets: empty, U, S, T
+- Union operation: (union E1 E2)
+- Intersection operation: (intersect E1 E2)
+- Complement operation: (complement E)
+
+Query format:
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+When submitting the final answer, specify the response mode (A, B, C, or D) and the number of elements in the union of S and T:
+
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“神经传导通路分析系统”。
-已知患者的局部神经传导网络 T 包含以下脑区节点和突触连接：
-- 脑区节点：A, B, C, D, E, F, G, H, I
-- 突触连接：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+欢迎使用临床基因组学数据检索系统。为了分析罕见病的致病机理，我们需要在黑盒模式下进行数据探查。
 
-传导跳数定义：任意脑区对 (X,Y) 之间的 d(X,Y) 为其在网络中最短的突触连接数。
+系统建立了一个罕见病病例样本的有限全集 U，包含 N 个病例（N 的值未知且大于等于 0）。在这个样本库中，存在两个固定但未知的病例集合：
+- 子集 S：携带特定基因突变 Alpha 的病例集合。
+- 子集 T：携带特定基因突变 Beta 的病例集合。
 
-系统监测到存在未知的信号失真和潜在病灶，内部固化了以下要素：
-1. 信号失真模式 f，从以下4种中选择其一：
-   - 模式I：监测读数 r 等于真实跳数 d
-   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
-   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
-   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即存在阈值衰减）
+你可以通过集合表达式来向数据库构造查询，集合表达式的构造规则如下：
+- 基本元素：空集 empty、全集 U、子集 S、子集 T
+- 运算符：并集 union、交集 intersect、补集 complement
+- 表达式示例：
+  - (union S T) 表示 S 和 T 的并集（携带 Alpha 或 Beta 突变的病例）
+  - (intersect S T) 表示 S 和 T 的交集（同时携带 Alpha 和 Beta 突变的病例）
+  - (complement S) 表示 S 相对于 U 的补集（不携带 Alpha 突变的病例）
+  - (intersect (union S T) (complement S)) 表示复合运算
 
-2. 一对隐藏的关联病灶区 Pk，从以下4对中选择其一：
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+每轮你可以提交一对集合表达式 (X, Y)，系统会返回一个非负整数作为应答。
 
-你的任务是通过交互刺激推断出：
-1. 实际的信号失真模式（I/II/III/IV）
-2. 关联病灶区的编号（P1/P2/P3/P4）
-3. 该病灶区之间的真实传导跳数
+系统的数据脱敏应答模式在整个探查过程中保持不变，但具体是以下哪一种模式是未知的：
+- 模式 A：返回 X 和 Y 的并集的病例个数
+- 模式 B：返回 X 和 Y 的交集的病例个数
+- 模式 C：返回 X 和 Y 的对称差的病例个数（即只属于其中一个集合的病例个数）
+- 模式 D：返回 X 的病例个数加上 Y 的病例个数
 
-你可以进行以下类型的查询：
-1. 刺激传导测试（校准查询）：提交任意脑区对 (X,Y)，系统返回经过模式 f 处理后的监测读数 r。你需要至少完成2次传导测试。
-2. 病灶读数请求：在完成至少2次传导测试后，可以获取隐藏病灶对的失真读数 r_target。此类查询至多只能进行1次。
-3. 最终提交：提交你推断的失真模式、病灶编号和真实跳数。三项必须全部正确才算成功。
+你的目标是通过尽可能少的查询，同时推断出：
+1. 系统的应答模式（A、B、C 或 D）
+2. 携带至少一种特定基因突变（Alpha 或 Beta）的病例总数（即 S 和 T 的并集的元素个数）
 
-## 查询与提交格式（严格要求）
-每次查询只能包含一个标签，使用以下 XML 格式：
-- 刺激传导测试（例如测试脑区 A 和 F）：
-<query_calibrate>A,F</query_calibrate>
-- 病灶读数请求（内容为空）：
-<query_target></query_target>
-- 最终提交（依次给出模式、病灶编号、真实跳数）：
-<answer>mode=I, pair=P1, distance=4</answer>
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，探查失败。
 
-注意事项：
-- 必须至少完成2次传导测试后才能请求病灶读数
-- 病灶读数请求至多只能进行1次
-- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
-- 违反规则或答案错误将导致诊断失败
+每次查询需要提供两个集合表达式 expr1 和 expr2。表达式使用前缀表示法，格式如下：
+
+- 基本集合：empty、U、S、T
+- 并集运算：(union E1 E2)
+- 交集运算：(intersect E1 E2)
+- 补集运算：(complement E)
+
+查询格式：
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+提交最终答案时，需要说明应答模式（A、B、C 或 D）和 S 与 T 并集的元素个数，格式如下：
+
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Neural Conduction Pathway Analysis System".
+Welcome to the Clinical Genomics Data Retrieval System. To analyze the pathogenic mechanisms of rare diseases, we need to conduct data probing in a black-box mode.
 
-The local neural network T contains the following brain region nodes and synaptic connections:
-- Brain regions: A, B, C, D, E, F, G, H, I
-- Synaptic connections: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+The system has established a finite universal set U of rare disease case samples, containing N cases (N is unknown and greater than or equal to 0). Within this repository, there exist two fixed but unknown case subsets:
+- Subset S: The set of cases carrying the specific genetic mutation Alpha.
+- Subset T: The set of cases carrying the specific genetic mutation Beta.
 
-Conduction hops definition: For any region pair (X,Y), d(X,Y) is the shortest number of synaptic connections in T.
+You can construct queries to the database using set expressions. The construction rules for set expressions are:
+- Basic elements: empty set (empty), universal set (U), subset S, subset T
+- Operators: union, intersect, complement
+- Expression examples:
+  - (union S T) represents the union of S and T (cases with Alpha or Beta mutation)
+  - (intersect S T) represents the intersection of S and T (cases with both Alpha and Beta mutations)
+  - (complement S) represents the complement of S relative to U (cases without Alpha mutation)
+  - (intersect (union S T) (complement S)) represents composite operations
 
-The system has internally fixed two hidden elements:
-1. A signal distortion pattern f, chosen from the following 4 types:
-   - Mode I: monitored reading r equals actual hops d
-   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
-   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
-   - Mode IV: r equals the maximum of d minus 1 and 0
+Each round you can submit a pair of set expressions (X, Y), and the system will return a non-negative integer as the response.
 
-2. A hidden correlated lesion pair Pk, chosen from the following 4 pairs:
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+The system's data-desensitized response mode remains constant throughout the probing process, but which of the following modes it is remains unknown:
+- Mode A: Returns the number of cases in the union of X and Y
+- Mode B: Returns the number of cases in the intersection of X and Y
+- Mode C: Returns the number of cases in the symmetric difference of X and Y (cases in exactly one of the sets)
+- Mode D: Returns the number of cases in X plus the number of cases in Y
 
-Your task is to infer through interactive stimulation:
-1. The actual signal distortion pattern (I/II/III/IV)
-2. The lesion pair number (P1/P2/P3/P4)
-3. The true conduction hops of that lesion pair
+Your goal is to infer, through as few queries as possible:
+1. The system's response mode (A, B, C, or D)
+2. The total number of cases carrying at least one of the specific genetic mutations (Alpha or Beta) (i.e., the number of elements in the union of S and T)
 
-You can perform the following queries:
-1. Stimulation Test (Calibration Query): Submit any region pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 tests.
-2. Lesion Reading Request: After completing at least 2 tests, you can request the reading r_target of the hidden lesion pair. This can be performed at most once.
-3. Final Submission: Submit your inferred pattern, lesion number, and true hops. All three must be correct to succeed.
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the probing fails.
 
-## Query and Submission Format (strictly required)
-Each query must contain only one tag, using the following XML format:
-- Stimulation Test (e.g., test regions A and F):
-<query_calibrate>A,F</query_calibrate>
-- Lesion Reading Request (empty content):
-<query_target></query_target>
-- Final Submission:
-<answer>mode=I, pair=P1, distance=4</answer>
+Each query requires two set expressions expr1 and expr2. Expressions use prefix notation with the following format:
 
-Notes:
-- You must complete at least 2 tests before requesting the lesion reading.
-- Lesion reading request can be performed at most once.
-- Region names must be chosen from A, B, C, D, E, F, G, H, I.
-- Violating rules or incorrect answers will result in failure.
+- Basic sets: empty, U, S, T
+- Union operation: (union E1 E2)
+- Intersection operation: (intersect E1 E2)
+- Complement operation: (complement E)
+
+Query format:
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+When submitting the final answer, specify the response mode (A, B, C, or D) and the number of elements in the union of S and T:
+
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用“知识图谱评估偏差分析系统”。
-当前学科知识依赖树 T 包含以下知识模块和先修关系：
-- 知识模块：A, B, C, D, E, F, G, H, I
-- 先修关系：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+欢迎使用高校教务大数据分析平台。为了评估核心课程的选修情况，我们需要通过安全接口进行数据推断。
 
-学习跨度定义：任意知识模块对 (X,Y) 之间的 d(X,Y) 为其在图谱上的最短依赖路径长度。
+系统划定了一个参与在线学习平台的全体学生全集 U，包含 N 名学生（N 的值未知且大于等于 0）。在这个全集中，存在两个固定但未知的学生子集：
+- 子集 S：选修了“高级人工智能”课程的学生集合。
+- 子集 T：选修了“算法分析与设计”课程的学生集合。
 
-测试系统存在固有的评估偏差，并设置了核心考查路径：
-1. 计分评估模式 f，从以下4种中选择其一：
-   - 模式I：评估层级 r 等于实际跨度 d
-   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
-   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
-   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即基础免测）
+你可以通过集合表达式来向教务接口构造查询，集合表达式的构造规则如下：
+- 基本元素：空集 empty、全集 U、子集 S、子集 T
+- 运算符：并集 union、交集 intersect、补集 complement
+- 表达式示例：
+  - (union S T) 表示 S 和 T 的并集
+  - (intersect S T) 表示 S 和 T 的交集
+  - (complement S) 表示 S 相对于 U 的补集
+  - (intersect (union S T) (complement S)) 表示复合运算
 
-2. 一条隐藏的核心考查路径 Pk，从以下4对中选择其一：
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+每轮你可以提交一对集合表达式 (X, Y)，接口会返回一个非负整数作为应答。
 
-你的任务是通过交互查询推断出：
-1. 实际的计分评估模式（I/II/III/IV）
-2. 核心考查路径的编号（P1/P2/P3/P4）
-3. 该考查路径的真实学习跨度
+安全接口的统计应答模式在整个分析过程中保持不变，但具体是以下哪一种模式是未知的：
+- 模式 A：返回 X 和 Y 的并集的学生人数
+- 模式 B：返回 X 和 Y 的交集的学生人数
+- 模式 C：返回 X 和 Y 的对称差的学生人数（即只选修了其中一门课程的学生人数）
+- 模式 D：返回 X 的学生人数加上 Y 的学生人数
 
-你可以进行以下类型的查询：
-1. 评估路径校准（校准查询）：提交任意模块对 (X,Y)，系统返回经过模式 f 处理后的评估层级 r。你需要至少完成2次校准。
-2. 核心考查请求：在完成至少2次评估路径校准后，可以请求获取核心考查路径的评估读数 r_target。此类查询至多只能进行1次。
-3. 最终提交：提交你推断的评估模式、考查路径编号和真实跨度。三项必须全部正确才算成功。
+你的目标是通过尽可能少的查询，同时推断出：
+1. 接口的统计应答模式（A、B、C 或 D）
+2. 选修了这两门核心课程中至少一门的学生总数（即 S 和 T 的并集的元素个数）
 
-## 查询与提交格式（严格要求）
-每次查询只能包含一个标签，使用以下 XML 格式：
-- 评估路径校准（例如查询模块 A 和 F）：
-<query_calibrate>A,F</query_calibrate>
-- 核心考查请求（内容为空）：
-<query_target></query_target>
-- 最终提交（依次给出模式、考查路径编号、真实跨度）：
-<answer>mode=I, pair=P1, distance=4</answer>
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，分析失败。
 
-注意事项：
-- 必须至少完成2次评估路径校准后才能请求核心考查读数
-- 核心考查请求至多只能进行1次
-- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
-- 违反规则或答案错误将导致分析失败
+每次查询需要提供两个集合表达式 expr1 和 expr2。表达式使用前缀表示法，格式如下：
+
+- 基本集合：empty、U、S、T
+- 并集运算：(union E1 E2)
+- 交集运算：(intersect E1 E2)
+- 补集运算：(complement E)
+
+查询格式：
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+提交最终答案时，需要说明应答模式（A、B、C 或 D）和 S 与 T 并集的元素个数，格式如下：
+
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Knowledge Graph Assessment Bias Analysis System".
+Welcome to the University Academic Big Data Analysis Platform. To evaluate the enrollment in core courses, we need to conduct data inference through a secure interface.
 
-The subject dependency tree T contains the following knowledge modules and prerequisite links:
-- Modules: A, B, C, D, E, F, G, H, I
-- Prerequisite links: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+The system defines a universal set U of all students participating in the online learning platform, containing N students (N is unknown and greater than or equal to 0). Within this universal set, there exist two fixed but unknown student subsets:
+- Subset S: The set of students enrolled in "Advanced Artificial Intelligence".
+- Subset T: The set of students enrolled in "Algorithm Analysis and Design".
 
-Learning span definition: For any module pair (X,Y), d(X,Y) is the shortest dependency path length in T.
+You can construct queries to the academic interface using set expressions. The construction rules for set expressions are:
+- Basic elements: empty set (empty), universal set (U), subset S, subset T
+- Operators: union, intersect, complement
+- Expression examples:
+  - (union S T) represents the union of S and T
+  - (intersect S T) represents the intersection of S and T
+  - (complement S) represents the complement of S relative to U
+  - (intersect (union S T) (complement S)) represents composite operations
 
-The system has internally fixed two hidden elements:
-1. A scoring assessment pattern f, chosen from the following 4 types:
-   - Mode I: assessment level r equals actual span d
-   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
-   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
-   - Mode IV: r equals the maximum of d minus 1 and 0
+Each round you can submit a pair of set expressions (X, Y), and the interface will return a non-negative integer as the response.
 
-2. A hidden core examination path Pk, chosen from the following 4 pairs:
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+The secure interface's statistical response mode remains constant throughout the analysis process, but which of the following modes it is remains unknown:
+- Mode A: Returns the number of students in the union of X and Y
+- Mode B: Returns the number of students in the intersection of X and Y
+- Mode C: Returns the number of students in the symmetric difference of X and Y (students enrolled in exactly one of the courses)
+- Mode D: Returns the number of students in X plus the number of students in Y
 
-Your task is to infer through interactive queries:
-1. The actual assessment pattern (I/II/III/IV)
-2. The core examination path number (P1/P2/P3/P4)
-3. The true learning span of that core path
+Your goal is to infer, through as few queries as possible:
+1. The interface's statistical response mode (A, B, C, or D)
+2. The total number of students enrolled in at least one of these two core courses (i.e., the number of elements in the union of S and T)
 
-You can perform the following queries:
-1. Assessment Path Calibration (Calibration Query): Submit any module pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 calibrations.
-2. Core Path Request: After completing at least 2 calibrations, you can request the reading r_target of the hidden core path. This can be performed at most once.
-3. Final Submission: Submit your inferred pattern, core path number, and true span. All three must be correct to succeed.
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the analysis fails.
 
-## Query and Submission Format (strictly required)
-Each query must contain only one tag, using the following XML format:
-- Assessment Path Calibration (e.g., query modules A and F):
-<query_calibrate>A,F</query_calibrate>
-- Core Path Request (empty content):
-<query_target></query_target>
-- Final Submission:
-<answer>mode=I, pair=P1, distance=4</answer>
+Each query requires two set expressions expr1 and expr2. Expressions use prefix notation with the following format:
 
-Notes:
-- You must complete at least 2 calibrations before requesting the core path reading.
-- Core path request can be performed at most once.
-- Module names must be chosen from A, B, C, D, E, F, G, H, I.
-- Violating rules or incorrect answers will result in failure.
+- Basic sets: empty, U, S, T
+- Union operation: (union E1 E2)
+- Intersection operation: (intersect E1 E2)
+- Complement operation: (complement E)
+
+Query format:
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+When submitting the final answer, specify the response mode (A, B, C, or D) and the number of elements in the union of S and T:
+
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎进入“工业管网仪表校验与故障排查系统”。
-厂区控制网 T 包含以下工作站节点和通信总线：
-- 工作站节点：A, B, C, D, E, F, G, H, I
-- 通信总线：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+欢迎使用智能制造流水线的质检黑盒探测仪。为了评估批次质量，我们需要对产线上的零部件进行无损检测推断。
 
-总线物理段数定义：任意工作站对 (X,Y) 之间的 d(X,Y) 为其在控制网上的最短总线段数。
+探测仪扫描了当前批次的精密零部件全集 U，共包含 N 个零件（N 的值未知且大于等于 0）。在该批次中，存在两个固定但未知的缺陷集合：
+- 子集 S：尺寸存在超差缺陷的零件集合。
+- 子集 T：表面存在划痕缺陷的零件集合。
 
-系统中仪表的读数存在系统补偿偏差，并存在一对隐藏的故障隐患链路：
-1. 仪表读数补偿模式 f，从以下4种中选择其一：
-   - 模式I：显示读数 r 等于实际段数 d
-   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d
-   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d
-   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即消除串扰本底）
+你可以通过集合表达式来向探测仪构造查询，集合表达式的构造规则如下：
+- 基本元素：空集 empty、全集 U、子集 S、子集 T
+- 运算符：并集 union、交集 intersect、补集 complement
+- 表达式示例：
+  - (union S T) 表示 S 和 T 的并集
+  - (intersect S T) 表示 S 和 T 的交集
+  - (complement S) 表示 S 相对于 U 的补集
+  - (intersect (union S T) (complement S)) 表示复合运算
 
-2. 一对隐藏的故障隐患链路 Pk，从以下4对中选择其一：
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+每轮你可以提交一对集合表达式 (X, Y)，探测仪会返回一个非负整数作为应答。
 
-你的任务是通过诊断交互推断出：
-1. 实际的仪表补偿模式（I/II/III/IV）
-2. 故障隐患链路的编号（P1/P2/P3/P4）
-3. 该隐患链路的真实物理段数
+探测仪的传感器反馈模式在整个检测过程中保持不变，但具体是以下哪一种模式是未知的：
+- 模式 A：返回 X 和 Y 的并集的零件个数
+- 模式 B：返回 X 和 Y 的交集的零件个数
+- 模式 C：返回 X 和 Y 的对称差的零件个数（即仅具有一种缺陷的零件个数）
+- 模式 D：返回 X 的零件个数加上 Y 的零件个数
 
-你可以进行以下类型的查询：
-1. 仪表校准检测（校准查询）：提交任意工作站对 (X,Y)，系统返回经过模式 f 处理后的仪表显示读数 r。你需要至少完成2次检测。
-2. 故障链路读数请求：在完成至少2次校准检测后，可以请求获取故障链路的仪表读数 r_target。此类查询至多只能进行1次。
-3. 最终提交：提交你推断的补偿模式、隐患链路编号和真实段数。三项必须全部正确才算成功。
+你的目标是通过尽可能少的查询，同时推断出：
+1. 探测仪的传感器反馈模式（A、B、C 或 D）
+2. 存在至少一种缺陷（尺寸超差或表面划痕）的不合格零件总数（即 S 和 T 的并集的元素个数）
 
-## 查询与提交格式（严格要求）
-每次查询只能包含一个标签，使用以下 XML 格式：
-- 仪表校准检测（例如检测工作站 A 和 F）：
-<query_calibrate>A,F</query_calibrate>
-- 故障链路读数请求（内容为空）：
-<query_target></query_target>
-- 最终提交（依次给出模式、链路编号、真实段数）：
-<answer>mode=I, pair=P1, distance=4</answer>
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，检测失败。
 
-注意事项：
-- 必须至少完成2次校准检测后才能请求故障链路读数
-- 故障链路读数请求至多只能进行1次
-- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
-- 违反规则或答案错误将导致排查失败
+每次查询需要提供两个集合表达式 expr1 和 expr2。表达式使用前缀表示法，格式如下：
+
+- 基本集合：empty、U、S、T
+- 并集运算：(union E1 E2)
+- 交集运算：(intersect E1 E2)
+- 补集运算：(complement E)
+
+查询格式：
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+提交最终答案时，需要说明应答模式（A、B、C 或 D）和 S 与 T 并集的元素个数，格式如下：
+
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Industrial Pipeline Instrument Calibration and Troubleshooting System".
+[Manufacturing/Industrial Scenario]
+Welcome to the Quality Inspection Black Box Detector of the Smart Manufacturing Assembly Line. To assess batch quality, we need to perform non-destructive testing inference on the components on the production line.
 
-The control network T contains the following workstations and communication buses:
-- Workstations: A, B, C, D, E, F, G, H, I
-- Communication buses: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+The detector has scanned a universal set U of precision components from the current batch, containing N components (N is unknown and greater than or equal to 0). Within this batch, there exist two fixed but unknown defect subsets:
+- Subset S: The set of components with out-of-tolerance dimensional defects.
+- Subset T: The set of components with surface scratch defects.
 
-Physical segments definition: For any workstation pair (X,Y), d(X,Y) is the shortest number of physical segments in T.
+You can construct queries to the detector using set expressions. The construction rules for set expressions are:
+- Basic elements: empty set (empty), universal set (U), subset S, subset T
+- Operators: union, intersect, complement
+- Expression examples:
+  - (union S T) represents the union of S and T
+  - (intersect S T) represents the intersection of S and T
+  - (complement S) represents the complement of S relative to U
+  - (intersect (union S T) (complement S)) represents composite operations
 
-The system has internally fixed two hidden elements:
-1. An instrument compensation pattern f, chosen from the following 4 types:
-   - Mode I: display reading r equals actual segments d
-   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
-   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
-   - Mode IV: r equals the maximum of d minus 1 and 0
+Each round you can submit a pair of set expressions (X, Y), and the detector will return a non-negative integer as the response.
 
-2. A hidden fault risk link Pk, chosen from the following 4 pairs:
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+The detector's sensor feedback mode remains constant throughout the inspection process, but which of the following modes it is remains unknown:
+- Mode A: Returns the number of components in the union of X and Y
+- Mode B: Returns the number of components in the intersection of X and Y
+- Mode C: Returns the number of components in the symmetric difference of X and Y (components with exactly one type of defect)
+- Mode D: Returns the number of components in X plus the number of components in Y
 
-Your task is to infer through diagnostic queries:
-1. The actual compensation pattern (I/II/III/IV)
-2. The fault link number (P1/P2/P3/P4)
-3. The true physical segments of that fault link
+Your goal is to infer, through as few queries as possible:
+1. The detector's sensor feedback mode (A, B, C, or D)
+2. The total number of non-compliant components with at least one type of defect (dimensional out-of-tolerance or surface scratch) (i.e., the number of elements in the union of S and T)
 
-You can perform the following queries:
-1. Instrument Calibration Test (Calibration Query): Submit any workstation pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 tests.
-2. Fault Link Reading Request: After completing at least 2 tests, you can request the reading r_target of the hidden fault link. This can be performed at most once.
-3. Final Submission: Submit your inferred pattern, fault link number, and true segments. All three must be correct to succeed.
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the inspection fails.
 
-## Query and Submission Format (strictly required)
-Each query must contain only one tag, using the following XML format:
-- Instrument Calibration Test (e.g., test workstations A and F):
-<query_calibrate>A,F</query_calibrate>
-- Fault Link Reading Request (empty content):
-<query_target></query_target>
-- Final Submission:
-<answer>mode=I, pair=P1, distance=4</answer>
+Each query requires two set expressions expr1 and expr2. Expressions use prefix notation with the following format:
 
-Notes:
-- You must complete at least 2 tests before requesting the fault link reading.
-- Fault link reading request can be performed at most once.
-- Workstation names must be chosen from A, B, C, D, E, F, G, H, I.
-- Violating rules or incorrect answers will result in failure.
+- Basic sets: empty, U, S, T
+- Union operation: (union E1 E2)
+- Intersection operation: (intersect E1 E2)
+- Complement operation: (complement E)
+
+Query format:
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+When submitting the final answer, specify the response mode (A, B, C, or D) and the number of elements in the union of S and T:
+
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎启动“涉案资金网络穿透式审计系统”。
-已查明的资金流转网络 T 包含以下涉案主体账户和流转关系：
-- 主体账户：A, B, C, D, E, F, G, H, I
-- 资金流转链：A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+欢迎使用法律电子取证与案卷分析系统。为了理清一起复杂商业诉讼的证据链，我们需要在保密隔离区内进行案卷检索推断。
 
-流转层级定义：任意账户对 (X,Y) 之间的 d(X,Y) 为其在网络上的最短流转环节数。
+系统索引了本次诉讼相关的全部案卷材料全集 U，共包含 N 份案卷（N 的值未知且大于等于 0）。在这些案卷中，存在两个固定但未知的证据子集：
+- 子集 S：包含“财务造假”直接证据的案卷集合。
+- 子集 T：包含“违规披露”直接证据的案卷集合。
 
-犯罪集团设置了账目混淆策略，并掩盖了一条核心利益输送链：
-1. 审计干扰模式 f，从以下4种中选择其一：
-   - 模式I：账面层级 r 等于实际层级 d
-   - 模式II：若 d 为奇数，r 等于 d 加 1；否则 r 等于 d（虚增偶数结构）
-   - 模式III：若 d 为偶数，r 等于 d 加 1；否则 r 等于 d（虚增奇数结构）
-   - 模式IV：r 等于 d 减 1 与 0 中的较大值（即掩盖直接流水）
+你可以通过集合表达式来向取证系统构造查询，集合表达式的构造规则如下：
+- 基本元素：空集 empty、全集 U、子集 S、子集 T
+- 运算符：并集 union、交集 intersect、补集 complement
+- 表达式示例：
+  - (union S T) 表示 S 和 T 的并集
+  - (intersect S T) 表示 S 和 T 的交集
+  - (complement S) 表示 S 相对于 U 的补集
+  - (intersect (union S T) (complement S)) 表示复合运算
 
-2. 一条隐藏的核心输送链 Pk，从以下4对中选择其一：
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+每轮你可以提交一对集合表达式 (X, Y)，取证系统会返回一个非负整数作为应答。
 
-你的任务是通过追踪查询推断出：
-1. 实际的审计干扰模式（I/II/III/IV）
-2. 核心输送链的编号（P1/P2/P3/P4）
-3. 该输送链的真实流转层级数
+取证系统的保密检索应答模式在整个分析过程中保持不变，但具体是以下哪一种模式是未知的：
+- 模式 A：返回 X 和 Y 的并集的案卷份数
+- 模式 B：返回 X 和 Y 的交集的案卷份数
+- 模式 C：返回 X 和 Y 的对称差的案卷份数（即仅包含一种违规证据的案卷份数）
+- 模式 D：返回 X 的案卷份数加上 Y 的案卷份数
 
-你可以进行以下类型的操作：
-1. 追踪审计查询（校准查询）：提交任意账户对 (X,Y)，系统返回经过模式 f 处理后的账面层级 r。你需要至少完成2次审计。
-2. 核心输送链取证：在完成至少2次追踪审计后，可以请求获取核心输送链的账面层级 r_target。此类请求至多只能进行1次。
-3. 最终提交：提交你推断的干扰模式、输送链编号和真实流转层级。三项必须全部正确才算成功。
+你的目标是通过尽可能少的查询，同时推断出：
+1. 取证系统的检索应答模式（A、B、C 或 D）
+2. 包含任意一种违规证据（财务造假或违规披露）的案卷总数（即 S 和 T 的并集的元素个数）
 
-## 查询与提交格式（严格要求）
-每次查询只能包含一个标签，使用以下 XML 格式：
-- 追踪审计查询（例如查询账户 A 和 F）：
-<query_calibrate>A,F</query_calibrate>
-- 核心输送链取证（内容为空）：
-<query_target></query_target>
-- 最终提交（依次给出模式、输送链编号、真实层级）：
-<answer>mode=I, pair=P1, distance=4</answer>
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，取证失败。
 
-注意事项：
-- 必须至少完成2次追踪审计后才能进行核心链取证
-- 核心链取证请求至多只能进行1次
-- 节点名称必须从 A, B, C, D, E, F, G, H, I 中选择
-- 违反规则或答案错误将导致取证失败
+每次查询需要提供两个集合表达式 expr1 和 expr2。表达式使用前缀表示法，格式如下：
+
+- 基本集合：empty、U、S、T
+- 并集运算：(union E1 E2)
+- 交集运算：(intersect E1 E2)
+- 补集运算：(complement E)
+
+查询格式：
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+提交最终答案时，需要说明应答模式（A、B、C 或 D）和 S 与 T 并集的元素个数，格式如下：
+
+<answer>mode=A, count=5</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Forensic Audit of Illicit Fund Networks System".
+Welcome to the Legal E-Discovery and Case File Analysis System. To clarify the chain of evidence in a complex commercial litigation, we need to conduct case file retrieval inference within a confidential quarantine area.
 
-The fund transfer network T contains the following entities and transfer links:
-- Entities: A, B, C, D, E, F, G, H, I
-- Transfer links: A-B, B-C, B-D, D-E, E-F, C-G, G-H, H-I
+The system has indexed a universal set U of all case file materials related to this litigation, containing N files (N is unknown and greater than or equal to 0). Among these files, there exist two fixed but unknown evidentiary subsets:
+- Subset S: The set of files containing direct evidence of "financial fraud".
+- Subset T: The set of files containing direct evidence of "regulatory non-compliance in disclosure".
 
-Transfer steps definition: For any entity pair (X,Y), d(X,Y) is the shortest number of transfer steps in T.
+You can construct queries to the e-discovery system using set expressions. The construction rules for set expressions are:
+- Basic elements: empty set (empty), universal set (U), subset S, subset T
+- Operators: union, intersect, complement
+- Expression examples:
+  - (union S T) represents the union of S and T
+  - (intersect S T) represents the intersection of S and T
+  - (complement S) represents the complement of S relative to U
+  - (intersect (union S T) (complement S)) represents composite operations
 
-The system has internally fixed two hidden elements:
-1. An audit interference pattern f, chosen from the following 4 types:
-   - Mode I: ledger steps r equals actual steps d
-   - Mode II: if d is odd, r equals d plus 1; otherwise r equals d
-   - Mode III: if d is even, r equals d plus 1; otherwise r equals d
-   - Mode IV: r equals the maximum of d minus 1 and 0
+Each round you can submit a pair of set expressions (X, Y), and the e-discovery system will return a non-negative integer as the response.
 
-2. A hidden core illicit transfer chain Pk, chosen from the following 4 pairs:
-   - P1: (A, F)
-   - P2: (C, H)
-   - P3: (D, I)
-   - P4: (E, G)
+The system's confidential retrieval response mode remains constant throughout the analysis process, but which of the following modes it is remains unknown:
+- Mode A: Returns the number of files in the union of X and Y
+- Mode B: Returns the number of files in the intersection of X and Y
+- Mode C: Returns the number of files in the symmetric difference of X and Y (files containing exactly one type of non-compliant evidence)
+- Mode D: Returns the number of files in X plus the number of files in Y
 
-Your task is to infer through tracing queries:
-1. The actual audit interference pattern (I/II/III/IV)
-2. The core transfer chain number (P1/P2/P3/P4)
-3. The true transfer steps of that core chain
+Your goal is to infer, through as few queries as possible:
+1. The e-discovery system's retrieval response mode (A, B, C, or D)
+2. The total number of files containing any type of non-compliant evidence (financial fraud or regulatory non-compliance in disclosure) (i.e., the number of elements in the union of S and T)
 
-You can perform the following queries:
-1. Tracing Audit Query (Calibration Query): Submit any entity pair (X,Y), the system returns a reading r processed by pattern f. You must complete at least 2 audits.
-2. Core Transfer Chain Evidence Request: After completing at least 2 audits, you can request the reading r_target of the hidden core chain. This can be performed at most once.
-3. Final Submission: Submit your inferred pattern, chain number, and true steps. All three must be correct to succeed.
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the e-discovery fails.
 
-## Query and Submission Format (strictly required)
-Each query must contain only one tag, using the following XML format:
-- Tracing Audit Query (e.g., query entities A and F):
-<query_calibrate>A,F</query_calibrate>
-- Core Transfer Chain Evidence Request (empty content):
-<query_target></query_target>
-- Final Submission:
-<answer>mode=I, pair=P1, distance=4</answer>
+Each query requires two set expressions expr1 and expr2. Expressions use prefix notation with the following format:
 
-Notes:
-- You must complete at least 2 audits before requesting the core chain evidence.
-- Core chain evidence request can be performed at most once.
-- Entity names must be chosen from A, B, C, D, E, F, G, H, I.
-- Violating rules or incorrect answers will result in failure.
+- Basic sets: empty, U, S, T
+- Union operation: (union E1 E2)
+- Intersection operation: (intersect E1 E2)
+- Complement operation: (complement E)
+
+Query format:
+<query>
+expr1: (union S T)
+expr2: (intersect S T)
+</query>
+
+When submitting the final answer, specify the response mode (A, B, C, or D) and the number of elements in the union of S and T:
+
+<answer>mode=A, count=5</answer>
 """
 
-    tags = ["answer", "query_calibrate", "query_target"]
-    
-    # 新增类属性
-    reasoning_type = "溯因推理"
-    data_structure = "树"
+    tags = ["answer", "query"]
 
-    # 难度配置
     DIFFICULTY_CONFIG = {
         1: {
-            "mode": "I",
-            "target_pair": "P2",
+            "N": 10,
+            "S": {1, 2, 3, 4},
+            "T": {5, 6, 7},
+            "mode": "A",
         },
         2: {
-            "mode": "II",
-            "target_pair": "P1",
+            "N": 15,
+            "S": {1, 2, 3, 4, 5, 6},
+            "T": {4, 5, 6, 7, 8},
+            "mode": "B",
         },
         3: {
-            "mode": "III",
-            "target_pair": "P4",
+            "N": 20,
+            "S": {1, 2, 3, 4, 5, 6, 7, 8},
+            "T": {5, 6, 7, 8, 9, 10, 11, 12},
+            "mode": "C",
         },
         4: {
-            "mode": "IV",
-            "target_pair": "P2",
+            "N": 25,
+            "S": {1, 3, 5, 7, 9, 11, 13, 15},
+            "T": {2, 4, 6, 8, 10, 12, 14},
+            "mode": "D",
         },
         5: {
-            "mode": "IV",
-            "target_pair": "P3",
+            "N": 30,
+            "S": {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+            "T": {6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+            "mode": "C",
         },
     }
 
-    def __init__(self, config):
-        # 定义树结构
-        self.tree_edges = [
-            ("A", "B"), ("B", "C"), ("B", "D"), ("D", "E"), 
-            ("E", "F"), ("C", "G"), ("G", "H"), ("H", "I")
-        ]
-        
-        # 定义目标对及其真实距离
-        self.target_pairs_info = {
-            "P1": (("A", "F"), 4),
-            "P2": (("C", "H"), 2),
-            "P3": (("D", "I"), 5),
-            "P4": (("E", "G"), 4),
-        }
-        
-        super().__init__(config)
-
     def _initialize_game(self):
-        """初始化游戏状态"""
-        diff = self.config.difficulty
-        
-        # 防御性类型转换，确保 difficulty 为 int
-        if isinstance(diff, str):
-            diff = int(diff)
+        diff = int(self.config.difficulty)
         
         if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
         
         cfg = self.DIFFICULTY_CONFIG[diff]
-        
-        # 设置模式和目标对
+        self.N = cfg["N"]
+        self.S = set(cfg["S"])
+        self.T = set(cfg["T"])
         self.mode = cfg["mode"]
-        self.target_pair_name = cfg["target_pair"]
-        self.target_pair_nodes, self.target_true_distance = self.target_pairs_info[self.target_pair_name]
         
-        # 构建图用于计算距离
-        self._build_graph()
+        self.U = set(range(1, self.N + 1))
         
-        # 查询计数器
-        self.calibration_count = 0
-        self.target_query_count = 0
+        self.answer_count = len(self.S | self.T)
         
-        # 游戏信息（用于规则格式化，本游戏不需要特殊格式化）
         self._game_info = {}
 
-    def _build_graph(self):
-        """构建图的邻接表表示"""
-        from collections import defaultdict, deque
+    def _parse_set_expression(self, expr_str):
+        expr_str = expr_str.strip()
         
-        self.graph = defaultdict(list)
-        for u, v in self.tree_edges:
-            self.graph[u].append(v)
-            self.graph[v].append(u)
-    
-    def _compute_distance(self, node1, node2):
-        """使用BFS计算两节点之间的最短距离"""
-        from collections import deque
+        if expr_str == "empty":
+            return set()
+        elif expr_str == "U":
+            return self.U.copy()
+        elif expr_str == "S":
+            return self.S.copy()
+        elif expr_str == "T":
+            return self.T.copy()
         
-        if node1 == node2:
-            return 0
+        if not (expr_str.startswith("(") and expr_str.endswith(")")):
+            raise ValueError(f"Invalid expression format: {expr_str}")
         
-        visited = {node1}
-        queue = deque([(node1, 0)])
+        inner = expr_str[1:-1].strip()
         
-        while queue:
-            current, dist = queue.popleft()
-            for neighbor in self.graph[current]:
-                if neighbor == node2:
-                    return dist + 1
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append((neighbor, dist + 1))
+        parts = self._split_expression(inner)
         
-        return -1  # 不应该到达这里（树是连通的）
-    
-    def _apply_mode(self, true_distance):
-        """根据模式对真实距离进行变换"""
-        d = true_distance
+        if len(parts) == 0:
+            raise ValueError(f"Empty expression: {expr_str}")
         
-        if self.mode == "I":
-            return d
-        elif self.mode == "II":
-            # 奇数加一
-            return d + 1 if d % 2 == 1 else d
-        elif self.mode == "III":
-            # 偶数加一
-            return d + 1 if d % 2 == 0 else d
-        elif self.mode == "IV":
-            # 减一截断
-            return max(0, d - 1)
+        op = parts[0]
+        
+        if op == "complement":
+            if len(parts) != 2:
+                raise ValueError(f"complement requires 1 argument: {expr_str}")
+            arg = self._parse_set_expression(parts[1])
+            return self.U - arg
+        
+        elif op == "union":
+            if len(parts) != 3:
+                raise ValueError(f"union requires 2 arguments: {expr_str}")
+            arg1 = self._parse_set_expression(parts[1])
+            arg2 = self._parse_set_expression(parts[2])
+            return arg1 | arg2
+        
+        elif op == "intersect":
+            if len(parts) != 3:
+                raise ValueError(f"intersect requires 2 arguments: {expr_str}")
+            arg1 = self._parse_set_expression(parts[1])
+            arg2 = self._parse_set_expression(parts[2])
+            return arg1 & arg2
+        
+        else:
+            raise ValueError(f"Unknown operator: {op}")
+
+    def _split_expression(self, expr):
+        parts = []
+        current = ""
+        depth = 0
+        
+        for char in expr:
+            if char == "(":
+                depth += 1
+                current += char
+            elif char == ")":
+                depth -= 1
+                current += char
+            elif char == " " and depth == 0:
+                if current:
+                    parts.append(current)
+                    current = ""
+            else:
+                current += char
+        
+        if current:
+            parts.append(current)
+        
+        return parts
+
+    def _compute_response(self, set_x, set_y):
+        if self.mode == "A":
+            return len(set_x | set_y)
+        elif self.mode == "B":
+            return len(set_x & set_y)
+        elif self.mode == "C":
+            return len(set_x ^ set_y)
+        elif self.mode == "D":
+            return len(set_x) + len(set_y)
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
         raw_ans = parsed_info["answer"]
         
-        # 解析答案: mode=X, pair=PY, distance=Z
-        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        kv_pairs = [x.strip() for x in raw_ans.split(",")]
         ans_dict = {}
         for kv in kv_pairs:
+            if "=" not in kv:
+                continue
             k, v = kv.split("=", 1)
-            ans_dict[k.strip()] = v.strip()
+            ans_dict[k.strip().lower()] = v.strip()
         
-        # 检查必需字段
-        if "mode" not in ans_dict or "pair" not in ans_dict or "distance" not in ans_dict:
+        if "mode" not in ans_dict or "count" not in ans_dict:
             return False
         
-        # 检查模式
-        if ans_dict["mode"] != self.mode:
+        if ans_dict["mode"].upper() != self.mode:
             return False
         
-        # 检查目标对
-        if ans_dict["pair"] != self.target_pair_name:
-            return False
-        
-        # 检查距离
         try:
-            submitted_distance = int(ans_dict["distance"])
-        except ValueError:
-            return False
-        
-        return submitted_distance == self.target_true_distance
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """生成一个与正确答案不同的错误读数，用于反事实干预。"""
-        try:
-            correct_val = int(correct)
-            # 返回一个偏移后的错误值，确保与正确值不同
-            wrong_val = correct_val + 1
-            return str(wrong_val)
+            count = int(ans_dict["count"])
         except (ValueError, TypeError):
-            # 如果 correct 不是数字（如错误提示信息），返回一个明显错误的值
-            return correct + " [WRONG]"
+            return False
+        
+        return count == self.answer_count
 
     def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑，用于计算正确的返回值"""
-        # 处理校准查询
-        if "query_calibrate" in parsed_info:
-            raw = parsed_info["query_calibrate"].strip()
-            parts = [x.strip() for x in raw.split(",")]
-            
-            if len(parts) != 2:
-                raise ValueError(
-                    "Calibration query must contain exactly two nodes separated by a comma."
-                    if self.config.language == "en" else
-                    "校准查询必须包含恰好两个节点，用逗号分隔。"
-                )
-            
-            node1, node2 = parts
-            
-            # 验证节点是否有效
-            valid_nodes = {"A", "B", "C", "D", "E", "F", "G", "H", "I"}
-            if node1 not in valid_nodes or node2 not in valid_nodes:
-                raise ValueError(
-                    "Invalid node name. Must be chosen from A, B, C, D, E, F, G, H, I."
-                    if self.config.language == "en" else
-                    "节点名称无效。必须从 A, B, C, D, E, F, G, H, I 中选择。"
-                )
-            
-            # 计算真实距离
-            true_dist = self._compute_distance(node1, node2)
-            
-            # 应用模式
-            reading = self._apply_mode(true_dist)
-            
-            # 增加计数
-            self.calibration_count += 1
-            
-            return str(reading)
+        if "query" not in parsed_info:
+            raise ValueError("No query found in parsed info")
         
-        # 处理目标对读数请求
-        elif "query_target" in parsed_info:
-            # 检查是否完成至少2次校准
-            if self.calibration_count < 2:
-                raise ValueError(
-                    f"You must complete at least 2 calibration queries before requesting target reading. Current count: {self.calibration_count}."
-                    if self.config.language == "en" else
-                    f"必须至少完成2次校准查询后才能请求目标对读数。当前已完成 {self.calibration_count} 次。"
-                )
-            
-            # 检查是否已经查询过
-            if self.target_query_count >= 1:
-                raise ValueError(
-                    "Target reading request can be performed at most once."
-                    if self.config.language == "en" else
-                    "目标对读数请求至多只能进行1次。"
-                )
-            
-            # 增加计数
-            self.target_query_count += 1
-            
-            # 应用模式到目标对的真实距离
-            target_reading = self._apply_mode(self.target_true_distance)
-            
-            return str(target_reading)
+        query_content = parsed_info["query"]
         
-        else:
-            raise ValueError(
-                "No valid query tag found."
-                if self.config.language == "en" else
-                "未找到有效的查询标签。"
-            )
+        lines = [line.strip() for line in query_content.strip().split("\n") if line.strip()]
+        
+        expr_dict = {}
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, val = line.split(":", 1)
+            expr_dict[key.strip()] = val.strip()
+        
+        if "expr1" not in expr_dict or "expr2" not in expr_dict:
+            raise ValueError("Invalid query format. Both expr1 and expr2 are required.")
+        
+        set_x = self._parse_set_expression(expr_dict["expr1"])
+        set_y = self._parse_set_expression(expr_dict["expr2"])
+        
+        response_value = self._compute_response(set_x, set_y)
+        
+        return str(response_value)
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        stripped = correct.strip()
+        try:
+            val = int(stripped)
+            if val == 0:
+                return "1"
+            else:
+                return str(val + 1)
+        except ValueError:
+            pass
+        
+        return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串（包含XML标签，以明确查询类型）
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
-        nodes = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+        query_pairs = [
+            ("S", "T"),
+            ("S", "S"),
+            ("T", "T"),
+            ("empty", "empty"),
+            ("S", "empty"),
+            ("T", "empty"),
+            ("U", "empty"),
+            ("S", "U"),
+            ("T", "U"),
+            ("(union S T)", "empty"),
+            ("(intersect S T)", "empty"),
+            ("(complement S)", "T"),
+            ("(complement T)", "S"),
+            ("(union S T)", "(intersect S T)"),
+            ("S", "(complement S)"),
+            ("T", "(complement T)"),
+        ]
         
-        # 1. 枚举所有无序节点对的校准查询
-        for i, n1 in enumerate(nodes):
-            for n2 in nodes[i+1:]:
-                true_dist = self._compute_distance(n1, n2)
-                reading = self._apply_mode(true_dist)
+        possible_queries = []
+        
+        for e1, e2 in query_pairs:
+            query_content = f"expr1: {e1}\nexpr2: {e2}"
+            
+            try:
+                set_x = self._parse_set_expression(e1)
+                set_y = self._parse_set_expression(e2)
+                ans_val = self._compute_response(set_x, set_y)
+                answer_str = str(ans_val)
                 
-                queries.append({
-                    "query": f"<query_calibrate>{n1},{n2}</query_calibrate>",
-                    "answer": str(reading)
+                possible_queries.append({
+                    "query": f"<query>\n{query_content}\n</query>",
+                    "answer": answer_str
                 })
-        
-        # 2. 枚举目标对读数请求
-        target_reading = self._apply_mode(self.target_true_distance)
-        queries.append({
-            "query": "<query_target></query_target>",
-            "answer": str(target_reading)
-        })
-
-        return queries
+            except Exception:
+                continue
+                
+        return possible_queries

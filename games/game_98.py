@@ -1,682 +1,685 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   可达性：在有向图中从某节点出发能到达哪些节点
-# ============================================================
-
 from .base import Game
 import re
 
+class HiddenRelationGame(Game):
 
-class GraphReachabilityGame(Game):
-
-    reasoning_type = "演绎推理"
+    reasoning_type = "归纳推理"
     data_structure = "图"
+    enable_counterfactual = False
 
-    # =========================================================================
-    # 场景 1：交通（物流运输可达性分析）
-    # =========================================================================
+    game_rule_zh = """\
+我们来玩一个"隐藏关系推理"游戏，规则如下：
+
+游戏设定了一个标号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 个元素。
+
+在这个集合上，存在一个未知的二元关系 E。这个关系满足以下性质：
+1. 对称性：如果元素对 {{u, v}} 满足关系 E，那么 {{v, u}} 也满足关系 E。
+2. 无自环：任何元素不与自己构成关系，即 {{u, u}} 不存在。
+3. 非平凡：既存在满足关系的元素对，也存在不满足关系的元素对。
+
+这个关系由一个仅依赖于元素标号的确定性规则决定，但该规则对你是未知的。
+
+有一组特定的元素对被设置为"禁问对" F，你不能直接查询这些对是否满足关系 E。禁问对集合为：
+{forbidden_pairs_str}
+
+你有 {quota} 次查询机会。你需要通过查询非禁问对来推断出生成关系 E 的规则，并最终预测所有禁问对是否满足关系 E。
+
+1. **查询边存在性**：询问某个非禁问的元素对 {{u, v}} 是否满足关系 E。
+   - 要求：u 不等于 v，{{u, v}} 不在禁问集合 F 中，且此前未查询过该对。
+   - 我会回答"有"或"没有"。
+
+2. **查询剩余配额**：询问还剩多少次查询机会。
+   - 我会回答一个非负整数。
+
+3. **最终提交**：当你认为已掌握规律时，对所有禁问对进行预测。
+   - 你需要对每个禁问对给出"有"或"没有"的判断。
+
+每次操作只能包含一个标签，使用以下 XML格式：
+
+- 查询边存在性（例如查询元素 2 和 5）：
+<query_edge>2,5</query_edge>
+
+- 查询剩余配额：
+<query_budget></query_budget>
+
+- 最终提交答案（对所有禁问对进行预测）：
+<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
+
+注意：
+1. 答案中必须包含所有禁问对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
+2. 元素对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
+3. 不得查询禁问对或重复查询同一对。
+4. 不得超出查询配额。
+5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
+
+违反任何约束或预测错误将导致游戏失败。
+"""
+
+    game_rule_en = """\
+Let's play a "Hidden Relation Inference" game. Here are the rules:
+
+There is a labeled set V = {{0, 1, ..., {n_minus_1}}}, containing {n} elements in total.
+
+On this set, there exists an unknown binary relation E. This relation satisfies the following properties:
+1. Symmetry: If element pair {{u, v}} satisfies relation E, then {{v, u}} also satisfies relation E.
+2. No self-loops: No element is related to itself, i.e., {{u, u}} does not exist.
+3. Non-trivial: There exist both pairs that satisfy the relation and pairs that do not.
+
+This relation is determined by a deterministic rule that depends only on element labels, but the rule is unknown to you.
+
+A specific set of element pairs is designated as "forbidden pairs" F. You cannot directly query whether these pairs satisfy relation E. The forbidden pair set is:
+{forbidden_pairs_str}
+
+You have {quota} query opportunities. You need to infer the rule generating relation E by querying non-forbidden pairs, and ultimately predict whether all forbidden pairs satisfy relation E.
+
+1. **Query Edge Existence**: Ask whether a non-forbidden element pair {{u, v}} satisfies relation E.
+   - Requirements: u is not equal to v, {{u, v}} is not in forbidden set F, and the pair has not been queried before.
+   - I will answer "Yes" or "No".
+
+2. **Query Remaining Quota**: Ask how many query opportunities remain.
+   - I will answer with a non-negative integer.
+
+3. **Final Submission**: When you believe you have grasped the pattern, predict all forbidden pairs.
+   - You need to give a "Yes" or "No" judgment for each forbidden pair.
+
+Each operation can only contain one tag, using the following XML format:
+
+- Query edge existence (e.g., query elements 2 and 5):
+<query_edge>2,5</query_edge>
+
+- Query remaining quota:
+<query_budget></query_budget>
+
+- Final answer submission (predict all forbidden pairs):
+<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
+
+Notes:
+1. The answer must include predictions for all forbidden pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
+2. Element pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
+3. Do not query forbidden pairs or repeatedly query the same pair.
+4. Do not exceed the query quota.
+5. Use as few queries as possible and find the rule through inductive reasoning.
+
+Violating any constraint or making incorrect predictions will result in game failure.
+"""
+
     contextualized_rule_zh_1 = """\
-欢迎使用“物流运输可达性分析”系统。
+作为城市交通规划师，你需要摸清一张未知交通网络的连通规则。
 
-系统内记录了一个单向物流运输网络，物流站点集合为 {vertices}，具体的直达运输路线未知。网络中可能存在循环路线，但不包含自我发货。
-我已经为你指定了初始发货站点 {start}，你的目标是推理出从该站点出发，货物最终能够送达的所有站点集合。
+我们来玩一个"隐藏交通网络推理"游戏，规则如下：
 
-初始状态下，你已经确认发货站点 {start} 是可达的。
+系统设定了一个交通枢纽编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 个枢纽。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的运输网络结构如实回答：
+在这个集合上，存在一个未知的直达连通关系 E。这个连通关系满足以下性质：
+1. 对称性：如果枢纽对 {{u, v}} 存在双向直达连通 E，那么 {{v, u}} 也同样连通。
+2. 无自环：任何枢纽不与自己构成连通关系，即 {{u, u}} 不存在。
+3. 非平凡：既存在相互连通的枢纽对，也存在不连通的枢纽对。
 
-1. 邻接枚举查询：询问某个已确认可达站点的所有直接下游站点。
-   - 限制：只能查询已确认可达的站点。
-   - 回答：列出该站点的所有直接下游站点。
+这个连通关系由一个仅依赖于枢纽编号的确定性规则决定，但该规则对你是未知的。
 
-2. 边存在性查询：询问从某个已确认可达站点到另一站点是否存在直达路线。
-   - 限制：起点必须是已确认可达的站点。
-   - 回答："是"或"否"。
+有一组特定的枢纽对被设置为"禁查路线" F，你不能直接查询这些对是否连通。禁查路线集合为：
+{forbidden_pairs_str}
 
-3. 路径验证查询：询问给定的站点序列是否构成从发货站点出发的实际运输路径。
-   - 限制：序列必须以发货站点 {start} 开头，长度至少为 2，站点可以重复。
-   - 回答："是"；或"否，在第 i 段失败"（i 为最小失败段的下标）。
+你有 {quota} 次查询机会。你需要通过查询非禁查路线来推断出生成连通关系 E 的规则，并最终预测所有禁查路线是否连通。
 
-4. 可达集合报告查询：询问当前已确认可达的站点集合。
-   - 回答：列出当前所有已确认可达的站点。
+1. **查询边存在性**：询问某个非禁查的枢纽对 {{u, v}} 是否存在直达连通 E。
+   - 要求：u 不等于 v，{{u, v}} 不在禁查路线集合 F 中，且此前未查询过该路线。
+   - 我会回答"有"或"没有"。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，排查任务失败。
+2. **查询剩余配额**：询问还剩多少次查询机会。
+   - 我会回答一个非负整数。
 
-## 询问与提交答案的格式（必须严格遵守）
+3. **最终提交**：当你认为已掌握规律时，对所有禁查路线进行预测。
+   - 你需要对每个禁查路线给出"有"或"没有"的判断。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+每次操作只能包含一个标签，使用以下 XML 格式：
 
-- 邻接枚举查询（例如查询站点 A）：
-<query_neighbors>A</query_neighbors>
+- 查询边存在性（例如查询枢纽 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 边存在性查询（例如查询从 A 到 B 是否有直达路线）：
-<query_edge>A,B</query_edge>
+- 查询剩余配额：
+<query_budget></query_budget>
 
-- 路径验证查询（例如验证路线 A->B->C）：
-<query_path>A,B,C</query_path>
+- 最终提交答案（对所有禁查路线进行预测）：
+<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
 
-- 可达集合报告查询：
-<query_reachable></query_reachable>
+注意：
+1. 答案中必须包含所有禁查路线的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
+2. 枢纽对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
+3. 不得查询禁查路线或重复查询同一路线。
+4. 不得超出查询配额。
+5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
 
-提交最终答案时，请列出所有可达站点（用逗号隔开，顺序不限），格式如下：
-
-<answer>A,B,C</answer>
+违反任何约束或预测错误将导致规划任务失败。
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Welcome to the "Logistics Network Reachability" system.
+[Traffic Scenario]
+As an urban traffic planner, you need to uncover the connectivity rules of an unknown transportation network.
 
-The system records a one-way logistics transport network with the station set {vertices}. The exact direct transport routes are unknown. The network may contain circular routes but no self-shipping.
-I have designated an initial dispatch station {start} for you. Your goal is to infer the set of all stations reachable from this starting station.
+Let's play a "Hidden Traffic Network Inference" game. Here are the rules:
 
-Initially, you have confirmed that the starting station {start} is reachable.
+There is a designated set of traffic hub labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} hubs in total.
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the actual transport network:
+On this set, there exists an unknown direct connectivity relation E. This relation satisfies the following properties:
+1. Symmetry: If hub pair {{u, v}} satisfies relation E, then {{v, u}} also satisfies relation E.
+2. No self-loops: No hub is connected to itself, i.e., {{u, u}} does not exist.
+3. Non-trivial: There exist both pairs that satisfy the relation and pairs that do not.
 
-1. Neighbor Enumeration Query: Ask for all direct downstream stations of a confirmed reachable station.
-   - Restriction: Can only query stations that are confirmed reachable.
-   - Answer: List all direct downstream stations.
+This relation is determined by a deterministic rule that depends only on hub labels, but the rule is unknown to you.
 
-2. Edge Existence Query: Ask whether there is a direct route from a confirmed reachable station to another.
-   - Restriction: The source station must be confirmed reachable.
-   - Answer: "Yes" or "No".
+A specific set of hub pairs is designated as "forbidden routes" F. You cannot directly query whether these routes satisfy relation E. The forbidden route set is:
+{forbidden_pairs_str}
 
-3. Path Verification Query: Ask whether a given station sequence forms a valid transport route from the dispatch station.
-   - Restriction: The sequence must start with {start}, have length at least 2, and stations can repeat.
-   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing segment).
+You have {quota} query opportunities. You need to infer the rule generating relation E by querying non-forbidden routes, and ultimately predict whether all forbidden routes satisfy relation E.
 
-4. Reachable Set Report Query: Ask for the currently confirmed reachable station set.
-   - Answer: List all currently confirmed reachable stations.
+1. **Query Edge Existence**: Ask whether a non-forbidden hub pair {{u, v}} satisfies relation E.
+   - Requirements: u is not equal to v, {{u, v}} is not in the forbidden set F, and the route has not been queried before.
+   - I will answer "Yes" or "No".
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
+2. **Query Remaining Quota**: Ask how many query opportunities remain.
+   - I will answer with a non-negative integer.
 
-## Query and Answer Format (strictly required)
+3. **Final Submission**: When you believe you have grasped the pattern, predict all forbidden routes.
+   - You need to give a "Yes" or "No" judgment for each forbidden route.
 
-Each query must contain only one tag. Use the following XML format:
+Each operation can only contain one tag, using the following XML format:
 
-- Neighbor Enumeration Query (e.g., querying station A):
-<query_neighbors>A</query_neighbors>
+- Query edge existence (e.g., query hubs 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Edge Existence Query (e.g., checking if there is a direct route from A to B):
-<query_edge>A,B</query_edge>
+- Query remaining quota:
+<query_budget></query_budget>
 
-- Path Verification Query (e.g., verifying route A->B->C):
-<query_path>A,B,C</query_path>
+- Final answer submission (predict all forbidden routes):
+<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
 
-- Reachable Set Report Query:
-<query_reachable></query_reachable>
+Notes:
+1. The answer must include predictions for all forbidden routes, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
+2. Hub pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
+3. Do not query forbidden routes or repeatedly query the same route.
+4. Do not exceed the query quota.
+5. Use as few queries as possible and find the rule through inductive reasoning.
 
-When submitting the final answer, list all reachable stations (comma-separated, order does not matter), using this format:
-
-<answer>A,B,C</answer>
+Violating any constraint or making incorrect predictions will result in planning failure.
 """
 
-    # =========================================================================
-    # 场景 2：医疗（传染病接触溯源）
-    # =========================================================================
     contextualized_rule_zh_2 = """\
-欢迎使用“传染病接触溯源”系统。
+作为临床药学专家，你需要推断一种新型药物库中不同成分之间是否存在相互作用。
 
-系统追踪了一个局部的传染接触网络，涉及人员集合为 {vertices}，具体的直接接触史未知。网络中可能存在交叉接触，但不包含自我传染。
-我已经为你指定了确认感染的零号病人 {start}，你的目标是推理出从该病人出发，可能被直接或间接传染的所有人员集合。
+我们来玩一个"隐藏药物作用推理"游戏，规则如下：
 
-初始状态下，你已经确认零号病人 {start} 在感染名单中。
+系统设定了一个药物成分编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 种成分。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的流行病学调查数据如实回答：
+在这个集合上，存在一个未知的相互作用关系 E。这个相互作用满足以下性质：
+1. 对称性：如果成分对 {{u, v}} 存在相互作用 E，那么 {{v, u}} 也同样存在。
+2. 无自环：任何成分不与自己构成相互作用测试，即 {{u, u}} 不存在。
+3. 非平凡：既存在产生相互作用的成分对，也存在无相互作用的成分对。
 
-1. 邻接枚举查询：询问某个已确认感染人员的所有直接接触者。
-   - 限制：只能查询已确认在感染名单中的人员。
-   - 回答：列出该人员的所有直接接触者。
+这个相互作用由一个仅依赖于成分编号的确定性规则决定，但该规则对你是未知的。
 
-2. 边存在性查询：询问从某个已确认感染人员到另一人员是否存在直接接触史。
-   - 限制：起点必须是已确认在感染名单中的人员。
-   - 回答："是"或"否"。
+有一组特定的成分对被设置为"临床禁忌测试对" F，你不能直接查询这些对是否存在相互作用。禁忌测试集合为：
+{forbidden_pairs_str}
 
-3. 路径验证查询：询问给定的人员序列是否构成从零号病人出发的有效传播链。
-   - 限制：序列必须以零号病人 {start} 开头，长度至少为 2，人员可以重复（如重复暴露）。
-   - 回答："是"；或"否，在第 i 段失败"（i 为最小失败段的下标）。
+你有 {quota} 次查询机会。你需要通过查询非禁忌对来推断出生成关系 E 的规则，并最终预测所有禁忌测试对是否存在相互作用 E。
 
-4. 可达集合报告查询：询问当前已确认在感染名单中的人员集合。
-   - 回答：列出当前所有已确认感染的人员。
+1. **查询边存在性**：询问某个非禁忌的成分对 {{u, v}} 是否存在相互作用 E。
+   - 要求：u 不等于 v，{{u, v}} 不在禁忌测试集合 F 中，且此前未查询过该组合。
+   - 我会回答"有"或"没有"。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，溯源任务失败。
+2. **查询剩余配额**：询问还剩多少次查询机会。
+   - 我会回答一个非负整数。
 
-## 询问与提交答案的格式（必须严格遵守）
+3. **最终提交**：当你认为已掌握规律时，对所有临床禁忌测试对进行预测。
+   - 你需要对每个禁忌对给出"有"或"没有"的判断。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+每次操作只能包含一个标签，使用以下 XML 格式：
 
-- 邻接枚举查询（例如查询人员 A）：
-<query_neighbors>A</query_neighbors>
+- 查询边存在性（例如查询成分 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 边存在性查询（例如查询 A 是否直接接触了 B）：
-<query_edge>A,B</query_edge>
+- 查询剩余配额：
+<query_budget></query_budget>
 
-- 路径验证查询（例如验证传播链 A->B->C）：
-<query_path>A,B,C</query_path>
+- 最终提交答案（对所有禁忌对进行预测）：
+<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
 
-- 可达集合报告查询：
-<query_reachable></query_reachable>
+注意：
+1. 答案中必须包含所有禁忌对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
+2. 成分对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
+3. 不得查询禁忌对或重复查询同一对。
+4. 不得超出查询配额。
+5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
 
-提交最终答案时，请列出所有可能被传染的人员（用逗号隔开，顺序不限），格式如下：
-
-<answer>A,B,C</answer>
+违反任何约束或预测错误将导致临床分析失败。
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Welcome to the "Infectious Disease Contact Tracing" system.
+[Medical Scenario]
+As a clinical pharmacy expert, you need to infer whether there are drug-drug interactions between different compounds in a novel drug library.
 
-The system tracks a localized transmission network involving the person set {vertices}. The exact direct contact history is unknown. Cross-contacts may exist, but self-infection is not included.
-I have designated the confirmed Patient Zero {start} for you. Your goal is to infer the set of all persons who might have been directly or indirectly infected originating from this patient.
+Let's play a "Hidden Drug Interaction Inference" game. Here are the rules:
 
-Initially, you have confirmed that Patient Zero {start} is in the infected list.
+There is a set of designated drug compound labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} compounds in total.
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on actual epidemiological investigation data:
+On this set, there exists an unknown interaction relation E. This interaction satisfies the following properties:
+1. Symmetry: If compound pair {{u, v}} has interaction E, then {{v, u}} also has it.
+2. No self-loops: No compound is tested for interaction with itself, i.e., {{u, u}} does not exist.
+3. Non-trivial: There exist both pairs that interact and pairs that do not.
 
-1. Neighbor Enumeration Query: Ask for all direct contacts of a confirmed infected person.
-   - Restriction: Can only query persons confirmed to be in the infected list.
-   - Answer: List all direct contacts.
+This interaction is determined by a deterministic rule that depends only on compound labels, but the rule is unknown to you.
 
-2. Edge Existence Query: Ask whether there is a direct contact history from a confirmed infected person to another.
-   - Restriction: The source person must be confirmed infected.
-   - Answer: "Yes" or "No".
+A specific set of compound pairs is designated as "clinical contraindication pairs" F. You cannot directly query whether these pairs have interactions. The forbidden pair set is:
+{forbidden_pairs_str}
 
-3. Path Verification Query: Ask whether a given person sequence forms a valid transmission chain from Patient Zero.
-   - Restriction: The sequence must start with {start}, have length at least 2, and persons can repeat (e.g., repeated exposure).
-   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing segment).
+You have {quota} query opportunities. You need to infer the rule generating relation E by querying non-forbidden pairs, and ultimately predict whether all contraindication pairs have interaction E.
 
-4. Reachable Set Report Query: Ask for the currently confirmed infected person set.
-   - Answer: List all currently confirmed infected persons.
+1. **Query Edge Existence**: Ask whether a non-forbidden compound pair {{u, v}} has interaction E.
+   - Requirements: u is not equal to v, {{u, v}} is not in the forbidden set F, and the pair has not been queried before.
+   - I will answer "Yes" or "No".
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracing task fails.
+2. **Query Remaining Quota**: Ask how many query opportunities remain.
+   - I will answer with a non-negative integer.
 
-## Query and Answer Format (strictly required)
+3. **Final Submission**: When you believe you have grasped the pattern, predict all clinical contraindication pairs.
+   - You need to give a "Yes" or "No" judgment for each forbidden pair.
 
-Each query must contain only one tag. Use the following XML format:
+Each operation can only contain one tag, using the following XML format:
 
-- Neighbor Enumeration Query (e.g., querying person A):
-<query_neighbors>A</query_neighbors>
+- Query edge existence (e.g., query compounds 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Edge Existence Query (e.g., checking direct contact from A to B):
-<query_edge>A,B</query_edge>
+- Query remaining quota:
+<query_budget></query_budget>
 
-- Path Verification Query (e.g., verifying chain A->B->C):
-<query_path>A,B,C</query_path>
+- Final answer submission (predict all contraindication pairs):
+<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
 
-- Reachable Set Report Query:
-<query_reachable></query_reachable>
+Notes:
+1. The answer must include predictions for all contraindication pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
+2. Compound pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
+3. Do not query contraindication pairs or repeatedly query the same pair.
+4. Do not exceed the query quota.
+5. Use as few queries as possible and find the rule through inductive reasoning.
 
-When submitting the final answer, list all potentially infected persons (comma-separated, order does not matter), using this format:
-
-<answer>A,B,C</answer>
+Violating any constraint or making incorrect predictions will result in clinical analysis failure.
 """
 
-    # =========================================================================
-    # 场景 3：教育（课程先修图谱解锁）
-    # =========================================================================
     contextualized_rule_zh_3 = """\
-欢迎使用“课程先修图谱解锁”系统。
+作为课程研发主管，你需要梳理一套全新教学大纲中知识点之间的交叉融合关联逻辑。
 
-系统设定了一个完整的学科知识图谱，课程模块集合为 {vertices}，具体的先修依赖关系未知。模块间可能存在循环依赖（如进阶互修），但不存在自我依赖。
-我已经为你分配了初始必修课 {start}，你的目标是推理出只要完成该必修课，后续能够直接或间接解锁的所有课程模块集合。
+我们来玩一个"隐藏知识关联推理"游戏，规则如下：
 
-初始状态下，你已经确认必修课 {start} 是已解锁的。
+大纲设定了一个核心知识点编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 个知识点。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的教学大纲依赖结构如实回答：
+在这个集合上，存在一个未知的学科交叉关联 E。这个关联满足以下性质：
+1. 对称性：如果知识点对 {{u, v}} 存在交叉关联 E，那么 {{v, u}} 也同样存在关联。
+2. 无自环：任何知识点不与自己构成关联比较，即 {{u, u}} 不存在。
+3. 非平凡：既存在有关联的知识点对，也存在无关联的知识点对。
 
-1. 邻接枚举查询：询问某个已解锁课程的所有直接后续课程（即以此为唯一先决条件的课程）。
-   - 限制：只能查询已确认解锁的课程。
-   - 回答：列出该课程的所有直接后续课程。
+这个关联关系由一个仅依赖于知识点编号的确定性规则决定，但该规则对你是未知的。
 
-2. 边存在性查询：询问从某个已解锁课程到另一课程是否存在直接先修依赖。
-   - 限制：起点必须是已确认解锁的课程。
-   - 回答："是"或"否"。
+有一组特定的知识点对被设置为"盲盒评估对" F，你不能直接查询这些对是否存在关联。盲盒评估集合为：
+{forbidden_pairs_str}
 
-3. 路径验证查询：询问给定的课程序列是否构成从初始必修课出发的有效学习进阶路线。
-   - 限制：序列必须以初始必修课 {start} 开头，长度至少为 2，课程可以重复（如复习重修）。
-   - 回答："是"；或"否，在第 i 段失败"（i 为最小进阶失败段的下标）。
+你有 {quota} 次查询机会。你需要通过查询非盲盒对来推断出生成关联 E 的规则，并最终预测所有盲盒评估对是否存在交叉关联。
 
-4. 可达集合报告查询：询问当前已确认解锁的课程模块集合。
-   - 回答：列出当前所有已确认解锁的课程。
+1. **查询边存在性**：询问某个非盲盒的知识点对 {{u, v}} 是否存在交叉关联 E。
+   - 要求：u 不等于 v，{{u, v}} 不在盲盒评估集合 F 中，且此前未查询过该对。
+   - 我会回答"有"或"没有"。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，规划任务失败。
+2. **查询剩余配额**：询问还剩多少次查询机会。
+   - 我会回答一个非负整数。
 
-## 询问与提交答案的格式（必须严格遵守）
+3. **最终提交**：当你认为已掌握规律时，对所有盲盒评估对进行预测。
+   - 你需要对每个盲盒对给出"有"或"没有"的判断。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+每次操作只能包含一个标签，使用以下 XML 格式：
 
-- 邻接枚举查询（例如查询课程 A）：
-<query_neighbors>A</query_neighbors>
+- 查询边存在性（例如查询知识点 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 边存在性查询（例如查询 A 是否是 B 的直接先修课）：
-<query_edge>A,B</query_edge>
+- 查询剩余配额：
+<query_budget></query_budget>
 
-- 路径验证查询（例如验证路线 A->B->C）：
-<query_path>A,B,C</query_path>
+- 最终提交答案（对所有盲盒评估对进行预测）：
+<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
 
-- 可达集合报告查询：
-<query_reachable></query_reachable>
+注意：
+1. 答案中必须包含所有盲盒评估对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
+2. 知识点对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
+3. 不得查询盲盒评估对或重复查询同一对。
+4. 不得超出查询配额。
+5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
 
-提交最终答案时，请列出所有可解锁的课程模块（用逗号隔开，顺序不限），格式如下：
-
-<answer>A,B,C</answer>
+违反任何约束或预测错误将导致大纲梳理失败。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Course Prerequisite Graph" system.
+As a curriculum development director, you need to map out the cross-disciplinary correlation logic between knowledge points in a brand-new syllabus.
 
-The system features a complete academic knowledge graph with the course module set {vertices}. The exact prerequisite dependencies are unknown. Circular dependencies may exist (e.g., advanced co-requisites), but self-dependencies do not.
-I have assigned an initial required course {start} for you. Your goal is to infer the set of all course modules that can be directly or indirectly unlocked after completing this initial course.
+Let's play a "Hidden Knowledge Correlation Inference" game. Here are the rules:
 
-Initially, you have confirmed that the required course {start} is unlocked.
+The syllabus defines a set of core knowledge point labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} points in total.
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the actual syllabus dependency structure:
+On this set, there exists an unknown cross-disciplinary correlation E. This correlation satisfies the following properties:
+1. Symmetry: If knowledge point pair {{u, v}} has correlation E, then {{v, u}} also has it.
+2. No self-loops: No knowledge point is correlated with itself for this purpose, i.e., {{u, u}} does not exist.
+3. Non-trivial: There exist both pairs that are correlated and pairs that are not.
 
-1. Neighbor Enumeration Query: Ask for all direct subsequent courses of a confirmed unlocked course (i.e., courses that have it as their sole prerequisite).
-   - Restriction: Can only query courses that are confirmed unlocked.
-   - Answer: List all direct subsequent courses.
+This correlation is determined by a deterministic rule that depends only on the point labels, but the rule is unknown to you.
 
-2. Edge Existence Query: Ask whether there is a direct prerequisite dependency from a confirmed unlocked course to another.
-   - Restriction: The source course must be confirmed unlocked.
-   - Answer: "Yes" or "No".
+A specific set of knowledge point pairs is designated as "blind-box evaluation pairs" F. You cannot directly query whether these pairs are correlated. The forbidden pair set is:
+{forbidden_pairs_str}
 
-3. Path Verification Query: Ask whether a given course sequence forms a valid learning progression route from the initial required course.
-   - Restriction: The sequence must start with {start}, have length at least 2, and courses can repeat (e.g., retaking for review).
-   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing progression segment).
+You have {quota} query opportunities. You need to infer the rule generating correlation E by querying non-forbidden pairs, and ultimately predict whether all blind-box evaluation pairs have correlation E.
 
-4. Reachable Set Report Query: Ask for the currently confirmed unlocked course set.
-   - Answer: List all currently confirmed unlocked courses.
+1. **Query Edge Existence**: Ask whether a non-forbidden knowledge point pair {{u, v}} has correlation E.
+   - Requirements: u is not equal to v, {{u, v}} is not in the blind-box evaluation set F, and the pair has not been queried before.
+   - I will answer "Yes" or "No".
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the planning task fails.
+2. **Query Remaining Quota**: Ask how many query opportunities remain.
+   - I will answer with a non-negative integer.
 
-## Query and Answer Format (strictly required)
+3. **Final Submission**: When you believe you have grasped the pattern, predict all blind-box evaluation pairs.
+   - You need to give a "Yes" or "No" judgment for each forbidden pair.
 
-Each query must contain only one tag. Use the following XML format:
+Each operation can only contain one tag, using the following XML format:
 
-- Neighbor Enumeration Query (e.g., querying course A):
-<query_neighbors>A</query_neighbors>
+- Query edge existence (e.g., query knowledge points 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Edge Existence Query (e.g., checking if A is a direct prerequisite for B):
-<query_edge>A,B</query_edge>
+- Query remaining quota:
+<query_budget></query_budget>
 
-- Path Verification Query (e.g., verifying route A->B->C):
-<query_path>A,B,C</query_path>
+- Final answer submission (predict all blind-box pairs):
+<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
 
-- Reachable Set Report Query:
-<query_reachable></query_reachable>
+Notes:
+1. The answer must include predictions for all blind-box pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
+2. Knowledge point pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
+3. Do not query blind-box pairs or repeatedly query the same pair.
+4. Do not exceed the query quota.
+5. Use as few queries as possible and find the rule through inductive reasoning.
 
-When submitting the final answer, list all unlockable course modules (comma-separated, order does not matter), using this format:
-
-<answer>A,B,C</answer>
+Violating any constraint or making incorrect predictions will result in curriculum mapping failure.
 """
 
-    # =========================================================================
-    # 场景 4：制造业/工业（工业流水线物料追踪）
-    # =========================================================================
     contextualized_rule_zh_4 = """\
-欢迎使用“工业流水线物料追踪”系统。
+作为智能制造系统工程师，你需要测试新产线上各模块间的装配兼容互换性。
 
-系统映射了一个复杂的工厂物料流转网络，加工单元集合为 {vertices}，具体的传送带连接状况未知。流转网络中可能存在物料回流，但不包含原地静止加工。
-我已经为你指定了物料的初始投料口 {start}，你的目标是推理出从该投料口投入物料后，能够流经的所有加工单元集合。
+我们来玩一个"隐藏装配兼容推理"游戏，规则如下：
 
-初始状态下，你已经确认初始投料口 {start} 接收了物料。
+产线设定了一个加工模块编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 个模块。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的厂区管网结构如实回答：
+在这个集合上，存在一个未知的装配兼容关系 E。这个兼容关系满足以下性质：
+1. 对称性：如果模块对 {{u, v}} 存在装配兼容 E，那么 {{v, u}} 也同样兼容。
+2. 无自环：任何模块不与自己进行装配兼容测试，即 {{u, u}} 不存在。
+3. 非平凡：既存在兼容的模块对，也存在不兼容的模块对。
 
-1. 邻接枚举查询：询问某个已确认接收物料单元的所有直接下游单元。
-   - 限制：只能查询已确认接收物料的单元。
-   - 回答：列出该单元的所有直接下游加工单元。
+这个兼容关系由一个仅依赖于模块编号的确定性工艺规则决定，但该规则对你是未知的。
 
-2. 边存在性查询：询问从某个已确认接收物料的单元到另一单元是否存在直接流转链路。
-   - 限制：起点必须是已确认接收物料的单元。
-   - 回答："是"或"否"。
+有一组特定的模块对被设置为"限制测试对" F，你不能直接查询这些对是否兼容。限制测试集合为：
+{forbidden_pairs_str}
 
-3. 路径验证查询：询问给定的加工单元序列是否构成从投料口出发的实际物料流转路径。
-   - 限制：序列必须以投料口 {start} 开头，长度至少为 2，单元可以重复（如回炉重造）。
-   - 回答："是"；或"否，在第 i 段失败"（i 为最小流转中断段的下标）。
+你有 {quota} 次查询机会。你需要通过查询非限制测试对来推断出生成兼容关系 E 的工艺规则，并最终预测所有限制测试对是否兼容。
 
-4. 可达集合报告查询：询问当前已确认接收到物料的加工单元集合。
-   - 回答：列出当前所有已确认接收物料的单元。
+1. **查询边存在性**：询问某个非限制测试的模块对 {{u, v}} 是否存在装配兼容 E。
+   - 要求：u 不等于 v，{{u, v}} 不在限制测试集合 F 中，且此前未测试过该组合。
+   - 我会回答"有"或"没有"。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，追踪任务失败。
+2. **查询剩余配额**：询问还剩多少次查询机会。
+   - 我会回答一个非负整数。
 
-## 询问与提交答案的格式（必须严格遵守）
+3. **最终提交**：当你认为已掌握规律时，对所有限制测试对进行预测。
+   - 你需要对每个限制测试对给出"有"或"没有"的判断。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+每次操作只能包含一个标签，使用以下 XML 格式：
 
-- 邻接枚举查询（例如查询加工单元 A）：
-<query_neighbors>A</query_neighbors>
+- 查询边存在性（例如查询模块 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 边存在性查询（例如查询从单元 A 到 B 是否有传送带直接连接）：
-<query_edge>A,B</query_edge>
+- 查询剩余配额：
+<query_budget></query_budget>
 
-- 路径验证查询（例如验证流转路径 A->B->C）：
-<query_path>A,B,C</query_path>
+- 最终提交答案（对所有限制测试对进行预测）：
+<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
 
-- 可达集合报告查询：
-<query_reachable></query_reachable>
+注意：
+1. 答案中必须包含所有限制测试对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
+2. 模块对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
+3. 不得查询限制测试对或重复测试同一对。
+4. 不得超出查询配额。
+5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
 
-提交最终答案时，请列出所有物料可达的加工单元（用逗号隔开，顺序不限），格式如下：
-
-<answer>A,B,C</answer>
+违反任何约束或预测错误将导致系统调试失败。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Industrial Assembly Line Tracking" system.
+[Manufacturing/Industry Scenario]
+As a smart manufacturing systems engineer, you need to test the assembly compatibility and interchangeability among different modules on a new production line.
 
-The system maps a complex factory material flow network with the processing unit set {vertices}. The exact conveyor belt connections are unknown. Material backflow may exist in the network, but strictly stationary processing is not included.
-I have designated the initial feed port {start} for you. Your goal is to infer the set of all processing units that the material can flow through starting from this feed port.
+Let's play a "Hidden Assembly Compatibility Inference" game. Here are the rules:
 
-Initially, you have confirmed that the feed port {start} has received material.
+The production line designates a set of processing module labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} modules in total.
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the actual plant piping and routing structure:
+On this set, there exists an unknown assembly compatibility relation E. This compatibility relation satisfies the following properties:
+1. Symmetry: If module pair {{u, v}} is compatible for assembly E, then {{v, u}} is also compatible.
+2. No self-loops: No module is tested for compatibility with itself, i.e., {{u, u}} does not exist.
+3. Non-trivial: There exist both compatible module pairs and incompatible pairs.
 
-1. Neighbor Enumeration Query: Ask for all direct downstream units of a confirmed material-receiving unit.
-   - Restriction: Can only query units that are confirmed to have received material.
-   - Answer: List all direct downstream processing units.
+This compatibility is determined by a deterministic process rule that depends only on the module labels, but the rule is unknown to you.
 
-2. Edge Existence Query: Ask whether there is a direct transfer link from a confirmed material-receiving unit to another.
-   - Restriction: The source unit must be confirmed to have received material.
-   - Answer: "Yes" or "No".
+A specific set of module pairs is designated as "restricted test pairs" F. You cannot directly query whether these pairs are compatible. The restricted test set is:
+{forbidden_pairs_str}
 
-3. Path Verification Query: Ask whether a given sequence of processing units forms a valid material flow path from the feed port.
-   - Restriction: The sequence must start with {start}, have length at least 2, and units can repeat (e.g., sent back for reprocessing).
-   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing transfer segment).
+You have {quota} query opportunities. You need to infer the process rule generating compatibility E by querying non-restricted pairs, and ultimately predict whether all restricted test pairs are compatible.
 
-4. Reachable Set Report Query: Ask for the currently confirmed material-receiving processing unit set.
-   - Answer: List all units currently confirmed to have received material.
+1. **Query Edge Existence**: Ask whether a non-restricted module pair {{u, v}} is compatible E.
+   - Requirements: u is not equal to v, {{u, v}} is not in the restricted test set F, and the pair has not been tested before.
+   - I will answer "Yes" or "No".
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracking task fails.
+2. **Query Remaining Quota**: Ask how many query opportunities remain.
+   - I will answer with a non-negative integer.
 
-## Query and Answer Format (strictly required)
+3. **Final Submission**: When you believe you have grasped the pattern, predict all restricted test pairs.
+   - You need to give a "Yes" or "No" judgment for each restricted pair.
 
-Each query must contain only one tag. Use the following XML format:
+Each operation can only contain one tag, using the following XML format:
 
-- Neighbor Enumeration Query (e.g., querying processing unit A):
-<query_neighbors>A</query_neighbors>
+- Query edge existence (e.g., query modules 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Edge Existence Query (e.g., checking for a direct conveyor link from A to B):
-<query_edge>A,B</query_edge>
+- Query remaining quota:
+<query_budget></query_budget>
 
-- Path Verification Query (e.g., verifying flow path A->B->C):
-<query_path>A,B,C</query_path>
+- Final answer submission (predict all restricted pairs):
+<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
 
-- Reachable Set Report Query:
-<query_reachable></query_reachable>
+Notes:
+1. The answer must include predictions for all restricted test pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
+2. Module pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
+3. Do not query restricted test pairs or repeatedly query the same pair.
+4. Do not exceed the query quota.
+5. Use as few queries as possible and find the rule through inductive reasoning.
 
-When submitting the final answer, list all reachable processing units (comma-separated, order does not matter), using this format:
-
-<answer>A,B,C</answer>
+Violating any constraint or making incorrect predictions will result in system debugging failure.
 """
 
-    # =========================================================================
-    # 场景 5：法律（涉案资金流向追踪）
-    # =========================================================================
     contextualized_rule_zh_5 = """\
-欢迎使用“涉案资金流向追踪”系统。
+作为高级法务顾问，你需要分析一部新颁布法规中各条款之间潜在的竞合关系。
 
-系统锁定了一个地下洗钱资金网络，涉案账户集合为 {vertices}，具体的转账流水明细未知。资金流转可能存在闭环洗钱特征，但不包含账户内自我转账。
-我已经为你标记了资金源头的核心嫌疑账户 {start}，你的目标是推理出从该核心账户流出的资金，最终能够流入的所有涉案账户集合。
+我们来玩一个"隐藏法律竞合推理"游戏，规则如下：
 
-初始状态下，你已经确认核心嫌疑账户 {start} 持有涉案资金。
+法典设定了一个法律条款编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 项条款。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的银行侦查流水数据如实回答：
+在这个集合上，存在一个未知的条款竞合关系 E。这个竞合关系满足以下性质：
+1. 对称性：如果条款对 {{u, v}} 存在竞合关系 E，那么 {{v, u}} 也同样存在竞合。
+2. 无自环：任何条款不与自己进行竞合判定，即 {{u, u}} 不存在。
+3. 非平凡：既存在产生竞合的条款对，也存在不竞合的条款对。
 
-1. 邻接枚举查询：询问某个已确认持有涉案资金账户的所有直接收款账户。
-   - 限制：只能查询已确认持有涉案资金的账户。
-   - 回答：列出该账户的所有直接收款账户。
+这个竞合关系由一个仅依赖于条款编号的确定性法理规则决定，但该规则对你是未知的。
 
-2. 边存在性查询：询问从某个已确认持有涉案资金的账户到另一账户是否存在直接转账记录。
-   - 限制：起点必须是已确认持有涉案资金的账户。
-   - 回答："是"或"否"。
+有一组特定的条款对被设置为"未公开裁决条款对" F，你不能直接查询这些对是否存在竞合。未公开裁决集合为：
+{forbidden_pairs_str}
 
-3. 路径验证查询：询问给定的账户序列是否构成从核心账户出发的真实资金链路。
-   - 限制：序列必须以核心账户 {start} 开头，长度至少为 2，账户可以重复（如多次过账循环）。
-   - 回答："是"；或"否，在第 i 段失败"（i 为最小链路中断段的下标）。
+你有 {quota} 次查询机会。你需要通过查询非未公开的裁决对来推断出生成竞合关系 E 的法理规则，并最终预测所有未公开裁决条款对是否存在竞合。
 
-4. 可达集合报告查询：询问当前已确认持有涉案资金的账户集合。
-   - 回答：列出当前所有已确认持有涉案资金的账户。
+1. **查询边存在性**：询问某个非未公开裁决的条款对 {{u, v}} 是否存在竞合关系 E。
+   - 要求：u 不等于 v，{{u, v}} 不在未公开裁决集合 F 中，且此前未查询过该条款对。
+   - 我会回答"有"或"没有"。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，追踪任务失败。
+2. **查询剩余配额**：询问还剩多少次查询机会。
+   - 我会回答一个非负整数。
 
-## 询问与提交答案的格式（必须严格遵守）
+3. **最终提交**：当你认为已掌握法理规律时，对所有未公开裁决条款对进行预测。
+   - 你需要对每个未公开对给出"有"或"没有"的判断。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+每次操作只能包含一个标签，使用以下 XML 格式：
 
-- 邻接枚举查询（例如查询涉案账户 A）：
-<query_neighbors>A</query_neighbors>
+- 查询边存在性（例如查询条款 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 边存在性查询（例如查询账户 A 是否直接转账给账户 B）：
-<query_edge>A,B</query_edge>
+- 查询剩余配额：
+<query_budget></query_budget>
 
-- 路径验证查询（例如验证资金链路 A->B->C）：
-<query_path>A,B,C</query_path>
+- 最终提交答案（对所有未公开裁决条款对进行预测）：
+<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
 
-- 可达集合报告查询：
-<query_reachable></query_reachable>
+注意：
+1. 答案中必须包含所有未公开裁决对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
+2. 条款对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
+3. 不得查询未公开裁决对或重复查询同一对。
+4. 不得超出查询配额。
+5. 请尽可能少地使用查询次数，通过归纳推理找出法理规则。
 
-提交最终答案时，请列出所有涉案资金流经的账户（用逗号隔开，顺序不限），格式如下：
-
-<answer>A,B,C</answer>
+违反任何约束或预测错误将导致法理分析失败。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the "Illicit Fund Flow Tracking" system.
+[Legal Scenario]
+As a senior legal counsel, you need to analyze the potential concurrence relationships between various articles in a newly enacted regulation.
 
-The system has locked onto an underground money laundering network with the suspect account set {vertices}. The exact transaction records are unknown. The fund flow may exhibit closed-loop laundering characteristics, but self-transfers within an account are not included.
-I have flagged the core suspect account (fund source) {start} for you. Your goal is to infer the set of all suspect accounts that eventually received funds flowing from this core account.
+Let's play a "Hidden Legal Concurrence Inference" game. Here are the rules:
 
-Initially, you have confirmed that the core suspect account {start} holds the illicit funds.
+The legal code defines a set of article labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} articles in total.
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on actual bank reconnaissance transaction data:
+On this set, there exists an unknown article concurrence relation E. This concurrence relation satisfies the following properties:
+1. Symmetry: If article pair {{u, v}} has a concurrence relationship E, then {{v, u}} also has it.
+2. No self-loops: No article is evaluated for concurrence with itself, i.e., {{u, u}} does not exist.
+3. Non-trivial: There exist both article pairs that concur and pairs that do not.
 
-1. Neighbor Enumeration Query: Ask for all direct payee accounts of an account confirmed to hold illicit funds.
-   - Restriction: Can only query accounts confirmed to hold illicit funds.
-   - Answer: List all direct payee accounts.
+This concurrence relation is determined by a deterministic jurisprudential rule that depends only on the article labels, but the rule is unknown to you.
 
-2. Edge Existence Query: Ask whether there is a direct transfer record from an account confirmed to hold illicit funds to another.
-   - Restriction: The source account must be confirmed to hold illicit funds.
-   - Answer: "Yes" or "No".
+A specific set of article pairs is designated as "undisclosed ruling pairs" F. You cannot directly query whether these pairs have concurrence. The undisclosed ruling set is:
+{forbidden_pairs_str}
 
-3. Path Verification Query: Ask whether a given account sequence forms an actual fund trail starting from the core account.
-   - Restriction: The sequence must start with {start}, have length at least 2, and accounts can repeat (e.g., multiple transfer loops).
-   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first broken link segment).
+You have {quota} query opportunities. You need to infer the jurisprudential rule generating concurrence E by querying non-undisclosed pairs, and ultimately predict whether all undisclosed ruling article pairs have concurrence.
 
-4. Reachable Set Report Query: Ask for the currently confirmed account set holding illicit funds.
-   - Answer: List all accounts currently confirmed to hold illicit funds.
+1. **Query Edge Existence**: Ask whether a non-undisclosed article pair {{u, v}} has concurrence relationship E.
+   - Requirements: u is not equal to v, {{u, v}} is not in the undisclosed ruling set F, and the pair has not been queried before.
+   - I will answer "Yes" or "No".
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracking task fails.
+2. **Query Remaining Quota**: Ask how many query opportunities remain.
+   - I will answer with a non-negative integer.
 
-## Query and Answer Format (strictly required)
+3. **Final Submission**: When you believe you have grasped the jurisprudential pattern, predict all undisclosed ruling article pairs.
+   - You need to give a "Yes" or "No" judgment for each undisclosed pair.
 
-Each query must contain only one tag. Use the following XML format:
+Each operation can only contain one tag, using the following XML format:
 
-- Neighbor Enumeration Query (e.g., querying suspect account A):
-<query_neighbors>A</query_neighbors>
+- Query edge existence (e.g., query articles 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Edge Existence Query (e.g., checking if account A directly transferred funds to account B):
-<query_edge>A,B</query_edge>
+- Query remaining quota:
+<query_budget></query_budget>
 
-- Path Verification Query (e.g., verifying fund trail A->B->C):
-<query_path>A,B,C</query_path>
+- Final answer submission (predict all undisclosed pairs):
+<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
 
-- Reachable Set Report Query:
-<query_reachable></query_reachable>
+Notes:
+1. The answer must include predictions for all undisclosed pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
+2. Article pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
+3. Do not query undisclosed ruling pairs or repeatedly query the same pair.
+4. Do not exceed the query quota.
+5. Use as few queries as possible and find the rule through inductive reasoning.
 
-When submitting the final answer, list all accounts that the illicit funds flowed through (comma-separated, order does not matter), using this format:
-
-<answer>A,B,C</answer>
+Violating any constraint or making incorrect predictions will result in legal analysis failure.
 """
 
-    game_rule_zh = """\
-我们现在来玩一个"图可达性推理"游戏，规则如下：
-
-游戏设定了一个有限有向图，图的顶点集合为 {vertices}，边集合未知。图中可能存在回路，但不包含自环。
-我已经为你指定了一个起点 {start}，你的目标是推理出从该起点出发能够到达的所有顶点集合。
-
-初始状态下，你已经确认起点 {start} 是可达的。
-
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实的图结构如实回答：
-
-1. 邻接枚举查询：询问某个已确认可达顶点的所有直接后继。
-   - 限制：只能查询已确认可达的顶点。
-   - 回答：列出该顶点的所有直接后继顶点。
-
-2. 边存在性查询：询问从某个已确认可达顶点到另一个顶点是否存在直接边。
-   - 限制：起点必须是已确认可达的顶点。
-   - 回答："是"或"否"。
-
-3. 路径验证查询：询问给定的顶点序列是否构成从起点出发的可行路径。
-   - 限制：序列必须以起点 {start} 开头，长度至少为 2，顶点可以重复。
-   - 回答："是"；或"否，在第 i 段失败"（i 为最小失败段的下标）。
-
-4. 可达集合报告查询：询问当前已确认可达的顶点集合。
-   - 回答：列出当前所有已确认可达的顶点。
-
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
-
-## 询问与提交答案的格式（必须严格遵守）
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 邻接枚举查询（例如查询顶点 A）：
-<query_neighbors>A</query_neighbors>
-
-- 边存在性查询（例如查询从 A 到 B 是否有边）：
-<query_edge>A,B</query_edge>
-
-- 路径验证查询（例如验证路径 A->B->C）：
-<query_path>A,B,C</query_path>
-
-- 可达集合报告查询：
-<query_reachable></query_reachable>
-
-提交最终答案时，请列出所有可达顶点（用逗号隔开，顺序不限），格式如下：
-
-<answer>A,B,C</answer>
-"""
-
-    game_rule_en = """\
-Let's play a "Graph Reachability Inference" game. Here are the rules:
-
-The game has a finite directed graph with vertex set {vertices}. The edge set is unknown. The graph may contain cycles but no self-loops.
-I have designated a starting vertex {start} for you. Your goal is to infer the set of all vertices reachable from this starting vertex.
-
-Initially, you have confirmed that the starting vertex {start} is reachable.
-
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the real graph structure:
-
-1. Neighbor Enumeration Query: Ask for all direct successors of a confirmed reachable vertex.
-   - Restriction: Can only query vertices that are confirmed reachable.
-   - Answer: List all direct successor vertices.
-
-2. Edge Existence Query: Ask whether there is a direct edge from a confirmed reachable vertex to another vertex.
-   - Restriction: The source vertex must be confirmed reachable.
-   - Answer: "Yes" or "No".
-
-3. Path Verification Query: Ask whether a given vertex sequence forms a valid path from the starting vertex.
-   - Restriction: The sequence must start with {start}, have length at least 2, and vertices can repeat.
-   - Answer: "Yes"; or "No, failed at segment i" (i is the index of the first failing segment).
-
-4. Reachable Set Report Query: Ask for the currently confirmed reachable vertex set.
-   - Answer: List all currently confirmed reachable vertices.
-
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
-
-## Query and Answer Format (strictly required)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Neighbor Enumeration Query (e.g., querying vertex A):
-<query_neighbors>A</query_neighbors>
-
-- Edge Existence Query (e.g., checking if there is an edge from A to B):
-<query_edge>A,B</query_edge>
-
-- Path Verification Query (e.g., verifying path A->B->C):
-<query_path>A,B,C</query_path>
-
-- Reachable Set Report Query:
-<query_reachable></query_reachable>
-
-When submitting the final answer, list all reachable vertices (comma-separated, order does not matter), using this format:
-
-<answer>A,B,C</answer>
-"""
-
-    tags = ["answer", "query_neighbors", "query_edge", "query_path", "query_reachable"]
-
-    # 难度配置说明：
-    # 1 (简单)         - 3个顶点，线性链式结构
-    # 2 (中等偏下)     - 5个顶点，简单分支结构
-    # 3 (中等偏上)     - 6个顶点，包含合流和不可达节点
-    # 4 (较难)         - 7个顶点，包含环路和多个不可达节点
-    # 5 (难)           - 8个顶点，复杂环路和多分支结构
+    tags = ["answer", "query_edge", "query_budget"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "vertices": "A,B,C",
-                "start": "A",
-                "edges": "A->B,B->C",  # 简单链: A->B->C
+                "n": 6,
+                "rule_func": lambda u, v: (u + v) % 2 == 0,
+                "forbidden_pairs": [{0, 3}, {1, 4}, {2, 5}],
+                "quota": 8,
             },
             2: {
-                "vertices": "A,B,C,D,E",
-                "start": "A",
-                "edges": "A->B,A->C,B->D,C->D",  # A可达B,C,D，E不可达
+                "n": 8,
+                "rule_func": lambda u, v: (u % 2) == (v % 2),
+                "forbidden_pairs": [{0, 4}, {1, 5}, {2, 6}, {3, 7}],
+                "quota": 10,
             },
             3: {
-                "vertices": "A,B,C,D,E,F",
-                "start": "A",
-                "edges": "A->B,A->C,B->D,C->D,D->E",  # A可达B,C,D,E，F不可达
+                "n": 10,
+                "rule_func": lambda u, v: abs(u - v) <= 2,
+                "forbidden_pairs": [{0, 5}, {1, 6}, {2, 7}, {3, 8}, {4, 9}],
+                "quota": 12,
             },
             4: {
-                "vertices": "A,B,C,D,E,F,G",
-                "start": "A",
-                "edges": "A->B,B->C,C->B,B->D,D->E,A->F",  # 包含B-C环，G不可达
+                "n": 12,
+                "rule_func": lambda u, v: (u * v) % 3 == 0,
+                "forbidden_pairs": [{0, 7}, {1, 8}, {2, 9}, {3, 10}, {4, 11}, {5, 6}],
+                "quota": 15,
             },
             5: {
-                "vertices": "A,B,C,D,E,F,G,H",
-                "start": "A",
-                "edges": "A->B,B->C,C->D,D->B,B->E,E->F,F->E,A->G",  # 复杂环路B-C-D和E-F，H不可达
+                "n": 15,
+                "rule_func": lambda u, v: (u + v) % 4 < 2,
+                "forbidden_pairs": [{0, 8}, {1, 9}, {2, 10}, {3, 11}, {4, 12}, {5, 13}, {6, 14}, {7, 8}],
+                "quota": 18,
             },
         },
         "en": {
             1: {
-                "vertices": "A,B,C",
-                "start": "A",
-                "edges": "A->B,B->C",
+                "n": 6,
+                "rule_func": lambda u, v: (u + v) % 2 == 0,
+                "forbidden_pairs": [{0, 3}, {1, 4}, {2, 5}],
+                "quota": 8,
             },
             2: {
-                "vertices": "A,B,C,D,E",
-                "start": "A",
-                "edges": "A->B,A->C,B->D,C->D",
+                "n": 8,
+                "rule_func": lambda u, v: (u % 2) == (v % 2),
+                "forbidden_pairs": [{0, 4}, {1, 5}, {2, 6}, {3, 7}],
+                "quota": 10,
             },
             3: {
-                "vertices": "A,B,C,D,E,F",
-                "start": "A",
-                "edges": "A->B,A->C,B->D,C->D,D->E",
+                "n": 10,
+                "rule_func": lambda u, v: abs(u - v) <= 2,
+                "forbidden_pairs": [{0, 5}, {1, 6}, {2, 7}, {3, 8}, {4, 9}],
+                "quota": 12,
             },
             4: {
-                "vertices": "A,B,C,D,E,F,G",
-                "start": "A",
-                "edges": "A->B,B->C,C->B,B->D,D->E,A->F",
+                "n": 12,
+                "rule_func": lambda u, v: (u * v) % 3 == 0,
+                "forbidden_pairs": [{0, 7}, {1, 8}, {2, 9}, {3, 10}, {4, 11}, {5, 6}],
+                "quota": 15,
             },
             5: {
-                "vertices": "A,B,C,D,E,F,G,H",
-                "start": "A",
-                "edges": "A->B,B->C,C->D,D->B,B->E,E->F,F->E,A->G",
+                "n": 15,
+                "rule_func": lambda u, v: (u + v) % 4 < 2,
+                "forbidden_pairs": [{0, 8}, {1, 9}, {2, 10}, {3, 11}, {4, 12}, {5, 13}, {6, 14}, {7, 8}],
+                "quota": 18,
             },
         },
     }
 
     def __init__(self, config):
+        self.queried_pairs = set()
+        self.remaining_quota = 0
         super().__init__(config)
 
     def _initialize_game(self):
@@ -690,267 +693,159 @@ When submitting the final answer, list all reachable vertices (comma-separated, 
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 解析顶点集合
-        self.vertices = set(v.strip() for v in cfg["vertices"].split(","))
-        self._game_info["vertices"] = cfg["vertices"]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["n_minus_1"] = cfg["n"] - 1
+        self._game_info["quota"] = cfg["quota"]
         
-        # 起点
-        self.start = cfg["start"].strip()
-        self._game_info["start"] = self.start
+        self.rule_func = cfg["rule_func"]
+        self.forbidden_pairs = cfg["forbidden_pairs"]
+        self.remaining_quota = cfg["quota"]
         
-        # 解析边集合，构建邻接表
-        self.adjacency = {v: [] for v in self.vertices}
-        for edge in cfg["edges"].split(","):
-            if "->" in edge:
-                src, dst = edge.split("->")
-                src, dst = src.strip(), dst.strip()
-                if src in self.vertices and dst in self.vertices:
-                    self.adjacency[src].append(dst)
+        forbidden_str = ", ".join(["{" + f"{min(p)},{max(p)}" + "}" for p in self.forbidden_pairs])
+        self._game_info["forbidden_pairs_str"] = forbidden_str
         
-        # 计算真实可达集合（Ground Truth）
-        self.true_reachable = self._compute_reachable()
-        
-        # 维护当前已确认可达集合（用于查询限制检查）
-        self.confirmed_reachable = {self.start}
+        self.relation_E = set()
+        for u in range(cfg["n"]):
+            for v in range(u + 1, cfg["n"]):
+                if self.rule_func(u, v):
+                    self.relation_E.add(frozenset({u, v}))
 
-    def _compute_reachable(self):
-        """使用BFS计算从起点可达的所有顶点"""
-        reachable = set()
-        queue = [self.start]
-        visited = {self.start}
-        
-        while queue:
-            current = queue.pop(0)
-            reachable.add(current)
-            for neighbor in self.adjacency[current]:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
-        
-        return reachable
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        
-        注意：
-        1. 仅枚举 "邻接查询"、"边存在性查询" 和 "可达集合查询"。
-        2. "路径查询" 由于可能存在环路导致数量无限，且可通过边查询组合推导，故此处不枚举。
-        3. 仅枚举针对【真实可达顶点】的查询。因为在实际游戏中，不可达顶点永远无法被确认，
-           也就永远无法成为合法查询的起点。
-        """
-        queries = []
-        
-        # 备份当前状态，防止污染游戏进程
-        saved_confirmed = self.confirmed_reachable.copy()
-        
-        # 将 confirmed_reachable 临时设为 true_reachable
-        # 这样可以模拟玩家已经发现所有可达节点的情况，从而获取所有有效节点的查询答案
-        self.confirmed_reachable = self.true_reachable.copy()
-        
-        try:
-            # 1. 可达集合报告查询
-            tag = "query_reachable"
-            parsed = {tag: ""}
-            ans = self._cf_core_produce(parsed)
-            queries.append({
-                "query": f"<{tag}></{tag}>",
-                "answer": ans
-            })
-            
-            # 排序以保证结果的确定性
-            sorted_reachable = sorted(list(self.true_reachable))
-            sorted_all_vertices = sorted(list(self.vertices))
-            
-            # 2. 邻接枚举查询 (仅针对真实可达的顶点)
-            for v in sorted_reachable:
-                tag = "query_neighbors"
-                parsed = {tag: v}
-                ans = self._cf_core_produce(parsed)
-                queries.append({
-                    "query": f"<{tag}>{v}</{tag}>",
-                    "answer": ans
-                })
-
-            # 3. 边存在性查询 (起点必须可达，终点可以是任意图节点，排除自环)
-            for src in sorted_reachable:
-                for dst in sorted_all_vertices:
-                    if src == dst:
-                        continue  # 游戏规则明确无自环，跳过
-                    tag = "query_edge"
-                    val = f"{src},{dst}"
-                    parsed = {tag: val}
-                    ans = self._cf_core_produce(parsed)
-                    queries.append({
-                        "query": f"<{tag}>{val}</{tag}>",
-                        "answer": ans
-                    })
-
-        finally:
-            # 恢复状态
-            self.confirmed_reachable = saved_confirmed
-            
-        return queries
+    def _normalize_pair(self, u, v):
+        return frozenset({u, v})
 
     def evaluate(self, parsed_info):
-        """评估提交的答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
-        try:
-            # 解析提交的顶点集合
-            submitted = set(v.strip() for v in raw_ans.split(",") if v.strip())
-            # 检查是否与真实可达集合完全一致
-            return submitted == self.true_reachable
-        except:
+        raw_ans = parsed_info["answer"]
+        
+        if self.config.language == "zh":
+            yes_keyword = "有"
+            no_keyword = "没有"
+        else:
+            yes_keyword = "Yes"
+            no_keyword = "No"
+        
+        pattern = r'\{(\d+),(\d+)\}\s*=\s*(' + yes_keyword + '|' + no_keyword + ')'
+        matches = re.findall(pattern, raw_ans, re.IGNORECASE)
+        
+        if not matches:
             return False
+        
+        model_predictions = {}
+        for match in matches:
+            u, v = int(match[0]), int(match[1])
+            prediction = match[2]
+            pair = self._normalize_pair(u, v)
+            model_predictions[pair] = (prediction.lower() == yes_keyword.lower())
+        
+        forbidden_pairs_set = {self._normalize_pair(*p) for p in self.forbidden_pairs}
+        if set(model_predictions.keys()) != forbidden_pairs_set:
+            return False
+        
+        for pair in forbidden_pairs_set:
+            predicted = model_predictions[pair]
+            actual = pair in self.relation_E
+            if predicted != actual:
+                return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑"""
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_not_reachable = "错误：该顶点尚未确认可达，无法查询。"
-            error_invalid_vertex = "错误：顶点不存在。"
-            error_invalid_format = "错误：格式无效。"
-            error_path_start = "错误：路径必须以起点开头。"
-            error_path_length = "错误：路径长度必须至少为2。"
+            yes_res, no_res = "有", "没有"
+            error_out_of_range = "错误：元素标号超出范围。"
+            error_self_loop = "错误：不能查询元素与自身的关系。"
+            error_forbidden = "错误：该元素对在禁问集合中，不能查询。"
+            error_repeated = "错误：该元素对已经查询过。"
+            error_quota_exceeded = "错误：查询配额已用尽。"
+            error_invalid_format = "错误：查询格式无效。"
         else:
             yes_res, no_res = "Yes", "No"
-            error_not_reachable = "Error: Vertex not confirmed reachable, cannot query."
-            error_invalid_vertex = "Error: Vertex does not exist."
-            error_invalid_format = "Error: Invalid format."
-            error_path_start = "Error: Path must start with the starting vertex."
-            error_path_length = "Error: Path length must be at least 2."
+            error_out_of_range = "Error: Element ID out of range."
+            error_self_loop = "Error: Cannot query relation between an element and itself."
+            error_forbidden = "Error: This pair is in the forbidden set and cannot be queried."
+            error_repeated = "Error: This pair has already been queried."
+            error_quota_exceeded = "Error: Query quota exhausted."
+            error_invalid_format = "Error: Invalid query format."
 
-        # 优先级：neighbors > edge > path > reachable
-        if "query_neighbors" in parsed_info:
-            vertex = parsed_info["query_neighbors"].strip()
-            
-            # 检查顶点是否存在
-            if vertex not in self.vertices:
-                return error_invalid_vertex
-            
-            # 检查顶点是否已确认可达
-            if vertex not in self.confirmed_reachable:
-                return error_not_reachable
-            
-            # 返回邻接顶点列表
-            neighbors = self.adjacency[vertex]
-            # 更新确认可达集合
-            self.confirmed_reachable.update(neighbors)
-            
-            if not neighbors:
-                return "[]" if self.config.language == "en" else "[]"
-            return "[" + ",".join(neighbors) + "]"
+        if "query_budget" in parsed_info:
+            return str(self.remaining_quota)
 
         elif "query_edge" in parsed_info:
             try:
                 raw = parsed_info["query_edge"].strip()
-                src, dst = [v.strip() for v in raw.split(",")]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    raise ValueError
+                u, v = int(parts[0]), int(parts[1])
                 
-                # 检查顶点是否存在
-                if src not in self.vertices or dst not in self.vertices:
-                    return error_invalid_vertex
+                if u < 0 or u >= self._game_info["n"] or v < 0 or v >= self._game_info["n"]:
+                    return error_out_of_range
                 
-                # 检查起点是否已确认可达
-                if src not in self.confirmed_reachable:
-                    return error_not_reachable
+                if u == v:
+                    return error_self_loop
                 
-                # 检查边是否存在
-                edge_exists = dst in self.adjacency[src]
+                pair = self._normalize_pair(u, v)
                 
-                # 如果边存在，更新确认可达集合
-                if edge_exists:
-                    self.confirmed_reachable.add(dst)
-                    return yes_res
-                else:
-                    return no_res
-            except:
+                if pair in {self._normalize_pair(*p) for p in self.forbidden_pairs}:
+                    return error_forbidden
+                
+                if pair in self.queried_pairs:
+                    return error_repeated
+                
+                if self.remaining_quota <= 0:
+                    return error_quota_exceeded
+                
+                self.queried_pairs.add(pair)
+                self.remaining_quota -= 1
+                
+                in_relation = pair in self.relation_E
+                return yes_res if in_relation else no_res
+                
+            except (ValueError, IndexError):
                 return error_invalid_format
-
-        elif "query_path" in parsed_info:
-            try:
-                raw = parsed_info["query_path"].strip()
-                path = [v.strip() for v in raw.split(",")]
-                
-                # 检查路径长度
-                if len(path) < 2:
-                    return error_path_length
-                
-                # 检查路径是否以起点开头
-                if path[0] != self.start:
-                    return error_path_start
-                
-                # 检查所有顶点是否存在
-                for v in path:
-                    if v not in self.vertices:
-                        return error_invalid_vertex
-                
-                # 验证路径的每一段
-                for i in range(len(path) - 1):
-                    src, dst = path[i], path[i + 1]
-                    if dst not in self.adjacency[src]:
-                        # 路径在第 i 段失败（从0开始计数）
-                        if self.config.language == "zh":
-                            return f"否，在第 {i} 段失败"
-                        else:
-                            return f"No, failed at segment {i}"
-                
-                # 路径有效，更新确认可达集合
-                self.confirmed_reachable.update(path)
-                return yes_res
-            except:
-                return error_invalid_format
-
-        elif "query_reachable" in parsed_info:
-            # 返回当前确认可达的顶点集合
-            reachable_list = sorted(list(self.confirmed_reachable))
-            return "[" + ",".join(reachable_list) + "]"
 
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct):
-        # 1. 若 correct 是纯整数字符串
+    def get_all_possible_queries(self) -> list[dict]:
+        possible_queries = []
+        n = self._game_info["n"]
+        
+        forbidden_set = {self._normalize_pair(*p) for p in self.forbidden_pairs}
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "有", "没有"
+        else:
+            yes_res, no_res = "Yes", "No"
+            
+        for u in range(n):
+            for v in range(u + 1, n):
+                pair = self._normalize_pair(u, v)
+                
+                if pair in forbidden_set:
+                    continue
+                
+                is_connected = pair in self.relation_E
+                ans = yes_res if is_connected else no_res
+                
+                possible_queries.append({
+                    "query": f"<query_edge>{u},{v}</query_edge>",
+                    "answer": ans
+                })
+                
+        return possible_queries
+
+    def _cf_make_wrong(self, correct: str) -> str:
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        # 2. 替换关键词（中文）
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-            
-        # 3. 替换关键词（英文）
-        correct_lower = correct.lower()
-        if correct_lower == "yes":
-            if correct.istitle(): return "No"
-            if correct.isupper(): return "NO"
-            return "no"
-        if correct_lower == "no":
-            if correct.istitle(): return "Yes"
-            if correct.isupper(): return "YES"
-            return "yes"
+        if correct == "有":
+            return "没有"
+        if correct == "没有":
+            return "有"
         
-        # 4. 处理列表格式 "[X,Y,Z]" — 随机移除或添加一个元素
-        if correct.startswith("[") and correct.endswith("]"):
-            inner = correct[1:-1].strip()
-            if not inner:
-                # 空列表 → 添加一个虚构元素
-                return "[X_FAKE]"
-            items = [x.strip() for x in inner.split(",")]
-            if len(items) > 1:
-                # 移除第一个元素
-                return "[" + ",".join(items[1:]) + "]"
-            else:
-                # 只有一个元素，追加一个虚构元素
-                return "[" + items[0] + ",X_FAKE]"
-        
-        # 5. 处理路径验证失败消息
-        import re
-        seg_match = re.search(r'(\d+)', correct)
-        if seg_match:
-            old_num = int(seg_match.group(1))
-            new_num = old_num + 1
-            return correct.replace(str(old_num), str(new_num), 1)
-        
-        # 6. 默认追加 _WRONG
-        return f"{correct}_WRONG"
+        if correct.lower() == "yes":
+            return "No" if correct[0].isupper() else "no"
+        if correct.lower() == "no":
+            return "Yes" if correct[0].isupper() else "yes"
+
+        return correct + "_WRONG"

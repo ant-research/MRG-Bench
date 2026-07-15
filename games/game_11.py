@@ -1,497 +1,438 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   属性共享：两个给定元素是否共享某属性
-# ============================================================
-
 from .base import Game
-import re
+import random
 
+class BinarySequenceDeductionGame(Game):
 
-class TernaryMarkingEquivalenceGame(Game):
+    reasoning_type = "演绎推理"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们来玩一个"三值标记等价判定"的推理游戏，规则如下：
+我们来玩一个"二值序列推理"游戏，规则如下：
 
-游戏设定了一个包含 {n} 个元素的集合 S，编号为 1 到 {n}。我已秘密为每个元素指定了一个标记值，标记值只有三种可能：1、2 或 3。每个元素恰有且仅有一个标记值，且标记在游戏过程中保持不变。
+游戏设定了一个长度为 {n} 的未知二值序列 S[1..{n}]，每个位置的值为 0 或 1。已知 S[1] = 1。
 
-游戏指定了两个特殊的目标元素：T1（编号 {t1}）和 T2（编号 {t2}）。
+定义相邻差分变量 E[1..{n_minus_1}]，其中 E[i] 表示 S[i] 和 S[i+1] 的异或值（当 S[i] 和 S[i+1] 相等时 E[i] = 0，不相等时 E[i] = 1）。
 
-你的目标是：判断 T1 和 T2 的标记值是否相同，并给出最终结论。
+你的目标是推理出完整的序列 S[1..{n}]。你可以反复提出以下三类问题（每次仅限一个问题），我会如实回答：
 
-你可以进行以下查询（每次仅限一个查询）：
+1. 差分查询：询问 E[i] 的值（i 的范围是 1 到 {n_minus_1}）。回答为 0 或 1。
+2. 差分比较查询：询问 E[i] 和 E[i+1] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
+3. 跨位比较查询：询问 S[i] 和 S[i+2] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
 
-**相同性查询**：询问任意两个不同元素 i 和 j 的标记值是否相同。我会回答"是"或"否"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-**重要约束**：你不能直接查询 T1 和 T2 是否标记相同（即禁止查询 Same({t1},{t2})）。除此之外，你可以查询集合中任意其他成对元素的标记关系。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你收集到足够信息后，请提交最终答案。你的答案必须是逻辑必然的结论，即在所有与已知查询结果一致的标记分配方案中，T1 和 T2 的关系都是确定的。
+- 差分查询（例如询问 E[3]）：
+<query_diff>3</query_diff>
 
-## 查询与提交答案的格式
+- 差分比较查询（例如询问 E[2] 和 E[3] 是否相等）：
+<query_diff_compare>2</query_diff_compare>
 
-每次查询请使用以下 XML 格式：
+- 跨位比较查询（例如询问 S[1] 和 S[3] 是否相等）：
+<query_skip_compare>1</query_skip_compare>
 
-- 相同性查询（例如查询编号 1 和 3 是否标记相同）：
-<query_same>1,3</query_same>
+提交最终答案时，请列出完整序列（用逗号隔开），格式如下：
 
-提交最终答案时，请说明 T1 和 T2 的标记是否相同，使用以下格式之一：
-
-- 如果认为 T1 和 T2 标记相同：
-<answer>Equal</answer>
-
-- 如果认为 T1 和 T2 标记不同：
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     game_rule_en = """\
-Let's play a "Ternary Marking Equivalence" deduction game. Here are the rules:
+Let's play a "Binary Sequence Deduction" game. Here are the rules:
 
-There is a set S containing {n} elements, numbered from 1 to {n}. I have secretly assigned each element a marking value from three possible values: 1, 2, or 3. Each element has exactly one marking value, and the marking remains constant throughout the game.
+There is a hidden binary sequence S[1..{n}] of length {n}, where each position has a value of 0 or 1. It is known that S[1] = 1.
 
-The game specifies two special target elements: T1 (ID {t1}) and T2 (ID {t2}).
+Define the adjacent difference variable E[1..{n_minus_1}], where E[i] represents the XOR of S[i] and S[i+1] (E[i] = 0 when S[i] and S[i+1] are equal, E[i] = 1 when they are different).
 
-Your goal is: to determine whether T1 and T2 have the same marking value, and provide a final conclusion.
+Your goal is to deduce the complete sequence S[1..{n}]. You can repeatedly ask the following three types of questions (one per turn), and I will answer truthfully:
 
-You can perform the following queries (one per turn):
+1. Difference Query: Ask for the value of E[i] (i ranges from 1 to {n_minus_1}). Answer is 0 or 1.
+2. Difference Comparison Query: Ask if E[i] and E[i+1] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
+3. Skip Comparison Query: Ask if S[i] and S[i+2] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
 
-**Sameness Query**: Ask whether any two different elements i and j have the same marking value. I will answer "Yes" or "No".
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-**Important Constraint**: You cannot directly query whether T1 and T2 have the same marking (i.e., querying Same({t1},{t2}) is forbidden). Apart from this, you can query the marking relationship between any other pair of elements in the set.
+Each query must contain only one tag. Use the following XML format:
 
-When you have gathered sufficient information, submit your final answer. Your answer must be a logically necessary conclusion, meaning that across all marking assignment schemes consistent with the known query results, the relationship between T1 and T2 is determined.
+- Difference Query (e.g., asking for E[3]):
+<query_diff>3</query_diff>
 
-## Query and Answer Format
+- Difference Comparison Query (e.g., asking if E[2] and E[3] are equal):
+<query_diff_compare>2</query_diff_compare>
 
-For each query, use the following XML format:
+- Skip Comparison Query (e.g., asking if S[1] and S[3] are equal):
+<query_skip_compare>1</query_skip_compare>
 
-- Sameness Query (e.g., querying if ID 1 and 3 have the same marking):
-<query_same>1,3</query_same>
+When submitting the final answer, list the complete sequence (comma-separated), using this format:
 
-When submitting the final answer, specify whether T1 and T2 have the same marking, using one of the following formats:
-
-- If you believe T1 and T2 have the same marking:
-<answer>Equal</answer>
-
-- If you believe T1 and T2 have different markings:
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_zh_1 = """\
-[交通场景]
-我们来使用"信号频段诊断系统"进行一项排查任务，规则如下：
+【交通场景】
+我们来进入一个交通信号灯控制推理任务，规则如下：
 
-交通网络中包含 {n} 个信号灯控制器，编号为 1 到 {n}。我已秘密为每个控制器分配了一个信号频段，频段只有三种可能：频段A、频段B 或 频段C。每个控制器恰有且仅有一个频段，且在排查过程中保持不变。
+有一条包含 {n} 个连续路口的干道，每个路口的信号灯状态 S[1..{n}] 未知。状态 S[i] 的值为 1（绿灯）或 0（红灯）。已知第 1 个路口是绿灯（S[1] = 1）。
 
-系统指定了两个关键目标控制器：T1（编号 {t1}）和 T2（编号 {t2}）。
+定义相邻路口的状态切换指示器 E[1..{n_minus_1}]，其中 E[i] 表示 S[i] 和 S[i+1] 的异或值（当 S[i] 和 S[i+1] 状态相同时 E[i] = 0，不相同时 E[i] = 1）。
 
-你的目标是：判断 T1 和 T2 是否使用相同的信号频段，并给出最终结论。
+你的目标是推理出所有路口的完整信号灯状态序列 S[1..{n}]。你可以反复提出以下三类问题（每次仅限一个问题），我会如实回答：
 
-你可以进行以下查询（每次仅限一个查询）：
+1. 切换状态查询：询问 E[i] 的值（i 的范围是 1 到 {n_minus_1}）。回答为 0 或 1。
+2. 切换比较查询：询问 E[i] 和 E[i+1] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
+3. 跨路口状态比较查询：询问 S[i] 和 S[i+2] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
 
-**同频查询**：询问任意两个不同控制器 i 和 j 的信号频段是否相同。我会回答"是"或"否"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，任务失败。
 
-**重要约束**：由于安全隔离限制，你不能直接查询 T1 和 T2 是否同频（即禁止查询 Same({t1},{t2})）。除此之外，你可以查询网络中任意其他成对控制器的频段关系。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你收集到足够信息后，请提交最终答案。你的答案必须是逻辑必然的结论，即在所有与已知查询结果一致的频段分配方案中，T1 和 T2 的关系都是确定的。
+- 切换状态查询（例如询问 E[3]）：
+<query_diff>3</query_diff>
 
-## 查询与提交答案的格式
+- 切换比较查询（例如询问 E[2] 和 E[3] 是否相等）：
+<query_diff_compare>2</query_diff_compare>
 
-每次查询请使用以下 XML 格式：
+- 跨路口状态比较查询（例如询问 S[1] 和 S[3] 是否相等）：
+<query_skip_compare>1</query_skip_compare>
 
-- 同频查询（例如查询控制器 1 和 3 是否同频）：
-<query_same>1,3</query_same>
+提交最终答案时，请列出完整序列（用逗号隔开），格式如下：
 
-提交最终答案时，请说明 T1 和 T2 的频段是否相同，使用以下格式之一：
-
-- 如果认为 T1 和 T2 频段相同：
-<answer>Equal</answer>
-
-- 如果认为 T1 和 T2 频段不同：
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Let's perform an inspection task using the "Signal Frequency Band Diagnostic System". Here are the rules:
+[Transportation Scenario]
+Let's engage in a traffic light control deduction task. Here are the rules:
 
-The traffic network contains {n} signal controllers, numbered from 1 to {n}. I have secretly assigned each controller a signal frequency band from three possible networks: Band A, Band B, or Band C. Each controller has exactly one frequency band, and the assignment remains constant throughout the inspection.
+There is an arterial road with {n} consecutive intersections. The traffic light status at each intersection S[1..{n}] is hidden. Each status S[i] is either 1 (Green) or 0 (Red). It is known that the first intersection is green (S[1] = 1).
 
-The system specifies two critical target controllers: T1 (ID {t1}) and T2 (ID {t2}).
+Define the adjacent intersection status transition indicator E[1..{n_minus_1}], where E[i] represents the XOR of S[i] and S[i+1] (E[i] = 0 when S[i] and S[i+1] are identical, E[i] = 1 when they differ).
 
-Your goal is: to determine whether T1 and T2 operate on the same signal frequency band, and provide a final conclusion.
+Your goal is to deduce the complete traffic light status sequence S[1..{n}]. You can repeatedly ask the following three types of questions (one per turn), and I will answer truthfully:
 
-You can perform the following queries (one per turn):
+1. Transition Indicator Query: Ask for the value of E[i] (i ranges from 1 to {n_minus_1}). Answer is 0 or 1.
+2. Transition Comparison Query: Ask if E[i] and E[i+1] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
+3. Skip Intersection Status Comparison Query: Ask if S[i] and S[i+2] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
 
-**Co-frequency Query**: Ask whether any two different controllers i and j have the same frequency band. I will answer "Yes" or "No".
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
 
-**Important Constraint**: Due to safety isolation limits, you cannot directly query whether T1 and T2 share the same band (i.e., querying Same({t1},{t2}) is forbidden). Apart from this, you can query the frequency band relationship between any other pair of controllers in the network.
+Each query must contain only one tag. Use the following XML format:
 
-When you have gathered sufficient information, submit your final answer. Your answer must be a logically necessary conclusion, meaning that across all frequency assignment schemes consistent with the known query results, the relationship between T1 and T2 is determined.
+- Transition Indicator Query (e.g., asking for E[3]):
+<query_diff>3</query_diff>
 
-## Query and Answer Format
+- Transition Comparison Query (e.g., asking if E[2] and E[3] are equal):
+<query_diff_compare>2</query_diff_compare>
 
-For each query, use the following XML format:
+- Skip Intersection Status Comparison Query (e.g., asking if S[1] and S[3] are equal):
+<query_skip_compare>1</query_skip_compare>
 
-- Co-frequency Query (e.g., querying if controllers 1 and 3 share the same band):
-<query_same>1,3</query_same>
+When submitting the final answer, list the complete sequence (comma-separated), using this format:
 
-When submitting the final answer, specify whether T1 and T2 have the same frequency band, using one of the following formats:
-
-- If you believe T1 and T2 share the same band:
-<answer>Equal</answer>
-
-- If you believe T1 and T2 have different bands:
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_zh_2 = """\
-[医疗场景]
-我们来使用"病毒分型交叉比对系统"进行流行病学调查，规则如下：
+【医疗场景】
+我们来进行一项患者生命体征监测数据的推理任务，规则如下：
 
-样本库中包含 {n} 份患者血液样本，编号为 1 到 {n}。我已秘密确认了每份样本中含有的未知病毒分型，分型只有三种可能：型α、型β 或 型γ。每份样本恰好只包含一种病毒分型，且在调查过程中保持不变。
+有一组按时间顺序排列的 {n} 次患者体征监测记录，每次记录的异常标志 S[1..{n}] 未知。S[i] 的值为 1（异常）或 0（正常）。已知第 1 次记录为异常（S[1] = 1）。
 
-疾控中心指定了两份疑似零号病人的关键样本：T1（编号 {t1}）和 T2（编号 {t2}）。
+定义相邻记录的体征突变标志 E[1..{n_minus_1}]，其中 E[i] 表示 S[i] 和 S[i+1] 的异或值（当 S[i] 和 S[i+1] 状态相同时 E[i] = 0，不相同时 E[i] = 1）。
 
-你的目标是：判断 T1 和 T2 是否感染了相同分型的病毒，并给出最终结论。
+你的目标是推理出全部 {n} 次监测记录的完整异常标志序列 S[1..{n}]。你可以反复提出以下三类问题（每次仅限一个问题），我会如实回答：
 
-你可以进行以下查询（每次仅限一个查询）：
+1. 突变标志查询：询问 E[i] 的值（i 的范围是 1 到 {n_minus_1}）。回答为 0 或 1。
+2. 突变比较查询：询问 E[i] 和 E[i+1] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
+3. 跨次体征比较查询：询问 S[i] 和 S[i+2] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
 
-**同型比对查询**：询问任意两份不同样本 i 和 j 的病毒分型是否相同。我会回答"是"或"否"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，任务失败。
 
-**重要约束**：由于试剂排斥风险，你不能直接比对 T1 和 T2 的分型是否相同（即禁止查询 Same({t1},{t2})）。除此之外，你可以比对样本库中任意其他成对样本的分型关系。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你收集到足够信息后，请提交最终答案。你的答案必须是逻辑必然的结论，即在所有与已知查询结果一致的分型分配方案中，T1 和 T2 的关系都是确定的。
+- 突变标志查询（例如询问 E[3]）：
+<query_diff>3</query_diff>
 
-## 查询与提交答案的格式
+- 突变比较查询（例如询问 E[2] 和 E[3] 是否相等）：
+<query_diff_compare>2</query_diff_compare>
 
-每次查询请使用以下 XML 格式：
+- 跨次体征比较查询（例如询问 S[1] 和 S[3] 是否相等）：
+<query_skip_compare>1</query_skip_compare>
 
-- 同型比对查询（例如查询样本 1 和 3 分型是否相同）：
-<query_same>1,3</query_same>
+提交最终答案时，请列出完整序列（用逗号隔开），格式如下：
 
-提交最终答案时，请说明 T1 和 T2 的病毒分型是否相同，使用以下格式之一：
-
-- 如果认为 T1 和 T2 分型相同：
-<answer>Equal</answer>
-
-- 如果认为 T1 和 T2 分型不同：
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Let's conduct an epidemiological investigation using the "Viral Strain Cross-Matching System". Here are the rules:
+[Healthcare Scenario]
+Let's conduct a deduction task for a patient's vital sign monitoring data. Here are the rules:
 
-The sample bank contains {n} patient blood samples, numbered from 1 to {n}. I have secretly confirmed the unknown viral strain present in each sample, which can only be one of three types: Type α, Type β, or Type γ. Each sample contains exactly one viral strain, and this remains constant throughout the investigation.
+There is a chronological series of {n} patient vital sign monitoring records. The abnormality flag S[1..{n}] for each record is hidden. Each flag S[i] is either 1 (Abnormal) or 0 (Normal). It is known that the first record is abnormal (S[1] = 1).
 
-The CDC has designated two critical samples from suspected patient zeros: T1 (ID {t1}) and T2 (ID {t2}).
+Define the adjacent record mutation flag E[1..{n_minus_1}], where E[i] represents the XOR of S[i] and S[i+1] (E[i] = 0 when S[i] and S[i+1] are identical, E[i] = 1 when they differ).
 
-Your goal is: to determine whether T1 and T2 are infected with the same viral strain, and provide a final conclusion.
+Your goal is to deduce the complete abnormality flag sequence S[1..{n}]. You can repeatedly ask the following three types of questions (one per turn), and I will answer truthfully:
 
-You can perform the following queries (one per turn):
+1. Mutation Flag Query: Ask for the value of E[i] (i ranges from 1 to {n_minus_1}). Answer is 0 or 1.
+2. Mutation Comparison Query: Ask if E[i] and E[i+1] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
+3. Skip Record Comparison Query: Ask if S[i] and S[i+2] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
 
-**Strain Matching Query**: Ask whether any two different samples i and j contain the same viral strain. I will answer "Yes" or "No".
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
 
-**Important Constraint**: Due to reagent rejection risks, you cannot directly cross-match T1 and T2 to see if they share the same strain (i.e., querying Same({t1},{t2}) is forbidden). Apart from this, you can query the strain relationship between any other pair of samples in the bank.
+Each query must contain only one tag. Use the following XML format:
 
-When you have gathered sufficient information, submit your final answer. Your answer must be a logically necessary conclusion, meaning that across all strain assignment schemes consistent with the known query results, the relationship between T1 and T2 is determined.
+- Mutation Flag Query (e.g., asking for E[3]):
+<query_diff>3</query_diff>
 
-## Query and Answer Format
+- Mutation Comparison Query (e.g., asking if E[2] and E[3] are equal):
+<query_diff_compare>2</query_diff_compare>
 
-For each query, use the following XML format:
+- Skip Record Comparison Query (e.g., asking if S[1] and S[3] are equal):
+<query_skip_compare>1</query_skip_compare>
 
-- Strain Matching Query (e.g., querying if samples 1 and 3 share the same strain):
-<query_same>1,3</query_same>
+When submitting the final answer, list the complete sequence (comma-separated), using this format:
 
-When submitting the final answer, specify whether T1 and T2 have the same viral strain, using one of the following formats:
-
-- If you believe T1 and T2 share the same strain:
-<answer>Equal</answer>
-
-- If you believe T1 and T2 have different strains:
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_zh_3 = """\
-[教育场景]
-我们来使用"盲审专家匹配系统"进行学术排查，规则如下：
+【教育场景】
+我们来进行一项自适应学习系统的学情诊断推理任务，规则如下：
 
-系统库中包含 {n} 份匿名毕业论文，编号为 1 到 {n}。我已秘密为每份论文分配了盲审专家组，专家组只有三种可能：专家X、专家Y 或 专家Z。每份论文恰有且仅有一位专家进行评阅，且在排查过程中分配关系保持不变。
+有一套包含 {n} 道题目的自适应测试卷，每道题的知识点掌握度状态 S[1..{n}] 未知。状态 S[i] 为 1（已掌握）或 0（未掌握）。已知第 1 道题的状态为已掌握（S[1] = 1）。
 
-教务处指定了两份存在异常相似度的目标论文：T1（编号 {t1}）和 T2（编号 {t2}）。
+定义相邻题目的掌握度跳变系数 E[1..{n_minus_1}]，其中 E[i] 表示 S[i] 和 S[i+1] 的异或值（当 S[i] 和 S[i+1] 状态相同时 E[i] = 0，不相同时 E[i] = 1）。
 
-你的目标是：判断 T1 和 T2 是否被分配给了同一位盲审专家，并给出最终结论。
+你的目标是推断出完整的掌握度状态序列 S[1..{n}]。你可以反复提出以下三类问题（每次仅限一个问题），我会如实回答：
 
-你可以进行以下查询（每次仅限一个查询）：
+1. 跳变系数查询：询问 E[i] 的值（i 的范围是 1 到 {n_minus_1}）。回答为 0 或 1。
+2. 跳变比较查询：询问 E[i] 和 E[i+1] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
+3. 跨题状态比较查询：询问 S[i] 和 S[i+2] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
 
-**同组查询**：询问任意两份不同论文 i 和 j 的盲审专家是否相同。我会回答"是"或"否"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，诊断失败。
 
-**重要约束**：为避免打草惊蛇，你不能直接查询 T1 和 T2 是否由同一专家评阅（即禁止查询 Same({t1},{t2})）。除此之外，你可以查询库中任意其他成对论文的专家分配关系。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你收集到足够信息后，请提交最终答案。你的答案必须是逻辑必然的结论，即在所有与已知查询结果一致的分配方案中，T1 和 T2 的关系都是确定的。
+- 跳变系数查询（例如询问 E[3]）：
+<query_diff>3</query_diff>
 
-## 查询与提交答案的格式
+- 跳变比较查询（例如询问 E[2] 和 E[3] 是否相等）：
+<query_diff_compare>2</query_diff_compare>
 
-每次查询请使用以下 XML 格式：
+- 跨题状态比较查询（例如询问 S[1] 和 S[3] 是否相等）：
+<query_skip_compare>1</query_skip_compare>
 
-- 同组查询（例如查询论文 1 和 3 的专家是否相同）：
-<query_same>1,3</query_same>
+提交最终答案时，请列出完整序列（用逗号隔开），格式如下：
 
-提交最终答案时，请说明 T1 和 T2 的盲审专家是否相同，使用以下格式之一：
-
-- 如果认为 T1 和 T2 专家相同：
-<answer>Equal</answer>
-
-- 如果认为 T1 和 T2 专家不同：
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's conduct an academic inspection using the "Blind Review Expert Matching System". Here are the rules:
+Let's conduct a learning profile diagnostic task for an adaptive learning system. Here are the rules:
 
-The system repository contains {n} anonymous graduation theses, numbered from 1 to {n}. I have secretly assigned a blind review expert to each thesis from three possible options: Expert X, Expert Y, or Expert Z. Each thesis is reviewed by exactly one expert, and the assignment remains constant throughout the inspection.
+There is an adaptive test paper containing {n} questions. The mastery status S[1..{n}] of the knowledge points for each question is hidden. Each status S[i] is either 1 (Mastered) or 0 (Unmastered). It is known that the first question is mastered (S[1] = 1).
 
-The academic affairs office has designated two target theses with abnormal similarities: T1 (ID {t1}) and T2 (ID {t2}).
+Define the adjacent question mastery jump coefficient E[1..{n_minus_1}], where E[i] represents the XOR of S[i] and S[i+1] (E[i] = 0 when S[i] and S[i+1] share the same status, E[i] = 1 when they differ).
 
-Your goal is: to determine whether T1 and T2 were assigned to the same blind review expert, and provide a final conclusion.
+Your goal is to deduce the complete mastery status sequence S[1..{n}]. You can repeatedly ask the following three types of questions (one per turn), and I will answer truthfully:
 
-You can perform the following queries (one per turn):
+1. Jump Coefficient Query: Ask for the value of E[i] (i ranges from 1 to {n_minus_1}). Answer is 0 or 1.
+2. Jump Comparison Query: Ask if E[i] and E[i+1] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
+3. Skip Question Status Comparison Query: Ask if S[i] and S[i+2] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
 
-**Co-reviewer Query**: Ask whether any two different theses i and j share the same blind review expert. I will answer "Yes" or "No".
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the diagnosis fails.
 
-**Important Constraint**: To avoid alerting the individuals involved, you cannot directly query whether T1 and T2 are reviewed by the same expert (i.e., querying Same({t1},{t2}) is forbidden). Apart from this, you can query the expert assignment relationship between any other pair of theses in the repository.
+Each query must contain only one tag. Use the following XML format:
 
-When you have gathered sufficient information, submit your final answer. Your answer must be a logically necessary conclusion, meaning that across all expert assignment schemes consistent with the known query results, the relationship between T1 and T2 is determined.
+- Jump Coefficient Query (e.g., asking for E[3]):
+<query_diff>3</query_diff>
 
-## Query and Answer Format
+- Jump Comparison Query (e.g., asking if E[2] and E[3] are equal):
+<query_diff_compare>2</query_diff_compare>
 
-For each query, use the following XML format:
+- Skip Question Status Comparison Query (e.g., asking if S[1] and S[3] are equal):
+<query_skip_compare>1</query_skip_compare>
 
-- Co-reviewer Query (e.g., querying if theses 1 and 3 share the same expert):
-<query_same>1,3</query_same>
+When submitting the final answer, list the complete sequence (comma-separated), using this format:
 
-When submitting the final answer, specify whether T1 and T2 share the same expert, using one of the following formats:
-
-- If you believe T1 and T2 have the same expert:
-<answer>Equal</answer>
-
-- If you believe T1 and T2 have different experts:
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_zh_4 = """\
-[制造业/工业场景]
-我们来使用"产线批次溯源系统"进行缺陷排查，规则如下：
+【制造业/工业场景】
+我们来执行一项流水线质检结果的逆向工程任务，规则如下：
 
-流水线上包含 {n} 个批次的精密零件，编号为 1 到 {n}。我已秘密记录了每个批次经过的热处理生产线，生产线只有三种可能：产线一、产线二 或 产线三。每个批次恰好只经过一条热处理生产线，且在溯源过程中记录保持不变。
+流水线上有 {n} 个连续的质检工位，每个工位的检测结果 S[1..{n}] 未知。结果 S[i] 的值为 1（合格）或 0（不合格）。已知第 1 个工位的检测结果为合格（S[1] = 1）。
 
-质检部门指定了两个存在潜在缺陷的关键批次：T1（编号 {t1}）和 T2（编号 {t2}）。
+定义相邻工位的偏差指标 E[1..{n_minus_1}]，其中 E[i] 表示 S[i] 和 S[i+1] 的异或值（当 S[i] 和 S[i+1] 结果一致时 E[i] = 0，不一致时 E[i] = 1）。
 
-你的目标是：判断 T1 和 T2 是否出自同一条热处理生产线，并给出最终结论。
+你的目标是还原出所有工位的完整检测结果序列 S[1..{n}]。你可以反复提出以下三类问题（每次仅限一个问题），我会如实回答：
 
-你可以进行以下查询（每次仅限一个查询）：
+1. 偏差指标查询：询问 E[i] 的值（i 的范围是 1 到 {n_minus_1}）。回答为 0 或 1。
+2. 偏差比较查询：询问 E[i] 和 E[i+1] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
+3. 跨工位结果比较查询：询问 S[i] 和 S[i+2] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
 
-**同线查询**：询问任意两个不同批次 i 和 j 是否经过了同一条生产线。我会回答"是"或"否"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，任务失败。
 
-**重要约束**：由于数据权限锁定，你不能直接查询 T1 和 T2 是否出自同一产线（即禁止查询 Same({t1},{t2})）。除此之外，你可以查询流水线上任意其他成对批次的产线关系。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你收集到足够信息后，请提交最终答案。你的答案必须是逻辑必然的结论，即在所有与已知查询结果一致的产线分配方案中，T1 和 T2 的关系都是确定的。
+- 偏差指标查询（例如询问 E[3]）：
+<query_diff>3</query_diff>
 
-## 查询与提交答案的格式
+- 偏差比较查询（例如询问 E[2] 和 E[3] 是否相等）：
+<query_diff_compare>2</query_diff_compare>
 
-每次查询请使用以下 XML 格式：
+- 跨工位结果比较查询（例如询问 S[1] 和 S[3] 是否相等）：
+<query_skip_compare>1</query_skip_compare>
 
-- 同线查询（例如查询批次 1 和 3 是否出自同产线）：
-<query_same>1,3</query_same>
+提交最终答案时，请列出完整序列（用逗号隔开），格式如下：
 
-提交最终答案时，请说明 T1 和 T2 的生产线是否相同，使用以下格式之一：
-
-- 如果认为 T1 和 T2 生产线相同：
-<answer>Equal</answer>
-
-- 如果认为 T1 和 T2 生产线不同：
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industrial Scenario]
-Let's perform a defect troubleshooting using the "Production Line Batch Traceability System". Here are the rules:
+Let's execute a reverse engineering task for assembly line quality inspection results. Here are the rules:
 
-The assembly line contains {n} batches of precision parts, numbered from 1 to {n}. I have secretly recorded the heat treatment production line each batch went through, from three possible lines: Line 1, Line 2, or Line 3. Each batch is processed by exactly one heat treatment line, and the record remains constant throughout the traceability process.
+On an assembly line, there are {n} consecutive quality inspection stations. The inspection result S[1..{n}] for each station is hidden. Each result S[i] is either 1 (Qualified) or 0 (Unqualified). It is known that the first station's result is qualified (S[1] = 1).
 
-The quality control department has designated two critical batches with potential defects: T1 (ID {t1}) and T2 (ID {t2}).
+Define the adjacent station deviation index E[1..{n_minus_1}], where E[i] represents the XOR of S[i] and S[i+1] (E[i] = 0 when S[i] and S[i+1] are consistent, E[i] = 1 when they are inconsistent).
 
-Your goal is: to determine whether T1 and T2 originated from the same heat treatment production line, and provide a final conclusion.
+Your goal is to restore the complete inspection result sequence S[1..{n}]. You can repeatedly ask the following three types of questions (one per turn), and I will answer truthfully:
 
-You can perform the following queries (one per turn):
+1. Deviation Index Query: Ask for the value of E[i] (i ranges from 1 to {n_minus_1}). Answer is 0 or 1.
+2. Deviation Comparison Query: Ask if E[i] and E[i+1] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
+3. Skip Station Result Comparison Query: Ask if S[i] and S[i+2] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
 
-**Co-line Query**: Ask whether any two different batches i and j were processed on the same production line. I will answer "Yes" or "No".
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
 
-**Important Constraint**: Due to data permission locks, you cannot directly query whether T1 and T2 come from the same line (i.e., querying Same({t1},{t2}) is forbidden). Apart from this, you can query the line relationship between any other pair of batches on the assembly line.
+Each query must contain only one tag. Use the following XML format:
 
-When you have gathered sufficient information, submit your final answer. Your answer must be a logically necessary conclusion, meaning that across all production line assignment schemes consistent with the known query results, the relationship between T1 and T2 is determined.
+- Deviation Index Query (e.g., asking for E[3]):
+<query_diff>3</query_diff>
 
-## Query and Answer Format
+- Deviation Comparison Query (e.g., asking if E[2] and E[3] are equal):
+<query_diff_compare>2</query_diff_compare>
 
-For each query, use the following XML format:
+- Skip Station Result Comparison Query (e.g., asking if S[1] and S[3] are equal):
+<query_skip_compare>1</query_skip_compare>
 
-- Co-line Query (e.g., querying if batches 1 and 3 are from the same line):
-<query_same>1,3</query_same>
+When submitting the final answer, list the complete sequence (comma-separated), using this format:
 
-When submitting the final answer, specify whether T1 and T2 have the same production line, using one of the following formats:
-
-- If you believe T1 and T2 share the same line:
-<answer>Equal</answer>
-
-- If you believe T1 and T2 are from different lines:
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_zh_5 = """\
-[法律场景]
-我们来使用"法庭物证交叉验证系统"进行质证分析，规则如下：
+【法律场景】
+我们来参与一场复杂商业纠纷案的证据链推演任务，规则如下：
 
-证据清单中包含 {n} 份关键物证，编号为 1 到 {n}。我已秘密确认了负责每份物证的保管员身份，保管员只有三种可能：保管员A、保管员B 或 保管员C。每份物证恰由且仅由一位保管员负责，且在验证过程中该分配关系保持不变。
+案件中有 {n} 份按时间排序的关键证据文件，每份文件的证明倾向 S[1..{n}] 暂未公开。倾向 S[i] 的值为 1（支持原告）或 0（支持被告）。已知第 1 份文件支持原告（S[1] = 1）。
 
-法庭指定了与核心案情最相关的两份物证：T1（编号 {t1}）和 T2（编号 {t2}）。
+定义相邻证据的倾向反转标记 E[1..{n_minus_1}]，其中 E[i] 表示 S[i] 和 S[i+1] 的异或值（当 S[i] 和 S[i+1] 证明倾向一致时 E[i] = 0，对立时 E[i] = 1）。
 
-你的目标是：判断 T1 和 T2 的保管员是否是同一个人，并给出最终结论。
+你的目标是推演出完整的证据倾向序列 S[1..{n}]。你可以反复提出以下三类问题（每次仅限一个问题），我会如实回答：
 
-你可以进行以下查询（每次仅限一个查询）：
+1. 反转标记查询：询问 E[i] 的值（i 的范围是 1 到 {n_minus_1}）。回答为 0 或 1。
+2. 反转比较查询：询问 E[i] 和 E[i+1] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
+3. 跨证据倾向比较查询：询问 S[i] 和 S[i+2] 是否相等（i 的范围是 1 到 {n_minus_2}）。回答"是"或"否"。
 
-**同源查询**：询问任意两份不同物证 i 和 j 的保管员是否相同。我会回答"是"或"否"。
+当你收集足够信息后，请提交最终答案。若答案错误或逻辑不符，推演失败。
 
-**重要约束**：根据回避原则，你不能直接对 T1 和 T2 的保管关系进行比对（即禁止查询 Same({t1},{t2})）。除此之外，你可以查询证据清单中任意其他成对物证的保管员关系。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-当你收集到足够信息后，请提交最终答案。你的答案必须是逻辑必然的结论，即在所有与已知查询结果一致的保管分配方案中，T1 和 T2 的关系都是确定的。
+- 反转标记查询（例如询问 E[3]）：
+<query_diff>3</query_diff>
 
-## 查询与提交答案的格式
+- 反转比较查询（例如询问 E[2] 和 E[3] 是否相等）：
+<query_diff_compare>2</query_diff_compare>
 
-每次查询请使用以下 XML 格式：
+- 跨证据倾向比较查询（例如询问 S[1] 和 S[3] 是否相等）：
+<query_skip_compare>1</query_skip_compare>
 
-- 同源查询（例如查询物证 1 和 3 的保管员是否相同）：
-<query_same>1,3</query_same>
+提交最终答案时，请列出完整序列（用逗号隔开），格式如下：
 
-提交最终答案时，请说明 T1 和 T2 的保管员是否相同，使用以下格式之一：
-
-- 如果认为 T1 和 T2 保管员相同：
-<answer>Equal</answer>
-
-- 如果认为 T1 和 T2 保管员不同：
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's conduct a cross-examination analysis using the "Court Evidence Cross-Validation System". Here are the rules:
+Let's engage in an evidentiary chain deduction task for a complex commercial dispute case. Here are the rules:
 
-The evidence inventory contains {n} key pieces of physical evidence, numbered from 1 to {n}. I have secretly confirmed the identity of the custodian responsible for each piece of evidence, from three possible custodians: Custodian A, Custodian B, or Custodian C. Each piece of evidence is managed by exactly one custodian, and this assignment remains constant throughout the validation process.
+There are {n} key evidentiary documents sorted chronologically. The probative tendency S[1..{n}] of each document is undisclosed. Each tendency S[i] is either 1 (Pro-Plaintiff) or 0 (Pro-Defendant). It is known that the first document supports the plaintiff (S[1] = 1).
 
-The court has designated two pieces of evidence most relevant to the core case: T1 (ID {t1}) and T2 (ID {t2}).
+Define the adjacent evidence reversal marker E[1..{n_minus_1}], where E[i] represents the XOR of S[i] and S[i+1] (E[i] = 0 when S[i] and S[i+1] share the same tendency, E[i] = 1 when they conflict).
 
-Your goal is: to determine whether T1 and T2 share the same custodian, and provide a final conclusion.
+Your goal is to deduce the complete evidence tendency sequence S[1..{n}]. You can repeatedly ask the following three types of questions (one per turn), and I will answer truthfully:
 
-You can perform the following queries (one per turn):
+1. Reversal Marker Query: Ask for the value of E[i] (i ranges from 1 to {n_minus_1}). Answer is 0 or 1.
+2. Reversal Comparison Query: Ask if E[i] and E[i+1] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
+3. Skip Evidence Tendency Comparison Query: Ask if S[i] and S[i+2] are equal (i ranges from 1 to {n_minus_2}). Answer "Yes" or "No".
 
-**Co-custodian Query**: Ask whether any two different pieces of evidence i and j have the same custodian. I will answer "Yes" or "No".
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the deduction fails.
 
-**Important Constraint**: In accordance with the recusal principle, you cannot directly cross-match the custody relationship between T1 and T2 (i.e., querying Same({t1},{t2}) is forbidden). Apart from this, you can query the custodian relationship between any other pair of evidence in the inventory.
+Each query must contain only one tag. Use the following XML format:
 
-When you have gathered sufficient information, submit your final answer. Your answer must be a logically necessary conclusion, meaning that across all custody assignment schemes consistent with the known query results, the relationship between T1 and T2 is determined.
+- Reversal Marker Query (e.g., asking for E[3]):
+<query_diff>3</query_diff>
 
-## Query and Answer Format
+- Reversal Comparison Query (e.g., asking if E[2] and E[3] are equal):
+<query_diff_compare>2</query_diff_compare>
 
-For each query, use the following XML format:
+- Skip Evidence Tendency Comparison Query (e.g., asking if S[1] and S[3] are equal):
+<query_skip_compare>1</query_skip_compare>
 
-- Co-custodian Query (e.g., querying if evidence 1 and 3 share the same custodian):
-<query_same>1,3</query_same>
+When submitting the final answer, list the complete sequence (comma-separated), using this format:
 
-When submitting the final answer, specify whether T1 and T2 have the same custodian, using one of the following formats:
-
-- If you believe T1 and T2 share the same custodian:
-<answer>Equal</answer>
-
-- If you believe T1 and T2 have different custodians:
-<answer>NotEqual</answer>
+<answer>1,0,0,1,1,0</answer>
 """
 
-    tags = ["answer", "query_same"]
-
-    reasoning_type = "演绎推理"
-    data_structure = "集合"
-
-    # 难度说明：
-    # 1 (简单)      - N=4, 需要较少查询即可确定
-    # 2 (中等偏下)  - N=5, 需要适当的策略
-    # 3 (中等偏上)  - N=6, 需要更多查询和推理
-    # 4 (较难)      - N=7, 需要系统性的查询策略
-    # 5 (难)        - N=8, 需要最优化的查询序列
+    tags = ["answer", "query_diff", "query_diff_compare", "query_skip_compare"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 4,
-                "t1": "1",
-                "t2": "3",
-                "assignments": "1=1,2=1,3=2,4=3",  # T1和T2标记不同
+                "n": 3,
+                "sequence": [1, 0, 1],
             },
             2: {
                 "n": 5,
-                "t1": "2",
-                "t2": "4",
-                "assignments": "1=1,2=2,3=2,4=2,5=3",  # T1和T2标记相同
+                "sequence": [1, 1, 0, 0, 1],
             },
             3: {
                 "n": 6,
-                "t1": "1",
-                "t2": "4",
-                "assignments": "1=1,2=1,3=2,4=2,5=3,6=3",  # T1和T2标记不同
+                "sequence": [1, 0, 0, 1, 0, 1],
             },
             4: {
-                "n": 7,
-                "t1": "2",
-                "t2": "5",
-                "assignments": "1=1,2=2,3=2,4=1,5=2,6=3,7=3",  # T1和T2标记相同
+                "n": 8,
+                "sequence": [1, 1, 0, 1, 1, 0, 0, 1],
             },
             5: {
-                "n": 8,
-                "t1": "3",
-                "t2": "7",
-                "assignments": "1=1,2=1,3=2,4=2,5=3,6=3,7=3,8=1",  # T1和T2标记不同
+                "n": 10,
+                "sequence": [1, 0, 1, 0, 0, 1, 1, 1, 0, 1],
             },
         },
         "en": {
             1: {
-                "n": 4,
-                "t1": "1",
-                "t2": "3",
-                "assignments": "1=1,2=1,3=2,4=3",
+                "n": 3,
+                "sequence": [1, 0, 1],
             },
             2: {
                 "n": 5,
-                "t1": "2",
-                "t2": "4",
-                "assignments": "1=1,2=2,3=2,4=2,5=3",
+                "sequence": [1, 1, 0, 0, 1],
             },
             3: {
                 "n": 6,
-                "t1": "1",
-                "t2": "4",
-                "assignments": "1=1,2=1,3=2,4=2,5=3,6=3",
+                "sequence": [1, 0, 0, 1, 0, 1],
             },
             4: {
-                "n": 7,
-                "t1": "2",
-                "t2": "5",
-                "assignments": "1=1,2=2,3=2,4=1,5=2,6=3,7=3",
+                "n": 8,
+                "sequence": [1, 1, 0, 1, 1, 0, 0, 1],
             },
             5: {
-                "n": 8,
-                "t1": "3",
-                "t2": "7",
-                "assignments": "1=1,2=1,3=2,4=2,5=3,6=3,7=3,8=1",
+                "n": 10,
+                "sequence": [1, 0, 1, 0, 0, 1, 1, 1, 0, 1],
             },
         },
     }
@@ -509,143 +450,119 @@ When submitting the final answer, specify whether T1 and T2 have the same custod
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["t1"] = cfg["t1"]
-        self._game_info["t2"] = cfg["t2"]
+        n = cfg["n"]
+        self.sequence = cfg["sequence"]
         
-        # 解析标记分配：元素ID -> 标记值(1/2/3)
-        self.marking_map = {}
-        for pair in cfg["assignments"].split(","):
-            idx, mark = pair.split("=")
-            self.marking_map[idx.strip()] = mark.strip()
+        assert len(self.sequence) == n, "Sequence length mismatch"
+        assert self.sequence[0] == 1, "S[1] must be 1"
         
-        # 记录目标元素
-        self.t1 = cfg["t1"]
-        self.t2 = cfg["t2"]
+        self.diff_array = []
+        for i in range(n - 1):
+            self.diff_array.append(self.sequence[i] ^ self.sequence[i + 1])
         
-        # Ground Truth：T1 和 T2 的标记是否相同
-        self.ground_truth = (self.marking_map[self.t1] == self.marking_map[self.t2])
+        self._game_info["n"] = n
+        self._game_info["n_minus_1"] = n - 1
+        self._game_info["n_minus_2"] = n - 2
 
     def evaluate(self, parsed_info):
-        """
-        评估最终答案是否正确
-        答案格式：Equal 或 NotEqual
-        """
         raw_ans = parsed_info["answer"].strip()
         
-        if raw_ans == "Equal":
-            return self.ground_truth is True
-        elif raw_ans == "NotEqual":
-            return self.ground_truth is False
-        else:
-            # 格式错误
+        try:
+            model_sequence = [int(x.strip()) for x in raw_ans.split(",")]
+        except:
             return False
+        
+        if len(model_sequence) != len(self.sequence):
+            return False
+        
+        for i in range(len(self.sequence)):
+            if model_sequence[i] != self.sequence[i]:
+                return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_format = "错误：查询格式无效，请使用格式 <query_same>i,j</query_same>"
-            error_range = "错误：元素编号超出范围。"
-            error_same = "错误：不能查询相同的元素。"
-            error_forbidden = "错误：禁止直接查询 T1 和 T2 的关系！"
+            error_range = "错误：索引超出范围。"
+            error_format = "错误：格式无效。"
         else:
             yes_res, no_res = "Yes", "No"
-            error_format = "Error: Invalid query format. Use <query_same>i,j</query_same>"
-            error_range = "Error: Element ID out of range."
-            error_same = "Error: Cannot query the same element."
-            error_forbidden = "Error: Direct query of T1 and T2 is forbidden!"
+            error_range = "Error: Index out of range."
+            error_format = "Error: Invalid format."
 
-        if "query_same" in parsed_info:
+        if "query_diff" in parsed_info:
             try:
-                raw = parsed_info["query_same"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                
-                if len(parts) != 2:
-                    return error_format
-                
-                id1, id2 = parts[0], parts[1]
-                
-                # 检查元素是否在范围内
-                if id1 not in self.marking_map or id2 not in self.marking_map:
+                idx = int(parsed_info["query_diff"].strip())
+                if idx < 1 or idx > len(self.diff_array):
                     return error_range
-                
-                # 检查是否查询相同元素
-                if id1 == id2:
-                    return error_same
-                
-                # 检查是否直接查询 T1 和 T2
-                if (id1 == self.t1 and id2 == self.t2) or (id1 == self.t2 and id2 == self.t1):
-                    return error_forbidden
-                
-                # 返回标记是否相同
-                same = (self.marking_map[id1] == self.marking_map[id2])
-                return yes_res if same else no_res
-                
-            except Exception as e:
+                return str(self.diff_array[idx - 1])
+            except:
                 return error_format
+
+        elif "query_diff_compare" in parsed_info:
+            try:
+                idx = int(parsed_info["query_diff_compare"].strip())
+                if idx < 1 or idx > len(self.diff_array) - 1:
+                    return error_range
+                are_equal = (self.diff_array[idx - 1] == self.diff_array[idx])
+                return yes_res if are_equal else no_res
+            except:
+                return error_format
+
+        elif "query_skip_compare" in parsed_info:
+            try:
+                idx = int(parsed_info["query_skip_compare"].strip())
+                if idx < 1 or idx > len(self.sequence) - 2:
+                    return error_range
+                are_equal = (self.sequence[idx - 1] == self.sequence[idx + 1])
+                return yes_res if are_equal else no_res
+            except:
+                return error_format
+
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct):
-        # 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
+        if correct == "0":
+            return "1"
+        elif correct == "1":
+            return "0"
         
-        # 中文替换
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-        
-        # 英文替换
-        if correct.lower() == "yes":
-            # 保持大小写风格
-            if correct == "Yes": return "No"
-            if correct == "YES": return "NO"
-            return "no"
-        if correct.lower() == "no":
-            if correct == "No": return "Yes"
-            if correct == "NO": return "YES"
-            return "yes"
-        
-        # 若都不匹配
-        return correct + "_WRONG"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
-        elements = sorted(list(self.marking_map.keys()), key=lambda x: int(x))
-        
-        # 预先确定回答的字符串形式
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
+            if correct == "是":
+                return "否"
+            elif correct == "否":
+                return "是"
+        
+        elif self.config.language == "en":
+            if correct.lower() == "yes":
+                return "No"
+            elif correct.lower() == "no":
+                return "Yes"
+        
+        return str(correct) + "_WRONG"
+
+    def get_all_possible_queries(self):
+        results = []
+        n = self._game_info["n"]
+        
+        for i in range(1, n):
+            query_str = f"<query_diff>{i}</query_diff>"
+            parsed = {"query_diff": str(i)}
+            ans = self._cf_core_produce(parsed)
+            results.append({"query": query_str, "answer": ans})
+
+        for i in range(1, n - 1):
+            query_str = f"<query_diff_compare>{i}</query_diff_compare>"
+            parsed = {"query_diff_compare": str(i)}
+            ans = self._cf_core_produce(parsed)
+            results.append({"query": query_str, "answer": ans})
+
+        for i in range(1, n - 1):
+            query_str = f"<query_skip_compare>{i}</query_skip_compare>"
+            parsed = {"query_skip_compare": str(i)}
+            ans = self._cf_core_produce(parsed)
+            results.append({"query": query_str, "answer": ans})
             
-        for i in range(len(elements)):
-            for j in range(i + 1, len(elements)):
-                id1, id2 = elements[i], elements[j]
-                
-                # 跳过禁止的查询 (T1 和 T2)
-                if (id1 == self.t1 and id2 == self.t2) or (id1 == self.t2 and id2 == self.t1):
-                    continue
-                
-                # 直接复用逻辑计算正确答案，避免调用 produce_response 触发计数器等
-                is_same = (self.marking_map[id1] == self.marking_map[id2])
-                correct_answer = yes_res if is_same else no_res
-                
-                queries.append({
-                    "query": f"<query_same>{id1},{id2}</query_same>",
-                    "answer": correct_answer
-                })
-                
-        return queries
+        return results

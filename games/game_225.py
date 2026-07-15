@@ -1,785 +1,672 @@
 from .base import Game
-import re
-import itertools
+import random
 
-class GraphIndependenceGame(Game):
-    reasoning_type = "归纳推理"
-    data_structure = "图"
+class SiblingCycleGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"图独立性推理"游戏，规则如下：
+我们现在来玩一个"兄弟环推理"游戏，规则如下：
 
-游戏设定了一个整数集合 [N] = {{1, 2, ..., {n}}}。存在一个未知的、固定的布尔关系 R，它定义了一个无向图 G：
-- 图的顶点就是集合 [N] 中的所有数字
-- 对于任意两个不同的数字 i 和 j（i < j），如果 R(i,j) = 1，则它们之间存在一条边
-- 关系 R 是对称的且没有自环（即一个数字不会与自己连边）
+游戏设定了一个包含 {n} 个命名节点的有根树结构。所有节点的名称你已经知道，它们是：{node_names}。但是，节点之间的父子关系和兄弟关系对你来说是隐藏的。
 
-你的目标是通过有限次数的查询，推断出这个未知关系 R 的规律，并最终正确判断 {k} 个测试集合是否为独立集。
+对于树中的每个内部节点（拥有子节点的节点），它的所有子节点被放置在一个固定但未知的有向循环顺序中。对于任意非根节点 X，我们定义它的"兄弟环"为：X 的父节点的所有子节点（包括 X 自己）按照循环顺序形成的有向环。
 
-**独立集定义**：一个子集 S 是独立集，当且仅当 S 内任意两个不同元素之间都不存在边。
+你的目标是：确定以下目标节点的精确兄弟集合（不包含该节点本身）：{target_nodes}
 
-## 可用的查询类型
+你可以进行以下两种类型的查询：
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+1. 前进查询 advance：询问从节点 X 在其兄弟环上沿固定方向前进 t 步后到达的节点。
+   - 输入：非根节点名 X，正整数步长 t
+   - 返回：到达的节点名 Y
+   - 注意：如果 X 是根节点，此查询无效
 
-1. **子集独立性查询**：询问一个子集 S 是否为独立集
-   - 如果 S 是独立集，回答"独立"
-   - 如果 S 不是独立集，回答"非独立"，并给出 S 内字典序最小的相连边对 (x,y)，其中 x < y
+2. 验证查询 submit：提交你认为的某个目标节点的兄弟集合。
+   - 输入：目标节点名 X，兄弟集合 S（不包含 X 自己）
+   - 返回：如果完全正确，返回"正确"；否则返回"不正确；缺失 k 个，且多余 m 个"
 
-2. **边存在性查询**：询问两个数字 i 和 j 之间是否存在边（要求 i < j）
-   - 如果存在边，回答"存在边"
-   - 如果不存在边，回答"无边"
+当你成功验证了所有目标节点的兄弟集合后，游戏胜利。
 
-3. **边计数查询**：询问一个子集 S 内部边的总数量
-   - 回答 S 内边的数量（一个非负整数）
+每次只能包含一个查询标签。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 前进查询（例如从节点 A 前进 2 步）：
+<query_advance>A,2</query_advance>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 验证查询（例如提交节点 B 的兄弟集合为 C,D）：
+<query_submit>B:C,D</query_submit>
 
-- 子集独立性查询（例如查询子集 {{1,3,5}}）：
-<query_independence>1,3,5</query_independence>
+注意：
+- 前进查询的格式为：节点名,步长
+- 验证查询的格式为：目标节点名:兄弟1,兄弟2,...
+- 兄弟集合中的节点顺序不重要
+- 如果某个目标节点没有兄弟，提交空集合，格式为：节点名:
 
-- 边存在性查询（例如查询 2 和 5 之间）：
-<query_edge>2,5</query_edge>
-
-- 边计数查询（例如查询子集 {{1,2,3,4}}）：
-<query_count>1,2,3,4</query_count>
-
-当你完成所有查询后，需要提交最终答案，判断 {k} 个测试集合是否为独立集。格式如下：
-
-<answer>1:yes,2:no,3:yes</answer>
-
-其中数字表示测试集合的编号（从 1 开始），yes 表示独立集，no 表示非独立集。{k} 个判断用逗号分隔。
-
-**注意**：
-- 请尽可能少地使用查询次数来推断规律
-- 以下是你需要判断的 {k} 个测试集合：
-{test_sets_desc}
-- 所有查询的回答保证一致性
-- 答案格式必须严格按照要求，否则视为失败
+当所有目标节点都验证正确后，使用以下格式提交最终答案：
+<answer>complete</answer>
 """
 
     game_rule_en = """\
-Let's play a "Graph Independence Reasoning" game. Here are the rules:
+Let's play a "Sibling Cycle Inference" game. Here are the rules:
 
-The game defines an integer set [N] = {{1, 2, ..., {n}}}. There exists an unknown, fixed boolean relation R that defines an undirected graph G:
-- The vertices of the graph are all numbers in set [N]
-- For any two different numbers i and j (i < j), if R(i,j) = 1, there is an edge between them
-- Relation R is symmetric and has no self-loops (a number cannot connect to itself)
+The game involves a rooted tree structure with {n} named nodes. You know all node names: {node_names}. However, the parent-child and sibling relationships are hidden from you.
 
-Your goal is to infer the pattern of this unknown relation R through a limited number of queries, and finally correctly determine whether {k} test sets are independent sets.
+For each internal node (a node with children) in the tree, all its children are placed in a fixed but unknown directed cyclic order. For any non-root node X, we define its "sibling cycle" as: all children of X's parent (including X itself) forming a directed cycle in that order.
 
-**Independent Set Definition**: A subset S is an independent set if and only if there is no edge between any two different elements in S.
+Your goal is: determine the exact sibling set (excluding the node itself) for the following target nodes: {target_nodes}
 
-## Available Query Types
+You can perform two types of queries:
 
-You can repeatedly make the following three types of queries (one query at a time):
+1. Advance query: ask which node is reached by advancing t steps from node X along its sibling cycle in the fixed direction.
+   - Input: non-root node name X, positive integer step t
+   - Output: the reached node name Y
+   - Note: if X is the root, this query is invalid
 
-1. **Subset Independence Query**: Ask whether a subset S is an independent set
-   - If S is independent, answer "Independent"
-   - If S is not independent, answer "Not Independent" and provide the lexicographically smallest connected pair (x,y) in S, where x < y
+2. Submit query: submit what you believe to be the sibling set of a target node.
+   - Input: target node name X, sibling set S (excluding X itself)
+   - Output: if completely correct, return "Correct"; otherwise return "Incorrect; missing k, extra m"
 
-2. **Edge Existence Query**: Ask whether there is an edge between two numbers i and j (require i < j)
-   - If an edge exists, answer "Edge exists"
-   - If no edge exists, answer "No edge"
+When you successfully verify the sibling sets of all target nodes, you win the game.
 
-3. **Edge Count Query**: Ask for the total number of edges within a subset S
-   - Answer the number of edges in S (a non-negative integer)
+Each turn can contain only one query tag.
 
-## Query and Answer Format (must strictly follow)
+- Advance query (e.g., advance 2 steps from node A):
+<query_advance>A,2</query_advance>
 
-Each query must contain only one tag. Use the following XML format:
+- Submit query (e.g., submit sibling set C,D for node B):
+<query_submit>B:C,D</query_submit>
 
-- Subset Independence Query (e.g., query subset {{1,3,5}}):
-<query_independence>1,3,5</query_independence>
+Notes:
+- Advance query format: node_name,steps
+- Submit query format: target_node:sibling1,sibling2,...
+- Order of siblings in the set doesn't matter
+- If a target node has no siblings, submit an empty set: node_name:
 
-- Edge Existence Query (e.g., query between 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Edge Count Query (e.g., query subset {{1,2,3,4}}):
-<query_count>1,2,3,4</query_count>
-
-After completing all queries, you need to submit the final answer to determine whether the {k} test sets are independent sets. Format as follows:
-
-<answer>1:yes,2:no,3:yes</answer>
-
-Where the number indicates the test set number (starting from 1), yes means independent set, no means not independent set. Separate the {k} judgments with commas.
-
-**Note**:
-- Use as few queries as possible to infer the pattern
-- Here are the {k} test sets you need to judge:
-{test_sets_desc}
-- All query answers are guaranteed to be consistent
-- Answer format must strictly follow the requirements, otherwise it is considered a failure
+When all target nodes are correctly verified, submit the final answer:
+<answer>complete</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用“城市交通路口冲突分析系统”。
+欢迎使用“枢纽环线调度推演”系统。本系统旨在帮助交通规划人员理清复杂的公共交通拓扑结构。
 
-系统管控着辖区内 [N] = {{1, 2, ..., {n}}} 号交通路口。存在一个未知的、固定的交通流冲突关系 R，它定义了一个无向图 G：
-- 图的顶点即为集合 [N] 中的所有路口编号
-- 对于任意两个不同的路口 i 和 j（i < j），如果 R(i,j) = 1，表示这两个路口的车流存在严重冲突（即存在边）
-- 冲突关系是对称的且没有自环（即单个路口自身不存在冲突）
+系统导入了一个包含 {n} 个站点的多级交通网络（表现为有根树结构）。你已知所有的站点名称：{node_names}。但是，站点之间的行政隶属关系（父子关系）和同级环线关系（兄弟关系）已被隐去。
 
-你的目标是通过有限次数的查询，推断出该路网冲突关系 R 的规律，并最终正确判断 {k} 个路口测试子集是否为无冲突的“安全并行集”（即独立集）。
+对于网络中每个管辖枢纽（拥有下属站点的节点），其所有直属下级站点被规划为一条固定但未知的“单向环线公交路线”。对于任意非最高级站点 X，我们定义它的“同级环线”为：X 的上级枢纽管辖的所有下属站点（包括 X 自身）按照列车单向行驶顺序形成的闭环。
 
-**独立集（安全并行集）定义**：一个子集 S 是独立集，当且仅当 S 内任意两个不同路口之间都不存在冲突（边）。
+你的推演目标是：确定以下目标站点的精确同环站点集合（不包含该站点本身）：{target_nodes}
 
-## 可用的查询类型
+你可以通过系统终端进行以下两种类型的查询：
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+1. 线路前进查询 advance：询问从站点 X 乘坐单向环线班车前进 t 站后到达的站点。
+   - 输入：非最高级站点名 X，正整数站数 t
+   - 返回：到达的站点名 Y
+   - 注意：如果 X 是最高级枢纽，此查询无效
 
-1. **子集独立性查询**：询问一个路口子集 S 是否为独立集
-   - 如果 S 是独立集，回答"独立"
-   - 如果 S 不是独立集，回答"非独立"，并给出 S 内字典序最小的冲突相连边对 (x,y)，其中 x < y
+2. 验证查询 submit：提交你所推断的某个目标站点的所有同环站点集合。
+   - 输入：目标站点名 X，同环站点集合 S（不包含 X 自己）
+   - 返回：如果完全正确，返回"正确"；否则返回"不正确；缺失 k 个，且多余 m 个"
 
-2. **边存在性查询**：询问两个路口 i 和 j 之间是否存在冲突（即边）（要求 i < j）
-   - 如果存在冲突（边），回答"存在边"
-   - 如果不存在冲突，回答"无边"
+当你成功验证了所有目标站点的同环集合后，推演胜利。
 
-3. **边计数查询**：询问一个路口子集 S 内部冲突（边）的总数量
-   - 回答 S 内冲突的总数量（一个非负整数）
+每次只能包含一个查询标签。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 前进查询（例如从站点 A 前进 2 站）：
+<query_advance>A,2</query_advance>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 验证查询（例如提交站点 B 的同环站点为 C,D）：
+<query_submit>B:C,D</query_submit>
 
-- 子集独立性查询（例如查询子集 {{1,3,5}}）：
-<query_independence>1,3,5</query_independence>
+注意：
+- 前进查询的格式为：站点名,站数
+- 验证查询的格式为：目标站点名:站点1,站点2,...
+- 站点集合中的站点顺序不重要
+- 如果某个目标站点没有同环站点（单站线路），提交空集合，格式为：站点名:
 
-- 边存在性查询（例如查询 2 和 5 之间）：
-<query_edge>2,5</query_edge>
-
-- 边计数查询（例如查询子集 {{1,2,3,4}}）：
-<query_count>1,2,3,4</query_count>
-
-当你完成所有查询后，需要提交最终答案，判断 {k} 个测试集合是否为独立集。格式如下：
-
-<answer>1:yes,2:no,3:yes</answer>
-
-其中数字表示测试集合的编号（从 1 开始），yes 表示独立集，no 表示非独立集。{k} 个判断用逗号分隔。
-
-**注意**：
-- 请尽可能少地使用查询次数来推断规律
-- 以下是你需要判断的 {k} 个测试集合：
-{test_sets_desc}
-- 所有查询的回答保证一致性
-- 答案格式必须严格按照要求，否则视为失败
+当所有目标站点都验证正确后，使用以下格式提交最终推演结果：
+<answer>complete</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Urban Traffic Intersection Conflict Analysis System".
+Welcome to the "Hub Route Dispatch Inference System". This system is designed to help transportation planners clarify complex public transit topologies.
 
-The system manages traffic intersections numbered [N] = {{1, 2, ..., {n}}}. There exists an unknown, fixed traffic flow conflict relation R that defines an undirected graph G:
-- The vertices of the graph are all intersection numbers in set [N]
-- For any two different intersections i and j (i < j), if R(i,j) = 1, it means their traffic flows have a severe conflict (i.e., there is an edge between them)
-- Relation R is symmetric and has no self-loops (an intersection cannot conflict with itself)
+The system has imported a multi-level transit network comprising {n} stations (represented as a rooted tree structure). You know the names of all stations: {node_names}. However, the administrative jurisdictions (parent-child relationships) and peer loop routing (sibling relationships) are hidden from you.
 
-Your goal is to infer the pattern of this conflict relation R through a limited number of queries, and finally correctly determine whether {k} test sets are conflict-free "safe parallel sets" (i.e., independent sets).
+For each administrative hub (a node with subordinate stations) in the network, all its direct subordinate stations are organized into a fixed but unknown "one-way loop bus route". For any non-supreme station X, we define its "peer loop" as: all subordinate stations under X's administrative hub (including X itself) forming a closed loop in the one-way driving direction of the transit.
 
-**Independent Set (Safe Parallel Set) Definition**: A subset S is an independent set if and only if there is no conflict (edge) between any two different elements in S.
+Your inference goal is: determine the exact set of peer loop stations (excluding the station itself) for the following target stations: {target_nodes}
 
-## Available Query Types
+You can perform two types of queries via the system terminal:
 
-You can repeatedly make the following three types of queries (one query at a time):
+1. Advance query: ask which station is reached by riding the one-way loop bus forward for t stops from station X.
+   - Input: non-supreme station name X, positive integer stops t
+   - Output: the reached station name Y
+   - Note: if X is the supreme hub, this query is invalid
 
-1. **Subset Independence Query**: Ask whether a subset S is an independent set
-   - If S is independent, answer "Independent"
-   - If S is not independent, answer "Not Independent" and provide the lexicographically smallest connected conflict pair (x,y) in S, where x < y
+2. Submit query: submit what you deduce to be the peer loop station set of a target station.
+   - Input: target station name X, peer station set S (excluding X itself)
+   - Output: if completely correct, return "Correct"; otherwise return "Incorrect; missing k, extra m"
 
-2. **Edge Existence Query**: Ask whether there is a conflict (edge) between two intersections i and j (require i < j)
-   - If a conflict exists, answer "Edge exists"
-   - If no conflict exists, answer "No edge"
+When you successfully verify the peer sets for all target stations, you win the inference.
 
-3. **Edge Count Query**: Ask for the total number of conflicts (edges) within a subset S
-   - Answer the number of conflicts in S (a non-negative integer)
+Each turn can contain only one query tag.
 
-## Query and Answer Format (must strictly follow)
+- Advance query (e.g., advance 2 stops from station A):
+<query_advance>A,2</query_advance>
 
-Each query must contain only one tag. Use the following XML format:
+- Submit query (e.g., submit peer stations C,D for station B):
+<query_submit>B:C,D</query_submit>
 
-- Subset Independence Query (e.g., query subset {{1,3,5}}):
-<query_independence>1,3,5</query_independence>
+Notes:
+- Advance query format: station_name,stops
+- Submit query format: target_station:station1,station2,...
+- Order of stations in the set doesn't matter
+- If a target station has no peer stations (a single-station loop), submit an empty set: station_name:
 
-- Edge Existence Query (e.g., query between 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Edge Count Query (e.g., query subset {{1,2,3,4}}):
-<query_count>1,2,3,4</query_count>
-
-After completing all queries, you need to submit the final answer to determine whether the {k} test sets are independent sets. Format as follows:
-
-<answer>1:yes,2:no,3:yes</answer>
-
-Where the number indicates the test set number (starting from 1), yes means independent set, no means not independent set. Separate the {k} judgments with commas.
-
-**Note**:
-- Use as few queries as possible to infer the pattern
-- Here are the {k} test sets you need to judge:
-{test_sets_desc}
-- All query answers are guaranteed to be consistent
-- Answer format must strictly follow the requirements, otherwise it is considered a failure
+When all target stations are correctly verified, submit the final result:
+<answer>complete</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“临床药物配伍禁忌分析系统”。
+欢迎使用“医疗流转路径推演”系统。本系统旨在辅助医院管理者优化科室间的病历流转效率。
 
-系统收录了 [N] = {{1, 2, ..., {n}}} 号候选药物。存在一个未知的、固定的不良相互作用关系 R，它定义了一个无向图 G：
-- 图的顶点即为集合 [N] 中的所有药物编号
-- 对于任意两种不同的药物 i 和 j（i < j），如果 R(i,j) = 1，表示这两种药物联用会产生不良反应（即存在边）
-- 相互作用是对称的且没有自环（即单一药物不存在自我配伍禁忌）
+系统导入了一个包含 {n} 个科室/部门的层级医疗体系（表现为有根树结构）。你已知所有的科室名称：{node_names}。但是，部门间的上下级关系（父子关系）和同级流转路径（兄弟关系）已被隐去。
 
-你的目标是通过有限次数的查询，推断出这种药物相互作用 R 的规律，并最终正确判断 {k} 个处方测试集合是否为安全的“联合用药集”（即独立集）。
+对于体系中每个上级管理部门（拥有下属科室的节点），其所有直属下级科室被纳入一个固定但未知的“单向病历流转环线”。对于任意非最高级科室 X，我们定义它的“同环流转组”为：X 的上级部门管辖的所有下属科室（包括 X 自身）按照病历单向传阅顺序形成的闭环。
 
-**独立集（联合用药集）定义**：一个子集 S 是独立集，当且仅当 S 内任意两种不同药物之间都不存在不良反应（边）。
+你的推演目标是：确定以下目标科室的精确同环科室集合（不包含该科室本身）：{target_nodes}
 
-## 可用的查询类型
+你可以通过系统终端进行以下两种类型的查询：
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+1. 流转前进查询 advance：询问一份病历从科室 X 沿单向流转环线向下传递 t 次后到达的科室。
+   - 输入：非最高级科室名 X，正整数传递次数 t
+   - 返回：到达的科室名 Y
+   - 注意：如果 X 是最高管理部门，此查询无效
 
-1. **子集独立性查询**：询问一个药物子集 S 是否为独立集
-   - 如果 S 是独立集，回答"独立"
-   - 如果 S 不是独立集，回答"非独立"，并给出 S 内字典序最小的不良反应边对 (x,y)，其中 x < y
+2. 验证查询 submit：提交你所推断的某个目标科室的所有同环科室集合。
+   - 输入：目标科室名 X，同环科室集合 S（不包含 X 自己）
+   - 返回：如果完全正确，返回"正确"；否则返回"不正确；缺失 k 个，且多余 m 个"
 
-2. **边存在性查询**：询问两种药物 i 和 j 之间是否存在相互作用（即边）（要求 i < j）
-   - 如果存在作用（边），回答"存在边"
-   - 如果不存在作用，回答"无边"
+当你成功验证了所有目标科室的同环集合后，推演胜利。
 
-3. **边计数查询**：询问一个药物子集 S 内部不良反应（边）的总数量
-   - 回答 S 内相互作用的总数量（一个非负整数）
+每次只能包含一个查询标签。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 前进查询（例如从科室 A 流转 2 次）：
+<query_advance>A,2</query_advance>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 验证查询（例如提交科室 B 的同环科室为 C,D）：
+<query_submit>B:C,D</query_submit>
 
-- 子集独立性查询（例如查询子集 {{1,3,5}}）：
-<query_independence>1,3,5</query_independence>
+注意：
+- 前进查询的格式为：科室名,传递次数
+- 验证查询的格式为：目标科室名:科室1,科室2,...
+- 科室集合中的科室顺序不重要
+- 如果某个目标科室没有同环科室（独立流转节点），提交空集合，格式为：科室名:
 
-- 边存在性查询（例如查询 2 和 5 之间）：
-<query_edge>2,5</query_edge>
-
-- 边计数查询（例如查询子集 {{1,2,3,4}}）：
-<query_count>1,2,3,4</query_count>
-
-当你完成所有查询后，需要提交最终答案，判断 {k} 个测试集合是否为独立集。格式如下：
-
-<answer>1:yes,2:no,3:yes</answer>
-
-其中数字表示测试集合的编号（从 1 开始），yes 表示独立集，no 表示非独立集。{k} 个判断用逗号分隔。
-
-**注意**：
-- 请尽可能少地使用查询次数来推断规律
-- 以下是你需要判断的 {k} 个测试集合：
-{test_sets_desc}
-- 所有查询的回答保证一致性
-- 答案格式必须严格按照要求，否则视为失败
+当所有目标科室都验证正确后，使用以下格式提交最终推演结果：
+<answer>complete</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Clinical Drug Interaction Analysis System".
+Welcome to the "Medical Record Circulation Inference System". This system is intended to assist hospital administrators in optimizing the efficiency of medical record circulation between departments.
 
-The system includes candidate drugs numbered [N] = {{1, 2, ..., {n}}}. There exists an unknown, fixed adverse drug interaction relation R that defines an undirected graph G:
-- The vertices of the graph are all drug numbers in set [N]
-- For any two different drugs i and j (i < j), if R(i,j) = 1, it means co-administering them causes an adverse reaction (i.e., there is an edge between them)
-- Relation R is symmetric and has no self-loops (a drug cannot interact with itself)
+The system has imported a hierarchical healthcare structure comprising {n} departments (represented as a rooted tree structure). You know the names of all departments: {node_names}. However, the supervisory relationships (parent-child relationships) and peer circulation paths (sibling relationships) are hidden from you.
 
-Your goal is to infer the pattern of this drug interaction relation R through a limited number of queries, and finally correctly determine whether {k} test sets are safe "joint medication sets" (i.e., independent sets).
+For each supervisory department (a node with subordinate departments) in the structure, all its direct subordinate departments are organized into a fixed but unknown "one-way record circulation loop". For any non-supreme department X, we define its "peer circulation group" as: all subordinate departments under X's supervisor (including X itself) forming a closed loop in the one-way record routing sequence.
 
-**Independent Set (Joint Medication Set) Definition**: A subset S is an independent set if and only if there is no adverse interaction (edge) between any two different elements in S.
+Your inference goal is: determine the exact set of peer circulation departments (excluding the department itself) for the following target departments: {target_nodes}
 
-## Available Query Types
+You can perform two types of queries via the system terminal:
 
-You can repeatedly make the following three types of queries (one query at a time):
+1. Advance query: ask which department a medical record reaches by circulating forward t times from department X along the one-way loop.
+   - Input: non-supreme department name X, positive integer transfers t
+   - Output: the reached department name Y
+   - Note: if X is the supreme department, this query is invalid
 
-1. **Subset Independence Query**: Ask whether a subset S is an independent set
-   - If S is independent, answer "Independent"
-   - If S is not independent, answer "Not Independent" and provide the lexicographically smallest interacting pair (x,y) in S, where x < y
+2. Submit query: submit what you deduce to be the peer circulation department set of a target department.
+   - Input: target department name X, peer department set S (excluding X itself)
+   - Output: if completely correct, return "Correct"; otherwise return "Incorrect; missing k, extra m"
 
-2. **Edge Existence Query**: Ask whether there is an interaction (edge) between two drugs i and j (require i < j)
-   - If an interaction exists, answer "Edge exists"
-   - If no interaction exists, answer "No edge"
+When you successfully verify the peer sets for all target departments, you win the inference.
 
-3. **Edge Count Query**: Ask for the total number of interactions (edges) within a subset S
-   - Answer the number of interactions in S (a non-negative integer)
+Each turn can contain only one query tag.
 
-## Query and Answer Format (must strictly follow)
+- Advance query (e.g., circulate 2 times from department A):
+<query_advance>A,2</query_advance>
 
-Each query must contain only one tag. Use the following XML format:
+- Submit query (e.g., submit peer departments C,D for department B):
+<query_submit>B:C,D</query_submit>
 
-- Subset Independence Query (e.g., query subset {{1,3,5}}):
-<query_independence>1,3,5</query_independence>
+Notes:
+- Advance query format: department_name,transfers
+- Submit query format: target_department:department1,department2,...
+- Order of departments in the set doesn't matter
+- If a target department has no peer departments (an independent node), submit an empty set: department_name:
 
-- Edge Existence Query (e.g., query between 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Edge Count Query (e.g., query subset {{1,2,3,4}}):
-<query_count>1,2,3,4</query_count>
-
-After completing all queries, you need to submit the final answer to determine whether the {k} test sets are independent sets. Format as follows:
-
-<answer>1:yes,2:no,3:yes</answer>
-
-Where the number indicates the test set number (starting from 1), yes means independent set, no means not independent set. Separate the {k} judgments with commas.
-
-**Note**:
-- Use as few queries as possible to infer the pattern
-- Here are the {k} test sets you need to judge:
-{test_sets_desc}
-- All query answers are guaranteed to be consistent
-- Answer format must strictly follow the requirements, otherwise it is considered a failure
+When all target departments are correctly verified, submit the final result:
+<answer>complete</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用“高校排课冲突智能检测系统”。
+欢迎使用“知识图谱复习闭环推演”系统。本系统旨在协助教育专家分析课程大纲中知识模块的逻辑关联。
 
-系统包含了 [N] = {{1, 2, ..., {n}}} 号核心课程。存在一个未知的、固定的排课时间冲突关系 R，它定义了一个无向图 G：
-- 图的顶点即为集合 [N] 中的所有课程编号
-- 对于任意两门不同的课程 i 和 j（i < j），如果 R(i,j) = 1，表示这两门课程上课时间冲突（即存在边）
-- 冲突关系是对称的且没有自环（即单门课程不存在自我冲突）
+系统导入了一个包含 {n} 个知识模块的层级大纲（表现为有根树结构）。你已知所有的模块名称：{node_names}。但是，模块间的所属关系（父子关系）和同级复习顺序（兄弟关系）已被隐去。
 
-你的目标是通过有限次数的查询，推断出这种课程冲突关系 R 的规律，并最终正确判断 {k} 个选课测试集合是否为无冲突的“可行选课集”（即独立集）。
+对于大纲中每个包含子模块的综合单元，其所有直属子模块被安排在一个固定但未知的“单向螺旋复习闭环”中。对于任意非根节点模块 X，我们定义它的“同环知识组”为：X 所属综合单元下的所有直属子模块（包括 X 自身）按照教学复习推进顺序形成的闭环。
 
-**独立集（可行选课集）定义**：一个子集 S 是独立集，当且仅当 S 内任意两门不同课程之间都不存在时间冲突（边）。
+你的推演目标是：确定以下目标模块的精确同环知识集合（不包含该模块本身）：{target_nodes}
 
-## 可用的查询类型
+你可以通过系统终端进行以下两种类型的查询：
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+1. 推进查询 advance：询问从模块 X 沿螺旋复习闭环推进 t 个学习阶段后到达的模块。
+   - 输入：非根模块名 X，正整数阶段数 t
+   - 返回：到达的模块名 Y
+   - 注意：如果 X 是总课程根节点，此查询无效
 
-1. **子集独立性查询**：询问一个选课子集 S 是否为独立集
-   - 如果 S 是独立集，回答"独立"
-   - 如果 S 不是独立集，回答"非独立"，并给出 S 内字典序最小的冲突边对 (x,y)，其中 x < y
+2. 验证查询 submit：提交你所推断的某个目标模块的所有同环知识集合。
+   - 输入：目标模块名 X，同环知识集合 S（不包含 X 自己）
+   - 返回：如果完全正确，返回"正确"；否则返回"不正确；缺失 k 个，且多余 m 个"
 
-2. **边存在性查询**：询问两门课程 i 和 j 之间是否存在冲突（即边）（要求 i < j）
-   - 如果存在冲突（边），回答"存在边"
-   - 如果不存在冲突，回答"无边"
+当你成功验证了所有目标模块的同环集合后，推演胜利。
 
-3. **边计数查询**：询问一个选课子集 S 内部时间冲突（边）的总数量
-   - 回答 S 内冲突的总数量（一个非负整数）
+每次只能包含一个查询标签。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 推进查询（例如从模块 A 推进 2 个阶段）：
+<query_advance>A,2</query_advance>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 验证查询（例如提交模块 B 的同环模块为 C,D）：
+<query_submit>B:C,D</query_submit>
 
-- 子集独立性查询（例如查询子集 {{1,3,5}}）：
-<query_independence>1,3,5</query_independence>
+注意：
+- 推进查询的格式为：模块名,阶段数
+- 验证查询的格式为：目标模块名:模块1,模块2,...
+- 模块集合中的模块顺序不重要
+- 如果某个目标模块没有同环模块，提交空集合，格式为：模块名:
 
-- 边存在性查询（例如查询 2 和 5 之间）：
-<query_edge>2,5</query_edge>
-
-- 边计数查询（例如查询子集 {{1,2,3,4}}）：
-<query_count>1,2,3,4</query_count>
-
-当你完成所有查询后，需要提交最终答案，判断 {k} 个测试集合是否为独立集。格式如下：
-
-<answer>1:yes,2:no,3:yes</answer>
-
-其中数字表示测试集合的编号（从 1 开始），yes 表示独立集，no 表示非独立集。{k} 个判断用逗号分隔。
-
-**注意**：
-- 请尽可能少地使用查询次数来推断规律
-- 以下是你需要判断的 {k} 个测试集合：
-{test_sets_desc}
-- 所有查询的回答保证一致性
-- 答案格式必须严格按照要求，否则视为失败
+当所有目标模块都验证正确后，使用以下格式提交最终推演结果：
+<answer>complete</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "University Course Scheduling Conflict Detection System".
+Welcome to the "Knowledge Graph Review Loop Inference System". This system is designed to assist educational experts in analyzing the logical associations of knowledge modules within a syllabus.
 
-The system contains core courses numbered [N] = {{1, 2, ..., {n}}}. There exists an unknown, fixed scheduling conflict relation R that defines an undirected graph G:
-- The vertices of the graph are all course numbers in set [N]
-- For any two different courses i and j (i < j), if R(i,j) = 1, it means their class times conflict (i.e., there is an edge between them)
-- Relation R is symmetric and has no self-loops (a course cannot conflict with itself)
+The system has imported a hierarchical syllabus comprising {n} knowledge modules (represented as a rooted tree structure). You know the names of all modules: {node_names}. However, the containment relationships (parent-child relationships) and peer review sequences (sibling relationships) are hidden from you.
 
-Your goal is to infer the pattern of this scheduling conflict relation R through a limited number of queries, and finally correctly determine whether {k} test sets are conflict-free "feasible selection sets" (i.e., independent sets).
+For each comprehensive unit (a node with sub-modules) in the syllabus, all its direct sub-modules are arranged in a fixed but unknown "one-way spiral review loop". For any non-root module X, we define its "peer knowledge group" as: all direct sub-modules under X's comprehensive unit (including X itself) forming a closed loop in the educational review progression sequence.
 
-**Independent Set (Feasible Selection Set) Definition**: A subset S is an independent set if and only if there is no time conflict (edge) between any two different elements in S.
+Your inference goal is: determine the exact set of peer knowledge modules (excluding the module itself) for the following target modules: {target_nodes}
 
-## Available Query Types
+You can perform two types of queries via the system terminal:
 
-You can repeatedly make the following three types of queries (one query at a time):
+1. Advance query: ask which module is reached by advancing t learning stages from module X along the spiral review loop.
+   - Input: non-root module name X, positive integer stages t
+   - Output: the reached module name Y
+   - Note: if X is the root of the entire course, this query is invalid
 
-1. **Subset Independence Query**: Ask whether a subset S is an independent set
-   - If S is independent, answer "Independent"
-   - If S is not independent, answer "Not Independent" and provide the lexicographically smallest conflicting pair (x,y) in S, where x < y
+2. Submit query: submit what you deduce to be the peer knowledge module set of a target module.
+   - Input: target module name X, peer knowledge set S (excluding X itself)
+   - Output: if completely correct, return "Correct"; otherwise return "Incorrect; missing k, extra m"
 
-2. **Edge Existence Query**: Ask whether there is a conflict (edge) between two courses i and j (require i < j)
-   - If a conflict exists, answer "Edge exists"
-   - If no conflict exists, answer "No edge"
+When you successfully verify the peer sets for all target modules, you win the inference.
 
-3. **Edge Count Query**: Ask for the total number of conflicts (edges) within a subset S
-   - Answer the number of conflicts in S (a non-negative integer)
+Each turn can contain only one query tag.
 
-## Query and Answer Format (must strictly follow)
+- Advance query (e.g., advance 2 stages from module A):
+<query_advance>A,2</query_advance>
 
-Each query must contain only one tag. Use the following XML format:
+- Submit query (e.g., submit peer modules C,D for module B):
+<query_submit>B:C,D</query_submit>
 
-- Subset Independence Query (e.g., query subset {{1,3,5}}):
-<query_independence>1,3,5</query_independence>
+Notes:
+- Advance query format: module_name,stages
+- Submit query format: target_module:module1,module2,...
+- Order of modules in the set doesn't matter
+- If a target module has no peer modules, submit an empty set: module_name:
 
-- Edge Existence Query (e.g., query between 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Edge Count Query (e.g., query subset {{1,2,3,4}}):
-<query_count>1,2,3,4</query_count>
-
-After completing all queries, you need to submit the final answer to determine whether the {k} test sets are independent sets. Format as follows:
-
-<answer>1:yes,2:no,3:yes</answer>
-
-Where the number indicates the test set number (starting from 1), yes means independent set, no means not independent set. Separate the {k} judgments with commas.
-
-**Note**:
-- Use as few queries as possible to infer the pattern
-- Here are the {k} test sets you need to judge:
-{test_sets_desc}
-- All query answers are guaranteed to be consistent
-- Answer format must strictly follow the requirements, otherwise it is considered a failure
+When all target modules are correctly verified, submit the final result:
+<answer>complete</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎使用“工业生产线工序干涉排查系统”。
+欢迎使用“工厂传送带拓扑推演”系统。本系统旨在帮助工业工程师逆向工程复杂的流水线布局。
 
-系统中定义了 [N] = {{1, 2, ..., {n}}} 号生产工序。存在一个未知的、固定的工序资源干涉关系 R，它定义了一个无向图 G：
-- 图的顶点即为集合 [N] 中的所有工序编号
-- 对于任意两个不同的工序 i 和 j（i < j），如果 R(i,j) = 1，表示这两个工序同时进行会发生资源干涉（即存在边）
-- 干涉关系是对称的且没有自环（即单个工序自身不会产生干涉）
+系统导入了一个包含 {n} 个生产单元的工厂架构（表现为有根树结构）。你已知所有的单元名称：{node_names}。但是，单元间的车间管辖关系（父子关系）和同传送带协作关系（兄弟关系）已被隐去。
 
-你的目标是通过有限次数的查询，推断出这种工序干涉关系 R 的规律，并最终正确判断 {k} 个工序测试集合是否为可同时运行的“并行加工集”（即独立集）。
+对于架构中每个管辖车间（拥有下属工位的节点），其所有直属下属工位被连接在一条固定但未知的“单向环形传送带”上。对于任意非总厂级的工位 X，我们定义它的“同环工位组”为：X 所在车间管辖的所有下属工位（包括 X 自身）按照物料单向传送顺序形成的闭环。
 
-**独立集（并行加工集）定义**：一个子集 S 是独立集，当且仅当 S 内任意两个不同工序之间都不存在资源干涉（边）。
+你的推演目标是：确定以下目标工位的精确同环工位集合（不包含该工位本身）：{target_nodes}
 
-## 可用的查询类型
+你可以通过系统终端进行以下两种类型的查询：
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+1. 传送前进查询 advance：询问物料从工位 X 沿环形传送带向前传送 t 个工位后到达的生产单元。
+   - 输入：非总厂级工位名 X，正整数传送步数 t
+   - 返回：到达的工位名 Y
+   - 注意：如果 X 是总厂节点，此查询无效
 
-1. **子集独立性查询**：询问一个工序子集 S 是否为独立集
-   - 如果 S 是独立集，回答"独立"
-   - 如果 S 不是独立集，回答"非独立"，并给出 S 内字典序最小的干涉边对 (x,y)，其中 x < y
+2. 验证查询 submit：提交你所推断的某个目标工位的所有同环工位集合。
+   - 输入：目标工位名 X，同环工位集合 S（不包含 X 自己）
+   - 返回：如果完全正确，返回"正确"；否则返回"不正确；缺失 k 个，且多余 m 个"
 
-2. **边存在性查询**：询问两个工序 i 和 j 之间是否存在干涉（即边）（要求 i < j）
-   - 如果存在干涉（边），回答"存在边"
-   - 如果不存在干涉，回答"无边"
+当你成功验证了所有目标工位的同环集合后，推演胜利。
 
-3. **边计数查询**：询问一个工序子集 S 内部资源干涉（边）的总数量
-   - 回答 S 内干涉的总数量（一个非负整数）
+每次只能包含一个查询标签。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 前进查询（例如从工位 A 传送 2 步）：
+<query_advance>A,2</query_advance>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 验证查询（例如提交工位 B 的同环工位为 C,D）：
+<query_submit>B:C,D</query_submit>
 
-- 子集独立性查询（例如查询子集 {{1,3,5}}）：
-<query_independence>1,3,5</query_independence>
+注意：
+- 前进查询的格式为：工位名,步数
+- 验证查询的格式为：目标工位名:工位1,工位2,...
+- 工位集合中的工位顺序不重要
+- 如果某个目标工位没有同环工位（独立作业单元），提交空集合，格式为：工位名:
 
-- 边存在性查询（例如查询 2 和 5 之间）：
-<query_edge>2,5</query_edge>
-
-- 边计数查询（例如查询子集 {{1,2,3,4}}）：
-<query_count>1,2,3,4</query_count>
-
-当你完成所有查询后，需要提交最终答案，判断 {k} 个测试集合是否为独立集。格式如下：
-
-<answer>1:yes,2:no,3:yes</answer>
-
-其中数字表示测试集合的编号（从 1 开始），yes 表示独立集，no 表示非独立集。{k} 个判断用逗号分隔。
-
-**注意**：
-- 请尽可能少地使用查询次数来推断规律
-- 以下是你需要判断的 {k} 个测试集合：
-{test_sets_desc}
-- 所有查询的回答保证一致性
-- 答案格式必须严格按照要求，否则视为失败
+当所有目标工位都验证正确后，使用以下格式提交最终推演结果：
+<answer>complete</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Welcome to the "Industrial Production Line Process Interference Checking System".
+Welcome to the "Factory Conveyor Layout Inference System". This system is designed to help industrial engineers reverse-engineer complex assembly line layouts.
 
-The system defines production processes numbered [N] = {{1, 2, ..., {n}}}. There exists an unknown, fixed process resource interference relation R that defines an undirected graph G:
-- The vertices of the graph are all process numbers in set [N]
-- For any two different processes i and j (i < j), if R(i,j) = 1, it means running them simultaneously causes resource interference (i.e., there is an edge between them)
-- Relation R is symmetric and has no self-loops (a process cannot interfere with itself)
+The system has imported a factory architecture comprising {n} production units (represented as a rooted tree structure). You know the names of all units: {node_names}. However, the workshop jurisdiction relationships (parent-child relationships) and peer conveyor collaboration relationships (sibling relationships) are hidden from you.
 
-Your goal is to infer the pattern of this interference relation R through a limited number of queries, and finally correctly determine whether {k} test sets are parallel processing sets (i.e., independent sets).
+For each workshop (a node with subordinate workstations) in the architecture, all its direct subordinate workstations are connected on a fixed but unknown "one-way circular conveyor belt". For any non-main-plant workstation X, we define its "peer conveyor group" as: all subordinate workstations under X's workshop (including X itself) forming a closed loop in the one-way material transmission sequence.
 
-**Independent Set (Parallel Processing Set) Definition**: A subset S is an independent set if and only if there is no resource interference (edge) between any two different elements in S.
+Your inference goal is: determine the exact set of peer conveyor workstations (excluding the workstation itself) for the following target workstations: {target_nodes}
 
-## Available Query Types
+You can perform two types of queries via the system terminal:
 
-You can repeatedly make the following three types of queries (one query at a time):
+1. Advance query: ask which production unit is reached when materials are transmitted forward for t positions from workstation X along the circular conveyor belt.
+   - Input: non-main-plant workstation name X, positive integer transmission steps t
+   - Output: the reached workstation name Y
+   - Note: if X is the main plant node, this query is invalid
 
-1. **Subset Independence Query**: Ask whether a subset S is an independent set
-   - If S is independent, answer "Independent"
-   - If S is not independent, answer "Not Independent" and provide the lexicographically smallest interfering pair (x,y) in S, where x < y
+2. Submit query: submit what you deduce to be the peer conveyor workstation set of a target workstation.
+   - Input: target workstation name X, peer workstation set S (excluding X itself)
+   - Output: if completely correct, return "Correct"; otherwise return "Incorrect; missing k, extra m"
 
-2. **Edge Existence Query**: Ask whether there is an interference (edge) between two processes i and j (require i < j)
-   - If an interference exists, answer "Edge exists"
-   - If no interference exists, answer "No edge"
+When you successfully verify the peer sets for all target workstations, you win the inference.
 
-3. **Edge Count Query**: Ask for the total number of interferences (edges) within a subset S
-   - Answer the number of interferences in S (a non-negative integer)
+Each turn can contain only one query tag.
 
-## Query and Answer Format (must strictly follow)
+- Advance query (e.g., transmit 2 steps from workstation A):
+<query_advance>A,2</query_advance>
 
-Each query must contain only one tag. Use the following XML format:
+- Submit query (e.g., submit peer workstations C,D for workstation B):
+<query_submit>B:C,D</query_submit>
 
-- Subset Independence Query (e.g., query subset {{1,3,5}}):
-<query_independence>1,3,5</query_independence>
+Notes:
+- Advance query format: workstation_name,steps
+- Submit query format: target_workstation:workstation1,workstation2,...
+- Order of workstations in the set doesn't matter
+- If a target workstation has no peer workstations (an independent processing unit), submit an empty set: workstation_name:
 
-- Edge Existence Query (e.g., query between 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Edge Count Query (e.g., query subset {{1,2,3,4}}):
-<query_count>1,2,3,4</query_count>
-
-After completing all queries, you need to submit the final answer to determine whether the {k} test sets are independent sets. Format as follows:
-
-<answer>1:yes,2:no,3:yes</answer>
-
-Where the number indicates the test set number (starting from 1), yes means independent set, no means not independent set. Separate the {k} judgments with commas.
-
-**Note**:
-- Use as few queries as possible to infer the pattern
-- Here are the {k} test sets you need to judge:
-{test_sets_desc}
-- All query answers are guaranteed to be consistent
-- Answer format must strictly follow the requirements, otherwise it is considered a failure
+When all target workstations are correctly verified, submit the final result:
+<answer>complete</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用“案件证据链逻辑排异系统”。
+欢迎使用“合规审查传阅闭环推演”系统。本系统旨在帮助法务合规人员梳理复杂的内部审批流转网络。
 
-系统录入了 [N] = {{1, 2, ..., {n}}} 号关键证据。存在一个未知的、固定的证据矛盾关系 R，它定义了一个无向图 G：
-- 图的顶点即为集合 [N] 中的所有证据编号
-- 对于任意两份不同的证据 i 和 j（i < j），如果 R(i,j) = 1，表示这两份证据在逻辑上相互矛盾（即存在边）
-- 矛盾关系是对称的且没有自环（即单份证据不存在自我矛盾）
+系统导入了一个包含 {n} 个审批节点的合规审查体系（表现为有根树结构）。你已知所有的节点名称：{node_names}。但是，节点间的层级隶属关系（父子关系）和同级传阅流转顺序（兄弟关系）已被隐去。
 
-你的目标是通过有限次数的查询，推断出这种证据矛盾关系 R 的规律，并最终正确判断 {k} 个证据测试集合是否为逻辑自洽的“有效证据链”（即独立集）。
+对于体系中每个审查委员会（拥有下属审查节点的管理层），其所有直属下属节点被编制在一个固定但未知的“单向案卷传阅闭环”中。对于任意非最高层节点 X，我们定义它的“同传阅环节点组”为：X 所在委员会管辖的所有下属节点（包括 X 自身）按照案卷单向流转顺序形成的闭环。
 
-**独立集（有效证据链）定义**：一个子集 S 是独立集，当且仅当 S 内任意两份不同证据之间都不存在逻辑矛盾（边）。
+你的推演目标是：确定以下目标节点的精确同环节点集合（不包含该节点本身）：{target_nodes}
 
-## 可用的查询类型
+你可以通过系统终端进行以下两种类型的查询：
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+1. 流转前进查询 advance：询问一份案卷从节点 X 沿单向传阅环向下流转 t 步后到达的审查节点。
+   - 输入：非最高层节点名 X，正整数流转步数 t
+   - 返回：到达的节点名 Y
+   - 注意：如果 X 是最高层管理节点，此查询无效
 
-1. **子集独立性查询**：询问一个证据子集 S 是否为独立集
-   - 如果 S 是独立集，回答"独立"
-   - 如果 S 不是独立集，回答"非独立"，并给出 S 内字典序最小的逻辑矛盾边对 (x,y)，其中 x < y
+2. 验证查询 submit：提交你所推断的某个目标节点的所有同环节点集合。
+   - 输入：目标节点名 X，同环节点集合 S（不包含 X 自己）
+   - 返回：如果完全正确，返回"正确"；否则返回"不正确；缺失 k 个，且多余 m 个"
 
-2. **边存在性查询**：询问两份证据 i 和 j 之间是否存在矛盾（即边）（要求 i < j）
-   - 如果存在矛盾（边），回答"存在边"
-   - 如果不存在矛盾，回答"无边"
+当你成功验证了所有目标节点的同环集合后，推演胜利。
 
-3. **边计数查询**：询问一个证据子集 S 内部逻辑矛盾（边）的总数量
-   - 回答 S 内矛盾的总数量（一个非负整数）
+每次只能包含一个查询标签。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 前进查询（例如从节点 A 流转 2 步）：
+<query_advance>A,2</query_advance>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 验证查询（例如提交节点 B 的同环节点为 C,D）：
+<query_submit>B:C,D</query_submit>
 
-- 子集独立性查询（例如查询子集 {{1,3,5}}）：
-<query_independence>1,3,5</query_independence>
+注意：
+- 前进查询的格式为：节点名,步数
+- 验证查询的格式为：目标节点名:节点1,节点2,...
+- 节点集合中的节点顺序不重要
+- 如果某个目标节点没有同环节点（单人审批制），提交空集合，格式为：节点名:
 
-- 边存在性查询（例如查询 2 和 5 之间）：
-<query_edge>2,5</query_edge>
-
-- 边计数查询（例如查询子集 {{1,2,3,4}}）：
-<query_count>1,2,3,4</query_count>
-
-当你完成所有查询后，需要提交最终答案，判断 {k} 个测试集合是否为独立集。格式如下：
-
-<answer>1:yes,2:no,3:yes</answer>
-
-其中数字表示测试集合的编号（从 1 开始），yes 表示独立集，no 表示非独立集。{k} 个判断用逗号分隔。
-
-**注意**：
-- 请尽可能少地使用查询次数来推断规律
-- 以下是你需要判断的 {k} 个测试集合：
-{test_sets_desc}
-- 所有查询的回答保证一致性
-- 答案格式必须严格按照要求，否则视为失败
+当所有目标节点都验证正确后，使用以下格式提交最终推演结果：
+<answer>complete</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the "Case Evidence Logic Contradiction Analysis System".
+[Legal Scenario]
+Welcome to the "Compliance Review Circulation Inference System". This system is designed to help legal and compliance personnel unravel complex internal approval networks.
 
-The system records key evidence items numbered [N] = {{1, 2, ..., {n}}}. There exists an unknown, fixed logical contradiction relation R that defines an undirected graph G:
-- The vertices of the graph are all evidence numbers in set [N]
-- For any two different evidence items i and j (i < j), if R(i,j) = 1, it means they are logically contradictory (i.e., there is an edge between them)
-- Relation R is symmetric and has no self-loops (an evidence item cannot contradict itself)
+The system has imported a compliance review hierarchy comprising {n} approval nodes (represented as a rooted tree structure). You know the names of all nodes: {node_names}. However, the hierarchical subordination relationships (parent-child relationships) and peer circulation routing sequences (sibling relationships) are hidden from you.
 
-Your goal is to infer the pattern of this contradiction relation R through a limited number of queries, and finally correctly determine whether {k} test sets are logically consistent "valid evidence chains" (i.e., independent sets).
+For each review committee (a management level with subordinate review nodes) in the hierarchy, all its direct subordinate nodes are organized into a fixed but unknown "one-way dossier circulation loop". For any non-supreme node X, we define its "peer circulation group" as: all subordinate nodes under X's committee (including X itself) forming a closed loop in the one-way dossier routing sequence.
 
-**Independent Set (Valid Evidence Chain) Definition**: A subset S is an independent set if and only if there is no logical contradiction (edge) between any two different elements in S.
+Your inference goal is: determine the exact set of peer circulation nodes (excluding the node itself) for the following target nodes: {target_nodes}
 
-## Available Query Types
+You can perform two types of queries via the system terminal:
 
-You can repeatedly make the following three types of queries (one query at a time):
+1. Advance query: ask which review node a dossier reaches when circulating forward for t steps from node X along the one-way circulation loop.
+   - Input: non-supreme node name X, positive integer circulation steps t
+   - Output: the reached node name Y
+   - Note: if X is the supreme management node, this query is invalid
 
-1. **Subset Independence Query**: Ask whether a subset S is an independent set
-   - If S is independent, answer "Independent"
-   - If S is not independent, answer "Not Independent" and provide the lexicographically smallest contradictory pair (x,y) in S, where x < y
+2. Submit query: submit what you deduce to be the peer circulation node set of a target node.
+   - Input: target node name X, peer node set S (excluding X itself)
+   - Output: if completely correct, return "Correct"; otherwise return "Incorrect; missing k, extra m"
 
-2. **Edge Existence Query**: Ask whether there is a contradiction (edge) between two evidence items i and j (require i < j)
-   - If a contradiction exists, answer "Edge exists"
-   - If no contradiction exists, answer "No edge"
+When you successfully verify the peer sets for all target nodes, you win the inference.
 
-3. **Edge Count Query**: Ask for the total number of contradictions (edges) within a subset S
-   - Answer the number of contradictions in S (a non-negative integer)
+Each turn can contain only one query tag.
 
-## Query and Answer Format (must strictly follow)
+- Advance query (e.g., circulate 2 steps from node A):
+<query_advance>A,2</query_advance>
 
-Each query must contain only one tag. Use the following XML format:
+- Submit query (e.g., submit peer nodes C,D for node B):
+<query_submit>B:C,D</query_submit>
 
-- Subset Independence Query (e.g., query subset {{1,3,5}}):
-<query_independence>1,3,5</query_independence>
+Notes:
+- Advance query format: node_name,steps
+- Submit query format: target_node:node1,node2,...
+- Order of nodes in the set doesn't matter
+- If a target node has no peer nodes (sole reviewer), submit an empty set: node_name:
 
-- Edge Existence Query (e.g., query between 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Edge Count Query (e.g., query subset {{1,2,3,4}}):
-<query_count>1,2,3,4</query_count>
-
-After completing all queries, you need to submit the final answer to determine whether the {k} test sets are independent sets. Format as follows:
-
-<answer>1:yes,2:no,3:yes</answer>
-
-Where the number indicates the test set number (starting from 1), yes means independent set, no means not independent set. Separate the {k} judgments with commas.
-
-**Note**:
-- Use as few queries as possible to infer the pattern
-- Here are the {k} test sets you need to judge:
-{test_sets_desc}
-- All query answers are guaranteed to be consistent
-- Answer format must strictly follow the requirements, otherwise it is considered a failure
+When all target nodes are correctly verified, submit the final result:
+<answer>complete</answer>
 """
 
-    tags = ["answer", "query_independence", "query_edge", "query_count"]
+    tags = ["answer", "query_advance", "query_submit"]
+    
+    reasoning_type = "归纳推理"
+    data_structure = "树"
+    enable_counterfactual = False
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 6,
-                "k": 2,
-                "rule_type": "parity_sum",  # (i+j) % 2 == 1
-                "test_sets": [
-                    [1, 3, 5],      
-                    [2, 3, 4],      
-                ]
+                "n": 5,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B", "C"]),
+                    "B": ("Root", ["A", "B", "C"]),
+                    "C": ("Root", ["A", "B", "C"]),
+                    "D": ("A", ["D", "E"]),
+                    "E": ("A", ["D", "E"]),
+                },
+                "targets": ["B", "D"],
             },
             2: {
-                "n": 8,
-                "k": 3,
-                "rule_type": "close_distance",  # |i-j| <= 2
-                "test_sets": [
-                    [1, 4, 7],      
-                    [2, 3, 5],      
-                    [1, 5, 8],      
-                ]
+                "n": 7,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B"]),
+                    "B": ("Root", ["A", "B"]),
+                    "C": ("A", ["C", "D", "E"]),
+                    "D": ("A", ["C", "D", "E"]),
+                    "E": ("A", ["C", "D", "E"]),
+                    "F": ("B", ["F", "G"]),
+                    "G": ("B", ["F", "G"]),
+                },
+                "targets": ["A", "C"],
             },
             3: {
-                "n": 10,
-                "k": 3,
-                "rule_type": "gcd_greater_1",  # gcd(i,j) > 1
-                "test_sets": [
-                    [1, 3, 5, 7],   
-                    [2, 4, 8],      
-                    [1, 2, 5],      
-                ]
+                "n": 9,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B", "C"]),
+                    "B": ("Root", ["A", "B", "C"]),
+                    "C": ("Root", ["A", "B", "C"]),
+                    "D": ("A", ["D", "E"]),
+                    "E": ("A", ["D", "E"]),
+                    "F": ("B", ["F", "G", "H"]),
+                    "G": ("B", ["F", "G", "H"]),
+                    "H": ("B", ["F", "G", "H"]),
+                    "I": ("C", ["I"]),
+                },
+                "targets": ["D", "F", "I"],
             },
             4: {
-                "n": 12,
-                "k": 4,
-                "rule_type": "mod3_product",  
-                "test_sets": [
-                    [1, 2, 4, 5],   
-                    [3, 6, 9],      
-                    [1, 4, 7, 10],  
-                    [2, 5, 6],      
-                ]
+                "n": 11,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B"]),
+                    "B": ("Root", ["A", "B"]),
+                    "C": ("A", ["C", "D", "E", "F"]),
+                    "D": ("A", ["C", "D", "E", "F"]),
+                    "E": ("A", ["C", "D", "E", "F"]),
+                    "F": ("A", ["C", "D", "E", "F"]),
+                    "G": ("B", ["G", "H"]),
+                    "H": ("B", ["G", "H"]),
+                    "I": ("C", ["I", "J"]),
+                    "J": ("C", ["I", "J"]),
+                    "K": ("D", ["K"]),
+                },
+                "targets": ["C", "G", "I"],
             },
             5: {
-                "n": 15,
-                "k": 5,
-                "rule_type": "xor_odd_bits",  # popcount(i XOR j) % 2 == 1
-                "test_sets": [
-                    [1, 2, 4, 8],   
-                    [3, 5, 6],      
-                    [1, 3, 7],      
-                    [2, 8, 10],     
-                    [4, 5, 12, 13], 
-                ]
+                "n": 13,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B", "C"]),
+                    "B": ("Root", ["A", "B", "C"]),
+                    "C": ("Root", ["A", "B", "C"]),
+                    "D": ("A", ["D", "E", "F"]),
+                    "E": ("A", ["D", "E", "F"]),
+                    "F": ("A", ["D", "E", "F"]),
+                    "G": ("B", ["G", "H"]),
+                    "H": ("B", ["G", "H"]),
+                    "I": ("C", ["I", "J", "K"]),
+                    "J": ("C", ["I", "J", "K"]),
+                    "K": ("C", ["I", "J", "K"]),
+                    "L": ("D", ["L", "M"]),
+                    "M": ("D", ["L", "M"]),
+                },
+                "targets": ["E", "G", "I", "L"],
             },
         },
         "en": {
             1: {
-                "n": 6,
-                "k": 2,
-                "rule_type": "parity_sum",
-                "test_sets": [
-                    [1, 3, 5],
-                    [2, 3, 4],
-                ]
+                "n": 5,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B", "C"]),
+                    "B": ("Root", ["A", "B", "C"]),
+                    "C": ("Root", ["A", "B", "C"]),
+                    "D": ("A", ["D", "E"]),
+                    "E": ("A", ["D", "E"]),
+                },
+                "targets": ["B", "D"],
             },
             2: {
-                "n": 8,
-                "k": 3,
-                "rule_type": "close_distance",
-                "test_sets": [
-                    [1, 4, 7],
-                    [2, 3, 5],
-                    [1, 5, 8],
-                ]
+                "n": 7,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B"]),
+                    "B": ("Root", ["A", "B"]),
+                    "C": ("A", ["C", "D", "E"]),
+                    "D": ("A", ["C", "D", "E"]),
+                    "E": ("A", ["C", "D", "E"]),
+                    "F": ("B", ["F", "G"]),
+                    "G": ("B", ["F", "G"]),
+                },
+                "targets": ["A", "C"],
             },
             3: {
-                "n": 10,
-                "k": 3,
-                "rule_type": "gcd_greater_1",
-                "test_sets": [
-                    [1, 3, 5, 7],
-                    [2, 4, 8],
-                    [1, 2, 5],
-                ]
+                "n": 9,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B", "C"]),
+                    "B": ("Root", ["A", "B", "C"]),
+                    "C": ("Root", ["A", "B", "C"]),
+                    "D": ("A", ["D", "E"]),
+                    "E": ("A", ["D", "E"]),
+                    "F": ("B", ["F", "G", "H"]),
+                    "G": ("B", ["F", "G", "H"]),
+                    "H": ("B", ["F", "G", "H"]),
+                    "I": ("C", ["I"]),
+                },
+                "targets": ["D", "F", "I"],
             },
             4: {
-                "n": 12,
-                "k": 4,
-                "rule_type": "mod3_product",
-                "test_sets": [
-                    [1, 2, 4, 5],
-                    [3, 6, 9],
-                    [1, 4, 7, 10],
-                    [2, 5, 6],
-                ]
+                "n": 11,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B"]),
+                    "B": ("Root", ["A", "B"]),
+                    "C": ("A", ["C", "D", "E", "F"]),
+                    "D": ("A", ["C", "D", "E", "F"]),
+                    "E": ("A", ["C", "D", "E", "F"]),
+                    "F": ("A", ["C", "D", "E", "F"]),
+                    "G": ("B", ["G", "H"]),
+                    "H": ("B", ["G", "H"]),
+                    "I": ("C", ["I", "J"]),
+                    "J": ("C", ["I", "J"]),
+                    "K": ("D", ["K"]),
+                },
+                "targets": ["C", "G", "I"],
             },
             5: {
-                "n": 15,
-                "k": 5,
-                "rule_type": "xor_odd_bits",
-                "test_sets": [
-                    [1, 2, 4, 8],
-                    [3, 5, 6],
-                    [1, 3, 7],
-                    [2, 8, 10],
-                    [4, 5, 12, 13],
-                ]
+                "n": 13,
+                "tree_structure": {
+                    "Root": (None, []),
+                    "A": ("Root", ["A", "B", "C"]),
+                    "B": ("Root", ["A", "B", "C"]),
+                    "C": ("Root", ["A", "B", "C"]),
+                    "D": ("A", ["D", "E", "F"]),
+                    "E": ("A", ["D", "E", "F"]),
+                    "F": ("A", ["D", "E", "F"]),
+                    "G": ("B", ["G", "H"]),
+                    "H": ("B", ["G", "H"]),
+                    "I": ("C", ["I", "J", "K"]),
+                    "J": ("C", ["I", "J", "K"]),
+                    "K": ("C", ["I", "J", "K"]),
+                    "L": ("D", ["L", "M"]),
+                    "M": ("D", ["L", "M"]),
+                },
+                "targets": ["E", "G", "I", "L"],
             },
         },
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 查询计数器
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏配置和规则"""
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -788,272 +675,155 @@ Where the number indicates the test set number (starting from 1), yes means inde
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
-        self._game_info["k"] = cfg["k"]
         
-        self.n = cfg["n"]
-        self.k = cfg["k"]
-        self.rule_type = cfg["rule_type"]
-        self.test_sets = cfg["test_sets"]
+        tree_structure = cfg["tree_structure"]
         
-        # 构建测试集描述，直接放入规则中
-        test_sets_desc_lines = []
-        for idx, ts in enumerate(self.test_sets, 1):
-            if lang == "zh":
-                test_sets_desc_lines.append(f"  测试集 {idx}: {{{','.join(map(str, ts))}}}")
-            else:
-                test_sets_desc_lines.append(f"  Test set {idx}: {{{','.join(map(str, ts))}}}")
-        self._game_info["test_sets_desc"] = "\n".join(test_sets_desc_lines)
+        all_nodes = list(tree_structure.keys())
+        self._game_info["node_names"] = ", ".join(all_nodes)
         
-        # 预计算所有边的关系（Ground Truth）
-        self.edges = set()
-        for i in range(1, self.n + 1):
-            for j in range(i + 1, self.n + 1):
-                if self._has_edge(i, j):
-                    self.edges.add((i, j))
+        self.tree = {}
+        for node, (parent, cycle) in tree_structure.items():
+            self.tree[node] = {
+                "parent": parent,
+                "cycle": cycle
+            }
+        
+        self.targets = set(cfg["targets"])
+        self._game_info["target_nodes"] = ", ".join(cfg["targets"])
+        
+        self.verified_targets = set()
 
-    def _has_edge(self, i, j):
-        """判断 i 和 j 之间是否有边（根据规则类型）"""
-        if i > j:
-            i, j = j, i
+    def _get_sibling_set(self, node):
+        if node not in self.tree or node == "Root":
+            return set()
         
-        if self.rule_type == "parity_sum":
-            # (i+j) 是奇数时有边
-            return (i + j) % 2 == 1
-        
-        elif self.rule_type == "close_distance":
-            # |i-j| <= 2 时有边
-            return abs(i - j) <= 2
-        
-        elif self.rule_type == "gcd_greater_1":
-            # gcd(i,j) > 1 时有边
-            from math import gcd
-            return gcd(i, j) > 1
-        
-        elif self.rule_type == "mod3_product":
-            # i 和 j 中至少有一个是3的倍数时有边
-            return (i % 3 == 0) or (j % 3 == 0)
-        
-        elif self.rule_type == "xor_odd_bits":
-            # (i XOR j) 的二进制中1的个数为奇数时有边
-            xor_val = i ^ j
-            bit_count = bin(xor_val).count('1')
-            return bit_count % 2 == 1
-        
-        return False
-
-    def _is_independent_set(self, subset):
-        """判断子集是否为独立集"""
-        subset_list = sorted(subset)
-        for i in range(len(subset_list)):
-            for j in range(i + 1, len(subset_list)):
-                if (subset_list[i], subset_list[j]) in self.edges:
-                    return False, (subset_list[i], subset_list[j])
-        return True, None
-
-    def _count_edges_in_subset(self, subset):
-        """计算子集内边的数量"""
-        count = 0
-        subset_list = sorted(subset)
-        for i in range(len(subset_list)):
-            for j in range(i + 1, len(subset_list)):
-                if (subset_list[i], subset_list[j]) in self.edges:
-                    count += 1
-        return count
+        cycle = self.tree[node]["cycle"]
+        return set(cycle) - {node}
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
-        raw_ans = parsed_info["answer"].strip()
-        
-        # 解析答案格式：1:yes,2:no,3:yes
-        try:
-            judgments = {}
-            for item in raw_ans.split(","):
-                item = item.strip()
-                idx_str, result = item.split(":")
-                idx = int(idx_str)
-                result = result.strip().lower()
-                if result not in ["yes", "no"]:
-                    return False
-                judgments[idx] = (result == "yes")
-            
-            # 检查是否有k个判断
-            if len(judgments) != self.k:
-                return False
-            
-            # 检查每个测试集的判断是否正确
-            for idx in range(1, self.k + 1):
-                if idx not in judgments:
-                    return False
-                
-                test_set = self.test_sets[idx - 1]
-                is_indep, _ = self._is_independent_set(test_set)
-                
-                if judgments[idx] != is_indep:
-                    return False
-            
-            return True
-            
-        except Exception as e:
-            return False
+        return self.verified_targets == self.targets
 
     def _cf_core_produce(self, parsed_info):
-        self.query_count += 1
+        lang = self.config.language
         
-        if self.config.language == "zh":
-            indep_yes = "独立"
-            indep_no_prefix = "非独立，证人对："
-            edge_yes = "存在边"
-            edge_no = "无边"
-            err_format = "错误：格式无效"
-            err_range = "错误：数字超出范围"
-        else:
-            indep_yes = "Independent"
-            indep_no_prefix = "Not Independent, witness pair: "
-            edge_yes = "Edge exists"
-            edge_no = "No edge"
-            err_format = "Error: Invalid format"
-            err_range = "Error: Number out of range"
-
-        try:
-            # 子集独立性查询
-            if "query_independence" in parsed_info:
-                raw = parsed_info["query_independence"].strip()
-                if not raw:  # 空查询
-                    return err_format
-                
-                nums = [int(x.strip()) for x in raw.split(",")]
-                # 验证范围
-                for num in nums:
-                    if num < 1 or num > self.n:
-                        return err_range
-                
-                # 去重并排序
-                subset = sorted(set(nums))
-                is_indep, witness = self._is_independent_set(subset)
-                
-                if is_indep:
-                    return indep_yes
-                else:
-                    return f"{indep_no_prefix}({witness[0]},{witness[1]})"
-            
-            # 边存在性查询
-            elif "query_edge" in parsed_info:
-                raw = parsed_info["query_edge"].strip()
-                parts = [x.strip() for x in raw.split(",")]
+        if "query_advance" in parsed_info:
+            try:
+                raw = parsed_info["query_advance"].strip()
+                parts = raw.split(",")
                 if len(parts) != 2:
-                    return err_format
+                    raise ValueError("Invalid format")
                 
-                i, j = int(parts[0]), int(parts[1])
-                if i < 1 or i > self.n or j < 1 or j > self.n:
-                    return err_range
-                if i >= j:
-                    return err_format
+                node = parts[0].strip()
+                steps = int(parts[1].strip())
                 
-                if (i, j) in self.edges:
-                    return edge_yes
+                if steps <= 0:
+                    return "错误：步长必须是正整数。" if lang == "zh" else "Error: steps must be a positive integer."
+                
+                if node not in self.tree:
+                    return "错误：节点不存在。" if lang == "zh" else "Error: node does not exist."
+                
+                if node == "Root":
+                    return "错误：根节点没有兄弟环。" if lang == "zh" else "Error: root has no sibling cycle."
+                
+                cycle = self.tree[node]["cycle"]
+                if not cycle:
+                    return "错误：该节点没有兄弟环。" if lang == "zh" else "Error: node has no sibling cycle."
+                
+                idx = cycle.index(node)
+                new_idx = (idx + steps) % len(cycle)
+                result_node = cycle[new_idx]
+                
+                return result_node
+                
+            except Exception as e:
+                return "错误：查询格式无效。" if lang == "zh" else "Error: invalid query format."
+        
+        elif "query_submit" in parsed_info:
+            try:
+                raw = parsed_info["query_submit"].strip()
+                if ":" not in raw:
+                    raise ValueError("Invalid format")
+                
+                parts = raw.split(":", 1)
+                node = parts[0].strip()
+                siblings_str = parts[1].strip()
+                
+                if node not in self.targets:
+                    return "错误：该节点不是目标节点。" if lang == "zh" else "Error: not a target node."
+                
+                if siblings_str == "":
+                    submitted_siblings = set()
                 else:
-                    return edge_no
-            
-            # 边计数查询
-            elif "query_count" in parsed_info:
-                raw = parsed_info["query_count"].strip()
-                if not raw:  # 空查询
-                    return err_format
+                    submitted_siblings = set(s.strip() for s in siblings_str.split(",") if s.strip())
                 
-                nums = [int(x.strip()) for x in raw.split(",")]
-                for num in nums:
-                    if num < 1 or num > self.n:
-                        return err_range
+                true_siblings = self._get_sibling_set(node)
                 
-                subset = set(nums)
-                count = self._count_edges_in_subset(subset)
-                return str(count)
-            
-            else:
-                return err_format
+                missing = true_siblings - submitted_siblings
+                extra = submitted_siblings - true_siblings
                 
-        except Exception as e:
-            return err_format
+                if len(missing) == 0 and len(extra) == 0:
+                    self.verified_targets.add(node)
+                    return "正确" if lang == "zh" else "Correct"
+                else:
+                    if lang == "zh":
+                        return f"不正确；缺失 {len(missing)} 个，且多余 {len(extra)} 个"
+                    else:
+                        return f"Incorrect; missing {len(missing)}, extra {len(extra)}"
+                    
+            except Exception as e:
+                return "错误：提交格式无效。" if lang == "zh" else "Error: invalid submission format."
+        
+        else:
+            raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct):
-        """生成一个与正确答案相反/不同的错误答案"""
         if correct.isdigit():
-            val = int(correct)
-            return str(val + 1)
+            return str(int(correct) + 1)
         
-        if self.config.language == "zh":
-            if correct == "独立":
-                return "非独立，证人对：(1,2)"
-            if correct.startswith("非独立"):
-                return "独立"
-            if correct == "存在边":
-                return "无边"
-            if correct == "无边":
-                return "存在边"
-        else:
-            if correct == "Independent":
-                return "Not Independent, witness pair: (1,2)"
-            if correct.startswith("Not Independent"):
-                return "Independent"
-            if correct == "Edge exists":
-                return "No edge"
-            if correct == "No edge":
-                return "Edge exists"
-        
-        return correct + " [WRONG]"
+        val = correct
+        if "是" in val:
+            return val.replace("是", "否")
+        if "否" in val:
+            return val.replace("否", "是")
+            
+        low_val = val.lower()
+        if "yes" in low_val:
+            if val == "Yes": return "No"
+            if val == "yes": return "no"
+            if val == "YES": return "NO"
+            return val.replace("Yes", "No").replace("yes", "no")
+        if "no" in low_val:
+            if val == "No": return "Yes"
+            if val == "no": return "yes"
+            if val == "NO": return "YES"
+            return val.replace("No", "Yes").replace("no", "yes")
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        为避免指数爆炸和上下文溢出，限制总查询数。
-        """
+        return f"{correct}_WRONG"
+
+    def get_all_possible_queries(self):
         queries = []
+        max_steps = self._game_info["n"]
         
-        if self.config.language == "zh":
-            indep_yes = "独立"
-            indep_no_prefix = "非独立，证人对："
-            edge_yes = "存在边"
-            edge_no = "无边"
-        else:
-            indep_yes = "Independent"
-            indep_no_prefix = "Not Independent, witness pair: "
-            edge_yes = "Edge exists"
-            edge_no = "No edge"
-
-        # 1. 边存在性查询
-        for i in range(1, self.n + 1):
-            for j in range(i + 1, self.n + 1):
-                query_str = f"<query_edge>{i},{j}</query_edge>"
-                if (i, j) in self.edges:
-                    ans = edge_yes
-                else:
-                    ans = edge_no
-                queries.append({"query": query_str, "answer": ans})
-
-        # 2. 子集查询 — 限制子集大小以避免指数爆炸
-        max_subset_size = min(self.n, 3)  # 从4降到3以减少查询量
-        for r in range(2, max_subset_size + 1):
-            for subset_tuple in itertools.combinations(range(1, self.n + 1), r):
-                subset = sorted(subset_tuple)
-                subset_str = ",".join(map(str, subset))
+        for node in self.tree:
+            if node == "Root":
+                continue
+            
+            cycle = self.tree[node]["cycle"]
+            if not cycle:
+                continue
                 
-                # 子集独立性查询
-                is_indep, witness = self._is_independent_set(subset)
-                if is_indep:
-                    indep_ans = indep_yes
-                else:
-                    indep_ans = f"{indep_no_prefix}({witness[0]},{witness[1]})"
+            current_idx = cycle.index(node)
+            cycle_len = len(cycle)
+            
+            for t in range(1, max_steps + 1):
+                new_idx = (current_idx + t) % cycle_len
+                result_node = cycle[new_idx]
+                
+                query_tag = f"<query_advance>{node},{t}</query_advance>"
                 
                 queries.append({
-                    "query": f"<query_independence>{subset_str}</query_independence>",
-                    "answer": indep_ans
+                    "query": query_tag,
+                    "answer": result_node
                 })
                 
-                # 边计数查询
-                count = self._count_edges_in_subset(subset)
-                queries.append({
-                    "query": f"<query_count>{subset_str}</query_count>",
-                    "answer": str(count)
-                })
-
         return queries

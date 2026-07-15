@@ -1,383 +1,484 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   集合规模：集合中元素的总数量
-# ============================================================
-
 from .base import Game
+import random
+from typing import List, Dict
 
-class ModuloDeductionGame(Game):
-
-    reasoning_type = "演绎推理"
-    data_structure = "集合"
+class TreeLeafCountGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"取模推理"游戏，规则如下：
+我们现在来玩一个"树叶子节点计数"的推理游戏，规则如下：
 
-游戏设定了一个固定的未知正整数 N，范围在 1 到 200 之间。你的目标是通过取模查询来推断出这个数字。
+游戏设定了一个固定但对你不可见的无向连通无环图（即一棵树），包含 {n} 个节点（编号 1 到 {n}）和 {n_minus_1} 条边。
 
-你可以进行以下两种操作：
+- 叶节点定义：度数等于 1 的节点称为叶节点。
+- 度数恒等式：所有节点度数之和等于边数的两倍，即 {degree_sum}。
+- 对于树且节点数大于等于 3，任意节点的度数为正整数。
 
-1. 取模查询：选择一个模数 k（k 必须是 3、4、5、6 或 7 中的一个），我会告诉你 N 除以 k 的余数 r。
-2. 宣布答案：当你认为已经确定 N 的值时，提交你的答案。
+每轮可以发起一个操作，操作类型如下：
 
-游戏约束：
-- 你最多只能进行 3 次取模查询。
-- 如果查询的模数 k 不在 3、4、5、6、7 中，该查询无效但仍然计入查询次数。
-- 如果宣布的答案不在 1 到 200 范围内，游戏失败。
-- 你需要在尽可能少的查询次数内确定 N 并宣布答案。
+1. 度数查询：询问某个节点 i 的度数。我会返回该节点的度数（一个正整数）。
+2. 相邻性查询：询问两个节点 i 和 j 之间是否存在直接连边。我会回答"是"或"否"。
+3. 最终申报：当你收集足够信息后，申报树中叶子节点的总数。
 
-## 询问与提交答案的格式（必须严格遵守）
+- 在进行最终申报之前，你必须至少完成两次查询（度数查询或相邻性查询均可）。
+- 查询次数不限，但请尽可能少地使用查询次数。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+你的目标是通过查询推断出该树中叶子节点的总数，并正确申报。
 
-- 取模查询（例如查询模数 5）：
-<query_mod>5</query_mod>
+每次只能包含一个标签。请使用以下 XML 格式：
 
-- 宣布答案（例如答案是 42）：
-<answer>42</answer>
+- 度数查询（例如查询节点 3 的度数）：
+<query_degree>3</query_degree>
 
-注意：在宣布答案之前，请确保你已经通过取模查询收集了足够的信息。
+- 相邻性查询（例如查询节点 1 和节点 5 是否相邻）：
+<query_adjacent>1,5</query_adjacent>
+
+- 最终申报（例如申报叶子总数为 4）：
+<answer>4</answer>
+
+若答案错误或格式不符，游戏失败。
 """
 
     game_rule_en = """\
-Let's play a "Modulo Deduction" game. Here are the rules:
+Let's play a "Tree Leaf Count" deduction game. Here are the rules:
 
-The game has set a fixed unknown positive integer N in the range from 1 to 200. Your goal is to infer this number through modulo queries.
+A fixed but hidden undirected connected acyclic graph (i.e., a tree) has been set up, containing {n} nodes (numbered 1 to {n}) and {n_minus_1} edges.
 
-You can perform the following two operations:
+- Leaf Node Definition: A node with degree equal to 1 is called a leaf node.
+- Degree Identity: The sum of all node degrees equals twice the number of edges, which is {degree_sum}.
+- For a tree with at least 3 nodes, every node has a positive integer degree.
 
-1. Modulo Query: Choose a modulus k (k must be one of 3, 4, 5, 6, or 7), and I will tell you the remainder r when N is divided by k.
-2. Announce Answer: When you believe you have determined the value of N, submit your answer.
+You can perform one operation per turn. The operation types are:
 
-Game Constraints:
-- You can perform at most 3 modulo queries.
-- If the queried modulus k is not in the set {3, 4, 5, 6, 7}, the query is invalid but still counts toward the query limit.
-- If the announced answer is not in the range 1 to 200, the game fails.
-- You need to determine N and announce the answer with as few queries as possible.
+1. Degree Query: Ask for the degree of a node i. I will return the degree (a positive integer).
+2. Adjacency Query: Ask whether there is a direct edge between nodes i and j. I will answer "Yes" or "No".
+3. Final Announcement: When you have gathered enough information, announce the total number of leaf nodes in the tree.
 
-## Query and Answer Format (strictly required)
+- Before making the final announcement, you must complete at least two queries (either degree or adjacency queries count).
+- There is no limit on the number of queries, but try to use as few queries as possible.
 
-Each operation must contain only one tag. Use the following XML format:
+Your goal is to infer the total number of leaf nodes in the tree through queries and announce it correctly.
 
-- Modulo Query (e.g., querying modulus 5):
-<query_mod>5</query_mod>
+Each turn must contain only one tag. Use the following XML format:
 
-- Announce Answer (e.g., answer is 42):
-<answer>42</answer>
+- Degree Query (e.g., querying the degree of node 3):
+<query_degree>3</query_degree>
 
-Note: Before announcing the answer, make sure you have collected enough information through modulo queries.
+- Adjacency Query (e.g., querying whether nodes 1 and 5 are adjacent):
+<query_adjacent>1,5</query_adjacent>
+
+- Final Announcement (e.g., announcing the leaf count is 4):
+<answer>4</answer>
+
+If the answer is incorrect or the format is invalid, the game fails.
 """
 
     contextualized_rule_zh_1 = """\
-智慧交通指挥中心正在追踪一条主干道上的违章车辆总数 N（范围在 1 到 200 之间）。你的目标是通过调度抓拍探头组来推断出确切的违章车辆数。
+我们现在来进行一项"公路网终端站点计数"的交通勘测任务，规则如下：
 
-你可以进行以下两种操作：
+系统记录了一个固定但对你不可见的乡村公路网（实质为一棵无向连通无环图），包含 {n} 个交通枢纽（编号 1 到 {n}）和 {n_minus_1} 条双向路段。
 
-1. 探头分组查询（即取模查询）：选择一组探头数量 k（k 必须是 3、4、5、6 或 7 中的一个），系统会对车辆进行均分扫描，并告诉你无法被均分的剩余违章车辆数 r（即 N 除以 k 的余数）。
-2. 提交调查报告（即宣布答案）：当你认为已经确定违章总数 N 的值时，提交你的最终报告。
+- 终端站点定义：仅与 1 条路段相连的枢纽（度数等于 1）称为终端站点。
+- 连接恒等式：所有枢纽连接的路段数量之和等于路段总数的两倍，即 {degree_sum}。
+- 对于枢纽数大于等于 3 的路网，任意枢纽连接的路段数均为正整数。
 
-游戏约束：
-- 你最多只能进行 3 次探头分组查询。
-- 如果查询的探头数量 k 不在 3、4、5、6、7 中，该查询无效但仍然计入查询次数。
-- 如果提交的违章总数不在 1 到 200 范围内，任务失败。
-- 你需要在尽可能少的查询次数内确定 N 并提交报告。
+每轮可以发起一个操作，操作类型如下：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 路段数查询（即度数查询）：询问某个枢纽 i 连接的路段数。我会返回该数值（一个正整数）。
+2. 直通查询（即相邻性查询）：询问两个枢纽 i 和 j 之间是否存在直接相连的路段。我会回答"是"或"否"。
+3. 最终申报：当你收集足够信息后，申报路网中终端站点的总数。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+- 在进行最终申报之前，你必须至少完成两次查询（路段数查询或直通查询均可）。
+- 查询次数不限，但请尽可能少地使用查询次数。
 
-- 探头分组查询（例如调度 5 个探头）：
-<query_mod>5</query_mod>
+你的目标是通过查询推断出该公路网中终端站点的总数，并正确申报。
 
-- 提交调查报告（例如总数是 42）：
-<answer>42</answer>
+每次只能包含一个标签。请使用以下 XML 格式：
 
-注意：在提交调查报告之前，请确保你已经通过探头分组查询收集了足够的信息。
+- 路段数查询（例如查询枢纽 3 的连接路段数）：
+<query_degree>3</query_degree>
+
+- 直通查询（例如查询枢纽 1 和枢纽 5 是否直通）：
+<query_adjacent>1,5</query_adjacent>
+
+- 最终申报（例如申报终端站点总数为 4）：
+<answer>4</answer>
+
+若答案错误或格式不符，任务失败。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-The smart traffic command center is tracking the total number of traffic violations N (ranging from 1 to 200) on a major arterial road. Your goal is to infer the exact number of violating vehicles by dispatching traffic camera groups.
+Let's perform a "Terminal Station Count" traffic network analysis task. Here are the rules:
 
-You can perform the following two operations:
+A fixed but hidden rural road network (an undirected connected acyclic graph, i.e., a tree) has been set up, containing {n} traffic hubs (numbered 1 to {n}) and {n_minus_1} two-way road segments.
 
-1. Camera Grouping Query (Modulo Query): Choose a camera group size k (k must be one of 3, 4, 5, 6, or 7). The system will scan and evenly divide the vehicles, returning the remaining number of violating vehicles r that cannot be evenly divided (i.e., the remainder when N is divided by k).
-2. Submit Investigation Report (Announce Answer): When you believe you have determined the exact value of the total violations N, submit your final report.
+- Terminal Station Definition: A hub connected to exactly 1 road segment (degree equal to 1) is called a terminal station.
+- Connection Identity: The sum of road segments connected to all hubs equals twice the total number of edges, which is {degree_sum}.
+- For a network with at least 3 hubs, every hub is connected to a positive integer of road segments.
 
-Game Constraints:
-- You can perform at most 3 camera grouping queries.
-- If the queried camera size k is not in the set {3, 4, 5, 6, 7}, the query is invalid but still counts toward the query limit.
-- If the submitted total violations are not in the range 1 to 200, the task fails.
-- You need to determine N and submit the report with as few queries as possible.
+You can perform one operation per turn. The operation types are:
 
-## Query and Answer Format (strictly required)
+1. Segment Count Query (Degree Query): Ask for the number of road segments connected to a hub i. I will return the number (a positive integer).
+2. Direct Connection Query (Adjacency Query): Ask whether there is a direct road segment between hubs i and j. I will answer "Yes" or "No".
+3. Final Announcement: When you have gathered enough information, announce the total number of terminal stations in the network.
 
-Each operation must contain only one tag. Use the following XML format:
+- Before making the final announcement, you must complete at least two queries (either segment count or direct connection queries count).
+- There is no limit on the number of queries, but try to use as few queries as possible.
 
-- Camera Grouping Query (e.g., dispatching 5 cameras):
-<query_mod>5</query_mod>
+Your goal is to infer the total number of terminal stations in the network through queries and announce it correctly.
 
-- Submit Investigation Report (e.g., total violations are 42):
-<answer>42</answer>
+Each turn must contain only one tag. Use the following XML format:
 
-Note: Before submitting the investigation report, make sure you have collected enough information through camera grouping queries.
+- Segment Count Query (e.g., querying the connections of hub 3):
+<query_degree>3</query_degree>
+
+- Direct Connection Query (e.g., querying whether hubs 1 and 5 are directly connected):
+<query_adjacent>1,5</query_adjacent>
+
+- Final Announcement (e.g., announcing the terminal station count is 4):
+<answer>4</answer>
+
+If the answer is incorrect or the format is invalid, the task fails.
 """
 
     contextualized_rule_zh_2 = """\
-医学实验室中有一批未知的特定变异细胞样本，细胞总数 N 范围在 1 到 200 之间。你的目标是通过细胞阵列分配测试推断出细胞的确切数量。
+我们现在来进行一项"传播链末端追踪"的流行病学调查任务，规则如下：
 
-你可以进行以下两种操作：
+系统记录了一个固定但对你不可见的疾病传播网（单源且无交叉感染的无向连通无环图），包含 {n} 个确诊病例（编号 1 到 {n}）和 {n_minus_1} 条直接传染记录。
 
-1. 阵列分配测试（即取模查询）：选择培养皿阵列的孔数 k（k 必须是 3、4、5、6 或 7 中的一个），系统会将细胞均分到各孔中，并告诉你最后剩下的游离细胞数量 r（即 N 除以 k 的余数）。
-2. 录入细胞总数（即宣布答案）：当你认为已经确定细胞总数 N 的值时，提交你的检测结果。
+- 末端病例定义：仅有 1 个直接传染接触者的病例（度数等于 1）称为末端病例。
+- 接触恒等式：所有病例的直接接触者数量之和等于传染记录数的两倍，即 {degree_sum}。
+- 对于病例数大于等于 3 的网络，任意病例的直接接触者数均为正整数。
 
-游戏约束：
-- 你最多只能进行 3 次阵列分配测试。
-- 如果选择的孔数 k 不在 3、4、5、6、7 中，该测试无效但仍然计入测试次数。
-- 如果录入的细胞总数不在 1 到 200 范围内，检测失败。
-- 你需要在尽可能少的测试次数内确定 N 并录入总数。
+每轮可以发起一个操作，操作类型如下：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 接触数查询（即度数查询）：询问某个病例 i 的直接接触病例数。我会返回该数值（一个正整数）。
+2. 传染途径查询（即相邻性查询）：询问两个病例 i 和 j 之间是否存在直接的传染接触。我会回答"是"或"否"。
+3. 最终申报：当你收集足够信息后，申报传播链中末端病例的总数。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+- 在进行最终申报之前，你必须至少完成两次查询（接触数查询或传染途径查询均可）。
+- 查询次数不限，但请尽可能少地使用查询次数。
 
-- 阵列分配测试（例如选择 5 孔阵列）：
-<query_mod>5</query_mod>
+你的目标是通过查询推断出该网络中末端病例的总数，并正确申报。
 
-- 录入细胞总数（例如总数是 42）：
-<answer>42</answer>
+每次只能包含一个标签。请使用以下 XML 格式：
 
-注意：在录入细胞总数之前，请确保你已经通过阵列分配测试收集了足够的信息。
+- 接触数查询（例如查询病例 3 的直接接触数）：
+<query_degree>3</query_degree>
+
+- 传染途径查询（例如查询病例 1 和病例 5 是否有直接接触）：
+<query_adjacent>1,5</query_adjacent>
+
+- 最终申报（例如申报末端病例总数为 4）：
+<answer>4</answer>
+
+若答案错误或格式不符，调查失败。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-A medical laboratory holds an unknown batch of specific mutated cell samples. The total number of cells N is in the range from 1 to 200. Your goal is to infer the exact number of cells through cell array allocation tests.
+Let's perform an "End-of-Chain Case Tracking" epidemiological investigation. Here are the rules:
 
-You can perform the following two operations:
+A fixed but hidden disease transmission network (an undirected connected acyclic graph, i.e., a tree with a single source and no cross-infections) has been recorded, containing {n} confirmed cases (numbered 1 to {n}) and {n_minus_1} direct transmission records.
 
-1. Array Allocation Test (Modulo Query): Choose the number of wells k for the culture dish array (k must be one of 3, 4, 5, 6, or 7). The system will evenly distribute the cells into the wells and tell you the number of remaining free cells r (i.e., the remainder when N is divided by k).
-2. Log Total Cell Count (Announce Answer): When you believe you have determined the exact value of the total cell count N, submit your test result.
+- End-of-Chain Case Definition: A case with exactly 1 direct transmission contact (degree equal to 1) is called an end-of-chain case.
+- Contact Identity: The sum of direct contacts for all cases equals twice the total number of transmission records, which is {degree_sum}.
+- For a network with at least 3 cases, every case has a positive integer of direct contacts.
 
-Game Constraints:
-- You can perform at most 3 array allocation tests.
-- If the chosen number of wells k is not in the set {3, 4, 5, 6, 7}, the test is invalid but still counts toward the test limit.
-- If the logged total cell count is not in the range 1 to 200, the test fails.
-- You need to determine N and log the total count with as few tests as possible.
+You can perform one operation per turn. The operation types are:
 
-## Query and Answer Format (strictly required)
+1. Contact Count Query (Degree Query): Ask for the number of direct contacts of case i. I will return the number (a positive integer).
+2. Transmission Route Query (Adjacency Query): Ask whether there is a direct transmission contact between cases i and j. I will answer "Yes" or "No".
+3. Final Announcement: When you have gathered enough information, announce the total number of end-of-chain cases in the network.
 
-Each operation must contain only one tag. Use the following XML format:
+- Before making the final announcement, you must complete at least two queries (either contact count or transmission route queries count).
+- There is no limit on the number of queries, but try to use as few queries as possible.
 
-- Array Allocation Test (e.g., choosing a 5-well array):
-<query_mod>5</query_mod>
+Your goal is to infer the total number of end-of-chain cases in the network through queries and announce it correctly.
 
-- Log Total Cell Count (e.g., total count is 42):
-<answer>42</answer>
+Each turn must contain only one tag. Use the following XML format:
 
-Note: Before logging the total cell count, make sure you have collected enough information through array allocation tests.
+- Contact Count Query (e.g., querying the direct contacts of case 3):
+<query_degree>3</query_degree>
+
+- Transmission Route Query (e.g., querying whether cases 1 and 5 have direct contact):
+<query_adjacent>1,5</query_adjacent>
+
+- Final Announcement (e.g., announcing the end-of-chain case count is 4):
+<answer>4</answer>
+
+If the answer is incorrect or the format is invalid, the investigation fails.
 """
 
     contextualized_rule_zh_3 = """\
-教务系统正在统计某个神秘学术社团的报名总人数 N（范围在 1 到 200 之间）。你的目标是通过学习小组划分测试来确定确切的报名人数。
+我们现在来进行一项"单一关系学者计数"的学术传承网络分析任务，规则如下：
 
-你可以进行以下两种操作：
+系统记录了一个固定但对你不可见的师生关系网（无交叉指导的无向连通无环图），包含 {n} 名学者（编号 1 到 {n}）和 {n_minus_1} 对一对一的师生指导关系。
 
-1. 分组划分查询（即取模查询）：设定每个学习小组的人数 k（k 必须是 3、4、5、6 或 7 中的一个），系统会尝试将报名学生均分，并告诉你不足一组的剩余学生人数 r（即 N 除以 k 的余数）。
-2. 确认报名人数（即宣布答案）：当你认为已经确定报名总人数 N 的值时，提交你的最终统计。
+- 单一关系学者定义：仅与 1 名其他学者有直接指导关系（度数等于 1）的学者称为单一关系学者（如刚入门的学生或独立的唯一导师）。
+- 关系恒等式：所有学者的指导关系数量之和等于总指导关系对数的两倍，即 {degree_sum}。
+- 对于包含至少 3 名学者的关系网，任意学者至少拥有一层指导关系。
 
-游戏约束：
-- 你最多只能进行 3 次分组划分查询。
-- 如果设定的小组人数 k 不在 3、4、5、6、7 中，该查询无效但仍然计入查询次数。
-- 如果确认的报名人数不在 1 到 200 范围内，统计失败。
-- 你需要在尽可能少的查询次数内确定 N 并确认报名人数。
+每轮可以发起一个操作，操作类型如下：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 关系数查询（即度数查询）：询问某位学者 i 拥有的直接指导关系数。我会返回该数值（一个正整数）。
+2. 指导关联查询（即相邻性查询）：询问两位学者 i 和 j 之间是否存在直接的师生指导关系。我会回答"是"或"否"。
+3. 最终申报：当你收集足够信息后，申报关系网中单一关系学者的总数。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+- 在进行最终申报之前，你必须至少完成两次查询（关系数查询或指导关联查询均可）。
+- 查询次数不限，但请尽可能少地使用查询次数。
 
-- 分组划分查询（例如每组 5 人）：
-<query_mod>5</query_mod>
+你的目标是通过查询推断出该网络中单一关系学者的总数，并正确申报。
 
-- 确认报名人数（例如人数是 42）：
-<answer>42</answer>
+每次只能包含一个标签。请使用以下 XML 格式：
 
-注意：在确认报名人数之前，请确保你已经通过分组划分查询收集了足够的信息。
+- 关系数查询（例如查询学者 3 的指导关系数）：
+<query_degree>3</query_degree>
+
+- 指导关联查询（例如查询学者 1 和学者 5 是否有直接师生关系）：
+<query_adjacent>1,5</query_adjacent>
+
+- 最终申报（例如申报单一关系学者总数为 4）：
+<answer>4</answer>
+
+若答案错误或格式不符，分析失败。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-The educational administration system is calculating the total number of registrations N (ranging from 1 to 200) for a mysterious academic club. Your goal is to determine the exact number of registered students through study group partitioning tests.
+Let's perform a "Single-Relation Scholar Count" academic lineage network analysis task. Here are the rules:
 
-You can perform the following two operations:
+A fixed but hidden mentor-student network (an undirected connected acyclic graph with no cross-mentoring) has been recorded, containing {n} scholars (numbered 1 to {n}) and {n_minus_1} one-on-one mentor-student relationships.
 
-1. Group Partitioning Query (Modulo Query): Set the number of students per study group k (k must be one of 3, 4, 5, 6, or 7). The system will attempt to evenly group the registered students and tell you the number of remaining ungrouped students r (i.e., the remainder when N is divided by k).
-2. Confirm Registration Count (Announce Answer): When you believe you have determined the exact value of the total registrations N, submit your final count.
+- Single-Relation Scholar Definition: A scholar with exactly 1 direct mentoring relationship (degree equal to 1) is called a single-relation scholar (e.g., a newly enrolled student or an independent sole mentor).
+- Relationship Identity: The sum of mentoring relationships for all scholars equals twice the total number of relationship pairs, which is {degree_sum}.
+- For a network with at least 3 scholars, every scholar has at least one positive mentoring relationship.
 
-Game Constraints:
-- You can perform at most 3 group partitioning queries.
-- If the set group size k is not in the set {3, 4, 5, 6, 7}, the query is invalid but still counts toward the query limit.
-- If the confirmed registration count is not in the range 1 to 200, the calculation fails.
-- You need to determine N and confirm the registration count with as few queries as possible.
+You can perform one operation per turn. The operation types are:
 
-## Query and Answer Format (strictly required)
+1. Relationship Count Query (Degree Query): Ask for the number of direct mentoring relationships of scholar i. I will return the number (a positive integer).
+2. Mentoring Association Query (Adjacency Query): Ask whether there is a direct mentor-student relationship between scholars i and j. I will answer "Yes" or "No".
+3. Final Announcement: When you have gathered enough information, announce the total number of single-relation scholars in the network.
 
-Each operation must contain only one tag. Use the following XML format:
+- Before making the final announcement, you must complete at least two queries (either relationship count or mentoring association queries count).
+- There is no limit on the number of queries, but try to use as few queries as possible.
 
-- Group Partitioning Query (e.g., 5 students per group):
-<query_mod>5</query_mod>
+Your goal is to infer the total number of single-relation scholars in the network through queries and announce it correctly.
 
-- Confirm Registration Count (e.g., count is 42):
-<answer>42</answer>
+Each turn must contain only one tag. Use the following XML format:
 
-Note: Before confirming the registration count, make sure you have collected enough information through group partitioning queries.
+- Relationship Count Query (e.g., querying the mentoring relationships of scholar 3):
+<query_degree>3</query_degree>
+
+- Mentoring Association Query (e.g., querying whether scholars 1 and 5 have a direct relationship):
+<query_adjacent>1,5</query_adjacent>
+
+- Final Announcement (e.g., announcing the single-relation scholar count is 4):
+<answer>4</answer>
+
+If the answer is incorrect or the format is invalid, the analysis fails.
 """
 
     contextualized_rule_zh_4 = """\
-自动化生产线上正有一批关键零部件等待清点，零部件总数 N 范围在 1 到 200 之间。你的任务是通过启动分拣机器人组来核实确切的零部件总数。
+我们现在来进行一项"管道末梢节点计数"的工业管网排查任务，规则如下：
 
-你可以进行以下两种操作：
+系统记录了一个固定但对你不可见的流体输送管网（无回路的无向连通无环图），包含 {n} 个阀门节点（编号 1 到 {n}）和 {n_minus_1} 段输送管道。
 
-1. 分拣装载测试（即取模查询）：设定每组分拣机器人的装载容量 k（k 必须是 3、4、5、6 或 7 中的一个），机器满载分拣后，流水线系统会反馈未能装满的剩余散件数量 r（即 N 除以 k 的余数）。
-2. 提交批次清点结果（即宣布答案）：当你认为已经确定零部件总数 N 的值时，提交你的清点数据。
+- 管道末梢定义：仅与 1 段输送管道相连的节点（度数等于 1）称为管道末梢。
+- 接口恒等式：所有节点连接的管道数量之和等于输送管道总数的两倍，即 {degree_sum}。
+- 对于包含至少 3 个节点的管网，任意阀门节点均至少连接一段管道（正整数）。
 
-游戏约束：
-- 因流水线节拍限制，你最多只能进行 3 次分拣装载测试。
-- 如果设定的装载容量 k 不在 3、4、5、6、7 中，该测试无效但仍然计入测试次数。
-- 如果提交的清点结果不在 1 到 200 范围内，清点失败。
-- 你需要在尽可能少的测试次数内确定 N 并提交清点结果。
+每轮可以发起一个操作，操作类型如下：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 接口数查询（即度数查询）：询问某个阀门节点 i 连接的输送管道数。我会返回该数值（一个正整数）。
+2. 直连管道查询（即相邻性查询）：询问两个节点 i 和 j 之间是否存在直接相连的输送管道。我会回答"是"或"否"。
+3. 最终申报：当你收集足够信息后，申报管网中管道末梢的总数。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+- 在进行最终申报之前，你必须至少完成两次查询（接口数查询或直连管道查询均可）。
+- 查询次数不限，但请尽可能少地使用查询次数。
 
-- 分拣装载测试（例如设定容量为 5）：
-<query_mod>5</query_mod>
+你的目标是通过查询推断出该管网中管道末梢的总数，并正确申报。
 
-- 提交批次清点结果（例如总数是 42）：
-<answer>42</answer>
+每次只能包含一个标签。请使用以下 XML 格式：
 
-注意：在提交批次清点结果之前，请确保你已经通过分拣装载测试收集了足够的信息。
+- 接口数查询（例如查询节点 3 的连接管道数）：
+<query_degree>3</query_degree>
+
+- 直连管道查询（例如查询节点 1 和节点 5 是否直接连通）：
+<query_adjacent>1,5</query_adjacent>
+
+- 最终申报（例如申报管道末梢总数为 4）：
+<answer>4</answer>
+
+若答案错误或格式不符，排查失败。
 """
 
     contextualized_rule_en_4 = """\
-[Industry Scenario]
-An automated production line is waiting to inventory a batch of critical components. The total number of components N is in the range from 1 to 200. Your task is to verify the exact total by activating automated sorting robot groups.
+[Manufacturing/Industrial Scenario]
+Let's perform a "Pipeline Terminal Count" industrial network inspection task. Here are the rules:
 
-You can perform the following two operations:
+A fixed but hidden fluid transport pipeline network (an undirected connected acyclic graph with no loops) has been recorded, containing {n} valve nodes (numbered 1 to {n}) and {n_minus_1} transport pipeline segments.
 
-1. Sorting Load Test (Modulo Query): Set the load capacity k for each group of sorting robots (k must be one of 3, 4, 5, 6, or 7). After fully loading and sorting, the pipeline system will report the number of remaining loose components r that couldn't fill a robot (i.e., the remainder when N is divided by k).
-2. Submit Batch Inventory Result (Announce Answer): When you believe you have determined the exact value of the total components N, submit your inventory data.
+- Pipeline Terminal Definition: A node connected to exactly 1 pipeline segment (degree equal to 1) is called a pipeline terminal.
+- Interface Identity: The sum of pipeline segments connected to all nodes equals twice the total number of segments, which is {degree_sum}.
+- For a network with at least 3 nodes, every valve node is connected to a positive integer of pipeline segments.
 
-Game Constraints:
-- Due to assembly line rhythm limits, you can perform at most 3 sorting load tests.
-- If the set load capacity k is not in the set {3, 4, 5, 6, 7}, the test is invalid but still counts toward the test limit.
-- If the submitted inventory result is not in the range 1 to 200, the inventory fails.
-- You need to determine N and submit the inventory result with as few tests as possible.
+You can perform one operation per turn. The operation types are:
 
-## Query and Answer Format (strictly required)
+1. Interface Count Query (Degree Query): Ask for the number of pipeline segments connected to node i. I will return the number (a positive integer).
+2. Direct Pipeline Query (Adjacency Query): Ask whether there is a direct transport pipeline between nodes i and j. I will answer "Yes" or "No".
+3. Final Announcement: When you have gathered enough information, announce the total number of pipeline terminals in the network.
 
-Each operation must contain only one tag. Use the following XML format:
+- Before making the final announcement, you must complete at least two queries (either interface count or direct pipeline queries count).
+- There is no limit on the number of queries, but try to use as few queries as possible.
 
-- Sorting Load Test (e.g., setting capacity to 5):
-<query_mod>5</query_mod>
+Your goal is to infer the total number of pipeline terminals in the network through queries and announce it correctly.
 
-- Submit Batch Inventory Result (e.g., total count is 42):
-<answer>42</answer>
+Each turn must contain only one tag. Use the following XML format:
 
-Note: Before submitting the batch inventory result, make sure you have collected enough information through sorting load tests.
+- Interface Count Query (e.g., querying the pipeline connections of node 3):
+<query_degree>3</query_degree>
+
+- Direct Pipeline Query (e.g., querying whether nodes 1 and 5 are directly connected):
+<query_adjacent>1,5</query_adjacent>
+
+- Final Announcement (e.g., announcing the pipeline terminal count is 4):
+<answer>4</answer>
+
+If the answer is incorrect or the format is invalid, the inspection fails.
 """
 
     contextualized_rule_zh_5 = """\
-法院专案组正在审查一宗复杂经济案件的涉案凭证文件，文件总数 N 范围在 1 到 200 之间。你的目标是通过指派审查配额来确切查明这些凭证的总量。
+我们现在来进行一项"资金流向终端账户计数"的司法资金盘查任务，规则如下：
 
-你可以进行以下两种操作：
+系统记录了一个固定但对你不可见的洗钱/代持网络（呈现为无闭环的无向连通无环图结构），包含 {n} 个涉案账户（编号 1 到 {n}）和 {n_minus_1} 条直接的资金转移协议。
 
-1. 审查配额分配（即取模查询）：指定每个审查小组处理的文件配额 k（k 必须是 3、4、5、6 或 7 中的一个），系统会将文件均分发配，并向你报告留在待定区未能均分的剩余文件数 r（即 N 除以 k 的余数）。
-2. 宣判文件总数（即宣布答案）：当你认为已经确凿掌握文件总数 N 的值时，正式提交你的审查结论。
+- 终端账户定义：仅与 1 个其他账户存在资金转移协议（度数等于 1）的底层账户称为终端账户。
+- 交易恒等式：所有账户的资金交易对手数量之和等于资金转移协议总数的两倍，即 {degree_sum}。
+- 对于包含至少 3 个账户的网络，任意账户均至少有一名交易对手。
 
-游戏约束：
-- 出于司法保密和效率规定，你最多只能进行 3 次审查配额分配。
-- 如果指定的配额 k 不在 3、4、5、6、7 中，该分配无效但仍然计入操作次数。
-- 如果宣判的文件总数不在 1 到 200 范围内，审查即告失败。
-- 你需要在尽可能少的分配次数内确定 N 并宣判文件总数。
+每轮可以发起一个操作，操作类型如下：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 交易对手数查询（即度数查询）：询问某个账户 i 的直接交易对手数量。我会返回该数值（一个正整数）。
+2. 直接往来查询（即相邻性查询）：询问两个账户 i 和 j 之间是否存在直接的资金转移协议。我会回答"是"或"否"。
+3. 最终申报：当你收集足够信息后，申报网络中终端账户的总数。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+- 在进行最终申报之前，你必须至少完成两次查询（交易对手数查询或直接往来查询均可）。
+- 查询次数不限，但请尽可能少地使用查询次数。
 
-- 审查配额分配（例如指定配额 5）：
-<query_mod>5</query_mod>
+你的目标是通过查询推断出该洗钱/代持网络中终端账户的总数，并正确申报。
 
-- 宣判文件总数（例如总数是 42）：
-<answer>42</answer>
+每次只能包含一个标签。请使用以下 XML 格式：
 
-注意：在宣判文件总数之前，请确保你已经通过审查配额分配收集了足够确凿的信息。
+- 交易对手数查询（例如查询账户 3 的交易对手数）：
+<query_degree>3</query_degree>
+
+- 直接往来查询（例如查询账户 1 和账户 5 是否有直接资金转移）：
+<query_adjacent>1,5</query_adjacent>
+
+- 最终申报（例如申报终端账户总数为 4）：
+<answer>4</answer>
+
+若答案错误或格式不符，盘查失败。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-A special court task force is reviewing case evidentiary documents for a complex economic case. The total number of documents N ranges from 1 to 200. Your goal is to exactly ascertain the total volume of these evidences by assigning review quotas.
+Let's perform an "End-Node Account Count" judicial fund tracking task. Here are the rules:
 
-You can perform the following two operations:
+A fixed but hidden money laundering/proxy holding network (structured as an undirected connected acyclic graph with no closed loops) has been recorded, containing {n} involved accounts (numbered 1 to {n}) and {n_minus_1} direct fund transfer agreements.
 
-1. Review Quota Allocation (Modulo Query): Specify the document handling quota k for each review panel (k must be one of 3, 4, 5, 6, or 7). The system will distribute the documents evenly and report back the number of remaining documents r left in the pending area that could not be evenly divided (i.e., the remainder when N is divided by k).
-2. Declare Total Document Count (Announce Answer): When you believe you have conclusively determined the exact value of the total documents N, formally submit your review conclusion.
+- End-Node Account Definition: A bottom-layer account involved in a fund transfer agreement with exactly 1 other account (degree equal to 1) is called an end-node account.
+- Transaction Identity: The sum of direct transaction counterparties for all accounts equals twice the total number of fund transfer agreements, which is {degree_sum}.
+- For a network with at least 3 accounts, every account has at least one counterparty.
 
-Game Constraints:
-- For judicial confidentiality and efficiency, you can perform at most 3 review quota allocations.
-- If the specified quota k is not in the set {3, 4, 5, 6, 7}, the allocation is invalid but still counts toward your operation limit.
-- If the declared total document count is not in the range 1 to 200, the review fails.
-- You need to determine N and declare the total document count with as few allocations as possible.
+You can perform one operation per turn. The operation types are:
 
-## Query and Answer Format (strictly required)
+1. Counterparty Count Query (Degree Query): Ask for the number of direct transaction counterparties of account i. I will return the number (a positive integer).
+2. Direct Transaction Query (Adjacency Query): Ask whether there is a direct fund transfer agreement between accounts i and j. I will answer "Yes" or "No".
+3. Final Announcement: When you have gathered enough information, announce the total number of end-node accounts in the network.
 
-Each operation must contain only one tag. Use the following XML format:
+- Before making the final announcement, you must complete at least two queries (either counterparty count or direct transaction queries count).
+- There is no limit on the number of queries, but try to use as few queries as possible.
 
-- Review Quota Allocation (e.g., specifying a quota of 5):
-<query_mod>5</query_mod>
+Your goal is to infer the total number of end-node accounts in the laundering/proxy network through queries and announce it correctly.
 
-- Declare Total Document Count (e.g., total count is 42):
-<answer>42</answer>
+Each turn must contain only one tag. Use the following XML format:
 
-Note: Before declaring the total document count, make sure you have collected conclusively enough information through review quota allocations.
+- Counterparty Count Query (e.g., querying the counterparties of account 3):
+<query_degree>3</query_degree>
+
+- Direct Transaction Query (e.g., querying whether accounts 1 and 5 have direct fund transfers):
+<query_adjacent>1,5</query_adjacent>
+
+- Final Announcement (e.g., announcing the end-node account count is 4):
+<answer>4</answer>
+
+If the answer is incorrect or the format is invalid, the tracking task fails.
 """
 
-    tags = ["answer", "query_mod"]
-
-    # 难度配置说明：
-    # 1 (简单)        - N 较小且特征明显，2次查询足够
-    # 2 (中等偏下)    - N 中等，需要2-3次查询
-    # 3 (中等偏上)    - N 较大，需要3次查询
-    # 4 (较难)        - N 接近上限，需要精确选择模数
-    # 5 (难)          - N 接近上限且需要最优策略
+    tags = ["answer", "query_degree", "query_adjacent"]
+    
+    reasoning_type = "演绎推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {"n": 23},   # 23 = 2 (mod 3), 2 (mod 7)，较小数字
-            2: {"n": 87},   # 87 = 2 (mod 5), 3 (mod 6), 3 (mod 7)
-            3: {"n": 142},  # 142 = 2 (mod 5), 4 (mod 6), 2 (mod 7)
-            4: {"n": 177},  # 177 = 2 (mod 5), 3 (mod 6), 2 (mod 7)
-            5: {"n": 197},  # 197 = 2 (mod 5), 5 (mod 6), 1 (mod 7)
+            1: {
+                "n": 5,
+                "edges": [(1, 2), (2, 3), (2, 4), (2, 5)],
+            },
+            2: {
+                "n": 7,
+                "edges": [(1, 2), (2, 3), (3, 4), (3, 5), (2, 6), (6, 7)],
+            },
+            3: {
+                "n": 10,
+                "edges": [(1, 2), (2, 3), (3, 4), (3, 5), (2, 6), (6, 7), (6, 8), (1, 9), (9, 10)],
+            },
+            4: {
+                "n": 12,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (5, 9), (6, 10), (7, 11), (7, 12)],
+            },
+            5: {
+                "n": 15,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (4, 9), (5, 10), (6, 11), (7, 12), (7, 13), (8, 14), (9, 15)],
+            },
         },
         "en": {
-            1: {"n": 23},
-            2: {"n": 87},
-            3: {"n": 142},
-            4: {"n": 177},
-            5: {"n": 197},
+            1: {
+                "n": 5,
+                "edges": [(1, 2), (2, 3), (2, 4), (2, 5)],
+            },
+            2: {
+                "n": 7,
+                "edges": [(1, 2), (2, 3), (3, 4), (3, 5), (2, 6), (6, 7)],
+            },
+            3: {
+                "n": 10,
+                "edges": [(1, 2), (2, 3), (3, 4), (3, 5), (2, 6), (6, 7), (6, 8), (1, 9), (9, 10)],
+            },
+            4: {
+                "n": 12,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (5, 9), (6, 10), (7, 11), (7, 12)],
+            },
+            5: {
+                "n": 15,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (4, 9), (5, 10), (6, 11), (7, 12), (7, 13), (8, 14), (9, 15)],
+            },
         },
     }
 
     def __init__(self, config):
+        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，设置目标数字 N"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保转为整数
+        diff = self.config.difficulty
+
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -385,118 +486,140 @@ Note: Before declaring the total document count, make sure you have collected co
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self.target_n = cfg["n"]  # 目标数字
-        self.query_count = 0      # 已使用的查询次数
-        self.max_queries = 3      # 最大查询次数
-        self.valid_moduli = {3, 4, 5, 6, 7}  # 有效的模数集合
-        
-        # 用于显示的游戏信息
-        self._game_info["n"] = "?"  # 不在规则中透露具体数字
+        n = cfg["n"]
+        edges = cfg["edges"]
+
+        self._game_info["n"] = n
+        self._game_info["n_minus_1"] = n - 1
+        self._game_info["degree_sum"] = 2 * (n - 1)
+
+        self.n = n
+        self.adj = {i: set() for i in range(1, n + 1)}
+        self.degrees = {i: 0 for i in range(1, n + 1)}
+
+        for u, v in edges:
+            self.adj[u].add(v)
+            self.adj[v].add(u)
+            self.degrees[u] += 1
+            self.degrees[v] += 1
+
+        self.true_leaf_count = sum(1 for d in self.degrees.values() if d == 1)
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案是否正确"""
         try:
-            answer = int(parsed_info["answer"].strip())
-            
-            # 检查答案是否在有效范围内
-            if answer < 1 or answer > 200:
-                return False
-            
-            # 检查答案是否正确
-            return answer == self.target_n
+            announced_count = int(parsed_info["answer"].strip())
         except (ValueError, KeyError):
             return False
 
+        return announced_count == self.true_leaf_count
+
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑：处理查询并返回读数"""
-        if "query_mod" in parsed_info:
-            # 检查是否超过查询次数限制
-            if self.query_count >= self.max_queries:
-                if self.config.language == "zh":
-                    return f"查询次数已用尽（最多{self.max_queries}次）。请直接提交你的答案。"
-                else:
-                    return f"Query limit reached ({self.max_queries} queries used). Please submit your answer directly."
-            
-            try:
-                k = int(parsed_info["query_mod"].strip())
-            except ValueError:
-                self.query_count += 1
-                if self.config.language == "zh":
-                    return f"错误：模数必须是整数。剩余查询次数：{self.max_queries - self.query_count}"
-                else:
-                    return f"Error: Modulus must be an integer. Remaining queries: {self.max_queries - self.query_count}"
-            
-            # 增加查询计数
-            self.query_count += 1
-            
-            # 检查模数是否有效
-            if k not in self.valid_moduli:
-                if self.config.language == "zh":
-                    return f"错误：模数必须是 3、4、5、6 或 7 中的一个。该查询无效但已计入次数。剩余查询次数：{self.max_queries - self.query_count}"
-                else:
-                    return f"Error: Modulus must be one of 3, 4, 5, 6, or 7. This invalid query still counts. Remaining queries: {self.max_queries - self.query_count}"
-            
-            # 计算并返回余数
-            remainder = self.target_n % k
-            if self.config.language == "zh":
-                return f"N 除以 {k} 的余数是 {remainder}。剩余查询次数：{self.max_queries - self.query_count}"
-            else:
-                return f"N mod {k} = {remainder}. Remaining queries: {self.max_queries - self.query_count}"
-        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_range = "错误：节点编号超出范围。"
+            error_format = "错误：格式无效。"
         else:
-            if self.config.language == "zh":
-                raise ValueError("无效的查询格式。")
-            else:
-                raise ValueError("Invalid query format.")
+            yes_res, no_res = "Yes", "No"
+            error_range = "Error: Node ID out of range."
+            error_format = "Error: Invalid format."
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个错误的取模查询回复（修改余数值，保证在合法范围内）"""
-        import re
-        
-        # 匹配中文格式: "N 除以 k 的余数是 r。..."
-        zh_match = re.search(r'除以\s*(\d+)\s*的余数是\s*(\d+)', correct)
-        if zh_match:
-            k = int(zh_match.group(1))
-            old_r = int(zh_match.group(2))
-            # 在 [0, k-1] 范围内选一个不同的余数
-            new_r = (old_r + 1) % k
-            if new_r == old_r:
-                new_r = (old_r + 2) % k
-            return correct.replace(f"余数是 {old_r}", f"余数是 {new_r}")
-        
-        # 匹配英文格式: "N mod k = r. ..."
-        en_match = re.search(r'mod\s+(\d+)\s*=\s*(\d+)', correct)
-        if en_match:
-            k = int(en_match.group(1))
-            old_r = int(en_match.group(2))
-            new_r = (old_r + 1) % k
-            if new_r == old_r:
-                new_r = (old_r + 2) % k
-            return correct.replace(f"= {old_r}", f"= {new_r}", 1)  # 只替换第一处
-        
-        # 兜底
-        return correct + " [WRONG]"
+        if "query_degree" in parsed_info:
+            self.query_count += 1
+            try:
+                node_id = int(parsed_info["query_degree"].strip())
+                if node_id < 1 or node_id > self.n:
+                    return error_range
+                return str(self.degrees[node_id])
+            except:
+                return error_format
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法的模数查询并返回对应的正确答案。
-        为冗余性评估提供所有可能的信息维度，不受查询次数限制。
-        """
-        results = []
+        elif "query_adjacent" in parsed_info:
+            self.query_count += 1
+            try:
+                raw = parsed_info["query_adjacent"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                node_i, node_j = int(parts[0]), int(parts[1])
+                if node_i < 1 or node_i > self.n or node_j < 1 or node_j > self.n:
+                    return error_range
+                is_adjacent = node_j in self.adj[node_i]
+                return yes_res if is_adjacent else no_res
+            except:
+                return error_format
 
-        for k in sorted(list(self.valid_moduli)):
-            remainder = self.target_n % k
+        else:
+            raise ValueError("No valid query tag found.")
+
+    def get_all_possible_queries(self) -> List[Dict[str, str]]:
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
             
-            query_str = f"<query_mod>{k}</query_mod>"
-            
-            if self.config.language == "zh":
-                ans = f"N 除以 {k} 的余数是 {remainder}。"
-            else:
-                ans = f"N mod {k} = {remainder}."
-            
-            results.append({
-                "query": query_str,
-                "answer": ans
+        queries = []
+        
+        for i in range(1, self.n + 1):
+            queries.append({
+                "query": f"<query_degree>{i}</query_degree>",
+                "answer": str(self.degrees[i])
             })
             
-        return results
+        for i in range(1, self.n + 1):
+            for j in range(i + 1, self.n + 1):
+                is_adj = j in self.adj[i]
+                queries.append({
+                    "query": f"<query_adjacent>{i},{j}</query_adjacent>",
+                    "answer": yes_res if is_adj else no_res
+                })
+        
+        return queries
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        try:
+            val = int(correct)
+            return str(val + 1)
+        except ValueError:
+            pass
+
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
+        
+        if correct.lower() == "yes":
+            return "No" if correct == "Yes" else "NO" if correct == "YES" else "no"
+        if correct.lower() == "no":
+            return "Yes" if correct == "No" else "YES" if correct == "NO" else "yes"
+
+        return correct + "_WRONG"
+
+    def step(self, response: str):
+        try:
+            parsed_info = self.parse(response)
+            if "answer" in parsed_info:
+                if self.query_count < 2:
+                    if self.config.language == "zh":
+                        res = "失败：在申报答案之前必须至少完成两次查询。"
+                    else:
+                        res = "Failed: You must complete at least two queries before announcing."
+                    self.state.set_state("failed", "insufficient queries")
+                    self.state.add_message("user", res)
+                else:
+                    is_success = self.evaluate(parsed_info)
+                    if is_success:
+                        res = "答案正确" if self.config.language == "zh" else "Correct answer."
+                        self.state.set_state("success", "success")
+                        self.state.add_message("user", res)
+                    else:
+                        res = "答案错误" if self.config.language == "zh" else "Incorrect answer."
+                        self.state.set_state("failed", "incorrect answer")
+                        self.state.add_message("user", res)
+            else:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+                
+        except Exception as e:
+            self.state.set_state("failed", str(e))    
+        
+        return self.state

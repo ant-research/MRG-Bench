@@ -1,1062 +1,972 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   子树属性聚合：某子树内所有节点的属性之和/最大值是多少
-# ============================================================
-
 from .base import Game
-import random
+import re
 
+class GraphPathEnumerationGame(Game):
 
-class TreeParameterInferenceGame(Game):
+    game_rule_zh = """\
+我们来玩一个"图路径枚举"推理游戏，规则如下：
 
-    # ================= 场景 1：交通 =================
+游戏设定了一个未知边集的有限无向简单图 G，节点集合 V 由若干个唯一大写字母构成（如 A、B、C 等）。图中无自环、无重边，每个节点的度数不超过 4。
+
+我已指定了起点 S 和终点 T（均属于 V），并保证至少存在一条从 S 到 T 的路径。
+
+你的目标是通过查询，精确枚举并提交从 S 到 T 的全部且仅有的简单路径集合（简单路径指不含重复节点的路径）。路径不可重复，必须均为合法路径。
+
+每次可以提出最多 3 个问题（每个问题单独书写，使用以下格式）：
+
+1. **邻居查询**：询问节点 X 的所有相邻节点
+   格式：<query_neighbor>X</query_neighbor>
+   
+2. **边存在查询**：询问节点 X 与 Y 是否直接相连
+   格式：<query_edge>X,Y</query_edge>
+   
+3. **度数查询**：询问节点 X 的度数
+   格式：<query_degree>X</query_degree>
+   
+4. **路径校验**：检验给定路径是否合法
+   格式：<query_verify>X1-X2-X3-...</query_verify>
+   
+5. **前缀可扩展查询**：询问从给定前缀路径可以扩展的下一步节点
+   格式：<query_expand>X1-X2-X3-...</query_expand>
+
+注意：你应该尽可能高效地使用查询次数。
+
+当你收集到足够信息后，可以提交你找到的所有从 S 到 T 的简单路径。每条路径用"-"连接节点，多条路径用";"分隔。
+
+格式：<answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
+
+如果答案不正确，系统会告诉你错误原因。你最多可以提交 3 次答案。
+
+- 起点：{start}
+- 终点：{end}
+- 节点集合：{vertices}
+"""
+
+    game_rule_en = """\
+Let's play a "Graph Path Enumeration" deduction game with the following rules:
+
+The game features a finite undirected simple graph G with an unknown edge set. The vertex set V consists of several unique uppercase letters (such as A, B, C, etc.). The graph has no self-loops, no multiple edges, and each node has a degree of at most 4.
+
+I have specified a start node S and an end node T (both in V), and guarantee that at least one path exists from S to T.
+
+Your goal is to precisely enumerate and submit the complete set of all simple paths from S to T through queries (a simple path is one without repeated nodes). Paths must not be duplicated and must all be valid.
+
+You can ask up to 3 questions per turn (each question written separately, using the following formats):
+
+1. **Neighbor Query**: Ask for all neighbors of node X
+   Format: <query_neighbor>X</query_neighbor>
+   
+2. **Edge Existence Query**: Ask if nodes X and Y are directly connected
+   Format: <query_edge>X,Y</query_edge>
+   
+3. **Degree Query**: Ask for the degree of node X
+   Format: <query_degree>X</query_degree>
+   
+4. **Path Verification**: Verify if a given path is valid
+   Format: <query_verify>X1-X2-X3-...</query_verify>
+   
+5. **Prefix Expansion Query**: Ask which nodes can extend a given path prefix
+   Format: <query_expand>X1-X2-X3-...</query_expand>
+
+Note: You should use queries as efficiently as possible.
+
+When you have gathered enough information, submit all simple paths from S to T that you have found. Connect nodes in each path with "-", and separate multiple paths with ";".
+
+Format: <answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
+
+If your answer is incorrect, the system will tell you why. You may submit up to 3 times.
+
+- Start: {start}
+- End: {end}
+- Vertices: {vertices}
+"""
+
     contextualized_rule_zh_1 = """\
-欢迎使用“交通网络客流推断系统”。规则如下：
+我们在交通物流场景中进行一项“物流管网路径枚举”任务，规则如下：
 
-管辖的交通网络设定为一棵有根树结构，共 {n} 个站点，编号从 1 到 {n}。总枢纽（根节点）为 {root}。每个站点的下级站点列表已经确定（无环状线路）。
+系统设定了一个包含未知通车路线的有限无向运输网络 G，中转枢纽集合 V 由若干个唯一大写字母构成（如 A、B、C 等）。网络中无自环、无重边，每个枢纽的直连路线不超过 4 条。
 
-定义：
-- 深度：从总枢纽出发到该站点的线路段数（即换乘次数），总枢纽深度为 0。
-- 终端站（叶子节点）：没有下级站点的站点。
-- 中转枢纽（内部节点）：有至少一个下级站点的站点。
+我已指定了发货起点 S 和收货终点 T（均属于 V），并保证至少存在一条从 S 到 T 的可用运输路线。
 
-每个站点都有一个客流量基数，其取值由四个隐藏的系统常量决定：EI、OI、EL、OL（均为 1 到 9 之间的正整数）。
+你的目标是通过查询，精确枚举并提交从 S 到 T 的全部且仅有的简单流转路线集合（简单路线指不含重复枢纽的路线）。路线不可重复，必须均为合法路线。
 
-站点客流量取值规则：
-- 如果站点是中转枢纽且深度为偶数，其值为 EI
-- 如果站点是中转枢纽且深度为奇数，其值为 OI
-- 如果站点是终端站且深度为偶数，其值为 EL
-- 如果站点是终端站且深度为奇数，其值为 OL
+每次可以提出最多 3 个问题（每个问题单独书写，使用以下格式）：
 
-你的目标分为两步：
-1. 通过查询推断出 EI、OI、EL、OL 四个参数的准确值
-2. 当你推断正确后，系统会指定一个从未被查询过的目标站点 t，你需要在不再查询的情况下给出该站点及其所有下级站点构成的子网路客流总和
+1. **邻居查询**：询问枢纽 X 的所有直连中转枢纽
+   格式：<query_neighbor>X</query_neighbor>
+   
+2. **边存在查询**：询问枢纽 X 与 Y 是否直接通车
+   格式：<query_edge>X,Y</query_edge>
+   
+3. **度数查询**：询问枢纽 X 的直连路线数量
+   格式：<query_degree>X</query_degree>
+   
+4. **路径校验**：检验给定运输路线是否合法
+   格式：<query_verify>X1-X2-X3-...</query_verify>
+   
+5. **前缀可扩展查询**：询问从给定前缀路线可以扩展驶往的下一站枢纽
+   格式：<query_expand>X1-X2-X3-...</query_expand>
 
-你可以进行以下两类查询：
+注意：你应该尽可能高效地使用查询次数。
 
-类型 A - 子网路客流求和查询（最多 12 次）：
-- 指定一个站点编号 u
-- 系统会返回该站点及其所有下级站点中所有客流量基数的总和
+当你收集到足够信息后，可以提交你找到的所有从 S 到 T 的简单路线。每条路线用"-"连接枢纽，多条路线用";"分隔。
 
-类型 B - 网络结构查询（不限次数）：
-- 查询交通网络的拓扑结构信息
-- 系统会返回各站点的下级列表等结构信息（不包含数值）
+格式：<answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## 查询与提交格式（必须严格遵守）
+如果答案不正确，系统会告诉你错误原因。你最多可以提交 3 次答案。
 
-每次只能进行一个操作。使用以下 XML 格式：
-
-- 子网路客流求和查询（例如查询站点 5）：
-<query_sum>5</query_sum>
-
-- 网络结构查询：
-<query_structure></query_structure>
-
-- 提交四个参数的推断（例如 EI=3, OI=5, EL=7, OL=2）：
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- 提交最终答案（当系统给出目标站点 t 后，预测其子网路客流和，例如预测为 42）：
-<answer>42</answer>
-
-注意：
-- 求和查询次数有限，请谨慎使用
-- 必须先正确推断出四个参数，才能进入最终预测阶段
-- 最终预测时不能再进行任何查询
+- 起点：{start}
+- 终点：{end}
+- 枢纽集合：{vertices}
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-Welcome to the "Traffic Network Flow Inference System". Here are the rules:
+Let's perform a "Logistics Network Path Enumeration" task in a transportation context with the following rules:
 
-The managed traffic network is modeled as a rooted tree with {n} stations, numbered from 1 to {n}. The central hub (root node) is {root}. Each station's list of subordinate stations is predetermined (acyclic).
+The system features a finite undirected transport network G with an unknown set of routes. The transit hub set V consists of several unique uppercase letters (such as A, B, C, etc.). The network has no self-loops, no multiple routes between the same hubs, and each hub connects to at most 4 direct routes.
 
-Definitions:
-- Depth: The number of transit segments from the central hub; the central hub has a depth of 0.
-- Terminal station (Leaf node): A station with no subordinate stations.
-- Transfer hub (Internal node): A station with at least one subordinate station.
+I have specified a dispatch start warehouse S and a receiving destination depot T (both in V), and guarantee that at least one viable transport route exists from S to T.
 
-Each station has a base passenger flow determined by four hidden system constants: EI, OI, EL, OL (all positive integers between 1 and 9).
+Your goal is to precisely enumerate and submit the complete set of all simple routes from S to T through queries (a simple route is one without repeated transit hubs). Routes must not be duplicated and must all be valid transport routes.
 
-Station flow value rules:
-- If the station is a transfer hub with even depth, its value is EI
-- If the station is a transfer hub with odd depth, its value is OI
-- If the station is a terminal station with even depth, its value is EL
-- If the station is a terminal station with odd depth, its value is OL
+You can ask up to 3 questions per turn (each question written separately, using the following formats):
 
-Your goal has two steps:
-1. Infer the exact values of EI, OI, EL, OL through queries
-2. After correct inference, the system will specify a target station t that has never been queried, and you need to predict the total passenger flow of its sub-network (itself and all subordinate stations) without further queries
+1. **Neighbor Query**: Ask for all directly connected transit hubs of hub X
+   Format: <query_neighbor>X</query_neighbor>
+   
+2. **Edge Existence Query**: Ask if hubs X and Y are directly connected by a route
+   Format: <query_edge>X,Y</query_edge>
+   
+3. **Degree Query**: Ask for the number of direct routes connected to hub X
+   Format: <query_degree>X</query_degree>
+   
+4. **Path Verification**: Verify if a given transport route is valid
+   Format: <query_verify>X1-X2-X3-...</query_verify>
+   
+5. **Prefix Expansion Query**: Ask which transit hubs can extend a given route prefix
+   Format: <query_expand>X1-X2-X3-...</query_expand>
 
-You can perform two types of queries:
+Note: You should use queries as efficiently as possible.
 
-Type A - Sub-network Flow Sum Query (at most 12 times):
-- Specify a station number u
-- The system will return the sum of all base passenger flows in that station's sub-network
+When you have gathered enough information, submit all simple routes from S to T that you have found. Connect hubs in each route with "-", and separate multiple routes with ";".
 
-Type B - Network Structure Query (unlimited):
-- Query the topological structure information of the traffic network
-- The system will return the subordinate list and other structural info (no values)
+Format: <answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## Query and Submission Format (must strictly follow)
+If your answer is incorrect, the system will tell you why. You may submit up to 3 times.
 
-Each turn allows only one operation. Use the following XML format:
-
-- Sub-network flow sum query (e.g., querying station 5):
-<query_sum>5</query_sum>
-
-- Network structure query:
-<query_structure></query_structure>
-
-- Submit parameter inference (e.g., EI=3, OI=5, EL=7, OL=2):
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- Submit final answer (after the system gives you target station t, predict its sub-network flow sum, e.g., 42):
-<answer>42</answer>
-
-Note:
-- Flow sum queries are limited, use them wisely
-- You must correctly infer all four parameters before entering the final prediction phase
-- No queries are allowed during the final prediction
+- Start Hub: {start}
+- End Hub: {end}
+- Hubs: {vertices}
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-我们来进行一项“医疗卫生资源配置推断”任务。规则如下：
+我们在医疗场景中进行一项“临床诊疗路径枚举”任务，规则如下：
 
-医疗管辖网络设定为一棵有根树，共 {n} 个医疗机构，编号从 1 到 {n}。总医院（根节点）为 {root}。每个机构的下级机构列表已经确定（无环）。
+系统设定了一个包含未知转诊规则的有限无向诊疗流转网络 G，科室/阶段集合 V 由若干个唯一大写字母构成（如 A、B、C 等）。网络中无自环、无重边，每个科室的合理流转方向不超过 4 个。
 
-定义：
-- 深度：从总医院出发到该机构的管理层级数，总医院深度为 0。
-- 基层诊所（叶子节点）：没有下级机构的医疗单位。
-- 区域中心（内部节点）：有至少一个下级机构的医疗单位。
+我已指定了初诊起点 S 和康复终点 T（均属于 V），并保证至少存在一条从 S 到 T 的完整诊疗流转路径。
 
-每个机构都有一个资源配置基数，其取值由四个隐藏的常量决定：EI、OI、EL、OL（均为 1 到 9 之间的正整数）。
+你的目标是通过查询，精确枚举并提交从 S 到 T 的全部且仅有的简单临床路径集合（简单路径指不含重复流转科室的路径）。路径不可重复，必须均为符合医疗规范的路径。
 
-机构资源取值规则：
-- 如果机构是区域中心且深度为偶数，其值为 EI
-- 如果机构是区域中心且深度为奇数，其值为 OI
-- 如果机构是基层诊所且深度为偶数，其值为 EL
-- 如果机构是基层诊所且深度为奇数，其值为 OL
+每次可以提出最多 3 个问题（每个问题单独书写，使用以下格式）：
 
-你的目标分为两步：
-1. 通过查询推断出 EI、OI、EL、OL 四个参数的准确值
-2. 当你推断正确后，系统会指定一个从未被查询过的机构 t，你需要在不再查询的情况下给出该机构及其所有下辖单位的资源总和
+1. **邻居查询**：询问科室 X 的所有合规转诊科室
+   格式：<query_neighbor>X</query_neighbor>
+   
+2. **边存在查询**：询问科室 X 与 Y 之间是否可以直接转诊流转
+   格式：<query_edge>X,Y</query_edge>
+   
+3. **度数查询**：询问科室 X 的允许转诊方向数量
+   格式：<query_degree>X</query_degree>
+   
+4. **路径校验**：检验给定的临床流转路径是否合规
+   格式：<query_verify>X1-X2-X3-...</query_verify>
+   
+5. **前缀可扩展查询**：询问基于当前已走过的诊疗阶段，下一步可扩展推进的科室
+   格式：<query_expand>X1-X2-X3-...</query_expand>
 
-你可以进行以下两类查询：
+注意：你应该尽可能高效地使用查询次数。
 
-类型 A - 管辖区资源求和查询（最多 12 次）：
-- 指定一个机构编号 u
-- 系统会返回该机构及其下辖网络中所有机构资源配置基数的总和
+当你收集到足够信息后，可以提交你找到的所有从 S 到 T 的简单临床流转路径。每条路径用"-"连接科室，多条路径用";"分隔。
 
-类型 B - 组织结构查询（不限次数）：
-- 查询医疗网络的层级结构信息
-- 系统会返回树状管理架构的下级列表等信息（不包含数值）
+格式：<answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## 查询与提交格式（必须严格遵守）
+如果答案不正确，系统会告诉你错误原因。你最多可以提交 3 次答案。
 
-每次只能进行一个操作。使用以下 XML 格式：
-
-- 管辖区资源求和查询（例如查询机构 5）：
-<query_sum>5</query_sum>
-
-- 组织结构查询：
-<query_structure></query_structure>
-
-- 提交四个参数的推断（例如 EI=3, OI=5, EL=7, OL=2）：
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- 提交最终答案（当系统给出目标机构 t 后，预测其管辖区资源总和，例如预测为 42）：
-<answer>42</answer>
-
-注意：
-- 资源求和查询次数有限，请谨慎使用
-- 必须先正确推断出四个参数，才能进入最终预测阶段
-- 最终预测时不能再进行任何查询
+- 起点：{start}
+- 终点：{end}
+- 科室集合：{vertices}
 """
 
     contextualized_rule_en_2 = """\
 [Healthcare Scenario]
-Let's conduct a "Healthcare Resource Allocation Inference" task. Here are the rules:
+Let's perform a "Clinical Pathway Enumeration" task in a medical context with the following rules:
 
-The medical administrative network is set as a rooted tree with {n} healthcare facilities, numbered from 1 to {n}. The Main Hospital (root node) is {root}. Each facility's list of subordinate facilities is predetermined (acyclic).
+The system features a finite undirected clinical transition network G with an unknown set of referral rules. The medical department/stage set V consists of several unique uppercase letters (such as A, B, C, etc.). The network has no self-loops, no multiple transition routes between the same departments, and each department has at most 4 valid referral directions.
 
-Definitions:
-- Depth: The number of administrative tiers from the Main Hospital; Main Hospital has a depth of 0.
-- Local Clinic (Leaf node): A facility with no subordinate facilities.
-- Regional Center (Internal node): A facility with at least one subordinate facility.
+I have specified an initial diagnosis start stage S and a recovery end stage T (both in V), and guarantee that at least one complete clinical pathway exists from S to T.
 
-Each facility has a resource allocation baseline determined by four hidden constants: EI, OI, EL, OL (all positive integers between 1 and 9).
+Your goal is to precisely enumerate and submit the complete set of all simple clinical pathways from S to T through queries (a simple pathway is one without repeated medical departments). Pathways must not be duplicated and must all comply with clinical transition protocols.
 
-Facility resource rules:
-- If the facility is a Regional Center with even depth, its value is EI
-- If the facility is a Regional Center with odd depth, its value is OI
-- If the facility is a Local Clinic with even depth, its value is EL
-- If the facility is a Local Clinic with odd depth, its value is OL
+You can ask up to 3 questions per turn (each question written separately, using the following formats):
 
-Your goal has two steps:
-1. Infer the exact values of EI, OI, EL, OL through queries
-2. After correct inference, the system will specify a target facility t that has never been queried, and you need to predict the total resource sum of its jurisdiction (itself and all subordinate units) without further queries
+1. **Neighbor Query**: Ask for all valid referral departments of department X
+   Format: <query_neighbor>X</query_neighbor>
+   
+2. **Edge Existence Query**: Ask if a direct transition is allowed between departments X and Y
+   Format: <query_edge>X,Y</query_edge>
+   
+3. **Degree Query**: Ask for the number of allowed transition directions for department X
+   Format: <query_degree>X</query_degree>
+   
+4. **Path Verification**: Verify if a given clinical transition pathway is valid
+   Format: <query_verify>X1-X2-X3-...</query_verify>
+   
+5. **Prefix Expansion Query**: Ask which departments can legitimately follow a given clinical pathway prefix
+   Format: <query_expand>X1-X2-X3-...</query_expand>
 
-You can perform two types of queries:
+Note: You should use queries as efficiently as possible.
 
-Type A - Jurisdiction Resource Sum Query (at most 12 times):
-- Specify a facility number u
-- The system will return the sum of all resource baselines in that facility's jurisdiction network
+When you have gathered enough information, submit all simple clinical pathways from S to T that you have found. Connect departments in each pathway with "-", and separate multiple pathways with ";".
 
-Type B - Organization Structure Query (unlimited):
-- Query the hierarchical structure information of the medical network
-- The system will return the subordinate list and other structural info (no values)
+Format: <answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## Query and Submission Format (must strictly follow)
+If your answer is incorrect, the system will tell you why. You may submit up to 3 times.
 
-Each turn allows only one operation. Use the following XML format:
-
-- Jurisdiction resource sum query (e.g., querying facility 5):
-<query_sum>5</query_sum>
-
-- Organization structure query:
-<query_structure></query_structure>
-
-- Submit parameter inference (e.g., EI=3, OI=5, EL=7, OL=2):
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- Submit final answer (after the system gives you target facility t, predict its jurisdiction resource sum, e.g., 42):
-<answer>42</answer>
-
-Note:
-- Resource sum queries are limited, use them wisely
-- You must correctly infer all four parameters before entering the final prediction phase
-- No queries are allowed during the final prediction
+- Initial Diagnosis: {start}
+- Recovery: {end}
+- Departments: {vertices}
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-我们来执行一项“教育经费指标推导”任务。规则如下：
+我们在教育学习场景中进行一项“知识图谱进阶路径枚举”任务，规则如下：
 
-教育行政系统设定为一棵有根树，共 {n} 个教育机构，编号从 1 到 {n}。最高教育局（根节点）为 {root}。每个机构的直属下级列表已经确定（无交叉管辖）。
+系统设定了一个隐藏相互依赖关系的有限无向知识网络 G，知识模块集合 V 由若干个唯一大写字母构成（如 A、B、C 等）。网络中无自环、无重复依赖，每个知识模块的直接关联模块不超过 4 个。
 
-定义：
-- 深度：从最高教育局到该机构的行政级别落差，最高教育局深度为 0。
-- 一线学校（叶子节点）：没有下级管理单位的实体学校。
-- 中层教育局（内部节点）：有至少一个直属下级机构的管理单位。
+我已指定了基础概念起点 S 和掌握目标终点 T（均属于 V），并保证至少存在一条从 S 进阶到 T 的合理学习路径。
 
-每个教育机构都有一项经费划拨基数，取值由四个隐藏的政策常量决定：EI、OI、EL、OL（均为 1 到 9 之间的正整数）。
+你的目标是通过查询，精确枚举并提交从 S 到 T 的全部且仅有的简单学习路径集合（简单路径指不含重复学习模块的进阶过程）。学习路径不可重复，必须均为逻辑连贯的合法顺序。
 
-机构经费取值规则：
-- 如果机构是中层教育局且深度为偶数，其值为 EI
-- 如果机构是中层教育局且深度为奇数，其值为 OI
-- 如果机构是一线学校且深度为偶数，其值为 EL
-- 如果机构是一线学校且深度为奇数，其值为 OL
+每次可以提出最多 3 个问题（每个问题单独书写，使用以下格式）：
 
-你的目标分为两步：
-1. 通过查询推断出 EI、OI、EL、OL 四个参数的准确值
-2. 当你推断正确后，系统会指定一个从未被查核过的机构 t，你需要在不再查询的情况下给出该机构及其所有下辖单位的经费总和
+1. **邻居查询**：询问知识模块 X 的所有直接关联模块
+   格式：<query_neighbor>X</query_neighbor>
+   
+2. **边存在查询**：询问知识模块 X 与 Y 之间是否存在直接依赖关系
+   格式：<query_edge>X,Y</query_edge>
+   
+3. **度数查询**：询问知识模块 X 的直接关联模块数量
+   格式：<query_degree>X</query_degree>
+   
+4. **路径校验**：检验给定的学习序列是否连贯合法
+   格式：<query_verify>X1-X2-X3-...</query_verify>
+   
+5. **前缀可扩展查询**：询问在学完当前模块序列后，可以平滑过渡学习的下一个知识模块
+   格式：<query_expand>X1-X2-X3-...</query_expand>
 
-你可以进行以下两类查询：
+注意：你应该尽可能高效地使用查询次数。
 
-类型 A - 辖区经费求和查询（最多 12 次）：
-- 指定一个机构编号 u
-- 系统会返回该机构及其整个下辖网络中所有节点经费基数的总和
+当你收集到足够信息后，可以提交你找到的所有从 S 到 T 的简单学习路径。每条路径用"-"连接知识模块，多条路径用";"分隔。
 
-类型 B - 行政结构查询（不限次数）：
-- 查询教育系统的行政隶属关系
-- 系统会返回各机构的下属列表等结构信息（不包含财务数值）
+格式：<answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## 查询与提交格式（必须严格遵守）
+如果答案不正确，系统会告诉你错误原因。你最多可以提交 3 次答案。
 
-每次只能进行一个操作。使用以下 XML 格式：
-
-- 辖区经费求和查询（例如查询机构 5）：
-<query_sum>5</query_sum>
-
-- 行政结构查询：
-<query_structure></query_structure>
-
-- 提交四个参数的推断（例如 EI=3, OI=5, EL=7, OL=2）：
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- 提交最终答案（当系统给出目标机构 t 后，预测其辖区经费和，例如预测为 42）：
-<answer>42</answer>
-
-注意：
-- 经费求和查询次数有限，请谨慎使用
-- 必须先正确推断出四个参数，才能进入最终预测阶段
-- 最终预测时不能再进行任何查询
+- 起点：{start}
+- 终点：{end}
+- 模块集合：{vertices}
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's perform an "Education Funding Metric Inference" task. Here are the rules:
+Let's perform a "Learning Knowledge Graph Path Enumeration" task in an educational context with the following rules:
 
-The education administrative system is set as a rooted tree with {n} institutions, numbered from 1 to {n}. The Supreme Education Board (root node) is {root}. Each institution's direct subordinate list is predetermined (no overlapping jurisdiction).
+The system features a finite undirected knowledge network G with hidden interdependence relationships. The knowledge module set V consists of several unique uppercase letters (such as A, B, C, etc.). The network has no self-loops, no redundant dependencies, and each knowledge module has at most 4 directly associated modules.
 
-Definitions:
-- Depth: The administrative tier gap from the Supreme Board; the Supreme Board has a depth of 0.
-- Frontline School (Leaf node): An actual school with no subordinate units.
-- Intermediate Board (Internal node): An administrative unit with at least one subordinate institution.
+I have specified a baseline concept start S and a mastery goal end T (both in V), and guarantee that at least one logical learning progression exists from S to T.
 
-Each institution has a funding allocation baseline determined by four hidden policy constants: EI, OI, EL, OL (all positive integers between 1 and 9).
+Your goal is to precisely enumerate and submit the complete set of all simple learning paths from S to T through queries (a simple learning path is a progression without repeated study modules). Paths must not be duplicated and must all be coherent and valid sequences.
 
-Institution funding rules:
-- If the institution is an Intermediate Board with even depth, its value is EI
-- If the institution is an Intermediate Board with odd depth, its value is OI
-- If the institution is a Frontline School with even depth, its value is EL
-- If the institution is a Frontline School with odd depth, its value is OL
+You can ask up to 3 questions per turn (each question written separately, using the following formats):
 
-Your goal has two steps:
-1. Infer the exact values of EI, OI, EL, OL through queries
-2. After correct inference, the system will specify a target institution t that has never been audited, and you need to predict the total funding sum of its jurisdiction without further queries
+1. **Neighbor Query**: Ask for all directly associated modules of knowledge module X
+   Format: <query_neighbor>X</query_neighbor>
+   
+2. **Edge Existence Query**: Ask if a direct dependency relationship exists between modules X and Y
+   Format: <query_edge>X,Y</query_edge>
+   
+3. **Degree Query**: Ask for the number of directly associated modules for knowledge module X
+   Format: <query_degree>X</query_degree>
+   
+4. **Path Verification**: Verify if a given learning sequence is coherent and valid
+   Format: <query_verify>X1-X2-X3-...</query_verify>
+   
+5. **Prefix Expansion Query**: Ask which knowledge modules can smoothly follow a given learned sequence prefix
+   Format: <query_expand>X1-X2-X3-...</query_expand>
 
-You can perform two types of queries:
+Note: You should use queries as efficiently as possible.
 
-Type A - Jurisdiction Funding Sum Query (at most 12 times):
-- Specify an institution number u
-- The system will return the sum of all funding baselines in that institution's jurisdiction network
+When you have gathered enough information, submit all simple learning paths from S to T that you have found. Connect knowledge modules in each path with "-", and separate multiple paths with ";".
 
-Type B - Administrative Structure Query (unlimited):
-- Query the administrative hierarchy of the education system
-- The system will return the subordinate list and other structural info (no financial values)
+Format: <answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## Query and Submission Format (must strictly follow)
+If your answer is incorrect, the system will tell you why. You may submit up to 3 times.
 
-Each turn allows only one operation. Use the following XML format:
-
-- Jurisdiction funding sum query (e.g., querying institution 5):
-<query_sum>5</query_sum>
-
-- Administrative structure query:
-<query_structure></query_structure>
-
-- Submit parameter inference (e.g., EI=3, OI=5, EL=7, OL=2):
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- Submit final answer (after the system gives you target institution t, predict its jurisdiction funding sum, e.g., 42):
-<answer>42</answer>
-
-Note:
-- Funding sum queries are limited, use them wisely
-- You must correctly infer all four parameters before entering the final prediction phase
-- No queries are allowed during the final prediction
+- Baseline Start: {start}
+- Mastery Goal: {end}
+- Modules: {vertices}
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-欢迎进入“工业制造BOM成本解析”环节。规则如下：
+我们在工业制造场景中进行一项“柔性制造工艺路线枚举”任务，规则如下：
 
-产品的物料清单（BOM）设定为一棵有根树，共包含 {n} 个组件/零件，编号从 1 到 {n}。最终成品（根节点）为 {root}。每个组件的子项构成列表已经确定（无循环依赖）。
+系统设定了一个具备未知流转工序的有限无向车间加工网络 G，工作站集合 V 由若干个唯一大写字母构成（如 A、B、C 等）。网络中无自环、无重边，每个工作站的物料对接链路不超过 4 条。
 
-定义：
-- 深度：从最终成品向下拆解的层级数，最终成品的深度为 0。
-- 基础原料（叶子节点）：不需要进一步拆解的底层零件。
-- 子装配体（内部节点）：由至少一个子项构成的中间组件。
+我已指定了原料投料起点 S 和成品下线终点 T（均属于 V），并保证至少存在一条从 S 到 T 的可贯通加工路线。
 
-每个节点（组件或原料）都有一个加工碳排放基数，取值由四个隐藏的工艺常量决定：EI、OI、EL、OL（均为 1 到 9 之间的正整数）。
+你的目标是通过查询，精确枚举并提交从 S 到 T 的全部且仅有的简单工艺流转路线集合（简单路线指不含重复返工作站的路线）。流转路线不可重复，必须均为符合工艺约束的合法工序。
 
-节点排碳取值规则：
-- 如果节点是子装配体且深度为偶数，其值为 EI
-- 如果节点是子装配体且深度为奇数，其值为 OI
-- 如果节点是基础原料且深度为偶数，其值为 EL
-- 如果节点是基础原料且深度为奇数，其值为 OL
+每次可以提出最多 3 个问题（每个问题单独书写，使用以下格式）：
 
-你的目标分为两步：
-1. 通过查询推断出 EI、OI、EL、OL 四个参数的准确值
-2. 当你推断正确后，系统会指定一个从未被检测过的节点 t，你需要在不再查询的情况下给出该组件及其所有底层子项的累计碳排放总和
+1. **邻居查询**：询问工作站 X 的所有对接流转工作站
+   格式：<query_neighbor>X</query_neighbor>
+   
+2. **边存在查询**：询问工作站 X 与 Y 之间是否可以直接传递物料
+   格式：<query_edge>X,Y</query_edge>
+   
+3. **度数查询**：询问工作站 X 的物料对接链路总数
+   格式：<query_degree>X</query_degree>
+   
+4. **路径校验**：检验给定的连续加工工序路线是否可行
+   格式：<query_verify>X1-X2-X3-...</query_verify>
+   
+5. **前缀可扩展查询**：询问基于当前已完成的加工流转序列，下一步可分发的对接工作站
+   格式：<query_expand>X1-X2-X3-...</query_expand>
 
-你可以进行以下两类查询：
+注意：你应该尽可能高效地使用查询次数。
 
-类型 A - 累计排碳求和查询（最多 12 次）：
-- 指定一个节点编号 u
-- 系统会返回该组件及其BOM分支下所有节点的排碳基数总和
+当你收集到足够信息后，可以提交你找到的所有从 S 到 T 的简单工艺流转路线。每条路线用"-"连接工作站，多条路线用";"分隔。
 
-类型 B - BOM结构查询（不限次数）：
-- 查询产品的物料清单层级关系
-- 系统会返回各组件的构成列表等结构信息（不包含数值）
+格式：<answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## 查询与提交格式（必须严格遵守）
+如果答案不正确，系统会告诉你错误原因。你最多可以提交 3 次答案。
 
-每次只能进行一个操作。使用以下 XML 格式：
-
-- 累计排碳求和查询（例如查询组件 5）：
-<query_sum>5</query_sum>
-
-- BOM结构查询：
-<query_structure></query_structure>
-
-- 提交四个参数的推断（例如 EI=3, OI=5, EL=7, OL=2）：
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- 提交最终答案（当系统给出目标节点 t 后，预测其累计排碳总和，例如预测为 42）：
-<answer>42</answer>
-
-注意：
-- 求和查询次数有限，请谨慎优化查询策略
-- 必须先正确推断出四个参数，才能进入最终预测阶段
-- 最终预测时不能再进行任何查询
+- 起点：{start}
+- 终点：{end}
+- 工作站集合：{vertices}
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Industrial BOM Cost Parsing" phase. Here are the rules:
+[Manufacturing/Industrial Scenario]
+Let's perform a "Flexible Manufacturing Process Routing Enumeration" task in an industrial context with the following rules:
 
-The product's Bill of Materials (BOM) is modeled as a rooted tree with {n} components/parts, numbered from 1 to {n}. The Final Product (root node) is {root}. Each component's sub-item list is predetermined (no cyclic dependencies).
+The system features a finite undirected workshop processing network G with an unknown set of transfer workflows. The workstation set V consists of several unique uppercase letters (such as A, B, C, etc.). The network has no self-loops, no multiple material transfer links between the same workstations, and each workstation connects to at most 4 material routing links.
 
-Definitions:
-- Depth: The number of breakdown levels from the Final Product; the Final Product has a depth of 0.
-- Base Material (Leaf node): A bottom-level part that requires no further breakdown.
-- Sub-assembly (Internal node): An intermediate component composed of at least one sub-item.
+I have specified a raw material input start S and a finished product output end T (both in V), and guarantee that at least one viable processing route exists from S to T.
 
-Each node (component or material) has a base carbon emission factor determined by four hidden process constants: EI, OI, EL, OL (all positive integers between 1 and 9).
+Your goal is to precisely enumerate and submit the complete set of all simple process routing flows from S to T through queries (a simple flow is a processing route without repeated workstations or rework). Routes must not be duplicated and must all comply with valid manufacturing constraints.
 
-Node emission rules:
-- If the node is a Sub-assembly with even depth, its value is EI
-- If the node is a Sub-assembly with odd depth, its value is OI
-- If the node is a Base Material with even depth, its value is EL
-- If the node is a Base Material with odd depth, its value is OL
+You can ask up to 3 questions per turn (each question written separately, using the following formats):
 
-Your goal has two steps:
-1. Infer the exact values of EI, OI, EL, OL through queries
-2. After correct inference, the system will specify a target node t that has never been tested, and you need to predict the cumulative carbon emission sum of that component and all its underlying sub-items without further queries
+1. **Neighbor Query**: Ask for all routing-compatible workstations of workstation X
+   Format: <query_neighbor>X</query_neighbor>
+   
+2. **Edge Existence Query**: Ask if materials can be transferred directly between workstations X and Y
+   Format: <query_edge>X,Y</query_edge>
+   
+3. **Degree Query**: Ask for the total number of material routing links for workstation X
+   Format: <query_degree>X</query_degree>
+   
+4. **Path Verification**: Verify if a given sequential processing flow is operationally feasible
+   Format: <query_verify>X1-X2-X3-...</query_verify>
+   
+5. **Prefix Expansion Query**: Ask which workstations can receive materials as the next step of a given processing flow prefix
+   Format: <query_expand>X1-X2-X3-...</query_expand>
 
-You can perform two types of queries:
+Note: You should use queries as efficiently as possible.
 
-Type A - Cumulative Emission Sum Query (at most 12 times):
-- Specify a node number u
-- The system will return the sum of all base carbon emission factors in that component's BOM branch
+When you have gathered enough information, submit all simple processing flows from S to T that you have found. Connect workstations in each flow with "-", and separate multiple flows with ";".
 
-Type B - BOM Structure Query (unlimited):
-- Query the hierarchical relationships of the Bill of Materials
-- The system will return the composition list and other structural info (no values)
+Format: <answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## Query and Submission Format (must strictly follow)
+If your answer is incorrect, the system will tell you why. You may submit up to 3 times.
 
-Each turn allows only one operation. Use the following XML format:
-
-- Cumulative emission sum query (e.g., querying component 5):
-<query_sum>5</query_sum>
-
-- BOM structure query:
-<query_structure></query_structure>
-
-- Submit parameter inference (e.g., EI=3, OI=5, EL=7, OL=2):
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- Submit final answer (after the system gives you target node t, predict its cumulative emission sum, e.g., 42):
-<answer>42</answer>
-
-Note:
-- Emission sum queries are limited, optimize your query strategy carefully
-- You must correctly infer all four parameters before entering the final prediction phase
-- No queries are allowed during the final prediction
+- Raw Material Input: {start}
+- Product Output: {end}
+- Workstations: {vertices}
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-我们来推进一项“法律条款效力溯源”任务。规则如下：
+我们在司法实务场景中进行一项“法定程序流转路径枚举”任务，规则如下：
 
-法典结构设定为一棵有根树，共 {n} 个法律节点，编号从 1 到 {n}。根本大法（根节点）为 {root}。每个法律条款的衍生细则列表已经确定（无循环引用）。
+系统设定了一个包含未知审理推进步骤的有限无向司法程序网络 G，法定环节集合 V 由若干个唯一大写字母构成（如 A、B、C 等）。网络中无自环、无重复的法律环节过渡规则，每个法定环节的程序流转分支不超过 4 个。
 
-定义：
-- 深度：从根本大法向下衍生的层级数，根本大法深度为 0。
-- 具体细则（叶子节点）：没有进一步衍生条款的底层规定。
-- 综合编章（内部节点）：包含至少一项衍生条款的框架性条文。
+我已指定了立案申请起点 S 和结案执行终点 T（均属于 V），并保证至少存在一套从 S 到 T 的完整合法程序推进路径。
 
-每个节点都有一个法理权重指数，取值由四个隐藏的司法常量决定：EI、OI、EL、OL（均为 1 到 9 之间的正整数）。
+你的目标是通过查询，精确枚举并提交从 S 到 T 的全部且仅有的简单程序流转路径集合（简单路径指不含重复审核或倒退环节的合法路径）。路径不可重复，必须均为符合法定程序的步骤序列。
 
-条款权重取值规则：
-- 如果节点是综合编章且深度为偶数，其值为 EI
-- 如果节点是综合编章且深度为奇数，其值为 OI
-- 如果节点是具体细则且深度为偶数，其值为 EL
-- 如果节点是具体细则且深度为奇数，其值为 OL
+每次可以提出最多 3 个问题（每个问题单独书写，使用以下格式）：
 
-你的目标分为两步：
-1. 通过查询推断出 EI、OI、EL、OL 四个参数的准确值
-2. 当你推断正确后，系统会指定一个从未被查阅过的节点 t，你需要在不再查询的情况下给出该编章及其所有衍生细则的累计权重总和
+1. **邻居查询**：询问法定环节 X 的所有合法前后置接续环节
+   格式：<query_neighbor>X</query_neighbor>
+   
+2. **边存在查询**：询问法定环节 X 与 Y 之间是否可以直接进行程序流转
+   格式：<query_edge>X,Y</query_edge>
+   
+3. **度数查询**：询问法定环节 X 拥有的合法程序流转分支数量
+   格式：<query_degree>X</query_degree>
+   
+4. **路径校验**：检验给定的司法程序流转序列是否合法合规
+   格式：<query_verify>X1-X2-X3-...</query_verify>
+   
+5. **前缀可扩展查询**：询问基于当前已走完的程序步骤，下一步可发起的法定推进环节
+   格式：<query_expand>X1-X2-X3-...</query_expand>
 
-你可以进行以下两类查询：
+注意：你应该尽可能高效地使用查询次数。
 
-类型 A - 法系权重求和查询（最多 12 次）：
-- 指定一个节点编号 u
-- 系统会返回该条款及其分支下所有衍生条款的法理权重总和
+当你收集到足够信息后，可以提交你找到的所有从 S 到 T 的简单法定程序流转路径。每条路径用"-"连接环节，多条路径用";"分隔。
 
-类型 B - 法典结构查询（不限次数）：
-- 查询法律条文的派生关系
-- 系统会返回各条款的衍生列表等结构信息（不包含权重数值）
+格式：<answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## 查询与提交格式（必须严格遵守）
+如果答案不正确，系统会告诉你错误原因。你最多可以提交 3 次答案。
 
-每次只能进行一个操作。使用以下 XML 格式：
-
-- 法系权重求和查询（例如查询条款 5）：
-<query_sum>5</query_sum>
-
-- 法典结构查询：
-<query_structure></query_structure>
-
-- 提交四个参数的推断（例如 EI=3, OI=5, EL=7, OL=2）：
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- 提交最终答案（当系统给出目标节点 t 后，预测其法系权重总和，例如预测为 42）：
-<answer>42</answer>
-
-注意：
-- 权重求和查询次数有限，请谨慎使用
-- 必须先正确推断出四个参数，才能进入最终预测阶段
-- 最终预测时不能再进行任何查询
+- 起点：{start}
+- 终点：{end}
+- 法定环节集合：{vertices}
 """
 
     contextualized_rule_en_5 = """\
 [Law Scenario]
-Let's advance a "Legal Statute Efficacy Tracing" task. Here are the rules:
+Let's perform a "Judicial Procedure Flow Path Enumeration" task in a legal context with the following rules:
 
-The legal code structure is modeled as a rooted tree with {n} legal nodes, numbered from 1 to {n}. The Basic Law (root node) is {root}. Each legal statute's list of derivative clauses is predetermined (no circular references).
+The system features a finite undirected judicial procedure network G with unknown procedural advancement rules. The statutory steps set V consists of several unique uppercase letters (such as A, B, C, etc.). The network has no self-loops, no redundant legal step transitions, and each statutory step has at most 4 valid procedural transition branches.
 
-Definitions:
-- Depth: The number of derivation levels from the Basic Law; the Basic Law has a depth of 0.
-- Specific Clause (Leaf node): A bottom-level provision with no further derivative clauses.
-- Comprehensive Chapter (Internal node): A framework provision containing at least one derivative clause.
+I have specified a case filing start S and a final enforcement end T (both in V), and guarantee that at least one complete, lawful procedural advancement path exists from S to T.
 
-Each node has a legal weight index determined by four hidden judicial constants: EI, OI, EL, OL (all positive integers between 1 and 9).
+Your goal is to precisely enumerate and submit the complete set of all simple procedural transition paths from S to T through queries (a simple path is a lawful sequence without repeated review steps or regressive loops). Paths must not be duplicated and must all be statutory-compliant sequences.
 
-Statute weight rules:
-- If the node is a Comprehensive Chapter with even depth, its value is EI
-- If the node is a Comprehensive Chapter with odd depth, its value is OI
-- If the node is a Specific Clause with even depth, its value is EL
-- If the node is a Specific Clause with odd depth, its value is OL
+You can ask up to 3 questions per turn (each question written separately, using the following formats):
 
-Your goal has two steps:
-1. Infer the exact values of EI, OI, EL, OL through queries
-2. After correct inference, the system will specify a target node t that has never been reviewed, and you need to predict the cumulative weight sum of that chapter and all its derivative clauses without further queries
+1. **Neighbor Query**: Ask for all valid preceding or succeeding statutory steps of step X
+   Format: <query_neighbor>X</query_neighbor>
+   
+2. **Edge Existence Query**: Ask if a direct procedural transition is allowed between steps X and Y
+   Format: <query_edge>X,Y</query_edge>
+   
+3. **Degree Query**: Ask for the number of valid procedural transition branches for statutory step X
+   Format: <query_degree>X</query_degree>
+   
+4. **Path Verification**: Verify if a given sequence of judicial procedure flows is lawful and compliant
+   Format: <query_verify>X1-X2-X3-...</query_verify>
+   
+5. **Prefix Expansion Query**: Ask which statutory steps can legally follow a given completed procedural sequence prefix
+   Format: <query_expand>X1-X2-X3-...</query_expand>
 
-You can perform two types of queries:
+Note: You should use queries as efficiently as possible.
 
-Type A - Legal System Weight Sum Query (at most 12 times):
-- Specify a node number u
-- The system will return the sum of all legal weight indices in that statute's derivative branch
+When you have gathered enough information, submit all simple statutory transition paths from S to T that you have found. Connect statutory steps in each path with "-", and separate multiple paths with ";".
 
-Type B - Legal Code Structure Query (unlimited):
-- Query the derivation relationships of the legal provisions
-- The system will return the derivative list and other structural info (no weight values)
+Format: <answer>S-A-T; S-B-C-T; S-D-E-F-T</answer>
 
-## Query and Submission Format (must strictly follow)
+If your answer is incorrect, the system will tell you why. You may submit up to 3 times.
 
-Each turn allows only one operation. Use the following XML format:
-
-- Legal system weight sum query (e.g., querying statute 5):
-<query_sum>5</query_sum>
-
-- Legal code structure query:
-<query_structure></query_structure>
-
-- Submit parameter inference (e.g., EI=3, OI=5, EL=7, OL=2):
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- Submit final answer (after the system gives you target node t, predict its legal system weight sum, e.g., 42):
-<answer>42</answer>
-
-Note:
-- Weight sum queries are limited, use them wisely
-- You must correctly infer all four parameters before entering the final prediction phase
-- No queries are allowed during the final prediction
+- Case Filing: {start}
+- Final Enforcement: {end}
+- Statutory Steps: {vertices}
 """
 
-    # ================= 原始规则及系统配置 =================
-    game_rule_zh = """\
-我们来玩一个"树参数推理"游戏。规则如下：
-
-游戏设定了一棵有根树，共 {n} 个节点，编号从 1 到 {n}。根节点为 {root}。每个节点的子节点列表已经确定（无环）。
-
-定义：
-- 深度：从根节点出发到该节点的边数，根节点深度为 0。
-- 叶子节点：没有子节点的节点。
-- 内部节点：有至少一个子节点的节点。
-
-每个节点都有一个取值，取值规则由四个隐藏的常量决定：EI、OI、EL、OL（均为 1 到 9 之间的正整数）。
-
-节点取值规则：
-- 如果节点是内部节点且深度为偶数，其值为 EI
-- 如果节点是内部节点且深度为奇数，其值为 OI
-- 如果节点是叶子节点且深度为偶数，其值为 EL
-- 如果节点是叶子节点且深度为奇数，其值为 OL
-
-你的目标分为两步：
-1. 通过查询推断出 EI、OI、EL、OL 四个参数的准确值
-2. 当你推断正确后，我会指定一个从未被查询过的节点 t，你需要在不再查询的情况下给出该节点子树的总和
-
-你可以进行以下两类查询：
-
-类型 A - 子树求和查询（最多 12 次）：
-- 指定一个节点编号 u
-- 我会返回该节点子树中所有节点值的总和
-
-类型 B - 结构查询（不限次数）：
-- 查询树的结构信息
-- 我会返回树的孩子列表等结构信息（不包含数值）
-
-## 查询与提交格式（必须严格遵守）
-
-每次只能进行一个操作。使用以下 XML 格式：
-
-- 子树求和查询（例如查询节点 5）：
-<query_sum>5</query_sum>
-
-- 结构查询：
-<query_structure></query_structure>
-
-- 提交四个参数的推断（例如 EI=3, OI=5, EL=7, OL=2）：
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- 提交最终答案（当我给出目标节点 t 后，预测其子树和，例如预测为 42）：
-<answer>42</answer>
-
-注意：
-- 子树求和查询次数有限，请谨慎使用
-- 必须先正确推断出四个参数，才能进入最终预测阶段
-- 最终预测时不能再进行任何查询
-"""
-
-    game_rule_en = """\
-Let's play a "Tree Parameter Inference" game. Here are the rules:
-
-The game is set on a rooted tree with {n} nodes, numbered from 1 to {n}. The root node is {root}. Each node's children list is predetermined (acyclic).
-
-Definitions:
-- Depth: The number of edges from the root to the node; root has depth 0.
-- Leaf node: A node with no children.
-- Internal node: A node with at least one child.
-
-Each node has a value determined by four hidden constants: EI, OI, EL, OL (all positive integers between 1 and 9).
-
-Node value rules:
-- If the node is internal with even depth, its value is EI
-- If the node is internal with odd depth, its value is OI
-- If the node is a leaf with even depth, its value is EL
-- If the node is a leaf with odd depth, its value is OL
-
-Your goal has two steps:
-1. Infer the exact values of EI, OI, EL, OL through queries
-2. After correct inference, I will specify a node t that has never been queried, and you need to predict its subtree sum without further queries
-
-You can perform two types of queries:
-
-Type A - Subtree Sum Query (at most 12 times):
-- Specify a node number u
-- I will return the sum of all node values in that node's subtree
-
-Type B - Structure Query (unlimited):
-- Query the tree structure information
-- I will return the children list and other structural information (no values)
-
-## Query and Submission Format (must strictly follow)
-
-Each turn allows only one operation. Use the following XML format:
-
-- Subtree sum query (e.g., querying node 5):
-<query_sum>5</query_sum>
-
-- Structure query:
-<query_structure></query_structure>
-
-- Submit parameter inference (e.g., EI=3, OI=5, EL=7, OL=2):
-<submit_params>EI=3, OI=5, EL=7, OL=2</submit_params>
-
-- Submit final answer (after I give you target node t, predict its subtree sum, e.g., 42):
-<answer>42</answer>
-
-Note:
-- Subtree sum queries are limited, use them wisely
-- You must correctly infer all four parameters before entering the final prediction phase
-- No queries are allowed during final prediction
-"""
-
-    tags = ["answer", "query_sum", "query_structure", "submit_params"]
+    tags = ["answer", "query_neighbor", "query_edge", "query_degree", "query_verify", "query_expand"]
     
-    reasoning_type = "归纳推理"
-    data_structure = "树"
+    reasoning_type = "演绎推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "n": 7,
-            "root": 1,
-            "children": {
-                1: [2, 3],
-                2: [4, 5],
-                3: [6, 7],
-                4: [],
-                5: [],
-                6: [],
-                7: []
+        "zh": {
+            1: {
+                "vertices": ["A", "B", "C", "D", "E", "F"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E"), ("E", "F")],
+                "start": "A",
+                "end": "F"
             },
-            "params": {"EI": 3, "OI": 5, "EL": 7, "OL": 2}
+            2: {
+                "vertices": ["A", "B", "C", "D", "E", "F", "G"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("C", "E"), ("D", "F"), ("E", "F"), ("F", "G")],
+                "start": "A",
+                "end": "G"
+            },
+            3: {
+                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "E"), ("C", "F"), ("D", "G"), ("E", "G"), ("E", "H"), ("F", "H"), ("G", "H")],
+                "start": "A",
+                "end": "H"
+            },
+            4: {
+                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
+                "edges": [("A", "B"), ("A", "C"), ("A", "D"), ("B", "E"), ("B", "F"), ("C", "F"), ("C", "G"), ("D", "G"), ("E", "H"), ("F", "H"), ("F", "I"), ("G", "I"), ("H", "I")],
+                "start": "A",
+                "end": "I"
+            },
+            5: {
+                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
+                "edges": [("A", "B"), ("A", "C"), ("A", "D"), ("B", "E"), ("B", "F"), ("C", "E"), ("C", "F"), ("C", "G"), ("D", "F"), ("D", "G"), ("E", "H"), ("F", "H"), ("F", "I"), ("G", "H"), ("G", "I"), ("H", "I")],
+                "start": "A",
+                "end": "I"
+            }
         },
-        2: {
-            "n": 10,
-            "root": 1,
-            "children": {
-                1: [2, 3, 4],
-                2: [5, 6],
-                3: [7],
-                4: [8, 9, 10],
-                5: [],
-                6: [],
-                7: [],
-                8: [],
-                9: [],
-                10: []
+        "en": {
+            1: {
+                "vertices": ["A", "B", "C", "D", "E", "F"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E"), ("E", "F")],
+                "start": "A",
+                "end": "F"
             },
-            "params": {"EI": 4, "OI": 6, "EL": 2, "OL": 8}
-        },
-        3: {
-            "n": 13,
-            "root": 1,
-            "children": {
-                1: [2, 3],
-                2: [4, 5, 6],
-                3: [7, 8],
-                4: [9, 10],
-                5: [11],
-                6: [],
-                7: [12],
-                8: [13],
-                9: [],
-                10: [],
-                11: [],
-                12: [],
-                13: []
+            2: {
+                "vertices": ["A", "B", "C", "D", "E", "F", "G"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("C", "E"), ("D", "F"), ("E", "F"), ("F", "G")],
+                "start": "A",
+                "end": "G"
             },
-            "params": {"EI": 5, "OI": 3, "EL": 8, "OL": 1}
-        },
-        4: {
-            "n": 18,
-            "root": 1,
-            "children": {
-                1: [2, 3, 4],
-                2: [5, 6],
-                3: [7, 8, 9],
-                4: [10, 11],
-                5: [12, 13],
-                6: [14],
-                7: [],
-                8: [15],
-                9: [16],
-                10: [],
-                11: [17, 18],
-                12: [],
-                13: [],
-                14: [],
-                15: [],
-                16: [],
-                17: [],
-                18: []
+            3: {
+                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "E"), ("C", "F"), ("D", "G"), ("E", "G"), ("E", "H"), ("F", "H"), ("G", "H")],
+                "start": "A",
+                "end": "H"
             },
-            "params": {"EI": 7, "OI": 4, "EL": 3, "OL": 9}
-        },
-        5: {
-            "n": 25,
-            "root": 1,
-            "children": {
-                1: [2, 3, 4, 5],
-                2: [6, 7, 8],
-                3: [9, 10],
-                4: [11, 12, 13],
-                5: [14],
-                6: [15, 16],
-                7: [17],
-                8: [],
-                9: [18, 19],
-                10: [20],
-                11: [],
-                12: [21, 22],
-                13: [],
-                14: [23, 24, 25],
-                15: [],
-                16: [],
-                17: [],
-                18: [],
-                19: [],
-                20: [],
-                21: [],
-                22: [],
-                23: [],
-                24: [],
-                25: []
+            4: {
+                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
+                "edges": [("A", "B"), ("A", "C"), ("A", "D"), ("B", "E"), ("B", "F"), ("C", "F"), ("C", "G"), ("D", "G"), ("E", "H"), ("F", "H"), ("F", "I"), ("G", "I"), ("H", "I")],
+                "start": "A",
+                "end": "I"
             },
-            "params": {"EI": 6, "OI": 2, "EL": 9, "OL": 4}
+            5: {
+                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
+                "edges": [("A", "B"), ("A", "C"), ("A", "D"), ("B", "E"), ("B", "F"), ("C", "E"), ("C", "F"), ("C", "G"), ("D", "F"), ("D", "G"), ("E", "H"), ("F", "H"), ("F", "I"), ("G", "H"), ("G", "I"), ("H", "I")],
+                "start": "A",
+                "end": "I"
+            }
         }
     }
 
     def __init__(self, config):
-        # 初始化查询计数器和状态标志
         self.query_count = 0
-        self.max_queries = 12
-        self.params_guessed = False
-        self.queried_nodes = set()
-        self.target_node = None
-        self.param_submit_count = 0
-        self.max_param_submits = 3
+        self.submission_count = 0
+        self.max_queries = 40
+        self.max_submissions = 3
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏参数"""
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 基本信息
-        self._game_info["n"] = cfg["n"]
-        self._game_info["root"] = cfg["root"]
+        self.vertices = set(cfg["vertices"])
+        self.edges = set()
+        self.adj_list = {v: set() for v in self.vertices}
         
-        # 树结构
-        self.children = cfg["children"]
-        self.root = cfg["root"]
-        self.n = cfg["n"]
+        for u, v in cfg["edges"]:
+            self.edges.add((min(u, v), max(u, v)))
+            self.adj_list[u].add(v)
+            self.adj_list[v].add(u)
         
-        # 使用实例级种子随机生成参数（如果需要可复现，可以从 config 传入 seed）
-        seed = getattr(self.config, 'seed', None)
-        if seed is not None:
-            rng = random.Random(seed)
-            self.true_params = {
-                "EI": rng.randint(1, 9),
-                "OI": rng.randint(1, 9),
-                "EL": rng.randint(1, 9),
-                "OL": rng.randint(1, 9),
-            }
-        else:
-            self.true_params = cfg["params"].copy()
+        self.start = cfg["start"]
+        self.end = cfg["end"]
         
-        # 计算每个节点的深度
-        self.depth = {}
-        self._compute_depth(self.root, 0)
+        self.all_paths = self._find_all_simple_paths(self.start, self.end)
         
-        # 计算每个节点的取值
-        self.node_values = {}
-        for node in range(1, self.n + 1):
-            is_leaf = len(self.children[node]) == 0
-            is_even_depth = self.depth[node] % 2 == 0
+        self._game_info["start"] = self.start
+        self._game_info["end"] = self.end
+        self._game_info["vertices"] = ", ".join(sorted(self.vertices))
+
+    def _find_all_simple_paths(self, start, end):
+        all_paths = []
+        
+        def dfs(current, target, path, visited):
+            if current == target:
+                all_paths.append(list(path))
+                return
             
-            if is_leaf:
-                self.node_values[node] = self.true_params["EL"] if is_even_depth else self.true_params["OL"]
-            else:
-                self.node_values[node] = self.true_params["EI"] if is_even_depth else self.true_params["OI"]
-
-        # 使用固定种子预先确定目标节点
-        seed_val = seed if seed is not None else 0
-        rng_target = random.Random(42 + self.n + diff + seed_val)
-        all_nodes = list(range(1, self.n + 1))
-        rng_target.shuffle(all_nodes)
-        self._predetermined_target = all_nodes[0]
-
-    def _compute_depth(self, node, d):
-        """递归计算深度"""
-        self.depth[node] = d
-        for child in self.children[node]:
-            self._compute_depth(child, d + 1)
-
-    def _compute_subtree_sum(self, node):
-        """计算子树和"""
-        total = self.node_values[node]
-        for child in self.children[node]:
-            total += self._compute_subtree_sum(child)
-        return total
-
-    def _get_subtree_coefficients(self, node):
-        """计算子树中四类节点的计数 (a, b, c, d)"""
-        # a: 偶深内部, b: 奇深内部, c: 偶深叶, d: 奇深叶
-        counts = {"a": 0, "b": 0, "c": 0, "d": 0}
+            for neighbor in sorted(self.adj_list[current]):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    path.append(neighbor)
+                    dfs(neighbor, target, path, visited)
+                    path.pop()
+                    visited.remove(neighbor)
         
-        def dfs(n):
-            is_leaf = len(self.children[n]) == 0
-            is_even = self.depth[n] % 2 == 0
-            
-            if is_leaf:
-                if is_even:
-                    counts["c"] += 1
+        dfs(start, end, [start], {start})
+        return all_paths
+
+    def _normalize_path(self, path_str):
+        return [n.strip() for n in path_str.split("-") if n.strip()]
+
+    def _is_valid_path(self, nodes):
+        is_zh = self.config.language == "zh"
+        
+        if len(nodes) < 2:
+            return False, "路径长度不足" if is_zh else "Path too short"
+        
+        if len(nodes) != len(set(nodes)):
+            for i, node in enumerate(nodes):
+                if node in nodes[:i]:
+                    if is_zh:
+                        return False, f"重复节点，位置=第{i+1}步"
+                    else:
+                        return False, f"Duplicate node at position {i+1}"
+        
+        for i, node in enumerate(nodes):
+            if node not in self.vertices:
+                if is_zh:
+                    return False, f"不存在的节点，位置=第{i+1}步"
                 else:
-                    counts["d"] += 1
-            else:
-                if is_even:
-                    counts["a"] += 1
-                else:
-                    counts["b"] += 1
-            
-            for child in self.children[n]:
-                dfs(child)
+                    return False, f"Invalid node at position {i+1}"
         
-        dfs(node)
-        return counts
-
-    def _format_tree_structure(self):
-        """格式化树结构输出"""
-        if self.config.language == "zh":
-            result = f"根节点: {self.root}\n子节点列表:\n"
-            for node in sorted(self.children.keys()):
-                children_str = ", ".join(map(str, self.children[node])) if self.children[node] else "无"
-                result += f"  节点 {node}: [{children_str}]\n"
-        else:
-            result = f"Root: {self.root}\nChildren list:\n"
-            for node in sorted(self.children.keys()):
-                children_str = ", ".join(map(str, self.children[node])) if self.children[node] else "None"
-                result += f"  Node {node}: [{children_str}]\n"
-        return result.strip()
+        for i in range(len(nodes) - 1):
+            edge = (min(nodes[i], nodes[i+1]), max(nodes[i], nodes[i+1]))
+            if edge not in self.edges:
+                if is_zh:
+                    return False, f"不存在的边，位置=第{i+1}步"
+                else:
+                    return False, f"Invalid edge at position {i+1}"
+        
+        return True, ""
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
-        if not self.params_guessed or self.target_node is None:
+        self.submission_count += 1
+        
+        if self.submission_count > self.max_submissions:
             return False
         
-        try:
-            predicted_sum = int(parsed_info["answer"].strip())
-            actual_sum = self._compute_subtree_sum(self.target_node)
-            return predicted_sum == actual_sum
-        except (ValueError, TypeError, KeyError):
-            return False
+        raw_ans = parsed_info["answer"].strip()
+        
+        submitted_paths = []
+        if raw_ans:
+            path_strs = [p.strip() for p in raw_ans.split(";") if p.strip()]
+            for path_str in path_strs:
+                nodes = self._normalize_path(path_str)
+                submitted_paths.append(nodes)
+        
+        submitted_set = set()
+        invalid_indices = []
+        duplicate_indices = []
+        
+        for i, path in enumerate(submitted_paths):
+            path_tuple = tuple(path)
+            
+            if path_tuple in submitted_set:
+                duplicate_indices.append(i + 1)
+                continue
+            
+            is_valid, _ = self._is_valid_path(path)
+            if not is_valid:
+                invalid_indices.append(i + 1)
+                continue
+            
+            if len(path) < 2 or path[0] != self.start or path[-1] != self.end:
+                invalid_indices.append(i + 1)
+                continue
+            
+            submitted_set.add(path_tuple)
+        
+        answer_set = set(tuple(path) for path in self.all_paths)
+        
+        if submitted_set == answer_set and not invalid_indices and not duplicate_indices:
+            return True
+        
+        valid_count = len(submitted_set)
+        missing_count = len(answer_set - submitted_set)
+        extra_count = len(submitted_set - answer_set)
+        
+        if self.config.language == "zh":
+            feedback = f"提交结果: 未通过\n"
+            feedback += f"合法且唯一的路径数: {valid_count}\n"
+            if duplicate_indices:
+                feedback += f"重复的路径索引: {duplicate_indices}\n"
+            if invalid_indices:
+                feedback += f"非法的路径索引: {invalid_indices}\n"
+            feedback += f"距离完整还差: {missing_count} 条\n"
+            if extra_count > 0:
+                feedback += f"多余的路径: {extra_count} 条"
+        else:
+            feedback = f"Submission result: Failed\n"
+            feedback += f"Valid and unique paths: {valid_count}\n"
+            if duplicate_indices:
+                feedback += f"Duplicate path indices: {duplicate_indices}\n"
+            if invalid_indices:
+                feedback += f"Invalid path indices: {invalid_indices}\n"
+            feedback += f"Missing paths: {missing_count}\n"
+            if extra_count > 0:
+                feedback += f"Extra paths: {extra_count}"
+        
+        self._last_feedback = feedback
+        return False
 
     def _cf_core_produce(self, parsed_info):
-        lang = self.config.language
-
-        # 如果参数已确认且目标已指定，不允许任何查询
-        if self.params_guessed and self.target_node is not None:
-            if "query_structure" in parsed_info or "query_sum" in parsed_info or "submit_params" in parsed_info:
-                return "错误：最终预测阶段不能再进行任何查询或提交参数。请直接提交答案。" if lang == "zh" else "Error: No queries or parameter submissions allowed during the final prediction phase. Please submit your answer directly."
-
-        # 处理结构查询
-        if "query_structure" in parsed_info:
-            return self._format_tree_structure()
+        responses = []
         
-        # 处理子树求和查询
-        if "query_sum" in parsed_info:
-            if self.query_count >= self.max_queries:
-                return "错误：已达到最大查询次数限制。" if lang == "zh" else "Error: Maximum query limit reached."
-            
-            if self.params_guessed:
-                return "错误：参数已确认后不能再进行查询。" if lang == "zh" else "Error: Cannot query after parameters are confirmed."
-            
-            try:
-                node = int(parsed_info["query_sum"].strip())
-                if node < 1 or node > self.n:
-                    return "错误：节点编号超出范围。" if lang == "zh" else "Error: Node number out of range."
-                
-                self.query_count += 1
-                self.queried_nodes.add(node)
-                subtree_sum = self._compute_subtree_sum(node)
-                return str(subtree_sum)
-            except (ValueError, TypeError):
-                return "错误：无效的节点编号。" if lang == "zh" else "Error: Invalid node number."
+        query_count_this_turn = 0
+        for tag in ["query_neighbor", "query_edge", "query_degree", "query_verify", "query_expand"]:
+            if tag in parsed_info:
+                query_count_this_turn += 1
         
-        # 处理参数提交
-        if "submit_params" in parsed_info:
-            self.param_submit_count += 1
-            if self.param_submit_count > self.max_param_submits:
-                if lang == "zh":
-                    msg = "错误：参数提交次数已用完，游戏失败。"
-                else:
-                    msg = "Error: Parameter submission attempts exhausted, game over."
-                self.state.set_state("failed", "parameter submission attempts exhausted")
-                return msg
-            try:
-                raw = parsed_info["submit_params"]
-                kv_pairs = [x.strip() for x in raw.split(",")]
-                params = {}
-                for kv in kv_pairs:
-                    k, v = kv.split("=")
-                    params[k.strip()] = int(v.strip())
-                
-                # 检查是否所有参数都存在
-                if set(params.keys()) != {"EI", "OI", "EL", "OL"}:
-                    return "错误：必须提交所有四个参数 EI、OI、EL、OL。" if lang == "zh" else "Error: Must submit all four parameters EI, OI, EL, OL."
-                
-                # 检查参数是否正确
-                if params == self.true_params:
-                    self.params_guessed = True
-                    # 选择一个未被查询过的节点作为目标
-                    available_nodes = [n for n in range(1, self.n + 1) if n not in self.queried_nodes]
-                    if not available_nodes:
-                        available_nodes = list(range(1, self.n + 1))
-                    
-                    if self._predetermined_target in available_nodes:
-                        self.target_node = self._predetermined_target
-                    else:
-                        self.target_node = available_nodes[0]
-                    
-                    if lang == "zh":
-                        return f"参数推断正确！\n现在请预测节点 {self.target_node} 的子树和（不能再进行查询）。"
-                    else:
-                        return f"Parameters correct!\nNow predict the subtree sum of node {self.target_node} (no more queries allowed)."
-                else:
-                    if lang == "zh":
-                        return f"参数推断错误。剩余查询次数：{self.max_queries - self.query_count}"
-                    else:
-                        return f"Parameters incorrect. Remaining queries: {self.max_queries - self.query_count}"
-            except (ValueError, TypeError, KeyError, AttributeError, IndexError):
-                return "错误：无效的参数格式。" if lang == "zh" else "Error: Invalid parameter format."
+        self.query_count += query_count_this_turn
         
-        return "错误：无法识别的操作。" if lang == "zh" else "Error: Unrecognized operation."
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        在此游戏中，枚举所有节点的子树求和查询以及一次结构查询。
-        """
-        queries = []
-        for node in range(1, self.n + 1):
-            queries.append({
-                "query": f"<query_sum>{node}</query_sum>",
-                "answer": str(self._compute_subtree_sum(node))
-            })
-        queries.append({
-            "query": "<query_structure></query_structure>",
-            "answer": self._format_tree_structure()
-        })
-        
-        submit_msg = f"<submit_params>EI={self.true_params['EI']}, OI={self.true_params['OI']}, EL={self.true_params['EL']}, OL={self.true_params['OL']}</submit_params>"
-        
-        if self.target_node is None:
-            available_nodes = [n for n in range(1, self.n + 1) if n not in self.queried_nodes]
-            if not available_nodes:
-                available_nodes = list(range(1, self.n + 1))
-            
-            if self._predetermined_target in available_nodes:
-                self.target_node = self._predetermined_target
+        if self.query_count > self.max_queries:
+            if self.config.language == "zh":
+                raise ValueError(f"查询次数超过限制（{self.max_queries}次）")
             else:
-                self.target_node = available_nodes[0]
-            self.params_guessed = True
-
-        if self.config.language == "zh":
-            ans_msg = f"参数推断正确！\n现在请预测节点 {self.target_node} 的子树和（不能再进行查询）。"
-        else:
-            ans_msg = f"Parameters correct!\nNow predict the subtree sum of node {self.target_node} (no more queries allowed)."
-
-        queries.append({
-            "query": submit_msg,
-            "answer": ans_msg
-        })
+                raise ValueError(f"Query count exceeded limit ({self.max_queries})")
         
-        return queries
+        if "query_neighbor" in parsed_info:
+            node = parsed_info["query_neighbor"].strip()
+            if node not in self.vertices:
+                if self.config.language == "zh":
+                    responses.append(f"邻居({node}): 无效节点")
+                else:
+                    responses.append(f"Neighbor({node}): Invalid node")
+            else:
+                neighbors = sorted(self.adj_list[node])
+                if self.config.language == "zh":
+                    responses.append(f"邻居({node}): [{', '.join(neighbors)}]")
+                else:
+                    responses.append(f"Neighbor({node}): [{', '.join(neighbors)}]")
+        
+        if "query_edge" in parsed_info:
+            try:
+                parts = parsed_info["query_edge"].split(",")
+                if len(parts) != 2:
+                    raise ValueError
+                u, v = parts[0].strip(), parts[1].strip()
+                
+                if u not in self.vertices or v not in self.vertices:
+                    if self.config.language == "zh":
+                        responses.append(f"有边({u},{v}): 无效节点")
+                    else:
+                        responses.append(f"HasEdge({u},{v}): Invalid node")
+                else:
+                    edge = (min(u, v), max(u, v))
+                    exists = edge in self.edges
+                    if self.config.language == "zh":
+                        responses.append(f"有边({u},{v}): {'是' if exists else '否'}")
+                    else:
+                        responses.append(f"HasEdge({u},{v}): {'Yes' if exists else 'No'}")
+            except:
+                if self.config.language == "zh":
+                    responses.append("有边查询格式错误")
+                else:
+                    responses.append("Edge query format error")
+        
+        if "query_degree" in parsed_info:
+            node = parsed_info["query_degree"].strip()
+            if node not in self.vertices:
+                if self.config.language == "zh":
+                    responses.append(f"度({node}): 无效节点")
+                else:
+                    responses.append(f"Degree({node}): Invalid node")
+            else:
+                degree = len(self.adj_list[node])
+                if self.config.language == "zh":
+                    responses.append(f"度({node}): {degree}")
+                else:
+                    responses.append(f"Degree({node}): {degree}")
+        
+        if "query_verify" in parsed_info:
+            path_str = parsed_info["query_verify"].strip()
+            nodes = self._normalize_path(path_str)
+            is_valid, reason = self._is_valid_path(nodes)
+            
+            if self.config.language == "zh":
+                if is_valid:
+                    is_st_path = (len(nodes) >= 2 and nodes[0] == self.start and nodes[-1] == self.end)
+                    responses.append(f"校验路径: 合法\n是否为 S-T: {'是' if is_st_path else '否'}")
+                else:
+                    responses.append(f"校验路径: 不合法({reason})")
+            else:
+                if is_valid:
+                    is_st_path = (len(nodes) >= 2 and nodes[0] == self.start and nodes[-1] == self.end)
+                    responses.append(f"Verify path: Valid\nIs S-T path: {'Yes' if is_st_path else 'No'}")
+                else:
+                    responses.append(f"Verify path: Invalid({reason})")
+        
+        if "query_expand" in parsed_info:
+            path_str = parsed_info["query_expand"].strip()
+            nodes = self._normalize_path(path_str)
+            
+            if not nodes:
+                if self.config.language == "zh":
+                    responses.append("可扩展: 无效前缀(原因=空路径)")
+                else:
+                    responses.append("Expandable: Invalid prefix(reason=empty path)")
+            elif len(nodes) != len(set(nodes)):
+                if self.config.language == "zh":
+                    responses.append("可扩展: 无效前缀(原因=包含重复节点)")
+                else:
+                    responses.append("Expandable: Invalid prefix(reason=contains duplicate nodes)")
+            elif any(n not in self.vertices for n in nodes):
+                if self.config.language == "zh":
+                    responses.append("可扩展: 无效前缀(原因=包含无效节点)")
+                else:
+                    responses.append("Expandable: Invalid prefix(reason=contains invalid nodes)")
+            else:
+                prefix_valid = True
+                for i in range(len(nodes) - 1):
+                    edge = (min(nodes[i], nodes[i+1]), max(nodes[i], nodes[i+1]))
+                    if edge not in self.edges:
+                        prefix_valid = False
+                        break
+                
+                if not prefix_valid:
+                    if self.config.language == "zh":
+                        responses.append("可扩展: 无效前缀(原因=路径中存在不连通的边)")
+                    else:
+                        responses.append("Expandable: Invalid prefix(reason=path contains disconnected edges)")
+                else:
+                    last_node = nodes[-1]
+                    visited = set(nodes)
+                    candidates = sorted([n for n in self.adj_list[last_node] if n not in visited])
+                    
+                    if self.config.language == "zh":
+                        responses.append(f"可扩展: [{', '.join(candidates)}]")
+                    else:
+                        responses.append(f"Expandable: [{', '.join(candidates)}]")
+        
+        if self.config.language == "zh":
+            return "\n\n".join(responses) if responses else "无有效查询"
+        else:
+            return "\n\n".join(responses) if responses else "No valid query"
 
-    def _cf_make_wrong(self, correct):
-        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct.isdigit():
             return str(int(correct) + 1)
         
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            if "否" in correct:
-                return correct.replace("否", "是")
-        else:
-            lower_correct = correct.lower()
-            if "yes" in lower_correct:
-                if "Yes" in correct: return correct.replace("Yes", "No")
-                if "YES" in correct: return correct.replace("YES", "NO")
-                return correct.replace("yes", "no")
-            if "no" in lower_correct:
-                if "No" in correct: return correct.replace("No", "Yes")
-                if "NO" in correct: return correct.replace("NO", "YES")
-                return correct.replace("no", "yes")
+        wrong = correct
+        replaced = False
         
+        if "是" in wrong or "否" in wrong:
+            wrong = wrong.replace("是", "TEMP_TRUE").replace("否", "是").replace("TEMP_TRUE", "否")
+            replaced = True
+            
+        lower_wrong = wrong.lower()
+        if "yes" in lower_wrong or "no" in lower_wrong:
+            wrong = wrong.replace("Yes", "TEMP_YES").replace("No", "Yes").replace("TEMP_YES", "No")
+            wrong = wrong.replace("yes", "TEMP_yes").replace("no", "yes").replace("TEMP_yes", "no")
+            wrong = wrong.replace("YES", "TEMP_YES_CAP").replace("NO", "YES").replace("TEMP_YES_CAP", "NO")
+            replaced = True
+            
+        if replaced:
+            return wrong
+            
         return correct + "_WRONG"
 
+    def step(self, response: str):
+        try:
+            parsed_info = self.parse(response)
+            
+            if "answer" in parsed_info:
+                is_success = self.evaluate(parsed_info)
+                if is_success:
+                    if self.config.language == "zh":
+                        res = "提交结果: 通过\n答案完全正确！"
+                    else:
+                        res = "Submission result: Passed\nAnswer is completely correct!"
+                    self.state.set_state("success", "success")
+                    self.state.add_message("user", res)
+                else:
+                    if self.submission_count >= self.max_submissions:
+                        feedback = getattr(self, '_last_feedback', '')
+                        if self.config.language == "zh":
+                            self.state.add_message("user", feedback + "\n已达到最大提交次数，游戏失败。")
+                        else:
+                            self.state.add_message("user", feedback + "\nMaximum submissions reached. Game failed.")
+                        self.state.set_state("failed", "max submissions exceeded")
+                    else:
+                        feedback = getattr(self, '_last_feedback', '')
+                        self.state.add_message("user", feedback)
+            else:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+                
+        except Exception as e:
+            self.state.set_state("failed", str(e))
+        
+        return self.state
+
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        lang = self.config.language
+        
+        for v in sorted(self.vertices):
+            q_str = f"<query_neighbor>{v}</query_neighbor>"
+            neighbors = sorted(self.adj_list[v])
+            if lang == "zh":
+                ans = f"邻居({v}): [{', '.join(neighbors)}]"
+            else:
+                ans = f"Neighbor({v}): [{', '.join(neighbors)}]"
+            queries.append({"query": q_str, "answer": ans})
+
+        for v in sorted(self.vertices):
+            q_str = f"<query_degree>{v}</query_degree>"
+            degree = len(self.adj_list[v])
+            if lang == "zh":
+                ans = f"度({v}): {degree}"
+            else:
+                ans = f"Degree({v}): {degree}"
+            queries.append({"query": q_str, "answer": ans})
+
+        verts = sorted(list(self.vertices))
+        for i in range(len(verts)):
+            for j in range(i + 1, len(verts)):
+                u, v = verts[i], verts[j]
+                q_str = f"<query_edge>{u},{v}</query_edge>"
+                exists = (u, v) in self.edges
+                if lang == "zh":
+                    ans = f"有边({u},{v}): {'是' if exists else '否'}"
+                else:
+                    ans = f"HasEdge({u},{v}): {'Yes' if exists else 'No'}"
+                queries.append({"query": q_str, "answer": ans})
+
+        all_simple_paths_from_start = []
+        
+        def dfs(current_node, current_path, visited):
+            all_simple_paths_from_start.append(list(current_path))
+            
+            for neighbor in sorted(self.adj_list[current_node]):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    current_path.append(neighbor)
+                    dfs(neighbor, current_path, visited)
+                    current_path.pop()
+                    visited.remove(neighbor)
+        
+        dfs(self.start, [self.start], {self.start})
+        
+        for path in all_simple_paths_from_start:
+            path_str = "-".join(path)
+            
+            is_st = (len(path) >= 2 and path[0] == self.start and path[-1] == self.end)
+            q_verify = f"<query_verify>{path_str}</query_verify>"
+            
+            if lang == "zh":
+                ans_verify = f"校验路径: 合法\n是否为 S-T: {'是' if is_st else '否'}"
+            else:
+                ans_verify = f"Verify path: Valid\nIs S-T path: {'Yes' if is_st else 'No'}"
+            queries.append({"query": q_verify, "answer": ans_verify})
+            
+            last_node = path[-1]
+            visited_set = set(path)
+            candidates = sorted([n for n in self.adj_list[last_node] if n not in visited_set])
+            
+            q_expand = f"<query_expand>{path_str}</query_expand>"
+            if lang == "zh":
+                ans_expand = f"可扩展: [{', '.join(candidates)}]"
+            else:
+                ans_expand = f"Expandable: [{', '.join(candidates)}]"
+            queries.append({"query": q_expand, "answer": ans_expand})
+
+        return queries

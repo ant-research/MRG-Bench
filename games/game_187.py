@@ -1,947 +1,666 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   删除节点影响：删除某节点后，树分裂为几棵独立的树
-# ============================================================
-
 from .base import Game
 import random
-import re
 
-
-class TreeDeleteRuleGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "树"
+class GraphDistanceSumGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"树删除规律推理"游戏，规则如下：
+我们现在来玩一个"图距离求和"的推理游戏，规则如下：
 
-游戏设定了一棵包含 {n} 个结点的无向树，结点编号为 1 到 {n}。我已为这棵树秘密指定了一个根结点（固定但不公开），树的边结构也不公开。
+游戏设定了一个固定但未知的无向、无权、连通的简单图 G=(V,E)，无自环与重边。
 
-给定了一组**受限结点**集合 S = {{{restricted_nodes}}}，这些结点**不可进行删除观测**。其余结点为**普通结点**，可以进行删除观测。
+开局公开信息：
+- 节点集合 V 的完整名单：{node_list}
+- 节点总数 N = {n}
+- 唯一源节点 T = {source}
 
-注意：每次删除观测后，树会**立即复原**，所有操作都在完整的树上进行。
+距离与层级定义：
+- 任意两个节点 u, v 的距离为连接它们的最短路径的边数
+- dist(T,T) = 0
+- 第 d 层是指所有满足 dist(T,v) = d 的节点集合（d 为非负整数）
 
-你的目标是通过查询推断出一个**通用规律**：从结点的结构信息（如子结点数、是否为根）映射到"删除该结点后图的连通分量数"。最终，你需要对所有受限结点正确预测删除后的连通分量数。
+你可以反复向我提出以下四类问题（每次仅限一个问题），我会根据真实图结构如实回答：
 
-## 可用的查询类型
+1. 层级计数查询：询问第 d 层有多少个节点。回答一个非负整数。
+2. 距离判断查询：询问节点 v 的最短距离是否等于 d。回答"是"或"否"。
+3. 边存在查询：询问节点 u 与节点 v 之间是否存在边。回答"是"或"否"。
+4. 度数查询：询问节点 v 的度数（连接的边数）。回答一个非负整数。
 
-1. **删除观测**（仅限普通结点 i 不在 S 中）：
-   查询删除结点 i 后，图会分成多少个连通分量。
+你的目标是推断出单源距离和 S，即除源节点 T 外所有节点到 T 的最短距离之和：
+S = 所有 v 属于 V 且 v 不等于 T 时，dist(T,v) 的总和
 
-2. **子结点数查询**（任意结点 i）：
-   查询以当前固定根为方向时，结点 i 的直接子结点个数。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。请尽可能用较少的提问次数完成推理。
 
-3. **根判定查询**（任意结点 i）：
-   查询结点 i 是否为根结点。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-4. **规律声明**：
-   当你认为已经找到通用规律时，可以声明你的规律公式。
+- 层级计数查询（例如问第 2 层）：
+<query_count>2</query_count>
 
-5. **规律自测**（仅限普通结点 j 不在 S 中）：
-   在声明规律后，可以先预测某个普通结点的删除结果，系统会告诉你预测是否正确。
+- 距离判断查询（例如问节点 A 的距离是否为 3）：
+<query_distance>A,3</query_distance>
 
-6. **目标预测**（仅限受限结点 i 在 S 中）：
-   对受限结点预测删除后的连通分量数。
+- 边存在查询（例如问节点 A 和节点 B 之间是否有边）：
+<query_edge>A,B</query_edge>
 
-## 交互约束
+- 度数查询（例如问节点 C 的度数）：
+<query_degree>C</query_degree>
 
-- 在首次规律声明前，必须至少完成 **3 个不同结点**的完整样本采集（每个结点需要同时获得删除结果、子结点数和是否为根的信息）。
-- 在规律声明后，需要在至少 **2 个此前未做过删除观测的普通结点**上执行自测（先预测，再验证）。
-- 查询总数（删除观测 + 结构查询）不得超过 **{max_queries}** 次。
+提交最终答案时，直接给出距离和 S 的数值，格式如下：
 
-## 询问与提交格式
-
-每次只能包含一个操作标签。使用以下 XML 格式：
-
-- 删除观测（例如删除结点 5）：
-<query_delete>5</query_delete>
-
-- 子结点数查询（例如查询结点 3）：
-<query_children>3</query_children>
-
-- 根判定查询（例如查询结点 2）：
-<query_isroot>2</query_isroot>
-
-- 规律声明（用自然语言描述你的规律）：
-<declare_rule>你的规律描述</declare_rule>
-
-- 规律自测（例如预测结点 4 删除后有 3 个连通分量）：
-<test>node=4, predicted=3</test>
-
-- 目标预测（例如预测受限结点 7 删除后有 2 个连通分量）：
-<predict>node=7, predicted=2</predict>
-
-- 最终答案提交（对所有受限结点的预测）：
-<answer>节点号:连通分量数, 节点号:连通分量数</answer>
-
-## 成功与失败条件
-
-- **成功**：在至少声明一次规律后，对 S 中所有结点的预测均正确。
-- **失败**：
-  - 对 S 中的结点预测累计出错 2 次；
-  - 或查询总数超过 {max_queries} 次。
+<answer>15</answer>
 """
 
     game_rule_en = """\
-Let's play a "Tree Deletion Rule Inference" game. Here are the rules:
+Let's play a "Graph Distance Sum" deduction game. Here are the rules:
 
-The game involves a fixed undirected tree with {n} nodes numbered from 1 to {n}. I have secretly designated a root node (fixed but not disclosed), and the edge structure is also hidden.
+There is a fixed but unknown undirected, unweighted, connected simple graph G=(V,E), with no self-loops or multiple edges.
 
-A set of **restricted nodes** S = {{{restricted_nodes}}} is given. These nodes **cannot be deleted for observation**. The remaining nodes are **normal nodes** that can be deleted for observation.
+Public information at the start:
+- Node set V: {node_list}
+- Total number of nodes N = {n}
+- Unique source node T = {source}
 
-Note: After each deletion observation, the tree is **immediately restored**. All operations are performed on the complete tree.
+Distance and layer definitions:
+- The distance between any two nodes u, v is the number of edges in the shortest path connecting them
+- dist(T,T) = 0
+- Layer d is the set of all nodes v satisfying dist(T,v) = d (d is a non-negative integer)
 
-Your goal is to infer a **universal rule** through queries: mapping from a node's structural information (such as number of children, whether it is the root) to "the number of connected components after deleting that node". Finally, you need to correctly predict the number of connected components after deletion for all restricted nodes.
+You can repeatedly ask me four types of questions (one per turn), and I will answer truthfully based on the real graph structure:
 
-## Available Query Types
+1. Layer Count Query: Ask how many nodes are in layer d. Answer is a non-negative integer.
+2. Distance Check Query: Ask if the shortest distance of node v equals d. Answer "Yes" or "No".
+3. Edge Existence Query: Ask if there is an edge between node u and node v. Answer "Yes" or "No".
+4. Degree Query: Ask for the degree of node v (number of connected edges). Answer is a non-negative integer.
 
-1. **Delete Observation** (only for normal nodes i not in S):
-   Query how many connected components the graph splits into after deleting node i.
+Your goal is to infer the single-source distance sum S, which is the sum of shortest distances from all nodes (except source T) to T:
+S = sum of dist(T,v) for all v in V where v is not equal to T
 
-2. **Children Count Query** (any node i):
-   Query the number of direct children of node i when oriented from the current fixed root.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails. Try to complete the deduction with as few questions as possible.
 
-3. **Root Check Query** (any node i):
-   Query whether node i is the root node.
+Each query must contain only one tag. Use the following XML format:
 
-4. **Rule Declaration**:
-   When you think you have found the universal rule, you can declare your rule formula.
+- Layer Count Query (e.g., asking about layer 2):
+<query_count>2</query_count>
 
-5. **Rule Self-Test** (only for normal nodes j not in S):
-   After declaring a rule, you can first predict the deletion result of a normal node, and the system will tell you if the prediction is correct.
+- Distance Check Query (e.g., asking if node A has distance 3):
+<query_distance>A,3</query_distance>
 
-6. **Target Prediction** (only for restricted nodes i in S):
-   Predict the number of connected components after deletion for restricted nodes.
+- Edge Existence Query (e.g., asking if there is an edge between node A and node B):
+<query_edge>A,B</query_edge>
 
-## Interaction Constraints
+- Degree Query (e.g., asking for the degree of node C):
+<query_degree>C</query_degree>
 
-- Before the first rule declaration, you must complete sample collection for at least **3 different nodes** (each node needs deletion result, children count, and root status).
-- After rule declaration, you must perform self-tests on at least **2 normal nodes that have not been deletion-observed before** (predict first, then verify).
-- Total number of queries (deletion observations + structural queries) must not exceed **{max_queries}**.
+When submitting the final answer, directly provide the numerical value of distance sum S in this format:
 
-## Query and Submission Format
-
-Each query must contain only one operation tag. Use the following XML format:
-
-- Delete Observation (e.g., delete node 5):
-<query_delete>5</query_delete>
-
-- Children Count Query (e.g., query node 3):
-<query_children>3</query_children>
-
-- Root Check Query (e.g., query node 2):
-<query_isroot>2</query_isroot>
-
-- Rule Declaration (describe your rule in natural language):
-<declare_rule>Your rule description</declare_rule>
-
-- Rule Self-Test (e.g., predict node 4 has 3 components after deletion):
-<test>node=4, predicted=3</test>
-
-- Target Prediction (e.g., predict restricted node 7 has 2 components after deletion):
-<predict>node=7, predicted=2</predict>
-
-- Final Answer Submission (predictions for all restricted nodes):
-<answer>node:components, node:components</answer>
-
-## Success and Failure Conditions
-
-- **Success**: After at least one rule declaration, all predictions for nodes in S are correct.
-- **Failure**:
-  - Cumulative 2 incorrect predictions for nodes in S;
-  - Or total number of queries exceeds {max_queries}.
+<answer>15</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎来到交通规划调度中心。我们现在来进行一次"路网封锁规律推演"，规则如下：
+[交通物流场景]
+我们现在来玩一个“物流枢纽延迟评估”的推理游戏，规则如下：
 
-系统设定了一个包含 {n} 个交通枢纽（结点编号为 1 到 {n}）的树状交通网。我们已为该路网秘密指定了一个总指挥中心（即固定的根结点），且道路的边结构不对外公开。
+游戏设定了一个固定但未知的双向连通的物流网络 G=(V,E)，任意两个节点之间没有重复线路。
 
-给定了一组**重点保护枢纽**集合 S = {{{restricted_nodes}}}，这些枢纽**不可进行封锁观测**（即删除观测）。其余枢纽为**普通枢纽**，可以进行封锁观测。
+开局公开信息：
+- 站点集合 V 的完整名单：{node_list}
+- 站点总数 N = {n}
+- 核心枢纽节点 T = {source}
 
-注意：每次封锁观测后，路网会**立即复原**，所有操作都在完整的交通网上进行。
+距离与层级定义：
+- 任意两个站点 u, v 的距离为连接它们的最短中转路径的线路段数
+- 核心枢纽到自身的距离 dist(T,T) = 0
+- 第 d 层是指所有满足 dist(T,v) = d 的站点集合（d 为非负整数）
 
-你的目标是通过查询推断出一个**通用规律**：从枢纽的结构信息（如下级枢纽数、是否为总指挥中心）映射到"封锁该枢纽后，路网分裂成的独立交通子网（连通分量）数"。最终，你需要对所有重点保护枢纽正确预测封锁后的独立交通子网数。
+你可以反复向我提出以下四类问题（每次仅限一个问题），我会根据真实的物流网络如实回答：
 
-## 可用的查询类型
+1. 层级计数查询：询问距离核心枢纽 d 个中转段的站点有多少个。回答一个非负整数。
+2. 距离判断查询：询问站点 v 到核心枢纽的最短中转段数是否等于 d。回答“是”或“否”。
+3. 边存在查询：询问站点 u 与站点 v 之间是否存在直达线路。回答“是”或“否”。
+4. 度数查询：询问站点 v 的直达线路数量。回答一个非负整数。
 
-1. **封锁观测**（即删除观测，仅限普通枢纽 i 不在 S 中）：
-   查询封锁（删除）枢纽 i 后，交通网会分成多少个独立交通子网。
+你的目标是推断出全局延迟指数 S，即除核心枢纽 T 外所有站点到 T 的最短距离之和：
+S = 所有 v 属于 V 且 v 不等于 T 时，dist(T,v) 的总和
 
-2. **下级枢纽数查询**（即子结点查询，任意枢纽 i）：
-   查询以总指挥中心为方向时，枢纽 i 的直接下级枢纽个数。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，评估失败。请尽可能用较少的提问次数完成推理。
 
-3. **总指挥中心判定**（即根判定，任意枢纽 i）：
-   查询枢纽 i 是否为总指挥中心（根结点）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-4. **规律声明**：
-   当你认为已经找到通用规律时，可以声明你的规律公式。
+- 层级计数查询（例如问距离为 2 的站点数）：
+<query_count>2</query_count>
 
-5. **规律自测**（仅限普通枢纽 j 不在 S 中）：
-   在声明规律后，可以先预测某个普通枢纽封锁后的结果，系统会告诉你预测是否正确。
+- 距离判断查询（例如问站点 A 的距离是否为 3）：
+<query_distance>A,3</query_distance>
 
-6. **目标预测**（仅限重点保护枢纽 i 在 S 中）：
-   对重点保护枢纽预测封锁后的独立交通子网数。
+- 边存在查询（例如问站点 A 和站点 B 之间是否有直达线路）：
+<query_edge>A,B</query_edge>
 
-## 交互约束
+- 度数查询（例如问站点 C 的度数）：
+<query_degree>C</query_degree>
 
-- 在首次规律声明前，必须至少完成 **3 个不同枢纽**的完整样本采集（每个枢纽需要同时获得封锁结果、下级枢纽数和是否为总指挥中心的信息）。
-- 在规律声明后，需要在至少 **2 个此前未做过封锁观测的普通枢纽**上执行自测（先预测，再验证）。
-- 查询总数（封锁观测 + 结构查询）不得超过 **{max_queries}** 次。
+提交最终答案时，直接给出全局延迟指数 S 的数值，格式如下：
 
-## 询问与提交格式
-
-每次只能包含一个操作标签。使用以下 XML 格式：
-
-- 封锁观测（例如封锁枢纽 5）：
-<query_delete>5</query_delete>
-
-- 下级枢纽数查询（例如查询枢纽 3）：
-<query_children>3</query_children>
-
-- 总指挥中心判定（例如查询枢纽 2）：
-<query_isroot>2</query_isroot>
-
-- 规律声明（用自然语言描述你的规律）：
-<declare_rule>你的规律描述</declare_rule>
-
-- 规律自测（例如预测枢纽 4 封锁后有 3 个交通子网）：
-<test>node=4, predicted=3</test>
-
-- 目标预测（例如预测重点保护枢纽 7 封锁后有 2 个交通子网）：
-<predict>node=7, predicted=2</predict>
-
-- 最终答案提交（对所有受限结点的预测）：
-<answer>节点号:连通分量数, 节点号:连通分量数</answer>
-
-## 成功与失败条件
-
-- **成功**：在至少声明一次规律后，对 S 中所有枢纽的预测均正确。
-- **失败**：
-  - 对 S 中的枢纽预测累计出错 2 次；
-  - 或查询总数超过 {max_queries} 次。
+<answer>15</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the Traffic Network Planning Center. Let's perform a "Traffic Hub Blockade Rule Inference". Here are the rules:
+[Transportation and Logistics Scenario]
+Let's play a "Logistics Hub Delay Assessment" deduction game. Here are the rules:
 
-The system models a tree-shaped traffic network containing {n} traffic hubs (nodes numbered from 1 to {n}). I have secretly designated a general command center (a fixed root node) for this network, and the edge structure of the roads is not disclosed.
+There is a fixed but unknown undirected, unweighted, connected logistics network G=(V,E), with no duplicated direct routes.
 
-A set of **highly protected hubs** S = {{{restricted_nodes}}} is given. These hubs **cannot be subjected to blockade observation** (i.e., deletion observation). The remaining hubs are **normal hubs** that can be blockaded for observation.
+Public information at the start:
+- Complete list of stations V: {node_list}
+- Total number of stations N = {n}
+- Core hub node T = {source}
 
-Note: After each blockade observation, the traffic network is **immediately restored**. All operations are performed on the complete network.
+Distance and layer definitions:
+- The distance between any two stations u, v is the minimum number of transit segments connecting them.
+- dist(T,T) = 0
+- Layer d is the set of all stations satisfying dist(T,v) = d (d is a non-negative integer).
 
-Your goal is to infer a **universal rule** through queries: mapping from a hub's structural information (such as the number of subordinate hubs, whether it is the command center) to "the number of independent traffic subnets (connected components) the network splits into after blockading that hub". Finally, you need to correctly predict the number of independent traffic subnets after blockading for all highly protected hubs.
+You can repeatedly ask me four types of questions (one per turn), and I will answer truthfully based on the real network structure:
 
-## Available Query Types
+1. Layer Count Query: Ask how many stations are exactly d transit segments away from the core hub. Answer is a non-negative integer.
+2. Distance Check Query: Ask if the shortest transit distance of station v to the core hub equals d. Answer "Yes" or "No".
+3. Edge Existence Query: Ask if there is a direct route between station u and station v. Answer "Yes" or "No".
+4. Degree Query: Ask for the number of direct routes connected to station v. Answer is a non-negative integer.
 
-1. **Blockade Observation** (Deletion Observation, only for normal hubs i not in S):
-   Query how many independent traffic subnets the network splits into after blockading (deleting) hub i.
+Your goal is to infer the Global Delay Index S, which is the sum of shortest distances from all stations (except core hub T) to T:
+S = sum of dist(T,v) for all v in V where v is not equal to T
 
-2. **Subordinate Hubs Count Query** (Children Count Query, any hub i):
-   Query the number of direct subordinate hubs of hub i when oriented from the general command center.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the assessment fails. Try to complete the deduction with as few questions as possible.
 
-3. **Command Center Check** (Root Check Query, any hub i):
-   Query whether hub i is the general command center (root node).
+Each query must contain only one tag. Use the following XML format:
 
-4. **Rule Declaration**:
-   When you think you have found the universal rule, you can declare your rule formula.
+- Layer Count Query (e.g., asking about transit distance 2):
+<query_count>2</query_count>
 
-5. **Rule Self-Test** (only for normal hubs j not in S):
-   After declaring a rule, you can first predict the blockade result of a normal hub, and the system will tell you if the prediction is correct.
+- Distance Check Query (e.g., asking if station A has distance 3):
+<query_distance>A,3</query_distance>
 
-6. **Target Prediction** (only for highly protected hubs i in S):
-   Predict the number of independent traffic subnets after blockading highly protected hubs.
+- Edge Existence Query (e.g., asking if there is a direct route between station A and station B):
+<query_edge>A,B</query_edge>
 
-## Interaction Constraints
+- Degree Query (e.g., asking for the number of direct routes of station C):
+<query_degree>C</query_degree>
 
-- Before the first rule declaration, you must complete sample collection for at least **3 different hubs** (each hub needs blockade result, subordinate hubs count, and command center status).
-- After rule declaration, you must perform self-tests on at least **2 normal hubs that have not been blockade-observed before** (predict first, then verify).
-- Total number of queries (blockade observations + structural queries) must not exceed **{max_queries}**.
+When submitting the final answer, directly provide the numerical value of Global Delay Index S in this format:
 
-## Query and Submission Format
-
-Each query must contain only one operation tag. Use the following XML format:
-
-- Blockade Observation (e.g., blockade hub 5):
-<query_delete>5</query_delete>
-
-- Subordinate Hubs Count Query (e.g., query hub 3):
-<query_children>3</query_children>
-
-- Command Center Check (e.g., query hub 2):
-<query_isroot>2</query_isroot>
-
-- Rule Declaration (describe your rule in natural language):
-<declare_rule>Your rule description</declare_rule>
-
-- Rule Self-Test (e.g., predict hub 4 yields 3 subnets after blockade):
-<test>node=4, predicted=3</test>
-
-- Target Prediction (e.g., predict protected hub 7 yields 2 subnets after blockade):
-<predict>node=7, predicted=2</predict>
-
-- Final Answer Submission (predictions for all restricted nodes):
-<answer>node:components, node:components</answer>
-
-## Success and Failure Conditions
-
-- **Success**: After at least one rule declaration, all predictions for hubs in S are correct.
-- **Failure**:
-  - Cumulative 2 incorrect predictions for hubs in S;
-  - Or total number of queries exceeds {max_queries}.
+<answer>15</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎来到疾病控制中心。我们现在来进行一次"传染病隔离干预规律推演"，规则如下：
+[医疗流行病学场景]
+我们现在来玩一个“病毒传播链溯源”的推理游戏，规则如下：
 
-系统记录了一条包含 {n} 个感染者（结点编号为 1 到 {n}）的树状接触追踪链。我们已秘密确认了零号病人（即固定的根结点），且接触传播的边结构不对外公开。
+游戏设定了一个固定但未知的双向接触传播网络 G=(V,E)，任意两个个体之间没有重复的接触记录。
 
-给定了一组**脆弱群体感染者**集合 S = {{{restricted_nodes}}}，这些感染者**不可进行隔离干预观测**（即删除观测）。其余为**普通感染者**，可以进行隔离干预观测。
+开局公开信息：
+- 暴露个体集合 V 的完整名单：{node_list}
+- 个体总数 N = {n}
+- 零号病人（首发感染者） T = {source}
 
-注意：每次隔离干预观测后，传播链会**立即复原**（推演模拟），所有操作都在完整的传播网上进行。
+传播距离与层级定义：
+- 任意两个个体 u, v 的距离为连接他们的最短有效接触链的代数
+- 零号病人自身的代数 dist(T,T) = 0
+- 第 d 代感染群是指所有满足 dist(T,v) = d 的个体集合（d 为非负整数）
 
-你的目标是通过查询推断出一个**通用规律**：从感染者的结构信息（如直接传染的下线人数、是否为零号病人）映射到"隔离该感染者后，传播链断裂成的独立感染集群（连通分量）数"。最终，你需要对所有脆弱群体感染者正确预测隔离干预后的独立感染集群数。
+你可以反复向我提出以下四类问题（每次仅限一个问题），我会根据真实的接触网络如实回答：
 
-## 可用的查询类型
+1. 层级计数查询：询问第 d 代感染群有多少人。回答一个非负整数。
+2. 距离判断查询：询问个体 v 的感染代数是否等于 d。回答“是”或“否”。
+3. 边存在查询：询问个体 u 与个体 v 之间是否存在有效接触记录。回答“是”或“否”。
+4. 度数查询：询问个体 v 的直接接触人数。回答一个非负整数。
 
-1. **隔离观测**（即删除观测，仅限普通感染者 i 不在 S 中）：
-   查询隔离（删除）感染者 i 后，传播链会分成多少个独立的感染集群。
+你的目标是推断出整体传播代价 S，即除零号病人 T 外所有个体到 T 的最短传播代数之和：
+S = 所有 v 属于 V 且 v 不等于 T 时，dist(T,v) 的总和
 
-2. **下线感染数查询**（即子结点查询，任意感染者 i）：
-   查询以零号病人为溯源起点时，感染者 i 直接传染的下线人数。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，溯源失败。请尽可能用较少的提问次数完成推理。
 
-3. **零号病人判定**（即根判定，任意感染者 i）：
-   查询感染者 i 是否为零号病人（根结点）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-4. **规律声明**：
-   当你认为已经找到通用规律时，可以声明你的规律公式。
+- 层级计数查询（例如问第 2 代感染群人数）：
+<query_count>2</query_count>
 
-5. **规律自测**（仅限普通感染者 j 不在 S 中）：
-   在声明规律后，可以先预测某个普通感染者隔离后的结果，系统会告诉你预测是否正确。
+- 距离判断查询（例如问个体 A 的感染代数是否为 3）：
+<query_distance>A,3</query_distance>
 
-6. **目标预测**（仅限脆弱群体感染者 i 在 S 中）：
-   对脆弱群体感染者预测隔离后的独立感染集群数。
+- 边存在查询（例如问个体 A 和个体 B 之间是否有接触记录）：
+<query_edge>A,B</query_edge>
 
-## 交互约束
+- 度数查询（例如问个体 C 的度数）：
+<query_degree>C</query_degree>
 
-- 在首次规律声明前，必须至少完成 **3 个不同感染者**的完整样本采集（每个感染者需要同时获得隔离结果、下线人数和是否为零号病人的信息）。
-- 在规律声明后，需要在至少 **2 个此前未做过隔离观测的普通感染者**上执行自测（先预测，再验证）。
-- 查询总数（隔离观测 + 结构查询）不得超过 **{max_queries}** 次。
+提交最终答案时，直接给出整体传播代价 S 的数值，格式如下：
 
-## 询问与提交格式
-
-每次只能包含一个操作标签。使用以下 XML 格式：
-
-- 隔离观测（例如隔离感染者 5）：
-<query_delete>5</query_delete>
-
-- 下线感染数查询（例如查询感染者 3）：
-<query_children>3</query_children>
-
-- 零号病人判定（例如查询感染者 2）：
-<query_isroot>2</query_isroot>
-
-- 规律声明（用自然语言描述你的规律）：
-<declare_rule>你的规律描述</declare_rule>
-
-- 规律自测（例如预测感染者 4 隔离后有 3 个感染集群）：
-<test>node=4, predicted=3</test>
-
-- 目标预测（例如预测脆弱群体感染者 7 隔离后有 2 个感染集群）：
-<predict>node=7, predicted=2</predict>
-
-- 最终答案提交（对所有受限结点的预测）：
-<answer>节点号:连通分量数, 节点号:连通分量数</answer>
-
-## 成功与失败条件
-
-- **成功**：在至少声明一次规律后，对 S 中所有感染者的预测均正确。
-- **失败**：
-  - 对 S 中的感染者预测累计出错 2 次；
-  - 或查询总数超过 {max_queries} 次。
+<answer>15</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the Disease Control Center. Let's perform an "Infection Isolation Intervention Rule Inference". Here are the rules:
+[Medical and Epidemiology Scenario]
+Let's play a "Virus Transmission Chain Tracing" deduction game. Here are the rules:
 
-The system records a tree-shaped contact tracing chain containing {n} infected individuals (nodes numbered from 1 to {n}). We have secretly confirmed Patient Zero (the fixed root node), and the edge structure of transmission is not disclosed.
+There is a fixed but unknown undirected, unweighted, connected contact network G=(V,E), with no duplicated contact records.
 
-A set of **vulnerable group infected** S = {{{restricted_nodes}}} is given. These individuals **cannot be subjected to isolation intervention observation** (i.e., deletion observation). The remaining are **normal infected**, which can be subjected to isolation intervention observation.
+Public information at the start:
+- Complete list of exposed individuals V: {node_list}
+- Total number of individuals N = {n}
+- Patient Zero (Index Case) T = {source}
 
-Note: After each isolation intervention observation, the transmission chain is **immediately restored** (as this is a simulation). All operations are performed on the complete transmission network.
+Distance and layer definitions:
+- The distance between any two individuals u, v is the length of the shortest transmission chain (number of generations) connecting them.
+- dist(T,T) = 0
+- Generation d is the set of all individuals satisfying dist(T,v) = d (d is a non-negative integer).
 
-Your goal is to infer a **universal rule** through queries: mapping from an infected individual's structural information (such as the number of directly infected subordinates, whether they are Patient Zero) to "the number of independent infection clusters (connected components) the transmission chain breaks into after isolating that individual". Finally, you need to correctly predict the number of independent infection clusters after isolation for all vulnerable group infected.
+You can repeatedly ask me four types of questions (one per turn), and I will answer truthfully based on the real contact network:
 
-## Available Query Types
+1. Layer Count Query: Ask how many individuals belong to infection generation d. Answer is a non-negative integer.
+2. Distance Check Query: Ask if the infection generation of individual v equals d. Answer "Yes" or "No".
+3. Edge Existence Query: Ask if there is a valid contact record between individual u and individual v. Answer "Yes" or "No".
+4. Degree Query: Ask for the number of direct contacts of individual v. Answer is a non-negative integer.
 
-1. **Isolation Observation** (Deletion Observation, only for normal infected i not in S):
-   Query how many independent infection clusters the network splits into after isolating (deleting) infected i.
+Your goal is to infer the Total Transmission Cost S, which is the sum of shortest transmission generations from all individuals (except Patient Zero T) to T:
+S = sum of dist(T,v) for all v in V where v is not equal to T
 
-2. **Subordinate Infected Count Query** (Children Count Query, any infected i):
-   Query the number of direct subordinate infected of individual i when oriented from Patient Zero.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracing fails. Try to complete the deduction with as few questions as possible.
 
-3. **Patient Zero Check** (Root Check Query, any infected i):
-   Query whether infected i is Patient Zero (root node).
+Each query must contain only one tag. Use the following XML format:
 
-4. **Rule Declaration**:
-   When you think you have found the universal rule, you can declare your rule formula.
+- Layer Count Query (e.g., asking about infection generation 2):
+<query_count>2</query_count>
 
-5. **Rule Self-Test** (only for normal infected j not in S):
-   After declaring a rule, you can first predict the isolation result of a normal infected, and the system will tell you if the prediction is correct.
+- Distance Check Query (e.g., asking if individual A is at generation 3):
+<query_distance>A,3</query_distance>
 
-6. **Target Prediction** (only for vulnerable group infected i in S):
-   Predict the number of independent infection clusters after isolation for vulnerable group infected.
+- Edge Existence Query (e.g., asking if there is a contact between individual A and individual B):
+<query_edge>A,B</query_edge>
 
-## Interaction Constraints
+- Degree Query (e.g., asking for the number of direct contacts of individual C):
+<query_degree>C</query_degree>
 
-- Before the first rule declaration, you must complete sample collection for at least **3 different infected individuals** (each needs isolation result, subordinate infected count, and Patient Zero status).
-- After rule declaration, you must perform self-tests on at least **2 normal infected that have not been isolation-observed before** (predict first, then verify).
-- Total number of queries (isolation observations + structural queries) must not exceed **{max_queries}**.
+When submitting the final answer, directly provide the numerical value of Total Transmission Cost S in this format:
 
-## Query and Submission Format
-
-Each query must contain only one operation tag. Use the following XML format:
-
-- Isolation Observation (e.g., isolate infected 5):
-<query_delete>5</query_delete>
-
-- Subordinate Infected Count Query (e.g., query infected 3):
-<query_children>3</query_children>
-
-- Patient Zero Check (e.g., query infected 2):
-<query_isroot>2</query_isroot>
-
-- Rule Declaration (describe your rule in natural language):
-<declare_rule>Your rule description</declare_rule>
-
-- Rule Self-Test (e.g., predict infected 4 yields 3 clusters after isolation):
-<test>node=4, predicted=3</test>
-
-- Target Prediction (e.g., predict vulnerable infected 7 yields 2 clusters after isolation):
-<predict>node=7, predicted=2</predict>
-
-- Final Answer Submission (predictions for all restricted nodes):
-<answer>node:components, node:components</answer>
-
-## Success and Failure Conditions
-
-- **Success**: After at least one rule declaration, all predictions for infected in S are correct.
-- **Failure**:
-  - Cumulative 2 incorrect predictions for infected in S;
-  - Or total number of queries exceeds {max_queries}.
+<answer>15</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎来到知识图谱学习系统。我们现在来进行一次"知识体系移除规律推演"，规则如下：
+[教育知识图谱场景]
+我们现在来玩一个“核心概念推导深度”的推理游戏，规则如下：
 
-系统设定了一个包含 {n} 个知识点（结点编号为 1 到 {n}）的树状知识依赖网。我们已为该体系秘密指定了一个核心基础知识点（即固定的根结点），且依赖关系边结构不对外公开。
+游戏设定了一个固定但未知的无向连通知识依赖图 G=(V,E)，任意两个概念之间没有重复的依赖关联。
 
-给定了一组**必修核心考点**集合 S = {{{restricted_nodes}}}，这些考点**不可进行移除观测**（即删除观测）。其余知识点为**普通知识点**，可以进行移除观测。
+开局公开信息：
+- 知识点集合 V 的完整名单：{node_list}
+- 知识点总数 N = {n}
+- 核心基石概念 T = {source}
 
-注意：每次移除观测后，知识网会**立即复原**，所有操作都在完整的知识体系上进行。
+推导距离与层级定义：
+- 任意两个概念 u, v 的距离为它们之间最短推导路径的步数
+- 核心概念自身距离 dist(T,T) = 0
+- 第 d 层衍生概念是指所有满足 dist(T,v) = d 的知识点集合（d 为非负整数）
 
-你的目标是通过查询推断出一个**通用规律**：从知识点的结构信息（如直接后置知识点数、是否为核心基础）映射到"移除该知识点后，体系分裂成的独立知识孤岛（连通分量）数"。最终，你需要对所有必修核心考点正确预测移除后的独立知识孤岛数。
+你可以反复向我提出以下四类问题（每次仅限一个问题），我会根据真实的知识图谱如实回答：
 
-## 可用的查询类型
+1. 层级计数查询：询问距离核心概念 d 步推导的知识点有多少个。回答一个非负整数。
+2. 距离判断查询：询问概念 v 到核心概念的最短推导步数是否等于 d。回答“是”或“否”。
+3. 边存在查询：询问概念 u 与概念 v 之间是否有直接推导关联。回答“是”或“否”。
+4. 度数查询：询问概念 v 的直接关联知识点数量。回答一个非负整数。
 
-1. **移除观测**（即删除观测，仅限普通知识点 i 不在 S 中）：
-   查询移除（删除）知识点 i 后，知识体系会分成多少个独立的知识孤岛。
+你的目标是推断出全局学习负荷 S，即除核心概念 T 外所有概念到 T 的最短推导步数之和：
+S = 所有 v 属于 V 且 v 不等于 T 时，dist(T,v) 的总和
 
-2. **后置知识点数查询**（即子结点查询，任意知识点 i）：
-   查询以核心基础知识点为起点方向时，知识点 i 的直接后置知识点个数。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，评估失败。请尽可能用较少的提问次数完成推理。
 
-3. **核心基础判定**（即根判定，任意知识点 i）：
-   查询知识点 i 是否为核心基础知识点（根结点）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-4. **规律声明**：
-   当你认为已经找到通用规律时，可以声明你的规律公式。
+- 层级计数查询（例如问推导步数为 2 的概念数）：
+<query_count>2</query_count>
 
-5. **规律自测**（仅限普通知识点 j 不在 S 中）：
-   在声明规律后，可以先预测某个普通知识点移除后的结果，系统会告诉你预测是否正确。
+- 距离判断查询（例如问概念 A 的步数是否为 3）：
+<query_distance>A,3</query_distance>
 
-6. **目标预测**（仅限必修核心考点 i 在 S 中）：
-   对必修核心考点预测移除后的独立知识孤岛数。
+- 边存在查询（例如问概念 A 和概念 B 之间是否有推导关联）：
+<query_edge>A,B</query_edge>
 
-## 交互约束
+- 度数查询（例如问概念 C 的直接关联数）：
+<query_degree>C</query_degree>
 
-- 在首次规律声明前，必须至少完成 **3 个不同知识点**的完整样本采集（每个知识点需要同时获得移除结果、后置知识点数和是否为核心基础的信息）。
-- 在规律声明后，需要在至少 **2 个此前未做过移除观测的普通知识点**上执行自测（先预测，再验证）。
-- 查询总数（移除观测 + 结构查询）不得超过 **{max_queries}** 次。
+提交最终答案时，直接给出全局学习负荷 S 的数值，格式如下：
 
-## 询问与提交格式
-
-每次只能包含一个操作标签。使用以下 XML 格式：
-
-- 移除观测（例如移除知识点 5）：
-<query_delete>5</query_delete>
-
-- 后置知识点数查询（例如查询知识点 3）：
-<query_children>3</query_children>
-
-- 核心基础判定（例如查询知识点 2）：
-<query_isroot>2</query_isroot>
-
-- 规律声明（用自然语言描述你的规律）：
-<declare_rule>你的规律描述</declare_rule>
-
-- 规律自测（例如预测知识点 4 移除后有 3 个知识孤岛）：
-<test>node=4, predicted=3</test>
-
-- 目标预测（例如预测核心考点 7 移除后有 2 个知识孤岛）：
-<predict>node=7, predicted=2</predict>
-
-- 最终答案提交（对所有受限结点的预测）：
-<answer>节点号:连通分量数, 节点号:连通分量数</answer>
-
-## 成功与失败条件
-
-- **成功**：在至少声明一次规律后，对 S 中所有知识点的预测均正确。
-- **失败**：
-  - 对 S 中的知识点预测累计出错 2 次；
-  - 或查询总数超过 {max_queries} 次。
+<answer>15</answer>
 """
 
     contextualized_rule_en_3 = """\
-[Education Scenario]
-Welcome to the Knowledge Graph Learning System. Let's perform a "Knowledge Dependency Removal Rule Inference". Here are the rules:
+[Education and Knowledge Graph Scenario]
+Let's play a "Core Concept Derivation Depth" deduction game. Here are the rules:
 
-The system contains a tree-shaped knowledge dependency network with {n} knowledge points (nodes numbered from 1 to {n}). We have secretly designated a core foundational point (the fixed root node), and the dependency edge structure is not disclosed.
+There is a fixed but unknown undirected, unweighted, connected knowledge dependency graph G=(V,E), with no duplicated direct dependencies.
 
-A set of **mandatory core exam points** S = {{{restricted_nodes}}} is given. These points **cannot be subjected to removal observation** (i.e., deletion observation). The remaining are **normal knowledge points**, which can be subjected to removal observation.
+Public information at the start:
+- Complete list of knowledge concepts V: {node_list}
+- Total number of concepts N = {n}
+- Core foundation concept T = {source}
 
-Note: After each removal observation, the knowledge network is **immediately restored**. All operations are performed on the complete network.
+Distance and layer definitions:
+- The distance between any two concepts u, v is the minimum number of derivation steps connecting them.
+- dist(T,T) = 0
+- Layer d is the set of all concepts satisfying dist(T,v) = d (d is a non-negative integer).
 
-Your goal is to infer a **universal rule** through queries: mapping from a knowledge point's structural information (such as the number of direct subsequent points, whether it is the core foundational point) to "the number of independent knowledge islands (connected components) the network splits into after removing that point". Finally, you need to correctly predict the number of independent knowledge islands after removal for all mandatory core exam points.
+You can repeatedly ask me four types of questions (one per turn), and I will answer truthfully based on the real knowledge graph:
 
-## Available Query Types
+1. Layer Count Query: Ask how many concepts require exactly d derivation steps from the core concept. Answer is a non-negative integer.
+2. Distance Check Query: Ask if the shortest derivation steps of concept v to the core concept equals d. Answer "Yes" or "No".
+3. Edge Existence Query: Ask if there is a direct derivation dependency between concept u and concept v. Answer "Yes" or "No".
+4. Degree Query: Ask for the number of directly related concepts for concept v. Answer is a non-negative integer.
 
-1. **Removal Observation** (Deletion Observation, only for normal points i not in S):
-   Query how many independent knowledge islands the network splits into after removing (deleting) point i.
+Your goal is to infer the Global Learning Load S, which is the sum of shortest derivation steps from all concepts (except core concept T) to T:
+S = sum of dist(T,v) for all v in V where v is not equal to T
 
-2. **Subsequent Points Count Query** (Children Count Query, any point i):
-   Query the number of direct subsequent knowledge points of point i when oriented from the core foundational point.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the assessment fails. Try to complete the deduction with as few questions as possible.
 
-3. **Core Foundational Check** (Root Check Query, any point i):
-   Query whether point i is the core foundational point (root node).
+Each query must contain only one tag. Use the following XML format:
 
-4. **Rule Declaration**:
-   When you think you have found the universal rule, you can declare your rule formula.
+- Layer Count Query (e.g., asking about derivation steps 2):
+<query_count>2</query_count>
 
-5. **Rule Self-Test** (only for normal points j not in S):
-   After declaring a rule, you can first predict the removal result of a normal point, and the system will tell you if the prediction is correct.
+- Distance Check Query (e.g., asking if concept A has derivation steps 3):
+<query_distance>A,3</query_distance>
 
-6. **Target Prediction** (only for mandatory core exam points i in S):
-   Predict the number of independent knowledge islands after removal for mandatory core exam points.
+- Edge Existence Query (e.g., asking if there is a direct derivation dependency between concept A and concept B):
+<query_edge>A,B</query_edge>
 
-## Interaction Constraints
+- Degree Query (e.g., asking for the number of directly related concepts for concept C):
+<query_degree>C</query_degree>
 
-- Before the first rule declaration, you must complete sample collection for at least **3 different points** (each needs removal result, subsequent points count, and core foundational status).
-- After rule declaration, you must perform self-tests on at least **2 normal points that have not been removal-observed before** (predict first, then verify).
-- Total number of queries (removal observations + structural queries) must not exceed **{max_queries}**.
+When submitting the final answer, directly provide the numerical value of Global Learning Load S in this format:
 
-## Query and Submission Format
-
-Each query must contain only one operation tag. Use the following XML format:
-
-- Removal Observation (e.g., remove knowledge point 5):
-<query_delete>5</query_delete>
-
-- Subsequent Points Count Query (e.g., query point 3):
-<query_children>3</query_children>
-
-- Core Foundational Check (e.g., query point 2):
-<query_isroot>2</query_isroot>
-
-- Rule Declaration (describe your rule in natural language):
-<declare_rule>Your rule description</declare_rule>
-
-- Rule Self-Test (e.g., predict point 4 yields 3 islands after removal):
-<test>node=4, predicted=3</test>
-
-- Target Prediction (e.g., predict core exam point 7 yields 2 islands after removal):
-<predict>node=7, predicted=2</predict>
-
-- Final Answer Submission (predictions for all restricted nodes):
-<answer>node:components, node:components</answer>
-
-## Success and Failure Conditions
-
-- **Success**: After at least one rule declaration, all predictions for points in S are correct.
-- **Failure**:
-  - Cumulative 2 incorrect predictions for points in S;
-  - Or total number of queries exceeds {max_queries}.
+<answer>15</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎来到工业供应链规划部。我们现在来进行一次"供应链装配停机规律推演"，规则如下：
+[制造业/工业场景]
+我们现在来玩一个“工业物联网通信跳数”的推理游戏，规则如下：
 
-系统设定了一个包含 {n} 个生产工序节点（结点编号为 1 到 {n}）的树状供应链装配网。我们已秘密指定了一个最终总装节点（即固定的根结点），且装配依赖的边结构不对外公开。
+游戏设定了一个固定但未知的无向连通工业控制网络 G=(V,E)，任意两个设备之间没有重复的直连数据线。
 
-给定了一组**核心瓶颈工序**集合 S = {{{restricted_nodes}}}，这些工序**不可进行停机阻断观测**（即删除观测）。其余为**普通工序**，可以进行停机阻断观测。
+开局公开信息：
+- 终端设备集合 V 的完整名单：{node_list}
+- 设备总数 N = {n}
+- 核心主控机 T = {source}
 
-注意：每次停机阻断观测后，供应链网络会**立即复原**，所有操作都在完整的生产装配网上进行。
+通信距离与层级定义：
+- 任意两个设备 u, v 的距离为连接它们的最短通信链路的跳数
+- 主控机自身的距离 dist(T,T) = 0
+- 第 d 级子网是指所有满足 dist(T,v) = d 的设备集合（d 为非负整数）
 
-你的目标是通过查询推断出一个**通用规律**：从工序的结构信息（如直接下游工序数、是否为最终总装节点）映射到"停机阻断该工序后，供应链断裂成的独立生产子网（连通分量）数"。最终，你需要对所有核心瓶颈工序正确预测停机阻断后的独立生产子网数。
+你可以反复向我提出以下四类问题（每次仅限一个问题），我会根据真实的拓扑结构如实回答：
 
-## 可用的查询类型
+1. 层级计数查询：询问位于第 d 级子网的设备有多少台。回答一个非负整数。
+2. 距离判断查询：询问设备 v 到主控机的最短通信跳数是否等于 d。回答“是”或“否”。
+3. 边存在查询：询问设备 u 与设备 v 之间是否存在直接数据线。回答“是”或“否”。
+4. 度数查询：询问设备 v 的直接连接设备数。回答一个非负整数。
 
-1. **停机阻断观测**（即删除观测，仅限普通工序 i 不在 S 中）：
-   查询停机阻断（删除）工序 i 后，供应链会分成多少个独立的生产子网。
+你的目标是推断出全网通信延迟指数 S，即除主控机 T 外所有设备到 T 的最短通信跳数之和：
+S = 所有 v 属于 V 且 v 不等于 T 时，dist(T,v) 的总和
 
-2. **下游工序数查询**（即子结点查询，任意工序 i）：
-   查询以最终总装节点为汇聚方向时，工序 i 的直接下游工序个数。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，诊断失败。请尽可能用较少的提问次数完成推理。
 
-3. **最终总装判定**（即根判定，任意工序 i）：
-   查询工序 i 是否为最终总装节点（根结点）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-4. **规律声明**：
-   当你认为已经找到通用规律时，可以声明你的规律公式。
+- 层级计数查询（例如问第 2 级子网设备数）：
+<query_count>2</query_count>
 
-5. **规律自测**（仅限普通工序 j 不在 S 中）：
-   在声明规律后，可以先预测某个普通工序停机后的结果，系统会告诉你预测是否正确。
+- 距离判断查询（例如问设备 A 的跳数是否为 3）：
+<query_distance>A,3</query_distance>
 
-6. **目标预测**（仅限核心瓶颈工序 i 在 S 中）：
-   对核心瓶颈工序预测停机阻断后的独立生产子网数。
+- 边存在查询（例如问设备 A 和设备 B 之间是否有数据线）：
+<query_edge>A,B</query_edge>
 
-## 交互约束
+- 度数查询（例如问设备 C 的连接数）：
+<query_degree>C</query_degree>
 
-- 在首次规律声明前，必须至少完成 **3 个不同工序**的完整样本采集（每个工序需要同时获得停机结果、下游工序数和是否为最终总装的信息）。
-- 在规律声明后，需要在至少 **2 个此前未做过停机阻断观测的普通工序**上执行自测（先预测，再验证）。
-- 查询总数（停机阻断观测 + 结构查询）不得超过 **{max_queries}** 次。
+提交最终答案时，直接给出全网通信延迟指数 S 的数值，格式如下：
 
-## 询问与提交格式
-
-每次只能包含一个操作标签。使用以下 XML 格式：
-
-- 停机阻断观测（例如停机工序 5）：
-<query_delete>5</query_delete>
-
-- 下游工序数查询（例如查询工序 3）：
-<query_children>3</query_children>
-
-- 最终总装判定（例如查询工序 2）：
-<query_isroot>2</query_isroot>
-
-- 规律声明（用自然语言描述你的规律）：
-<declare_rule>你的规律描述</declare_rule>
-
-- 规律自测（例如预测工序 4 停机后有 3 个生产子网）：
-<test>node=4, predicted=3</test>
-
-- 目标预测（例如预测核心瓶颈工序 7 停机后有 2 个生产子网）：
-<predict>node=7, predicted=2</predict>
-
-- 最终答案提交（对所有受限结点的预测）：
-<answer>节点号:连通分量数, 节点号:连通分量数</answer>
-
-## 成功与失败条件
-
-- **成功**：在至少声明一次规律后，对 S 中所有工序的预测均正确。
-- **失败**：
-  - 对 S 中的工序预测累计出错 2 次；
-  - 或查询总数超过 {max_queries} 次。
+<answer>15</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the Industrial Supply Chain Planning Department. Let's perform a "Supply Chain Assembly Downtime Rule Inference". Here are the rules:
+[Manufacturing and Industrial IoT Scenario]
+Let's play an "Industrial IoT Communication Hops" deduction game. Here are the rules:
 
-The system models a tree-shaped supply chain assembly network containing {n} production process nodes (nodes numbered from 1 to {n}). We have secretly designated a final assembly node (the fixed root node), and the assembly dependency edge structure is not disclosed.
+There is a fixed but unknown undirected, unweighted, connected industrial control network G=(V,E), with no duplicated direct data links.
 
-A set of **core bottleneck processes** S = {{{restricted_nodes}}} is given. These processes **cannot be subjected to downtime blockade observation** (i.e., deletion observation). The remaining are **normal processes**, which can be subjected to downtime blockade observation.
+Public information at the start:
+- Complete list of terminal devices V: {node_list}
+- Total number of devices N = {n}
+- Core master controller T = {source}
 
-Note: After each downtime blockade observation, the supply chain network is **immediately restored**. All operations are performed on the complete network.
+Distance and layer definitions:
+- The distance between any two devices u, v is the minimum number of communication hops connecting them.
+- dist(T,T) = 0
+- Subnet level d is the set of all devices satisfying dist(T,v) = d (d is a non-negative integer).
 
-Your goal is to infer a **universal rule** through queries: mapping from a process's structural information (such as the number of direct downstream processes, whether it is the final assembly node) to "the number of independent production subnets (connected components) the supply chain breaks into after halting that process". Finally, you need to correctly predict the number of independent production subnets after downtime for all core bottleneck processes.
+You can repeatedly ask me four types of questions (one per turn), and I will answer truthfully based on the real network topology:
 
-## Available Query Types
+1. Layer Count Query: Ask how many devices belong to subnet level d. Answer is a non-negative integer.
+2. Distance Check Query: Ask if the shortest communication hops of device v to the master controller equals d. Answer "Yes" or "No".
+3. Edge Existence Query: Ask if there is a direct data link between device u and device v. Answer "Yes" or "No".
+4. Degree Query: Ask for the number of directly connected devices for device v. Answer is a non-negative integer.
 
-1. **Downtime Blockade Observation** (Deletion Observation, only for normal processes i not in S):
-   Query how many independent production subnets the network splits into after halting (deleting) process i.
+Your goal is to infer the Network Latency Index S, which is the sum of shortest communication hops from all devices (except master controller T) to T:
+S = sum of dist(T,v) for all v in V where v is not equal to T
 
-2. **Downstream Processes Count Query** (Children Count Query, any process i):
-   Query the number of direct downstream processes of process i when oriented towards the final assembly node.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the diagnosis fails. Try to complete the deduction with as few questions as possible.
 
-3. **Final Assembly Check** (Root Check Query, any process i):
-   Query whether process i is the final assembly node (root node).
+Each query must contain only one tag. Use the following XML format:
 
-4. **Rule Declaration**:
-   When you think you have found the universal rule, you can declare your rule formula.
+- Layer Count Query (e.g., asking about subnet level 2):
+<query_count>2</query_count>
 
-5. **Rule Self-Test** (only for normal processes j not in S):
-   After declaring a rule, you can first predict the downtime result of a normal process, and the system will tell you if the prediction is correct.
+- Distance Check Query (e.g., asking if device A has communication hops 3):
+<query_distance>A,3</query_distance>
 
-6. **Target Prediction** (only for core bottleneck processes i in S):
-   Predict the number of independent production subnets after downtime for core bottleneck processes.
+- Edge Existence Query (e.g., asking if there is a direct data link between device A and device B):
+<query_edge>A,B</query_edge>
 
-## Interaction Constraints
+- Degree Query (e.g., asking for the number of directly connected devices for device C):
+<query_degree>C</query_degree>
 
-- Before the first rule declaration, you must complete sample collection for at least **3 different processes** (each needs downtime result, downstream processes count, and final assembly status).
-- After rule declaration, you must perform self-tests on at least **2 normal processes that have not been downtime-observed before** (predict first, then verify).
-- Total number of queries (downtime observations + structural queries) must not exceed **{max_queries}**.
+When submitting the final answer, directly provide the numerical value of Network Latency Index S in this format:
 
-## Query and Submission Format
-
-Each query must contain only one operation tag. Use the following XML format:
-
-- Downtime Blockade Observation (e.g., stop process 5):
-<query_delete>5</query_delete>
-
-- Downstream Processes Count Query (e.g., query process 3):
-<query_children>3</query_children>
-
-- Final Assembly Check (e.g., query process 2):
-<query_isroot>2</query_isroot>
-
-- Rule Declaration (describe your rule in natural language):
-<declare_rule>Your rule description</declare_rule>
-
-- Rule Self-Test (e.g., predict process 4 yields 3 subnets after downtime):
-<test>node=4, predicted=3</test>
-
-- Target Prediction (e.g., predict core bottleneck process 7 yields 2 subnets after downtime):
-<predict>node=7, predicted=2</predict>
-
-- Final Answer Submission (predictions for all restricted nodes):
-<answer>node:components, node:components</answer>
-
-## Success and Failure Conditions
-
-- **Success**: After at least one rule declaration, all predictions for processes in S are correct.
-- **Failure**:
-  - Cumulative 2 incorrect predictions for processes in S;
-  - Or total number of queries exceeds {max_queries}.
+<answer>15</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎来到案件卷宗分析系统。我们现在来进行一次"证据链排除规律推演"，规则如下：
+[法律反洗钱场景]
+我们现在来玩一个“涉案资金流转层级”的推理游戏，规则如下：
 
-系统设定了一个包含 {n} 个证据节点（结点编号为 1 到 {n}）的树状证据依赖网。我们已为该证据链秘密指定了一个核心主证（即固定的根结点），且证据依赖的边结构不对外公开。
+游戏设定了一个固定但未知的无向连通资金往来网络 G=(V,E)，任意两个账户之间只考虑是否存在交易，不计次数。
 
-给定了一组**关键不可推翻物证**集合 S = {{{restricted_nodes}}}，这些证据**不可进行证据排除观测**（即删除观测）。其余为**普通证据**，可以进行证据排除观测。
+开局公开信息：
+- 涉案账户集合 V 的完整名单：{node_list}
+- 账户总数 N = {n}
+- 核心嫌疑账户 T = {source}
 
-注意：每次证据排除观测后，证据网络会**立即复原**（由于是逻辑推演），所有操作都在完整的证据网上进行。
+流转层级与距离定义：
+- 任意两个账户 u, v 的距离为它们之间最短资金流转链路的层数
+- 核心账户自身的距离 dist(T,T) = 0
+- 第 d 层洗钱网络是指所有满足 dist(T,v) = d 的账户集合（d 为非负整数）
 
-你的目标是通过查询推断出一个**通用规律**：从证据节点的结构信息（如直接衍生的证据数、是否为核心主证）映射到"排除该证据后，整个证据链断裂成的独立证据闭环（连通分量）数"。最终，你需要对所有关键不可推翻物证正确预测排除后的独立证据闭环数。
+你可以反复向我提出以下四类问题（每次仅限一个问题），我会根据真实的资金交易网如实回答：
 
-## 可用的查询类型
+1. 层级计数查询：询问处于第 d 层流转的账户有多少个。回答一个非负整数。
+2. 距离判断查询：询问账户 v 距离核心账户的最短流转层数是否等于 d。回答“是”或“否”。
+3. 边存在查询：询问账户 u 与账户 v 之间是否存在直接资金交易。回答“是”或“否”。
+4. 度数查询：询问账户 v 的直接交易对手数量。回答一个非负整数。
 
-1. **证据排除观测**（即删除观测，仅限普通证据 i 不在 S 中）：
-   查询排除（删除）证据 i 后，证据网会分成多少个独立的证据闭环。
+你的目标是推断出总追踪难度 S，即除核心账户 T 外所有账户到 T 的最短流转层数之和：
+S = 所有 v 属于 V 且 v 不等于 T 时，dist(T,v) 的总和
 
-2. **衍生证据数查询**（即子结点查询，任意证据 i）：
-   查询以核心主证为根基方向时，证据 i 的直接衍生证据个数。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，调查失败。请尽可能用较少的提问次数完成推理。
 
-3. **核心主证判定**（即根判定，任意证据 i）：
-   查询证据 i 是否为核心主证（根结点）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-4. **规律声明**：
-   当你认为已经找到通用规律时，可以声明你的规律公式。
+- 层级计数查询（例如问第 2 层的账户数）：
+<query_count>2</query_count>
 
-5. **规律自测**（仅限普通证据 j 不在 S 中）：
-   在声明规律后，可以先预测某个普通证据排除后的结果，系统会告诉你预测是否正确。
+- 距离判断查询（例如问账户 A 的层数是否为 3）：
+<query_distance>A,3</query_distance>
 
-6. **目标预测**（仅限关键不可推翻物证 i 在 S 中）：
-   对关键物证预测排除后的独立证据闭环数。
+- 边存在查询（例如问账户 A 和账户 B 之间是否有交易）：
+<query_edge>A,B</query_edge>
 
-## 交互约束
+- 度数查询（例如问账户 C 的交易对手数）：
+<query_degree>C</query_degree>
 
-- 在首次规律声明前，必须至少完成 **3 个不同证据**的完整样本采集（每个证据需要同时获得排除结果、衍生证据数和是否为核心主证的信息）。
-- 在规律声明后，需要在至少 **2 个此前未做过排除观测的普通证据**上执行自测（先预测，再验证）。
-- 查询总数（排除观测 + 结构查询）不得超过 **{max_queries}** 次。
+提交最终答案时，直接给出总追踪难度 S 的数值，格式如下：
 
-## 询问与提交格式
-
-每次只能包含一个操作标签。使用以下 XML 格式：
-
-- 证据排除观测（例如排除证据 5）：
-<query_delete>5</query_delete>
-
-- 衍生证据数查询（例如查询证据 3）：
-<query_children>3</query_children>
-
-- 核心主证判定（例如查询证据 2）：
-<query_isroot>2</query_isroot>
-
-- 规律声明（用自然语言描述你的规律）：
-<declare_rule>你的规律描述</declare_rule>
-
-- 规律自测（例如预测证据 4 排除后有 3 个证据闭环）：
-<test>node=4, predicted=3</test>
-
-- 目标预测（例如预测关键物证 7 排除后有 2 个证据闭环）：
-<predict>node=7, predicted=2</predict>
-
-- 最终答案提交（对所有受限结点的预测）：
-<answer>节点号:连通分量数, 节点号:连通分量数</answer>
-
-## 成功与失败条件
-
-- **成功**：在至少声明一次规律后，对 S 中所有证据的预测均正确。
-- **失败**：
-  - 对 S 中的证据预测累计出错 2 次；
-  - 或查询总数超过 {max_queries} 次。
+<answer>15</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the Case File Analysis System. Let's perform an "Evidence Chain Exclusion Rule Inference". Here are the rules:
+[Legal and Anti-Money Laundering Scenario]
+Let's play an "Illicit Fund Transfer Layers" deduction game. Here are the rules:
 
-The system features a tree-shaped evidence dependency network containing {n} evidence nodes (nodes numbered from 1 to {n}). We have secretly designated a core primary evidence (the fixed root node), and the dependency edge structure of the evidence is not disclosed.
+There is a fixed but unknown undirected, unweighted, connected financial transaction network G=(V,E), considering only the existence of transactions between any two accounts.
 
-A set of **key irrefutable evidence** S = {{{restricted_nodes}}} is given. These evidence nodes **cannot be subjected to exclusion observation** (i.e., deletion observation). The remaining are **normal evidence**, which can be subjected to exclusion observation.
+Public information at the start:
+- Complete list of involved accounts V: {node_list}
+- Total number of accounts N = {n}
+- Core suspect account T = {source}
 
-Note: After each exclusion observation, the evidence chain is **immediately restored**. All operations are performed on the complete network.
+Distance and layer definitions:
+- The distance between any two accounts u, v is the minimum number of transaction layers connecting them.
+- dist(T,T) = 0
+- Transfer layer d is the set of all accounts satisfying dist(T,v) = d (d is a non-negative integer).
 
-Your goal is to infer a **universal rule** through queries: mapping from an evidence's structural information (such as the number of direct derivative evidence, whether it is the core primary evidence) to "the number of independent evidence loops (connected components) the chain breaks into after excluding that evidence". Finally, you need to correctly predict the number of independent evidence loops after exclusion for all key irrefutable evidence.
+You can repeatedly ask me four types of questions (one per turn), and I will answer truthfully based on the real financial transaction network:
 
-## Available Query Types
+1. Layer Count Query: Ask how many accounts are exactly at transfer layer d. Answer is a non-negative integer.
+2. Distance Check Query: Ask if the shortest transfer layers of account v to the core account equals d. Answer "Yes" or "No".
+3. Edge Existence Query: Ask if there is a direct fund transaction between account u and account v. Answer "Yes" or "No".
+4. Degree Query: Ask for the number of direct transaction counterparties for account v. Answer is a non-negative integer.
 
-1. **Exclusion Observation** (Deletion Observation, only for normal evidence i not in S):
-   Query how many independent evidence loops the network splits into after excluding (deleting) evidence i.
+Your goal is to infer the Total Investigation Difficulty S, which is the sum of shortest transfer layers from all accounts (except core account T) to T:
+S = sum of dist(T,v) for all v in V where v is not equal to T
 
-2. **Derivative Evidence Count Query** (Children Count Query, any evidence i):
-   Query the number of direct derivative evidence of evidence i when oriented from the core primary evidence.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the investigation fails. Try to complete the deduction with as few questions as possible.
 
-3. **Core Primary Check** (Root Check Query, any evidence i):
-   Query whether evidence i is the core primary evidence (root node).
+Each query must contain only one tag. Use the following XML format:
 
-4. **Rule Declaration**:
-   When you think you have found the universal rule, you can declare your rule formula.
+- Layer Count Query (e.g., asking about transfer layer 2):
+<query_count>2</query_count>
 
-5. **Rule Self-Test** (only for normal evidence j not in S):
-   After declaring a rule, you can first predict the exclusion result of normal evidence, and the system will tell you if the prediction is correct.
+- Distance Check Query (e.g., asking if account A has transfer layers 3):
+<query_distance>A,3</query_distance>
 
-6. **Target Prediction** (only for key irrefutable evidence i in S):
-   Predict the number of independent evidence loops after exclusion for key irrefutable evidence.
+- Edge Existence Query (e.g., asking if there is a direct fund transaction between account A and account B):
+<query_edge>A,B</query_edge>
 
-## Interaction Constraints
+- Degree Query (e.g., asking for the number of direct transaction counterparties for account C):
+<query_degree>C</query_degree>
 
-- Before the first rule declaration, you must complete sample collection for at least **3 different evidence nodes** (each needs exclusion result, derivative evidence count, and core primary status).
-- After rule declaration, you must perform self-tests on at least **2 normal evidence nodes that have not been exclusion-observed before** (predict first, then verify).
-- Total number of queries (exclusion observations + structural queries) must not exceed **{max_queries}**.
+When submitting the final answer, directly provide the numerical value of Total Investigation Difficulty S in this format:
 
-## Query and Submission Format
-
-Each query must contain only one operation tag. Use the following XML format:
-
-- Exclusion Observation (e.g., exclude evidence 5):
-<query_delete>5</query_delete>
-
-- Derivative Evidence Count Query (e.g., query evidence 3):
-<query_children>3</query_children>
-
-- Core Primary Check (e.g., query evidence 2):
-<query_isroot>2</query_isroot>
-
-- Rule Declaration (describe your rule in natural language):
-<declare_rule>Your rule description</declare_rule>
-
-- Rule Self-Test (e.g., predict evidence 4 yields 3 evidence loops after exclusion):
-<test>node=4, predicted=3</test>
-
-- Target Prediction (e.g., predict key evidence 7 yields 2 evidence loops after exclusion):
-<predict>node=7, predicted=2</predict>
-
-- Final Answer Submission (predictions for all restricted nodes):
-<answer>node:components, node:components</answer>
-
-## Success and Failure Conditions
-
-- **Success**: After at least one rule declaration, all predictions for evidence in S are correct.
-- **Failure**:
-  - Cumulative 2 incorrect predictions for evidence in S;
-  - Or total number of queries exceeds {max_queries}.
+<answer>15</answer>
 """
 
-    tags = ["query_delete", "query_children", "query_isroot", "declare_rule", "test", "predict", "answer"]
-
-    # 难度配置：
-    # 1 (简单)        - N=5, 简单链状树，规律明显
-    # 2 (中等偏下)    - N=7, 星形树，有一定复杂度
-    # 3 (中等偏上)    - N=9, 平衡树结构
-    # 4 (较难)        - N=10, 不对称树，需更多样本
-    # 5 (难)          - N=12, 复杂树结构，受限节点较多
+    tags = ["answer", "query_count", "query_distance", "query_edge", "query_degree"]
+    
+    reasoning_type = "演绎推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 5,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],  # 链状
-                "root": 3,
-                "restricted": [1, 5],
-                "max_queries": 15,
+                "n": 4,
+                "nodes": ["A", "B", "C", "D"],
+                "source": "A",
+                "edges": [("A", "B"), ("A", "C"), ("A", "D")],
             },
             2: {
-                "n": 7,
-                "edges": [(1, 2), (1, 3), (1, 4), (1, 5), (5, 6), (5, 7)],  # 以1为中心的星形
-                "root": 1,
-                "restricted": [6, 7],
-                "max_queries": 21,
+                "n": 6,
+                "nodes": ["A", "B", "C", "D", "E", "F"],
+                "source": "A",
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F")],
             },
             3: {
-                "n": 9,
-                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (7, 8), (7, 9)],
-                "root": 1,
-                "restricted": [4, 8, 9],
-                "max_queries": 27,
+                "n": 8,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                "source": "A",
+                "edges": [
+                    ("A", "B"), ("A", "C"),
+                    ("B", "D"), ("B", "E"),
+                    ("C", "F"),
+                    ("D", "G"), ("E", "H")
+                ],
             },
             4: {
                 "n": 10,
-                "edges": [(5, 1), (5, 2), (2, 3), (2, 4), (5, 6), (6, 7), (6, 8), (8, 9), (8, 10)],
-                "root": 5,
-                "restricted": [1, 3, 9, 10],
-                "max_queries": 30,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
+                "source": "A",
+                "edges": [
+                    ("A", "B"), ("A", "C"), ("A", "D"),
+                    ("B", "E"), ("C", "F"), ("D", "G"),
+                    ("E", "H"), ("F", "H"), ("G", "I"), ("G", "J")
+                ],
             },
             5: {
                 "n": 12,
-                "edges": [(6, 1), (6, 2), (6, 3), (2, 4), (2, 5), (3, 7), (3, 8), (8, 9), (8, 10), (10, 11), (10, 12)],
-                "root": 6,
-                "restricted": [1, 4, 5, 9, 11, 12],
-                "max_queries": 36,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"],
+                "source": "A",
+                "edges": [
+                    ("A", "B"), ("A", "C"),
+                    ("B", "D"), ("B", "E"), ("C", "F"),
+                    ("D", "G"), ("E", "H"), ("F", "I"),
+                    ("G", "J"), ("H", "K"), ("I", "L")
+                ],
             },
         },
         "en": {
             1: {
-                "n": 5,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
-                "root": 3,
-                "restricted": [1, 5],
-                "max_queries": 15,
+                "n": 4,
+                "nodes": ["A", "B", "C", "D"],
+                "source": "A",
+                "edges": [("A", "B"), ("A", "C"), ("A", "D")],
             },
             2: {
-                "n": 7,
-                "edges": [(1, 2), (1, 3), (1, 4), (1, 5), (5, 6), (5, 7)],
-                "root": 1,
-                "restricted": [6, 7],
-                "max_queries": 21,
+                "n": 6,
+                "nodes": ["A", "B", "C", "D", "E", "F"],
+                "source": "A",
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F")],
             },
             3: {
-                "n": 9,
-                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (7, 8), (7, 9)],
-                "root": 1,
-                "restricted": [4, 8, 9],
-                "max_queries": 27,
+                "n": 8,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                "source": "A",
+                "edges": [
+                    ("A", "B"), ("A", "C"),
+                    ("B", "D"), ("B", "E"),
+                    ("C", "F"),
+                    ("D", "G"), ("E", "H")
+                ],
             },
             4: {
                 "n": 10,
-                "edges": [(5, 1), (5, 2), (2, 3), (2, 4), (5, 6), (6, 7), (6, 8), (8, 9), (8, 10)],
-                "root": 5,
-                "restricted": [1, 3, 9, 10],
-                "max_queries": 30,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
+                "source": "A",
+                "edges": [
+                    ("A", "B"), ("A", "C"), ("A", "D"),
+                    ("B", "E"), ("C", "F"), ("D", "G"),
+                    ("E", "H"), ("F", "H"), ("G", "I"), ("G", "J")
+                ],
             },
             5: {
                 "n": 12,
-                "edges": [(6, 1), (6, 2), (6, 3), (2, 4), (2, 5), (3, 7), (3, 8), (8, 9), (8, 10), (10, 11), (10, 12)],
-                "root": 6,
-                "restricted": [1, 4, 5, 9, 11, 12],
-                "max_queries": 36,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"],
+                "source": "A",
+                "edges": [
+                    ("A", "B"), ("A", "C"),
+                    ("B", "D"), ("B", "E"), ("C", "F"),
+                    ("D", "G"), ("E", "H"), ("F", "I"),
+                    ("G", "J"), ("H", "K"), ("I", "L")
+                ],
             },
         },
     }
@@ -951,7 +670,7 @@ Each query must contain only one operation tag. Use the following XML format:
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -960,361 +679,171 @@ Each query must contain only one operation tag. Use the following XML format:
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 基本信息
-        self.n = cfg["n"]
+        self.nodes = cfg["nodes"]
+        self.source = cfg["source"]
         self.edges = cfg["edges"]
-        self.root = cfg["root"]
-        self.restricted = set(cfg["restricted"])
-        self.max_queries = cfg["max_queries"]
         
-        self._game_info["n"] = self.n
-        self._game_info["restricted_nodes"] = ",".join(map(str, sorted(self.restricted)))
-        self._game_info["max_queries"] = self.max_queries
-        
-        # 构建邻接表
-        self.adj = {i: [] for i in range(1, self.n + 1)}
+        self.graph = {node: [] for node in self.nodes}
         for u, v in self.edges:
-            self.adj[u].append(v)
-            self.adj[v].append(u)
+            self.graph[u].append(v)
+            self.graph[v].append(u)
         
-        # 预计算每个结点的结构信息（以指定的root为根）
-        self._compute_tree_structure()
+        self.distances = self._bfs_distances(self.source)
         
-        # 预计算每个结点删除后的连通分量数
-        self._compute_delete_results()
+        self.correct_sum = sum(
+            dist for node, dist in self.distances.items() 
+            if node != self.source
+        )
         
-        # 游戏状态追踪
-        self.query_count = 0  # 查询计数（删除观测 + 结构查询）
-        self.sampled_nodes = set()  # 已完整采样的结点（有删除+结构信息）
-        self.deleted_nodes = set()  # 已进行过删除观测的结点
-        self.rule_declared = False  # 是否已声明规律
-        self.tested_nodes = set()  # 规律声明后自测过的结点
-        self.predict_errors = 0  # 对受限结点预测错误次数
-        self.predicted_restricted = {}  # 对受限结点的预测记录 {node: predicted_value}
-        self.children_queried = set()  # 已查询过子节点数的结点
-        self.isroot_queried = set()    # 已查询过是否为根的结点
+        self.layers = {}
+        for node, dist in self.distances.items():
+            if dist not in self.layers:
+                self.layers[dist] = []
+            self.layers[dist].append(node)
+        
+        self._game_info["n"] = cfg["n"]
+        self._game_info["node_list"] = ", ".join(self.nodes)
+        self._game_info["source"] = self.source
 
-    def _compute_tree_structure(self):
-        """以指定的root为根，计算每个结点的子结点数"""
-        self.children_count = {i: 0 for i in range(1, self.n + 1)}
-        self.parent = {i: None for i in range(1, self.n + 1)}
+    def _bfs_distances(self, source):
+        from collections import deque
         
-        # BFS构建有向树
-        visited = set()
-        queue = [self.root]
-        visited.add(self.root)
+        distances = {source: 0}
+        queue = deque([source])
         
         while queue:
-            u = queue.pop(0)
-            for v in self.adj[u]:
-                if v not in visited:
-                    visited.add(v)
-                    self.parent[v] = u
-                    self.children_count[u] += 1
-                    queue.append(v)
-
-    def _compute_delete_results(self):
-        """预计算删除每个结点后的连通分量数"""
-        self.delete_result = {}
-        for node in range(1, self.n + 1):
-            # 删除node后，连通分量数 = 该结点的度数
-            # 因为删除一个结点，其每个邻居会成为一个独立连通分量的一部分
-            self.delete_result[node] = len(self.adj[node])
+            current = queue.popleft()
+            current_dist = distances[current]
+            
+            for neighbor in self.graph[current]:
+                if neighbor not in distances:
+                    distances[neighbor] = current_dist + 1
+                    queue.append(neighbor)
+        
+        return distances
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
-        if "answer" in parsed_info:
-            try:
-                raw = parsed_info["answer"]
-                pairs = [x.strip() for x in raw.split(",")]
-                for pair in pairs:
-                    if ":" in pair:
-                        node_str, val_str = pair.split(":")
-                        node = int(node_str.strip())
-                        predicted = int(val_str.strip())
-                        self.predicted_restricted[node] = predicted
-            except Exception:
-                return False
-
-        # 检查是否所有受限结点都已正确预测
-        if len(self.predicted_restricted) < len(self.restricted):
+        try:
+            submitted_sum = int(parsed_info["answer"].strip())
+            return submitted_sum == self.correct_sum
+        except (ValueError, KeyError, AttributeError):
             return False
-        
-        for node in self.restricted:
-            if node not in self.predicted_restricted:
-                return False
-            if self.predicted_restricted[node] != self.delete_result[node]:
-                return False
-        
-        return True
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑"""
-        yes_str = "是" if self.config.language == "zh" else "Yes"
-        no_str = "否" if self.config.language == "zh" else "No"
-        error_prefix = "错误：" if self.config.language == "zh" else "Error: "
-        
-        # 仅对计数查询检查次数限制
-        is_counting_query = any(tag in parsed_info for tag in ["query_delete", "query_children", "query_isroot"])
-        
-        if is_counting_query and self.query_count >= self.max_queries:
-            self.state.set_state("failed", "exceeded max queries")
-            return error_prefix + ("查询次数超限。" if self.config.language == "zh" else "Query limit exceeded.")
-        
-        # 处理删除观测
-        if "query_delete" in parsed_info:
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_format = "错误：格式无效或参数错误。"
+            error_node = "错误：节点不存在。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid format or parameters."
+            error_node = "Error: Node does not exist."
+
+        if "query_count" in parsed_info:
             try:
-                node = int(parsed_info["query_delete"].strip())
-                if node < 1 or node > self.n:
-                    return error_prefix + ("结点编号超出范围。" if self.config.language == "zh" else "Node ID out of range.")
-                if node in self.restricted:
-                    return error_prefix + ("该结点为受限结点，不可进行删除观测。" if self.config.language == "zh" else "This is a restricted node, cannot be deleted.")
-                
-                self.query_count += 1
-                self.deleted_nodes.add(node)
-                result = self.delete_result[node]
-                
-                if self.config.language == "zh":
-                    return f"删除结点 {node} 后，图分成 {result} 个连通分量。树已复原。"
-                else:
-                    return f"After deleting node {node}, the graph splits into {result} connected components. Tree restored."
-            except ValueError:
-                return error_prefix + ("无效的结点编号。" if self.config.language == "zh" else "Invalid node ID.")
-        
-        # 处理子结点数查询
-        elif "query_children" in parsed_info:
+                layer = int(parsed_info["query_count"].strip())
+                count = len(self.layers.get(layer, []))
+                return str(count)
+            except (ValueError, TypeError):
+                return error_format
+
+        elif "query_distance" in parsed_info:
             try:
-                node = int(parsed_info["query_children"].strip())
-                if node < 1 or node > self.n:
-                    return error_prefix + ("结点编号超出范围。" if self.config.language == "zh" else "Node ID out of range.")
-                
-                self.query_count += 1
-                self.children_queried.add(node)
-                count = self.children_count[node]
-                
-                if self.config.language == "zh":
-                    return f"结点 {node} 有 {count} 个子结点。"
-                else:
-                    return f"Node {node} has {count} children."
-            except ValueError:
-                return error_prefix + ("无效的结点编号。" if self.config.language == "zh" else "Invalid node ID.")
-        
-        # 处理根判定查询
-        elif "query_isroot" in parsed_info:
+                parts = [x.strip() for x in parsed_info["query_distance"].split(",")]
+                if len(parts) != 2:
+                    return error_format
+                node, dist = parts[0], int(parts[1])
+                if node not in self.nodes:
+                    return error_node
+                return yes_res if self.distances[node] == dist else no_res
+            except (ValueError, TypeError):
+                return error_format
+
+        elif "query_edge" in parsed_info:
             try:
-                node = int(parsed_info["query_isroot"].strip())
-                if node < 1 or node > self.n:
-                    return error_prefix + ("结点编号超出范围。" if self.config.language == "zh" else "Node ID out of range.")
-                
-                self.query_count += 1
-                self.isroot_queried.add(node)
-                is_root = (node == self.root)
-                
-                return yes_str if is_root else no_str
-            except ValueError:
-                return error_prefix + ("无效的结点编号。" if self.config.language == "zh" else "Invalid node ID.")
-        
-        # 处理规律声明
-        elif "declare_rule" in parsed_info:
-            # 检查是否满足前置条件：至少3个完整样本（同时有删除+子节点数+根判定）
-            complete_nodes = self.deleted_nodes & self.children_queried & self.isroot_queried
-            
-            if len(complete_nodes) < 3:
-                return error_prefix + ("规律声明前需要至少完成 3 个不同结点的完整样本采集（每个结点需要删除观测、子结点数查询和根判定查询）。" 
-                                       if self.config.language == "zh" 
-                                       else "Need at least 3 complete samples (deletion, children count, and root check for each) before declaring a rule.")
-            
-            self.rule_declared = True
-            if self.config.language == "zh":
-                return "规律已记录。现在你需要在至少 2 个未做过删除观测的普通结点上进行自测。"
-            else:
-                return "Rule recorded. Now you need to perform self-tests on at least 2 normal nodes that have not been deletion-observed."
-        
-        # 处理规律自测
-        elif "test" in parsed_info:
-            if not self.rule_declared:
-                return error_prefix + ("请先声明规律。" if self.config.language == "zh" else "Please declare a rule first.")
-            
+                parts = [x.strip() for x in parsed_info["query_edge"].split(",")]
+                if len(parts) != 2:
+                    return error_format
+                u, v = parts[0], parts[1]
+                if u not in self.nodes or v not in self.nodes:
+                    return error_node
+                has_edge = v in self.graph[u]
+                return yes_res if has_edge else no_res
+            except (ValueError, TypeError):
+                return error_format
+
+        elif "query_degree" in parsed_info:
             try:
-                raw = parsed_info["test"]
-                parts = [x.strip() for x in raw.split(",")]
-                test_dict = {}
-                for part in parts:
-                    if "=" in part:
-                        k, v = part.split("=", 1)
-                        test_dict[k.strip()] = v.strip()
-                
-                if "node" not in test_dict or "predicted" not in test_dict:
-                    raise ValueError
-                
-                node = int(test_dict["node"])
-                predicted = int(test_dict["predicted"])
-                
-                if node < 1 or node > self.n:
-                    return error_prefix + ("结点编号超出范围。" if self.config.language == "zh" else "Node ID out of range.")
-                if node in self.restricted:
-                    return error_prefix + ("该结点为受限结点，请使用 predict 标签。" if self.config.language == "zh" 
-                                           else "This is a restricted node, use predict tag.")
-                if node in self.deleted_nodes:
-                    return error_prefix + ("该结点已进行过删除观测，请选择其他结点。" if self.config.language == "zh" 
-                                           else "This node has been deletion-observed, choose another.")
-                
-                self.tested_nodes.add(node)
-                self.deleted_nodes.add(node)  # 标记为已观测
-                actual = self.delete_result[node]
-                
-                if predicted == actual:
-                    if self.config.language == "zh":
-                        return f"自测正确！结点 {node} 删除后确实有 {actual} 个连通分量。"
-                    else:
-                        return f"Test correct! Node {node} indeed has {actual} components after deletion."
-                else:
-                    if self.config.language == "zh":
-                        return f"自测错误。结点 {node} 删除后实际有 {actual} 个连通分量，你预测的是 {predicted}。"
-                    else:
-                        return f"Test incorrect. Node {node} actually has {actual} components after deletion, you predicted {predicted}."
-            except (ValueError, KeyError):
-                return error_prefix + ("自测格式错误。" if self.config.language == "zh" else "Invalid test format.")
-        
-        # 处理目标预测
-        elif "predict" in parsed_info:
-            if not self.rule_declared:
-                return error_prefix + ("请先声明规律。" if self.config.language == "zh" else "Please declare a rule first.")
-            
-            # 检查自测次数
-            tested_normal_count = len(self.tested_nodes)
-            if tested_normal_count < 2:
-                return error_prefix + ("规律声明后需要先在至少 2 个未观测的普通结点上进行自测。" if self.config.language == "zh"
-                                       else "Need to perform self-tests on at least 2 unobserved normal nodes after rule declaration.")
-            
-            try:
-                raw = parsed_info["predict"]
-                parts = [x.strip() for x in raw.split(",")]
-                pred_dict = {}
-                for part in parts:
-                    if "=" in part:
-                        k, v = part.split("=", 1)
-                        pred_dict[k.strip()] = v.strip()
-                
-                if "node" not in pred_dict or "predicted" not in pred_dict:
-                    raise ValueError
-                
-                node = int(pred_dict["node"])
-                predicted = int(pred_dict["predicted"])
-                
-                if node < 1 or node > self.n:
-                    return error_prefix + ("结点编号超出范围。" if self.config.language == "zh" else "Node ID out of range.")
-                if node not in self.restricted:
-                    return error_prefix + ("该结点不是受限结点。" if self.config.language == "zh" 
-                                           else "This is not a restricted node.")
-                
-                actual = self.delete_result[node]
-                self.predicted_restricted[node] = predicted
-                
-                if predicted == actual:
-                    if self.config.language == "zh":
-                        response = f"预测正确！结点 {node} 删除后有 {actual} 个连通分量。"
-                    else:
-                        response = f"Prediction correct! Node {node} has {actual} components after deletion."
-                    
-                    # 检查是否所有受限结点都已正确预测
-                    if len(self.predicted_restricted) == len(self.restricted):
-                        all_correct = all(
-                            self.predicted_restricted[n] == self.delete_result[n]
-                            for n in self.restricted
-                        )
-                        if all_correct:
-                            self.state.set_state("success", "all predictions correct")
-                    
-                    return response
-                else:
-                    self.predict_errors += 1
-                    if self.predict_errors >= 2:
-                        self.state.set_state("failed", "too many prediction errors")
-                        if self.config.language == "zh":
-                            return f"预测错误。结点 {node} 删除后实际有 {actual} 个连通分量。预测错误次数已达上限，游戏失败。"
-                        else:
-                            return f"Prediction incorrect. Node {node} actually has {actual} components. Error limit reached, game failed."
-                    else:
-                        if self.config.language == "zh":
-                            return f"预测错误。结点 {node} 删除后实际有 {actual} 个连通分量，你预测的是 {predicted}。还有 1 次预测错误的机会。"
-                        else:
-                            return f"Prediction incorrect. Node {node} actually has {actual} components, you predicted {predicted}. 1 error chance remaining."
-            except (ValueError, KeyError):
-                return error_prefix + ("预测格式错误。" if self.config.language == "zh" else "Invalid prediction format.")
-        
+                node = parsed_info["query_degree"].strip()
+                if node not in self.nodes:
+                    return error_node
+                degree = len(self.graph[node])
+                return str(degree)
+            except (ValueError, TypeError):
+                return error_format
+
         else:
             raise ValueError("No valid query tag found.")
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
-        lang = self.config.language
-        
-        yes_str = "是" if lang == "zh" else "Yes"
-        no_str = "否" if lang == "zh" else "No"
-        
-        for node in range(1, self.n + 1):
-            # 1. 删除观测 (仅限非受限结点)
-            if node not in self.restricted:
-                q_xml = f"<query_delete>{node}</query_delete>"
-                res = self.delete_result[node]
-                if lang == "zh":
-                    ans = f"删除结点 {node} 后，图分成 {res} 个连通分量。树已复原。"
-                else:
-                    ans = f"After deleting node {node}, the graph splits into {res} connected components. Tree restored."
-                queries.append({"query": q_xml, "answer": ans})
-
-            # 2. 子结点数查询 (所有结点)
-            q_xml = f"<query_children>{node}</query_children>"
-            count = self.children_count[node]
-            if lang == "zh":
-                ans = f"结点 {node} 有 {count} 个子结点。"
-            else:
-                ans = f"Node {node} has {count} children."
-            queries.append({"query": q_xml, "answer": ans})
-
-            # 3. 根判定查询 (所有结点)
-            q_xml = f"<query_isroot>{node}</query_isroot>"
-            is_root = (node == self.root)
-            ans = yes_str if is_root else no_str
-            queries.append({"query": q_xml, "answer": ans})
-            
-        return queries
-
     def _cf_make_wrong(self, correct: str) -> str:
-        if correct.strip().isdigit():
-            return str(int(correct.strip()) + 1)
-        
-        lang = self.config.language
-        
-        if lang == "zh":
-            if correct == "是":
-                return "否"
-            if correct == "否":
-                return "是"
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
         else:
-            if correct == "Yes":
-                return "No"
-            if correct == "No":
-                return "Yes"
+            yes_res, no_res = "Yes", "No"
+
+        if correct.strip() == yes_res:
+            return no_res
+        if correct.strip() == no_res:
+            return yes_res
+
+        try:
+            val = int(correct.strip())
+            wrong_val = val + 1
+            return str(wrong_val)
+        except ValueError:
+            pass
+
+        return correct + "_wrong"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
         
-        numbers = list(re.finditer(r'\d+', correct))
-        if numbers:
-            last = numbers[-1]
-            val = int(last.group())
-            new_val = val + 1 if val > 0 else 2
-            tweaked = correct[:last.start()] + str(new_val) + correct[last.end():]
-            if tweaked != correct:
-                return tweaked
-                
-        return correct + "_WRONG"
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+            
+        max_possible_layer = len(self.nodes)
+        for d in range(max_possible_layer + 1):
+            count = len(self.layers.get(d, []))
+            results.append({
+                "query": f"<query_count>{d}</query_count>",
+                "answer": str(count)
+            })
+
+        for node in self.nodes:
+            for d in range(max_possible_layer + 1):
+                actual_dist = self.distances[node]
+                ans = yes_res if actual_dist == d else no_res
+                results.append({
+                    "query": f"<query_distance>{node},{d}</query_distance>",
+                    "answer": ans
+                })
+
+        for i, u in enumerate(self.nodes):
+            for v in self.nodes[i+1:]:
+                has_edge = v in self.graph[u]
+                ans = yes_res if has_edge else no_res
+                results.append({
+                    "query": f"<query_edge>{u},{v}</query_edge>",
+                    "answer": ans
+                })
+
+        for node in self.nodes:
+            degree = len(self.graph[node])
+            results.append({
+                "query": f"<query_degree>{node}</query_degree>",
+                "answer": str(degree)
+            })
+            
+        return results

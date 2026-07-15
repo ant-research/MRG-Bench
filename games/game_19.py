@@ -1,432 +1,417 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   集合对称差：两个集合的对称差（只属于其中一个集合的元素）有哪些
-# ============================================================
-
 from .base import Game
 import random
+import re
+import itertools
 
-
-class SubsetDeductionGame(Game):
+class RankDeterminationGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"子集推理"游戏，规则如下：
+我们现在来玩一个"秩确定"的推理游戏，规则如下：
 
-游戏设定了一个全集 Ω，包含编号从 1 到 {n} 的所有元素。我已经秘密选定了一个目标子集 U（U 是 Ω 的子集，可能为空集、全集或任意子集）。
+游戏设定了一个包含 {n} 个不同元素的集合 E，这些元素为 {elements}。在这个集合上存在一个隐藏但固定的严格全序关系（即任意两个不同元素都可以比较大小，没有并列，且关系具有传递性）。
 
-你的目标是通过查询推断出这个目标子集 U 中包含哪些元素。你可以进行以下两种操作：
+我已经选定了一个目标元素 t = {target}。你的任务是确定这个目标元素在该全序关系中的秩 rank(t)。
 
-1. **差距查询**：提交一个候选子集 S（通过列举其中的元素编号），系统会返回一个非负整数 d，表示你提交的子集 S 与目标子集 U 之间的"差距大小"。具体而言，d 等于"仅在 S 中出现的元素数量"加上"仅在 U 中出现的元素数量"。
-   
-2. **最终答案提交**：当你确信已经推断出目标子集 U 时，提交你的答案。如果答案完全正确则游戏成功，否则游戏失败。
+秩的定义：对于元素 x，其秩 rank(x) 等于 1 加上小于 x 的元素个数。即最小的元素秩为 1，第二小的元素秩为 2，以此类推，最大的元素秩为 {n}。
 
-请尽可能用最少的查询次数找到目标子集。
-
-## 查询与提交答案的格式（必须严格遵守）
-
-- **差距查询**（例如查询子集包含元素 1, 3, 5）：
-<query_diff>1,3,5</query_diff>
-
-如果查询空集，内容留空：
-<query_diff></query_diff>
-
-- **最终答案提交**（例如目标子集为 2, 4, 6）：
-<answer>2,4,6</answer>
-
-如果答案是空集，内容留空：
-<answer></answer>
+你可以反复向我提出比较问题：询问集合中任意两个不同元素的相对顺序（即哪个元素在全序中更靠前）。我会根据隐藏的全序关系如实回答。
 
 注意：
-- 元素编号之间用英文逗号分隔，不要有多余空格
-- 编号顺序不影响结果
-- 每次只能进行一个操作（查询或提交答案）
+- 你不能直接询问目标元素的秩或等价问题（如"有多少元素小于目标元素"）
+- 每次只能比较两个元素
+- 请尽可能用最少的比较次数确定答案
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 比较查询（例如询问元素 e1 和 e3 的相对顺序）：
+<query_compare>e1,e3</query_compare>
+
+提交最终答案时，必须说明目标元素的秩（一个 1 到 {n} 之间的整数），格式如下：
+
+<answer>5</answer>
+
+表示你认为目标元素 {target} 的秩为 5。
 """
 
     game_rule_en = """\
-Let's play a "Subset Deduction" game. Here are the rules:
+Let's play a "Rank Determination" reasoning game. Here are the rules:
 
-The game defines a universal set Ω containing all elements numbered from 1 to {n}. I have secretly selected a target subset U (U is a subset of Ω, which could be empty, the full set, or any subset in between).
+The game defines a set E containing {n} distinct elements: {elements}. There exists a hidden but fixed strict total order on this set (meaning any two different elements can be compared, with no ties, and the relation is transitive).
 
-Your goal is to deduce which elements are in the target subset U through queries. You can perform two types of operations:
+I have selected a target element t = {target}. Your task is to determine the rank of this target element in the total order, denoted as rank(t).
 
-1. **Difference Query**: Submit a candidate subset S (by listing the element IDs it contains). The system will return a non-negative integer d representing the "difference size" between your submitted subset S and the target subset U. Specifically, d equals the number of elements that appear only in S plus the number of elements that appear only in U.
+Definition of rank: For an element x, its rank rank(x) equals 1 plus the number of elements smaller than x. That is, the smallest element has rank 1, the second smallest has rank 2, and so on, with the largest element having rank {n}.
 
-2. **Final Answer Submission**: When you are confident you have deduced the target subset U, submit your answer. If the answer is completely correct, the game succeeds; otherwise, it fails.
+You can repeatedly ask me comparison questions: inquire about the relative order of any two different elements in the set (i.e., which element comes first in the total order). I will answer truthfully based on the hidden total order.
 
-Try to find the target subset with as few queries as possible.
+Note:
+- You cannot directly ask for the target element's rank or equivalent questions (such as "how many elements are smaller than the target")
+- Each query can only compare two elements
+- Try to determine the answer with as few comparisons as possible
 
-## Query and Answer Format (must be strictly followed)
+Each query must contain only one tag. Use the following XML format:
 
-- **Difference Query** (e.g., querying subset containing elements 1, 3, 5):
-<query_diff>1,3,5</query_diff>
+- Comparison Query (e.g., asking about the relative order of e1 and e3):
+<query_compare>e1,e3</query_compare>
 
-To query the empty set, leave content empty:
-<query_diff></query_diff>
+When submitting the final answer, specify the rank of the target element (an integer between 1 and {n}), using this format:
 
-- **Final Answer Submission** (e.g., target subset is 2, 4, 6):
-<answer>2,4,6</answer>
+<answer>5</answer>
 
-If the answer is the empty set, leave content empty:
-<answer></answer>
-
-Notes:
-- Separate element IDs with commas, no extra spaces
-- Order of IDs does not matter
-- Only one operation (query or answer) per turn
+This means you believe the target element {target} has rank 5.
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-【交通网络维护系统】
-市中心区域共有 {n} 个关键交通路口监控摄像头（编号从 1 到 {n}）。其中有未知数量的摄像头发生了硬件故障（目标子集 U，可能全空、全满或任意部分）。
-作为交通系统调度员，你的目标是通过诊断查询推断出所有故障摄像头的编号。
+欢迎使用智能交通调度系统。在当前的调度批次中，包含 {n} 个待处理的通行任务（如车辆或信号），记为集合 E = {elements}。为了保障路网顺畅，系统内部已按照紧急程度和路线规划生成了一个严格的通行优先级序列（不存在并列，具有传递性）。
 
-你可以进行以下两种操作：
-1. **诊断派单**：向维修团队提交一个排查名单 S（列出怀疑故障的摄像头编号）。系统会自动返回一个偏差值 d，代表名单的“失误总数”。具体而言，d 等于你派人排查但实际正常的摄像头数量，加上实际故障但你没有派人排查的摄像头数量。
-2. **最终结案**：当你确定了所有真正故障的摄像头时，提交你的最终故障名单。如果完全正确则成功排除隐患，否则游戏失败。
+我已锁定了一个目标通行任务 t = {target}。你的任务是通过对比查询，确定该任务在总调度序列中的绝对通行位次 rank(t)。
 
-请用尽可能少的派单次数找到目标子集。
+位次的定义：通行优先级最高（最先通行）的任务位次为 1，其次为 2，以此类推，最后通行的任务位次为 {n}。这等同于 1 加上所有优先级高于该任务的数量。
 
-## 查询与提交答案的格式（必须严格遵守）
-
-- **诊断派单**（例如派单检查 1, 3, 5 号摄像头）：
-<query_diff>1,3,5</query_diff>
-
-如果提交空名单，内容留空：
-<query_diff></query_diff>
-
-- **最终结案**（例如确定 2, 4, 6 号摄像头故障）：
-<answer>2,4,6</answer>
-
-如果确定没有故障摄像头，内容留空：
-<answer></answer>
+你可以反复向我提出比对请求：每次指定两个不同的任务，系统将返回哪个任务应当优先通行（即在全序中更靠前）。
 
 注意：
-- 元素编号之间用英文逗号分隔，不要有多余空格
-- 编号顺序不影响结果
-- 每次只能进行一个操作（查询或提交答案）
+- 你不能直接查询目标任务的绝对位次或等价问题（如“有多少任务优先于目标任务”）
+- 每次只能比对两个任务
+- 请尽量用最少的比对次数确定目标任务的最终位次
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 比较查询（例如询问任务 e1 和 e3 的优先顺序）：
+<query_compare>e1,e3</query_compare>
+
+提交最终答案时，必须说明目标任务的位次（一个 1 到 {n} 之间的整数），格式如下：
+
+<answer>5</answer>
+
+表示你认为目标任务 {target} 的绝对通行位次为 5。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-There are {n} critical traffic intersection cameras (numbered 1 to {n}) in the downtown area. An unknown subset of them has experienced hardware malfunctions (the target subset U, which could be any combination).
-As the traffic system dispatcher, your goal is to deduce the exact subset of malfunctioning cameras through diagnostic queries.
+[Transportation Scenario]
+Welcome to the Intelligent Traffic Dispatch System. In the current dispatch batch, there are {n} pending traffic tasks (such as vehicles or signals), denoted as set E = {elements}. To ensure road network efficiency, the system has internally generated a strict traffic priority sequence based on urgency and route planning (with no ties, and the relation is transitive).
 
-You can perform two operations:
-1. **Diagnostic Dispatch**: Submit an inspection list S (the camera IDs you suspect are faulty). The system returns a Deviation Value d, representing the total number of "errors" in your list. Specifically, d equals the number of normal cameras you unnecessarily inspected, plus the number of actually malfunctioning cameras you missed.
-2. **Final Resolution**: When you are confident about the exact malfunctioning cameras, submit the final list. If completely correct, the game succeeds; otherwise, it fails.
+I have locked onto a target traffic task t = {target}. Your task is to determine the absolute dispatch rank of this task in the overall sequence, denoted as rank(t).
 
-Try to find the target subset with as few queries as possible.
+Definition of rank: The task with the highest priority (dispatched first) has rank 1, the second has rank 2, and so on, with the last task having rank {n}. This equals 1 plus the number of tasks with higher priority than the target.
 
-## Query and Answer Format (must be strictly followed)
+You can repeatedly submit comparison requests: specify any two different tasks, and the system will return which task should be dispatched first (i.e., comes first in the total order).
 
-- **Diagnostic Dispatch** (e.g., inspecting cameras 1, 3, 5):
-<query_diff>1,3,5</query_diff>
+Note:
+- You cannot directly ask for the target task's rank or equivalent questions (such as "how many tasks have higher priority than the target")
+- Each query can only compare two tasks
+- Try to determine the answer with as few comparisons as possible
 
-To submit an empty list, leave content empty:
-<query_diff></query_diff>
+Each query must contain only one tag. Use the following XML format:
 
-- **Final Resolution** (e.g., cameras 2, 4, 6 are faulty):
-<answer>2,4,6</answer>
+- Comparison Query (e.g., asking about the priority order of task e1 and e3):
+<query_compare>e1,e3</query_compare>
 
-If no cameras are faulty, leave content empty:
-<answer></answer>
+When submitting the final answer, specify the rank of the target task (an integer between 1 and {n}), using this format:
 
-Notes:
-- Separate element IDs with commas, no extra spaces
-- Order of IDs does not matter
-- Only one operation (query or answer) per turn
+<answer>5</answer>
+
+This means you believe the target task {target} has rank 5.
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-【医疗免疫系统分析】
-患者暴露于环境中的 {n} 种潜在过敏原（编号从 1 到 {n}），其免疫系统对其中一个特定的过敏原组合（目标子集 U）产生了排斥反应。
-作为主治医师，你的目标是通过定制靶向药物测试，精准推断出所有引发排斥的过敏原。
+欢迎进入急诊分诊排班系统。当前有 {n} 位待处理的急诊患者或医疗任务，集合为 E = {elements}。基于患者的生命体征和病情危重程度，医疗系统已生成了一个隐蔽但固定的严格优先就诊序列（绝无并列，严格遵守传递性）。
 
-你可以进行以下两种操作：
-1. **靶向药物测试**：提交一个针对特定过敏原的抑制药物配方 S（包含过敏原编号）。血液样本会反馈一个“不匹配指数 d”。具体而言，d 等于配方中包含了但患者实际上不过敏的成分数量（过度用药），加上患者实际过敏但配方中未包含的成分数量（治疗遗漏）。
-2. **最终确诊**：当你确信找出了所有导致排斥的过敏原时，提交最终的诊断结果。如果答案完全正确则游戏成功，否则游戏失败。
+系统指派给你的重点关注对象是 t = {target}。你的任务是推断出该患者/任务在全院急诊序列中的确切就诊顺位 rank(t)。
 
-请用尽可能少的测试次数找到目标子集。
+顺位的定义：最先就诊的顺位为 1，第二名顺位为 2，以此类推，最后就诊的为 {n}。即 1 加上排在该对象之前的总人数。
 
-## 查询与提交答案的格式（必须严格遵守）
-
-- **靶向药物测试**（例如测试针对 1, 3, 5 号的药物）：
-<query_diff>1,3,5</query_diff>
-
-如果测试安慰剂（空配方），内容留空：
-<query_diff></query_diff>
-
-- **最终确诊**（例如确诊为 2, 4, 6 号过敏原）：
-<answer>2,4,6</answer>
-
-如果患者没有任何过敏原，内容留空：
-<answer></answer>
+你可以反复调用分诊比对接口：输入任意两个不同的对象，系统会根据医疗规范如实反馈哪一位优先级更高（更早排期）。
 
 注意：
-- 元素编号之间用英文逗号分隔，不要有多余空格
-- 编号顺序不影响结果
-- 每次只能进行一个操作（查询或提交答案）
+- 你不能直接查询目标对象的绝对顺位或等价问题（如“有多少患者排在目标之前”）
+- 每次只能比对两个对象
+- 请尽量用最少的比对次数确定目标对象的最终顺位
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 比较查询（例如询问对象 e1 和 e3 的就诊先后）：
+<query_compare>e1,e3</query_compare>
+
+提交最终答案时，必须说明目标对象的顺位（一个 1 到 {n} 之间的整数），格式如下：
+
+<answer>5</answer>
+
+表示你认为目标对象 {target} 的确切就诊顺位为 5。
 """
 
     contextualized_rule_en_2 = """\
 [Healthcare Scenario]
-A patient is exposed to {n} potential environmental allergens (numbered 1 to {n}). Their immune system is reacting to a specific combination of them (the target subset U).
-As the attending physician, your goal is to deduce the exact triggering allergens through customized targeted drug tests.
+Welcome to the Emergency Triage and Scheduling System. There are currently {n} pending emergency patients or medical tasks, forming the set E = {elements}. Based on vital signs and critical condition severity, the system has generated a hidden but fixed strict priority treatment sequence (with no ties, strictly adhering to transitivity).
 
-You can perform two operations:
-1. **Targeted Drug Test**: Submit a suppressive medication formula S targeting a specific subset of allergens. The blood sample will return a "Mismatch Index" d. Specifically, d equals the number of allergens targeted by your drug that the patient is NOT allergic to (over-treatment), plus the number of actual triggering allergens your drug failed to target (under-treatment).
-2. **Final Diagnosis**: When you are certain of the exact combination of allergens, submit your final diagnosis. If completely correct, the game succeeds; otherwise, it fails.
+The system has assigned you a key target object t = {target}. Your task is to deduce the exact treatment rank of this patient/task in the overall hospital emergency sequence, denoted as rank(t).
 
-Try to find the target subset with as few queries as possible.
+Definition of rank: The object treated first has rank 1, the second has rank 2, and so on, with the last being {n}. This equals 1 plus the total number of individuals queued before the target object.
 
-## Query and Answer Format (must be strictly followed)
+You can repeatedly invoke the triage comparison interface: input any two distinct objects, and the system will truthfully return which one has higher priority (scheduled earlier) according to medical protocols.
 
-- **Targeted Drug Test** (e.g., testing drug for allergens 1, 3, 5):
-<query_diff>1,3,5</query_diff>
+Note:
+- You cannot directly ask for the target object's rank or equivalent questions (such as "how many patients are ahead of the target")
+- Each query can only compare two objects
+- Try to determine the answer with as few comparisons as possible
 
-To test a placebo (empty formula), leave content empty:
-<query_diff></query_diff>
+Each query must contain only one tag. Use the following XML format:
 
-- **Final Diagnosis** (e.g., diagnosing allergens 2, 4, 6):
-<answer>2,4,6</answer>
+- Comparison Query (e.g., asking about the treatment order of e1 and e3):
+<query_compare>e1,e3</query_compare>
 
-If no allergens are triggering, leave content empty:
-<answer></answer>
+When submitting the final answer, specify the rank of the target object (an integer between 1 and {n}), using this format:
 
-Notes:
-- Separate element IDs with commas, no extra spaces
-- Order of IDs does not matter
-- Only one operation (query or answer) per turn
+<answer>5</answer>
+
+This means you believe the target object {target} has treatment rank 5.
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-【教育自适应学习系统】
-本学期的核心知识图谱包含 {n} 个关键知识点（编号从 1 到 {n}）。某位学生存在一个未掌握的知识点盲区（目标子集 U）。
-作为 AI 导师，你的目标是通过推送专项练习来推断出该学生的真实薄弱环节。
+欢迎使用综合学情评价与录取排位系统。本批次共有 {n} 名候选学生，名单集合 E = {elements}。系统根据多维度的综合考核成绩，已生成了一份严格的全序排名榜单（不存在同分并列情况，排名逻辑具有传递性）。
 
-你可以进行以下两种操作：
-1. **推送专项练习**：为学生生成一份包含特定知识点集合 S 的测试卷。系统批改后会返回一个“低效分数 d”。具体而言，d 等于试卷中包含了但学生已经掌握的知识点数量（无效复习），加上学生尚未掌握但试卷中遗漏的知识点数量（未检测出的盲区）。
-2. **生成学情报告**：当你精确定位了所有未掌握的知识点后，提交最终结论。如果答案完全正确则游戏成功，否则游戏失败。
+当前需要进行复核的目标学生是 t = {target}。你需要通过两两比对，准确确定该名学生在榜单上的最终名次 rank(t)。
 
-请用尽可能少的测试次数找到目标子集。
+名次的定义：排名最高（最优秀）的学生名次为 1，次之为 2，以此类推，最后的学生名次为 {n}。名次数值等于 1 加上成绩优于该名学生的总人数。
 
-## 查询与提交答案的格式（必须严格遵守）
-
-- **推送专项练习**（例如考察 1, 3, 5 号知识点）：
-<query_diff>1,3,5</query_diff>
-
-如果不考察任何知识点，内容留空：
-<query_diff></query_diff>
-
-- **生成学情报告**（例如学生未掌握 2, 4, 6 号）：
-<answer>2,4,6</answer>
-
-如果学生已全部掌握，内容留空：
-<answer></answer>
+你可以反复向系统提出比较申请：询问任意两名不同学生的相对成绩高低（即谁的排名更靠前）。
 
 注意：
-- 元素编号之间用英文逗号分隔，不要有多余空格
-- 编号顺序不影响结果
-- 每次只能进行一个操作（查询或提交答案）
+- 你不能直接查询目标学生的绝对名次或等价问题（如“有多少学生名次高于目标学生”）
+- 每次只能比对两名学生
+- 请尽量用最少的比对次数确定目标学生的最终名次
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 比较查询（例如询问学生 e1 和 e3 的成绩排名相对高低）：
+<query_compare>e1,e3</query_compare>
+
+提交最终答案时，必须说明目标学生的名次（一个 1 到 {n} 之间的整数），格式如下：
+
+<answer>5</answer>
+
+表示你认为目标学生 {target} 的最终名次为 5。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-This semester's core knowledge graph contains {n} key concepts (numbered 1 to {n}). A student has a specific blind spot of unmastered concepts (the target subset U).
-As the AI tutor, your goal is to deduce the student's exact weaknesses by assigning targeted practice quizzes.
+Welcome to the Comprehensive Academic Evaluation and Admission Ranking System. There are {n} candidates in the current batch, forming the set E = {elements}. Based on multi-dimensional comprehensive assessments, the system has generated a strict total ranking list (with no ties or equal scores, and the ranking logic is transitive).
 
-You can perform two operations:
-1. **Assign Targeted Practice**: Generate a quiz covering a specific subset of concepts S. The system returns an "Inefficiency Score" d. Specifically, d equals the number of concepts in the quiz that the student has already mastered (redundant review), plus the number of unmastered concepts that were omitted from the quiz (missed blind spots).
-2. **Generate Learning Report**: Once you have precisely identified all unmastered concepts, submit your final conclusion. If completely correct, the game succeeds; otherwise, it fails.
+The target student currently under review is t = {target}. Your task is to accurately determine the final rank of this student on the list, denoted as rank(t), through pairwise comparisons.
 
-Try to find the target subset with as few queries as possible.
+Definition of rank: The highest-ranked (most excellent) student has rank 1, the second has rank 2, and so on, with the last student having rank {n}. The rank value equals 1 plus the total number of students with better performance than the target student.
 
-## Query and Answer Format (must be strictly followed)
+You can repeatedly submit comparison requests to the system: inquire about the relative academic standing of any two different students (i.e., who ranks higher).
 
-- **Assign Targeted Practice** (e.g., testing concepts 1, 3, 5):
-<query_diff>1,3,5</query_diff>
+Note:
+- You cannot directly ask for the target student's rank or equivalent questions (such as "how many students rank higher than the target")
+- Each query can only compare two students
+- Try to determine the answer with as few comparisons as possible
 
-For an empty quiz, leave content empty:
-<query_diff></query_diff>
+Each query must contain only one tag. Use the following XML format:
 
-- **Generate Learning Report** (e.g., unmastered concepts are 2, 4, 6):
-<answer>2,4,6</answer>
+- Comparison Query (e.g., asking about the relative ranking of students e1 and e3):
+<query_compare>e1,e3</query_compare>
 
-If all concepts are mastered, leave content empty:
-<answer></answer>
+When submitting the final answer, specify the rank of the target student (an integer between 1 and {n}), using this format:
 
-Notes:
-- Separate element IDs with commas, no extra spaces
-- Order of IDs does not matter
-- Only one operation (query or answer) per turn
+<answer>5</answer>
+
+This means you believe the target student {target} has rank 5.
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-【工业产线排障系统】
-一条高精度自动化装配线由 {n} 个核心工站（编号从 1 到 {n}）组成。由于未知原因，部分工站发生了隐蔽的参数偏移（目标子集 U）。
-作为首席工程师，你的目标是通过局部重置来推断出所有发生偏移的工站。
+欢迎接入智能工厂生产流控系统。当前产线面临 {n} 个待排期的生产工单或设备维护任务，集合 E = {elements}。为最大化产能，排程引擎已计算出一条严格的流水线加工执行序列（无并发，严格按先后顺序执行，具有传递性）。
 
-你可以进行以下两种操作：
-1. **局部重置诊断**：选定一个工站集合 S 并向其发送重置指令。主控台将返回一个“偏差基数 d”。具体而言，d 等于被你不必要地重置的正常工站数量，加上仍在运行且存在参数偏移的故障工站数量。
-2. **提交维护工单**：在你完全确认了所有存在偏移的工站后，提交最终的工单。如果答案完全正确则游戏成功，否则游戏失败。
+系统要求你定位关键工单 t = {target}。你的职责是查明该工单在全局执行序列中的确切流水号 rank(t)。
 
-请用尽可能少的诊断次数找到目标子集。
+流水号的定义：第一个上机加工的工单流水号为 1，第二个为 2，以此类推，最后一个为 {n}。它等于 1 加上在该工单之前完成的工单总数。
 
-## 查询与提交答案的格式（必须严格遵守）
-
-- **局部重置诊断**（例如重置 1, 3, 5 号工站）：
-<query_diff>1,3,5</query_diff>
-
-如果发送空指令，内容留空：
-<query_diff></query_diff>
-
-- **提交维护工单**（例如 2, 4, 6 号工站偏移）：
-<answer>2,4,6</answer>
-
-如果没有任何工站偏移，内容留空：
-<answer></answer>
+你可以反复发起排程比对查询：输入两个不同工单，系统会读取引擎数据并返回哪个工单被安排在更前面加工。
 
 注意：
-- 元素编号之间用英文逗号分隔，不要有多余空格
-- 编号顺序不影响结果
-- 每次只能进行一个操作（查询或提交答案）
+- 你不能直接查询目标工单的绝对流水号或等价问题（如“有多少工单排在目标之前”）
+- 每次只能比对两个工单
+- 请尽量用最少的比对次数确定目标工单的最终流水号
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 比较查询（例如询问工单 e1 和 e3 的加工先后顺序）：
+<query_compare>e1,e3</query_compare>
+
+提交最终答案时，必须说明目标工单的流水号（一个 1 到 {n} 之间的整数），格式如下：
+
+<answer>5</answer>
+
+表示你认为目标工单 {target} 的确切流水号为 5。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-A high-precision automated assembly line consists of {n} core stations (numbered 1 to {n}). For unknown reasons, a subset of stations has experienced hidden parameter deviations (the target subset U).
-As the chief engineer, your goal is to deduce all deviated stations through partial resets.
+Welcome to the Smart Factory Production Flow Control System. The production line currently faces {n} pending production orders or equipment maintenance tasks, forming the set E = {elements}. To maximize capacity, the scheduling engine has calculated a strict pipeline execution sequence (no concurrency, strictly sequential, and transitive).
 
-You can perform two operations:
-1. **Partial Reset Diagnostic**: Select a subset of stations S and send a reset command. The console will return a "Variance Base d". Specifically, d equals the number of normal stations you unnecessarily reset, plus the number of deviated stations you left running.
-2. **Submit Maintenance Order**: Once you have confirmed the exact deviated stations, submit the final order. If completely correct, the game succeeds; otherwise, it fails.
+The system requires you to locate a critical production order t = {target}. Your responsibility is to determine the exact execution rank of this order in the global sequence, denoted as rank(t).
 
-Try to find the target subset with as few queries as possible.
+Definition of rank: The first order to be processed on the machine has rank 1, the second has rank 2, and so on, with the last having rank {n}. It equals 1 plus the total number of orders completed before this target order.
 
-## Query and Answer Format (must be strictly followed)
+You can repeatedly initiate scheduling comparison queries: input two distinct orders, and the system will read the engine data to return which order is scheduled to be processed first.
 
-- **Partial Reset Diagnostic** (e.g., resetting stations 1, 3, 5):
-<query_diff>1,3,5</query_diff>
+Note:
+- You cannot directly ask for the target order's execution rank or equivalent questions (such as "how many orders are scheduled before the target")
+- Each query can only compare two orders
+- Try to determine the answer with as few comparisons as possible
 
-For an empty command, leave content empty:
-<query_diff></query_diff>
+Each query must contain only one tag. Use the following XML format:
 
-- **Submit Maintenance Order** (e.g., stations 2, 4, 6 are deviated):
-<answer>2,4,6</answer>
+- Comparison Query (e.g., asking about the processing sequence of order e1 and e3):
+<query_compare>e1,e3</query_compare>
 
-If no stations are deviated, leave content empty:
-<answer></answer>
+When submitting the final answer, specify the execution rank of the target order (an integer between 1 and {n}), using this format:
 
-Notes:
-- Separate element IDs with commas, no extra spaces
-- Order of IDs does not matter
-- Only one operation (query or answer) per turn
+<answer>5</answer>
+
+This means you believe the target order {target} has execution rank 5.
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-【法律卷宗审查系统】
-在一起复杂的商业合同纠纷中，法典库中共有 {n} 条可能相关的法条（编号从 1 到 {n}）。实际上，只有其中一个特定的法条组合（目标子集 U）能作为最终判决的绝对依据。
-作为资深律师，你的目标是通过提交初步案情分析来推导出这套关键法条。
+欢迎使用破产清算与债权优先级审查系统。本案共涉及 {n} 项独立债权或法律诉求，案卷集合 E = {elements}。根据相关法律法规的清偿顺序，法院已对这些诉求确立了一个严格的法定优先权序列（不存在同一顺位，具有法理上的传递性）。
 
-你可以进行以下两种操作：
-1. **提交初步分析**：向高级合伙人提交一份引用了特定法条集合 S 的分析报告。合伙人审阅后会给出一个“偏离指数 d”。具体而言，d 等于你引用了但实际上不适用的法条数量，加上实际适用但你未能引用的法条数量。
-2. **正式出具法律意见书**：当你确切推断出所有适用的核心法条时，提交你的最终意见书。如果答案完全正确则游戏成功，否则游戏失败。
+目前法庭要求对特定债权 t = {target} 进行审查。你需要通过法律顺位比对，确定该债权在总体清偿序列中的绝对法定顺位 rank(t)。
 
-请用尽可能少的分析次数找到目标子集。
+顺位的定义：最先获得清偿的绝对顺位为 1，其次为 2，以此类推，最后清偿的顺位为 {n}。顺位值等于 1 加上优先于该债权受偿的诉求数量。
 
-## 查询与提交答案的格式（必须严格遵守）
-
-- **提交初步分析**（例如引用法条 1, 3, 5）：
-<query_diff>1,3,5</query_diff>
-
-如果不引用任何法条，内容留空：
-<query_diff></query_diff>
-
-- **正式出具法律意见书**（例如适用法条为 2, 4, 6）：
-<answer>2,4,6</answer>
-
-如果无法条适用，内容留空：
-<answer></answer>
+你可以向卷宗系统申请判例比对：提供任意两项不同的债权，系统将依据法定顺位反馈哪一项具有更高的清偿优先权（排在更前）。
 
 注意：
-- 元素编号之间用英文逗号分隔，不要有多余空格
-- 编号顺序不影响结果
-- 每次只能进行一个操作（查询或提交答案）
+- 你不能直接查询目标债权的绝对法定顺位或等价问题（如“有多少债权优先于该目标”）
+- 每次只能比对两项债权
+- 请尽量用最少的比对次数确定目标债权的最终顺位
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 比较查询（例如询问债权 e1 和 e3 的优先受偿顺序）：
+<query_compare>e1,e3</query_compare>
+
+提交最终答案时，必须说明目标债权的顺位（一个 1 到 {n} 之间的整数），格式如下：
+
+<answer>5</answer>
+
+表示你认为目标债权 {target} 的绝对法定顺位为 5。
 """
 
     contextualized_rule_en_5 = """\
 [Law Scenario]
-In a complex commercial contract dispute, there are {n} potentially relevant legal clauses (numbered 1 to {n}). In reality, only a specific combination of them (the target subset U) serves as the absolute basis for the final ruling.
-As a senior lawyer, your goal is to deduce this exact set of key clauses by submitting preliminary case analyses.
+Welcome to the Bankruptcy Liquidation and Creditor Priority Review System. This case involves a total of {n} independent legal claims or creditor rights, denoted as case file set E = {elements}. In accordance with the settlement order prescribed by relevant laws and regulations, the court has established a strict statutory priority sequence for these claims (with no tied ranks, holding jurisprudential transitivity).
 
-You can perform two operations:
-1. **Submit Preliminary Analysis**: Submit a brief citing a specific subset of clauses S. The senior partner will provide a "Deviation Index d". Specifically, d equals the number of irrelevant clauses you cited, plus the number of applicable clauses you failed to cite.
-2. **Issue Formal Legal Opinion**: When you have deduced the exact core applicable clauses, submit your final opinion. If completely correct, the game succeeds; otherwise, it fails.
+The court currently requires a review of a specific legal claim t = {target}. Your task is to determine the absolute legal precedence rank of this claim in the overall settlement sequence, denoted as rank(t), through priority comparisons.
 
-Try to find the target subset with as few queries as possible.
+Definition of rank: The absolute rank to receive settlement first is 1, the second is 2, and so on, with the final settlement rank being {n}. The rank value equals 1 plus the number of claims that have priority over the target claim.
 
-## Query and Answer Format (must be strictly followed)
+You can apply for precedent comparison from the case file system: provide any two different claims, and the system will return which one has higher settlement priority (comes first) based on statutory ranking.
 
-- **Submit Preliminary Analysis** (e.g., citing clauses 1, 3, 5):
-<query_diff>1,3,5</query_diff>
+Note:
+- You cannot directly ask for the target claim's absolute legal precedence rank or equivalent questions (such as "how many claims have priority over the target")
+- Each query can only compare two claims
+- Try to determine the answer with as few comparisons as possible
 
-For an empty citation, leave content empty:
-<query_diff></query_diff>
+Each query must contain only one tag. Use the following XML format:
 
-- **Issue Formal Legal Opinion** (e.g., applicable clauses are 2, 4, 6):
-<answer>2,4,6</answer>
+- Comparison Query (e.g., asking about the settlement priority order of claim e1 and e3):
+<query_compare>e1,e3</query_compare>
 
-If no clauses apply, leave content empty:
-<answer></answer>
+When submitting the final answer, specify the rank of the target claim (an integer between 1 and {n}), using this format:
 
-Notes:
-- Separate element IDs with commas, no extra spaces
-- Order of IDs does not matter
-- Only one operation (query or answer) per turn
+<answer>5</answer>
+
+This means you believe the target claim {target} has a legal precedence rank of 5.
 """
 
-    tags = ["answer", "query_diff"]
+    tags = ["answer", "query_compare"]
+    
     reasoning_type = "演绎推理"
-    data_structure = "集合"
-
-    # 难度配置：
-    # 1 (简单)        - N=5, 目标子集大小为1-2
-    # 2 (中等偏下)    - N=8, 目标子集大小为2-4
-    # 3 (中等偏上)    - N=10, 目标子集大小为3-5
-    # 4 (较难)        - N=12, 目标子集大小为4-6
-    # 5 (难)          - N=15, 目标子集大小为5-8
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {"n": 5, "size_range": (1, 2)},
-            2: {"n": 8, "size_range": (2, 4)},
-            3: {"n": 10, "size_range": (3, 5)},
-            4: {"n": 12, "size_range": (4, 6)},
-            5: {"n": 15, "size_range": (5, 8)},
+            1: {
+                "n": 5,
+                "elements": ["e1", "e2", "e3", "e4", "e5"],
+                "order": ["e2", "e4", "e1", "e5", "e3"],
+                "target": "e1",
+            },
+            2: {
+                "n": 7,
+                "elements": ["e1", "e2", "e3", "e4", "e5", "e6", "e7"],
+                "order": ["e3", "e1", "e5", "e7", "e2", "e4", "e6"],
+                "target": "e7",
+            },
+            3: {
+                "n": 10,
+                "elements": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10"],
+                "order": ["e5", "e2", "e8", "e1", "e9", "e4", "e7", "e3", "e10", "e6"],
+                "target": "e4",
+            },
+            4: {
+                "n": 15,
+                "elements": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11", "e12", "e13", "e14", "e15"],
+                "order": ["e7", "e3", "e11", "e1", "e14", "e5", "e9", "e13", "e2", "e8", "e15", "e4", "e10", "e6", "e12"],
+                "target": "e8",
+            },
+            5: {
+                "n": 20,
+                "elements": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", 
+                           "e11", "e12", "e13", "e14", "e15", "e16", "e17", "e18", "e19", "e20"],
+                "order": ["e9", "e15", "e3", "e17", "e7", "e12", "e1", "e19", "e5", "e14", 
+                         "e11", "e8", "e20", "e4", "e16", "e2", "e13", "e6", "e10", "e18"],
+                "target": "e11",
+            },
         },
         "en": {
-            1: {"n": 5, "size_range": (1, 2)},
-            2: {"n": 8, "size_range": (2, 4)},
-            3: {"n": 10, "size_range": (3, 5)},
-            4: {"n": 12, "size_range": (4, 6)},
-            5: {"n": 15, "size_range": (5, 8)},
+            1: {
+                "n": 5,
+                "elements": ["e1", "e2", "e3", "e4", "e5"],
+                "order": ["e2", "e4", "e1", "e5", "e3"],
+                "target": "e1",
+            },
+            2: {
+                "n": 7,
+                "elements": ["e1", "e2", "e3", "e4", "e5", "e6", "e7"],
+                "order": ["e3", "e1", "e5", "e7", "e2", "e4", "e6"],
+                "target": "e7",
+            },
+            3: {
+                "n": 10,
+                "elements": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10"],
+                "order": ["e5", "e2", "e8", "e1", "e9", "e4", "e7", "e3", "e10", "e6"],
+                "target": "e4",
+            },
+            4: {
+                "n": 15,
+                "elements": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11", "e12", "e13", "e14", "e15"],
+                "order": ["e7", "e3", "e11", "e1", "e14", "e5", "e9", "e13", "e2", "e8", "e15", "e4", "e10", "e6", "e12"],
+                "target": "e8",
+            },
+            5: {
+                "n": 20,
+                "elements": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", 
+                           "e11", "e12", "e13", "e14", "e15", "e16", "e17", "e18", "e19", "e20"],
+                "order": ["e9", "e15", "e3", "e17", "e7", "e12", "e1", "e19", "e5", "e14", 
+                         "e11", "e8", "e20", "e4", "e16", "e2", "e13", "e6", "e10", "e18"],
+                "target": "e11",
+            },
         },
     }
 
     def __init__(self, config):
+        self.comparison_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，设置目标子集（使用种子化随机生成）"""
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
+        
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -434,121 +419,118 @@ Notes:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        n = cfg["n"]
-        self._game_info["n"] = n
         
-        # 构建全集
-        self.universal_set = set(str(i) for i in range(1, n + 1))
+        self._game_info["n"] = cfg["n"]
+        self._game_info["elements"] = ", ".join(cfg["elements"])
+        self._game_info["target"] = cfg["target"]
         
-        # 使用种子化随机生成目标子集
-        lo, hi = cfg["size_range"]
+        self.elements = set(cfg["elements"])
         
-        seed = getattr(self.config, 'seed', 42)
-        rng = random.Random(seed)
-        subset_size = rng.randint(lo, hi)
-        elements = list(range(1, n + 1))
-        chosen = rng.sample(elements, subset_size)
-        self.target_subset = set(str(x) for x in chosen)
+        self.target = cfg["target"]
+        
+        self.order = cfg["order"]
+        self.rank_map = {elem: idx + 1 for idx, elem in enumerate(self.order)}
+        
+        self.true_rank = self.rank_map[self.target]
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
-        
-        # 解析提交的答案
-        if raw_ans:
-            try:
-                submitted_set = set(x.strip() for x in raw_ans.split(",") if x.strip())
-            except:
-                return False
-        else:
-            submitted_set = set()  # 空集
-        
-        # 检查是否所有元素都在合法范围内
-        if not submitted_set.issubset(self.universal_set):
+
+        try:
+            answer = int(parsed_info["answer"].strip())
+        except:
             return False
         
-        # 检查是否与目标子集完全一致
-        return submitted_set == self.target_subset
+        if answer < 1 or answer > self._game_info["n"]:
+            return False
+        
+        return answer == self.true_rank
 
     def _cf_core_produce(self, parsed_info):
-        """处理差距查询，返回对称差大小（核心逻辑）"""
-        if "query_diff" not in parsed_info:
-            raise ValueError("No valid query tag found.")
+        if "query_compare" not in parsed_info:
+            if self.config.language == "zh":
+                raise ValueError("无效的查询标签。")
+            else:
+                raise ValueError("Invalid query tag.")
         
-        raw_query = parsed_info["query_diff"].strip()
-        
-        # 解析查询的子集
-        if raw_query:
-            queried_set = set(x.strip() for x in raw_query.split(",") if x.strip())
-            # 验证所有元素是否为合法数字
-            for elem in queried_set:
-                if not elem.isdigit():
-                    raise ValueError(f"Invalid element in query: '{elem}'")
-        else:
-            queried_set = set()  # 空集查询
-        
-        # 检查所有元素是否在合法范围内
-        if not queried_set.issubset(self.universal_set):
-            invalid = queried_set - self.universal_set
-            raise ValueError(f"Query contains element IDs out of range: {invalid}")
-        
-        # 计算对称差大小：|U Δ S| = |U - S| + |S - U|
-        symmetric_diff = self.target_subset.symmetric_difference(queried_set)
-        diff_size = len(symmetric_diff)
-        
-        return str(diff_size)
+        try:
+            raw = parsed_info["query_compare"]
+            parts = [x.strip() for x in raw.split(",")]
+            if len(parts) != 2:
+                raise ValueError("Invalid format")
+            elem1, elem2 = parts
+            
+            if elem1 not in self.elements or elem2 not in self.elements:
+                if self.config.language == "zh":
+                    return "错误：元素不在集合中。"
+                else:
+                    return "Error: Element not in set."
+            
+            if elem1 == elem2:
+                if self.config.language == "zh":
+                    return "错误：不能比较相同的元素。"
+                else:
+                    return "Error: Cannot compare identical elements."
+            
+            self.comparison_count += 1
+            
+            rank1 = self.rank_map[elem1]
+            rank2 = self.rank_map[elem2]
+            
+            if self.config.language == "zh":
+                if rank1 < rank2:
+                    return f"{elem1} 在全序中位于 {elem2} 之前。"
+                else:
+                    return f"{elem2} 在全序中位于 {elem1} 之前。"
+            else:
+                if rank1 < rank2:
+                    return f"{elem1} comes before {elem2} in the total order."
+                else:
+                    return f"{elem2} comes before {elem1} in the total order."
+                    
+        except Exception as e:
+            if self.config.language == "zh":
+                return "错误：查询格式无效。请使用格式 <query_compare>e1,e2</query_compare>"
+            else:
+                return "Error: Invalid query format. Please use format <query_compare>e1,e2</query_compare>"
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成一个错误的回复，用于反事实干预"""
-        if correct.isdigit():
-            val = int(correct)
-            n = len(self.universal_set)
-            # 确保错误值仍在 [0, n] 范围内且不等于正确值
-            if val < n:
-                return str(val + 1)
-            else:
-                return str(val - 1)
+        en_match = re.match(r'^(\S+) comes before (\S+) in the total order\.$', correct)
+        if en_match:
+            e1, e2 = en_match.group(1), en_match.group(2)
+            return f"{e2} comes before {e1} in the total order."
         
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            elif "否" in correct:
-                return correct.replace("否", "是")
-        else:
-            low_correct = correct.lower()
-            if "yes" in low_correct:
-                return correct.replace("Yes", "No").replace("yes", "no").replace("YES", "NO")
-            elif "no" in low_correct:
-                return correct.replace("No", "Yes").replace("no", "yes").replace("NO", "YES")
+        zh_match = re.match(r'^(\S+) 在全序中位于 (\S+) 之前。$', correct)
+        if zh_match:
+            e1, e2 = zh_match.group(1), zh_match.group(2)
+            return f"{e2} 在全序中位于 {e1} 之前。"
         
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        返回一组有代表性的合法查询：空集查询 + 每个单元素查询。
-        这 n+1 个查询已足够唯一确定目标子集 U：
-        - 空集查询返回 |U|
-        - 单元素 {i} 查询返回 |U|−1（若 i∈U）或 |U|+1（若 i∉U）
-        """
-        elements = sorted(list(self.universal_set), key=lambda x: int(x))
-        results = []
+        queries = []
+        sorted_elements = sorted(list(self.elements))
         
-        # 空集查询
-        queried_set = set()
-        diff_size = len(self.target_subset.symmetric_difference(queried_set))
-        results.append({
-            "query": "<query_diff></query_diff>",
-            "answer": str(diff_size)
-        })
-        
-        # 单元素查询
-        for elem in elements:
-            queried_set = {elem}
-            diff_size = len(self.target_subset.symmetric_difference(queried_set))
-            results.append({
-                "query": f"<query_diff>{elem}</query_diff>",
-                "answer": str(diff_size)
+        for e1, e2 in itertools.combinations(sorted_elements, 2):
+            query_str = f"<query_compare>{e1},{e2}</query_compare>"
+            
+            rank1 = self.rank_map[e1]
+            rank2 = self.rank_map[e2]
+            
+            answer = ""
+            if self.config.language == "zh":
+                if rank1 < rank2:
+                    answer = f"{e1} 在全序中位于 {e2} 之前。"
+                else:
+                    answer = f"{e2} 在全序中位于 {e1} 之前。"
+            else:
+                if rank1 < rank2:
+                    answer = f"{e1} comes before {e2} in the total order."
+                else:
+                    answer = f"{e2} comes before {e1} in the total order."
+            
+            queries.append({
+                "query": query_str,
+                "answer": answer
             })
-        
-        return results
-
+            
+        return queries

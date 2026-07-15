@@ -1,648 +1,590 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   层序遍历层内容：层序遍历中第k层包含哪些节点
-# ============================================================
-
+import re
 from .base import Game
 import random
 
-
-class TreeDepthExplorationGame(Game):
+class PermutationReconstructionGame(Game):
 
     reasoning_type = "演绎推理"
-    data_structure = "树"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们来玩一个"树深度探索"游戏，规则如下：
+我们来玩一个"排列复原"的推理游戏，规则如下：
 
-游戏设定了一棵固定的有根树，包含 {n} 个节点，每个节点有唯一的 ID。树的根节点 ID 为 {root}，根节点的深度定义为 0，任意其他节点的深度为该节点到根节点唯一路径上的边数。
+游戏设定了一列长度为 {n} 的互异标签（用数字 1 到 {n} 表示），这些标签按位置 1 到 {n} 排成一个当前排列。同时，存在一个由相同标签集合构成的隐藏目标排列（未知）。
 
-初始时，你仅知道根节点 {root}，其他节点的 ID 需要通过查询获得。
+你的目标是通过一系列操作，将当前排列转化为隐藏的目标排列。
 
-你的目标是：唯一确定深度为 {k} 的全部节点 ID 的集合。
+你可以进行以下四种操作（每次仅限一个操作）：
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据树的真实结构如实回答：
+1. **读数查询**：询问当前排列与目标排列之间的距离值（一个非负整数，距离为 0 表示两个排列相同）。
 
-1. 孩子查询：询问节点 X 的所有直接子节点 ID 列表。若无子节点，返回空列表。
-2. 层数查询：询问节点 X 的深度（非负整数）。
-3. 直连查询：询问节点 C 是否为节点 P 的直接子节点。回答"是"或"否"。
-4. 层宽查询：询问深度为 d 的节点数量（非负整数）。
+2. **试探交换**：指定两个不同的位置 i 和 j（1 到 {n} 之间），暂时交换这两个位置的元素，返回交换后的距离值，然后自动恢复为原排列（不改变当前状态）。
 
-注意：查询只能针对已知的节点 ID 或已定义的整数参数发起。
+3. **实际交换**：指定两个不同的位置 i 和 j（1 到 {n} 之间），实际交换这两个位置的元素，实际更新当前排列，并返回新的当前排列和新的距离值。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+4. **完成检查**：询问当前排列是否已经等于目标排列，返回"是"或"否"。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 当前排列为：{initial_perm}
+- 你可以随时查询当前的距离值或进行其他操作。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 你的目标是尽可能少地使用**实际交换**操作，使当前排列等于目标排列。
+- **试探交换**和**读数查询**不限次数，但**实际交换**的次数应当尽可能少。
+- 当你认为已经完成时，可以提交最终答案。
 
-- 孩子查询（例如查询节点 5 的子节点）：
-<query_children>5</query_children>
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-- 层数查询（例如查询节点 3 的深度）：
-<query_depth>3</query_depth>
+- 读数查询：
+<query_distance></query_distance>
 
-- 直连查询（例如查询节点 7 是否为节点 3 的直接子节点）：
-<query_parent>3,7</query_parent>
+- 试探交换（例如试探位置 2 和 5）：
+<query_trial>2,5</query_trial>
 
-- 层宽查询（例如查询深度为 2 的节点数量）：
-<query_width>2</query_width>
+- 实际交换（例如实际交换位置 3 和 7）：
+<action_swap>3,7</action_swap>
 
-提交最终答案时，必须列出深度为 {k} 的所有节点 ID（用逗号隔开，顺序不限），格式如下：
+- 完成检查：
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- 提交最终答案（当你确认当前排列已经是目标排列时，或者直接提交目标排列）：
+<answer>完成</answer> （当当前排列已经是目标时）
+<answer>[2, 3, 4, 1]</answer> （直接提交目标排列）
 """
 
     game_rule_en = """\
-Let's play a "Tree Depth Exploration" game. Here are the rules:
+Let's play a "Permutation Reconstruction" deduction game. Here are the rules:
 
-The game features a fixed rooted tree with {n} nodes, each having a unique ID. The root node has ID {root}, with depth 0. The depth of any other node is defined as the number of edges on the unique path from that node to the root.
+The game has a sequence of {n} distinct labels (represented by numbers 1 to {n}), arranged in positions 1 to {n} as the current permutation. There also exists a hidden target permutation (unknown) consisting of the same set of labels.
 
-Initially, you only know the root node {root}. Other node IDs must be discovered through queries.
+Your goal is to transform the current permutation into the hidden target permutation through a series of operations.
 
-Your goal is: to uniquely determine the complete set of node IDs at depth {k}.
+You can perform the following four types of operations (one per turn):
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the tree's actual structure:
+1. **Distance Query**: Ask for the distance value between the current permutation and the target permutation (a non-negative integer; distance 0 means the two permutations are identical).
 
-1. Children Query: Ask for the list of all direct child node IDs of node X. Returns an empty list if no children exist.
-2. Depth Query: Ask for the depth (non-negative integer) of node X.
-3. Parent Query: Ask if node C is a direct child of node P. Answer "Yes" or "No".
-4. Width Query: Ask for the number of nodes at depth d (non-negative integer).
+2. **Trial Swap**: Specify two different positions i and j (between 1 and {n}), temporarily swap the elements at these positions, return the distance value after swapping, then automatically restore to the original permutation (does not change current state).
 
-Note: Queries can only be made for known node IDs or defined integer parameters.
+3. **Actual Swap**: Specify two different positions i and j (between 1 and {n}), actually swap the elements at these positions, update the current permutation, and return the new current permutation and new distance value.
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+4. **Completion Check**: Ask whether the current permutation equals the target permutation, returns "Yes" or "No".
 
-## Query and Answer Format (strictly required)
+- Current permutation: {initial_perm}
+- You can query the current distance value or perform other operations at any time.
 
-Each query must contain only one tag. Use the following XML format:
+- Your goal is to use as few **Actual Swap** operations as possible to make the current permutation equal to the target permutation.
+- **Trial Swap** and **Distance Query** are unlimited, but the number of **Actual Swap** operations should be minimized.
+- When you believe you have completed the task, you can submit your final answer.
 
-- Children Query (e.g., querying children of node 5):
-<query_children>5</query_children>
+Each operation must contain only one tag. Use the following XML format:
 
-- Depth Query (e.g., querying depth of node 3):
-<query_depth>3</query_depth>
+- Distance Query:
+<query_distance></query_distance>
 
-- Parent Query (e.g., querying if node 7 is a direct child of node 3):
-<query_parent>3,7</query_parent>
+- Trial Swap (e.g., trial swap positions 2 and 5):
+<query_trial>2,5</query_trial>
 
-- Width Query (e.g., querying number of nodes at depth 2):
-<query_width>2</query_width>
+- Actual Swap (e.g., actually swap positions 3 and 7):
+<action_swap>3,7</action_swap>
 
-When submitting the final answer, list all node IDs at depth {k} (comma-separated, order does not matter), using this format:
+- Completion Check:
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- Submit Final Answer (when you confirm the current permutation is the target, or directly submit the target permutation):
+<answer>Complete</answer> (if current permutation is already the target)
+<answer>[2, 3, 4, 1]</answer> (directly submit the target permutation)
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用“交通路网拓扑分析系统”。你作为一名资深交通规划师，需要对一片未知区域的交通网络进行梳理。
+铁路局正在进行列车编组调度，规则如下：
 
-系统设定了一个固定的交通管辖网络（树形结构），包含 {n} 个站点，每个站点有唯一的 ID。网络的总枢纽站点 ID 为 {root}，其层级深度定义为 0。任意其他站点的层级深度，定义为该站点到总枢纽的唯一换乘路径上的区段数（边数）。
+轨道上停靠着长度为 {n} 的互异编号车厢（用数字 1 到 {n} 表示），这些车厢按轨道位置 1 到 {n} 排成一个当前编组。同时，存在一个符合发车标准的安全目标编组（未知）。
 
-初始时，你仅掌握总枢纽节点 {root} 的情报，其他站点的 ID 需要通过系统查询获得。
+你的目标是通过一系列调度操作，将当前编组转化为安全的目标编组。
 
-你的目标是：唯一确定层级深度为 {k} 的全部站点 ID 的集合（即第 {k} 级支线站点）。
+你可以进行以下四种操作（每次仅限一个操作）：
 
-你可以反复向系统提出以下四类查询（每次仅限一个查询），系统会根据真实的交通网络拓扑如实反馈：
+1. **读数查询**：询问当前编组与目标编组之间的调度偏差值（一个非负整数，偏差为 0 表示编组完全正确）。
 
-1. 孩子查询：询问站点 X 的所有直接下一级站点 ID 列表。若无下一级站点，返回空列表。
-2. 层数查询：询问站点 X 的层级深度（非负整数）。
-3. 直连查询：询问站点 C 是否为站点 P 的直接下一级站点。回答“是”或“否”。
-4. 层宽查询：询问层级深度为 d 的站点数量（非负整数）。
+2. **试探交换**：指定两个不同的轨道位置 i 和 j（1 到 {n} 之间），在数字沙盘上暂时交换这两个位置的车厢，返回交换后的偏差值，然后自动恢复为原编组（不改变实际轨道状态）。
 
-注意：查询只能针对已知的站点 ID 或已定义的整数参数发起。
+3. **实际交换**：指定两个不同的轨道位置 i 和 j（1 到 {n} 之间），指令调车机车实际交换这两个位置的车厢，实际更新当前编组，并返回新的当前编组和新的偏差值。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，规划任务失败。
+4. **完成检查**：询问当前编组是否已经等于目标编组，返回"是"或"否"。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 当前编组为：{initial_perm}
+- 你可以随时查询当前的偏差值或进行其他操作。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 你的目标是尽可能少地使用**实际交换**操作，使当前编组等于目标编组。
+- **试探交换**和**读数查询**不限次数，但**实际交换**的次数应当尽可能少，以节约调度成本。
+- 当你认为编组完成时，可以提交最终答案。
 
-- 孩子查询（例如查询站点 5 的直接下一级站点）：
-<query_children>5</query_children>
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-- 层数查询（例如查询站点 3 的层级深度）：
-<query_depth>3</query_depth>
+- 读数查询：
+<query_distance></query_distance>
 
-- 直连查询（例如查询站点 7 是否为站点 3 的直接下一级站点）：
-<query_parent>3,7</query_parent>
+- 试探交换（例如试探位置 2 和 5）：
+<query_trial>2,5</query_trial>
 
-- 层宽查询（例如查询层级深度为 2 的站点数量）：
-<query_width>2</query_width>
+- 实际交换（例如实际交换位置 3 和 7）：
+<action_swap>3,7</action_swap>
 
-提交最终答案时，必须列出层级深度为 {k} 的所有站点 ID（用逗号隔开，顺序不限），格式如下：
+- 完成检查：
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- 提交最终答案（当你确认当前编组已经是目标编组时，或者直接提交目标编组）：
+<answer>完成</answer> （当当前编组已经是目标时）
+<answer>[2, 3, 4, 1]</answer> （直接提交目标编组）
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Traffic Network Topology Analysis System". As a senior traffic planner, you need to map out the transportation network of an uncharted region.
+The railway administration is conducting train marshalling, and the rules are as follows:
 
-The system features a fixed hierarchical transit network (a rooted tree) with {n} stations, each having a unique ID. The central hub station has the ID {root}, with a hierarchy depth of 0. The depth of any other station is defined as the number of transit segments (edges) on its unique path to the central hub.
+There is a sequence of {n} distinct train cars (represented by numbers 1 to {n}), parked on track positions 1 to {n} as the current formation. There also exists a safe target formation (unknown) required for departure, consisting of the same set of cars.
 
-Initially, you only know the central hub {root}. Other station IDs must be discovered through system queries.
+Your goal is to transform the current formation into the target formation through a series of dispatch operations.
 
-Your goal is: to uniquely determine the complete set of station IDs at depth {k} (i.e., the {k}-th level branch stations).
+You can perform the following four types of operations (one per turn):
 
-You can repeatedly ask the system four types of queries (one per turn), and the system will answer truthfully based on the actual network topology:
+1. **Distance Query**: Ask for the dispatch deviation value between the current formation and the target formation (a non-negative integer; deviation 0 means the two formations are identical).
 
-1. Children Query: Ask for the list of all direct next-level station IDs of station X. Returns an empty list if none exist.
-2. Depth Query: Ask for the hierarchy depth (non-negative integer) of station X.
-3. Parent Query: Ask if station C is a direct next-level station of station P. Answer "Yes" or "No".
-4. Width Query: Ask for the number of stations at depth d (non-negative integer).
+2. **Trial Swap**: Specify two different track positions i and j (between 1 and {n}), temporarily swap the cars at these positions on a digital sandbox, return the deviation value after swapping, then automatically restore to the original formation (does not change actual track state).
 
-Note: Queries can only be made for known station IDs or defined integer parameters.
+3. **Actual Swap**: Specify two different track positions i and j (between 1 and {n}), instruct the shunting locomotive to actually swap the cars at these positions, update the current formation, and return the new current formation and new deviation value.
 
-When you have gathered enough information, submit your final answer. If the answer is incorrect or the format is invalid, the planning task fails.
+4. **Completion Check**: Ask whether the current formation equals the target formation, returns "Yes" or "No".
 
-## Query and Answer Format (strictly required)
+- Current formation: {initial_perm}
+- You can query the current deviation value or perform other operations at any time.
 
-Each query must contain only one tag. Use the following XML format:
+- Your goal is to use as few **Actual Swap** operations as possible to make the current formation equal to the target formation.
+- **Trial Swap** and **Distance Query** are unlimited, but the number of **Actual Swap** operations should be minimized to save dispatch costs.
+- When you believe the marshalling is complete, you can submit your final answer.
 
-- Children Query (e.g., querying next-level stations of station 5):
-<query_children>5</query_children>
+Each operation must contain only one tag. Use the following XML format:
 
-- Depth Query (e.g., querying depth of station 3):
-<query_depth>3</query_depth>
+- Distance Query:
+<query_distance></query_distance>
 
-- Parent Query (e.g., querying if station 7 is a direct next-level station of station 3):
-<query_parent>3,7</query_parent>
+- Trial Swap (e.g., trial swap positions 2 and 5):
+<query_trial>2,5</query_trial>
 
-- Width Query (e.g., querying number of stations at depth 2):
-<query_width>2</query_width>
+- Actual Swap (e.g., actually swap positions 3 and 7):
+<action_swap>3,7</action_swap>
 
-When submitting the final answer, list all station IDs at depth {k} (comma-separated, order does not matter), using this format:
+- Completion Check:
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- Submit Final Answer (when you confirm the current formation is the target, or directly submit the target formation):
+<answer>Complete</answer> (if current formation is already the target)
+<answer>[2, 3, 4, 1]</answer> (directly submit the target formation)
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“病毒变异图谱追踪系统”。你作为一名流行病学专家，需要厘清一种新型病毒的变异谱系。
+我们正在进行一项基因片段重组研究，规则如下：
 
-系统记录了一棵固定的变异株进化树，包含 {n} 个变异株节点，每个节点有唯一的 ID。进化树的原始毒株 ID 为 {root}，其变异代次（深度）定义为 0。任意其他变异株的变异代次，定义为该毒株溯源至原始毒株的唯一进化路径上的突变次数（边数）。
+样本中存在一列长度为 {n} 的互异基因片段（用数字 1 到 {n} 表示），这些片段按位置 1 到 {n} 排成一个当前序列。同时，存在一个由相同基因片段构成的健康目标序列（未知）。
 
-初始时，你仅分离出了原始毒株 {root}，其他变异株的 ID 需要通过检测查询获得。
+你的目标是通过一系列基因编辑操作，将当前序列转化为健康的序列。
 
-你的目标是：唯一确定变异代次为 {k} 的全部变异株 ID 的集合（即第 {k} 代变异株）。
+你可以进行以下四种操作（每次仅限一个操作）：
 
-你可以反复向系统提出以下四类查询（每次仅限一个查询），系统会根据真实的进化树如实反馈：
+1. **读数查询**：检测当前序列与健康目标序列之间的结构差异指数（一个非负整数，差异为 0 表示序列完全健康）。
 
-1. 孩子查询：询问变异株 X 的所有直接衍生下一代变异株 ID 列表。若无衍生变异株，返回空列表。
-2. 层数查询：询问变异株 X 的变异代次（非负整数）。
-3. 直连查询：询问变异株 C 是否由变异株 P 直接突变衍生而来。回答“是”或“否”。
-4. 层宽查询：询问变异代次为 d 的变异株数量（非负整数）。
+2. **试探交换**：指定两个不同的位置 i 和 j（1 到 {n} 之间），在计算机模型中暂时交换这两个位置的片段，返回交换后的差异指数，然后自动恢复为原序列（不改变培养皿中的实际序列）。
 
-注意：查询只能针对已知的变异株 ID 或已定义的整数参数发起。
+3. **实际交换**：指定两个不同的位置 i 和 j（1 到 {n} 之间），使用基因编辑工具实际交换这两个位置的片段，实际更新当前序列，并返回新的当前序列和新的差异指数。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，溯源任务失败。
+4. **完成检查**：询问当前序列是否已经等于健康序列，返回"是"或"否"。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 当前序列为：{initial_perm}
+- 你可以随时查询当前的差异指数或进行其他操作。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 你的目标是尽可能少地使用**实际交换**操作，使当前序列等于健康目标序列。
+- **试探交换**和**读数查询**不限次数，但**实际交换**的次数应当尽可能少，以降低基因突变风险。
+- 当你认为重组完成时，可以提交最终答案。
 
-- 孩子查询（例如查询变异株 5 的直接衍生毒株）：
-<query_children>5</query_children>
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-- 层数查询（例如查询变异株 3 的变异代次）：
-<query_depth>3</query_depth>
+- 读数查询：
+<query_distance></query_distance>
 
-- 直连查询（例如查询变异株 7 是否为变异株 3 的直接衍生毒株）：
-<query_parent>3,7</query_parent>
+- 试探交换（例如试探位置 2 和 5）：
+<query_trial>2,5</query_trial>
 
-- 层宽查询（例如查询变异代次为 2 的变异株数量）：
-<query_width>2</query_width>
+- 实际交换（例如实际交换位置 3 和 7）：
+<action_swap>3,7</action_swap>
 
-提交最终答案时，必须列出变异代次为 {k} 的所有变异株 ID（用逗号隔开，顺序不限），格式如下：
+- 完成检查：
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- 提交最终答案（当你确认当前序列已经是健康序列时，或者直接提交健康目标序列）：
+<answer>完成</answer> （当当前序列已经是健康目标时）
+<answer>[2, 3, 4, 1]</answer> （直接提交健康目标序列）
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Viral Mutation Lineage Tracking System". As an epidemiologist, your task is to clarify the mutation pedigree of a novel virus.
+We are conducting a gene fragment recombination study, and the rules are as follows:
 
-The system records a fixed mutation evolutionary tree comprising {n} strain nodes, each with a unique ID. The original strain in the tree has ID {root}, and its mutation generation (depth) is defined as 0. The generation of any other strain is defined as the number of mutations (edges) on its unique evolutionary path back to the original strain.
+In the sample, there is a sequence of {n} distinct gene fragments (represented by numbers 1 to {n}), arranged in positions 1 to {n} as the current sequence. There also exists a healthy target sequence (unknown) consisting of the same set of fragments.
 
-Initially, you have only isolated the original strain {root}. Other strain IDs must be discovered through testing queries.
+Your goal is to transform the current sequence into the healthy target sequence through a series of gene editing operations.
 
-Your goal is: to uniquely determine the complete set of strain IDs at mutation generation {k} (i.e., the {k}-th generation strains).
+You can perform the following four types of operations (one per turn):
 
-You can repeatedly ask the system four types of queries (one per turn), and the system will answer truthfully based on the actual evolutionary tree:
+1. **Distance Query**: Test for the structural difference index between the current sequence and the target sequence (a non-negative integer; difference 0 means the sequence is completely healthy).
 
-1. Children Query: Ask for the list of all direct descendant strain IDs derived from strain X. Returns an empty list if none exist.
-2. Depth Query: Ask for the mutation generation (non-negative integer) of strain X.
-3. Parent Query: Ask if strain C is a direct mutation derived from strain P. Answer "Yes" or "No".
-4. Width Query: Ask for the number of strains at mutation generation d (non-negative integer).
+2. **Trial Swap**: Specify two different positions i and j (between 1 and {n}), temporarily swap the fragments at these positions in a computer model, return the difference index after swapping, then automatically restore to the original sequence (does not change the actual sequence in the petri dish).
 
-Note: Queries can only be made for known strain IDs or defined integer parameters.
+3. **Actual Swap**: Specify two different positions i and j (between 1 and {n}), use gene editing tools to actually swap the fragments at these positions, update the current sequence, and return the new current sequence and new difference index.
 
-When you have gathered enough information, submit your final answer. If the answer is incorrect or the format is invalid, the tracking task fails.
+4. **Completion Check**: Ask whether the current sequence equals the healthy sequence, returns "Yes" or "No".
 
-## Query and Answer Format (strictly required)
+- Current sequence: {initial_perm}
+- You can query the current difference index or perform other operations at any time.
 
-Each query must contain only one tag. Use the following XML format:
+- Your goal is to use as few **Actual Swap** operations as possible to make the current sequence equal to the target sequence.
+- **Trial Swap** and **Distance Query** are unlimited, but the number of **Actual Swap** operations should be minimized to reduce the risk of gene mutation.
+- When you believe the recombination is complete, you can submit your final answer.
 
-- Children Query (e.g., querying direct descendants of strain 5):
-<query_children>5</query_children>
+Each operation must contain only one tag. Use the following XML format:
 
-- Depth Query (e.g., querying mutation generation of strain 3):
-<query_depth>3</query_depth>
+- Distance Query:
+<query_distance></query_distance>
 
-- Parent Query (e.g., querying if strain 7 is directly derived from strain 3):
-<query_parent>3,7</query_parent>
+- Trial Swap (e.g., trial swap positions 2 and 5):
+<query_trial>2,5</query_trial>
 
-- Width Query (e.g., querying number of strains at generation 2):
-<query_width>2</query_width>
+- Actual Swap (e.g., actually swap positions 3 and 7):
+<action_swap>3,7</action_swap>
 
-When submitting the final answer, list all strain IDs at generation {k} (comma-separated, order does not matter), using this format:
+- Completion Check:
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- Submit Final Answer (when you confirm the current sequence is the target, or directly submit the healthy target sequence):
+<answer>Complete</answer> (if current sequence is already the target)
+<answer>[2, 3, 4, 1]</answer> (directly submit the healthy target sequence)
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用“学科知识图谱分析平台”。你作为一名课程设计专家，需要梳理一门复杂学科的前置依赖层级。
+我们正在进行一门核心课程的大纲编排，规则如下：
 
-系统内置了一棵固定的知识体系依赖树，包含 {n} 个知识模块，每个模块有唯一的 ID。该学科的基石模块 ID 为 {root}，其进阶深度定义为 0。任意其他模块的进阶深度，定义为掌握该模块所需经过的、从基石模块出发的唯一先修路径上的模块跨度（边数）。
+课程包含了 {n} 个互异的知识模块（用数字 1 到 {n} 表示），这些模块按授课顺序 1 到 {n} 排成一个当前大纲。同时，存在一个符合学生认知规律的最优教学顺序（未知）。
 
-初始时，你仅了解基石模块 {root}，其他进阶模块的 ID 需要通过查阅大纲获得。
+你的目标是通过一系列调整，将当前大纲转化为最优的教学顺序。
 
-你的目标是：唯一确定进阶深度为 {k} 的全部知识模块 ID 的集合（即第 {k} 层级的进阶知识点）。
+你可以进行以下四种操作（每次仅限一个操作）：
 
-你可以反复向系统提出以下四类查询（每次仅限一个查询），系统会根据真实的课程图谱如实反馈：
+1. **读数查询**：评估当前大纲与最优顺序之间的逻辑脱节度（一个非负整数，脱节度为 0表示大纲顺序完美）。
 
-1. 孩子查询：询问知识模块 X 的所有直接后继进阶模块 ID 列表。若无后继模块，返回空列表。
-2. 层数查询：询问知识模块 X 的进阶深度（非负整数）。
-3. 直连查询：询问知识模块 C 是否以知识模块 P 为直接先决条件。回答“是”或“否”。
-4. 层宽查询：询问进阶深度为 d 的模块数量（非负整数）。
+2. **试探交换**：指定两个不同的顺序位置 i 和 j（1 到 {n} 之间），在教研系统中暂时交换这两个模块的顺序，返回交换后的脱节度，然后自动恢复为原大纲（不改变正式教学计划）。
 
-注意：查询只能针对已知的知识模块 ID 或已定义的整数参数发起。
+3. **实际交换**：指定两个不同的顺序位置 i 和 j（1 到 {n} 之间），在教务系统中实际调整这两个模块的授课顺序，实际更新当前大纲，并返回新的当前大纲和新的脱节度。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，教案规划任务失败。
+4. **完成检查**：询问当前大纲是否已经达到最优标准，返回"是"或"否"。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 当前大纲顺序为：{initial_perm}
+- 你可以随时查询当前的脱节度或进行其他操作。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 你的目标是尽可能少地使用**实际交换**操作，使当前大纲等于最优教学顺序。
+- **试探交换**和**读数查询**不限次数，但**实际交换**的次数应当尽可能少，以免引起教务系统的频繁变动。
+- 当你认为大纲编排完成时，可以提交最终答案。
 
-- 孩子查询（例如查询模块 5 的直接后继模块）：
-<query_children>5</query_children>
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-- 层数查询（例如查询模块 3 的进阶深度）：
-<query_depth>3</query_depth>
+- 读数查询：
+<query_distance></query_distance>
 
-- 直连查询（例如查询模块 7 是否直接依赖于模块 3）：
-<query_parent>3,7</query_parent>
+- 试探交换（例如试探位置 2 和 5）：
+<query_trial>2,5</query_trial>
 
-- 层宽查询（例如查询进阶深度为 2 的知识模块数量）：
-<query_width>2</query_width>
+- 实际交换（例如实际交换位置 3 和 7）：
+<action_swap>3,7</action_swap>
 
-提交最终答案时，必须列出进阶深度为 {k} 的所有知识模块 ID（用逗号隔开，顺序不限），格式如下：
+- 完成检查：
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- 提交最终答案（当你确认当前大纲已经是目标顺序时，或者直接提交最优教学顺序）：
+<answer>完成</answer> （当当前大纲已经是目标顺序时）
+<answer>[2, 3, 4, 1]</answer> （直接提交最优教学顺序）
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Subject Knowledge Graph Analysis Platform". As a curriculum design expert, you need to map out the prerequisite hierarchy of a complex academic discipline.
+We are organizing the syllabus for a core course, and the rules are as follows:
 
-The system contains a fixed dependency tree of knowledge modules, consisting of {n} modules, each with a unique ID. The foundational module of the subject has ID {root}, and its advanced depth is defined as 0. The advanced depth of any other module is defined as the number of learning steps (edges) on its unique prerequisite path starting from the foundational module.
+The course contains {n} distinct knowledge modules (represented by numbers 1 to {n}), arranged in teaching order 1 to {n} as the current syllabus. There also exists an optimal teaching sequence (unknown) that aligns with students' cognitive patterns.
 
-Initially, you are only aware of the foundational module {root}. The IDs of other advanced modules must be acquired by consulting the syllabus.
+Your goal is to transform the current syllabus into the optimal teaching sequence through a series of adjustments.
 
-Your goal is: to uniquely determine the complete set of knowledge module IDs at an advanced depth of {k} (i.e., the {k}-th level advanced topics).
+You can perform the following four types of operations (one per turn):
 
-You can repeatedly ask the system four types of queries (one per turn), and the system will answer truthfully based on the actual curriculum graph:
+1. **Distance Query**: Evaluate the logical disconnection degree between the current syllabus and the optimal sequence (a non-negative integer; degree 0 means the syllabus is perfectly ordered).
 
-1. Children Query: Ask for the list of all direct successor module IDs for knowledge module X. Returns an empty list if none exist.
-2. Depth Query: Ask for the advanced depth (non-negative integer) of knowledge module X.
-3. Parent Query: Ask if knowledge module C has knowledge module P as its direct prerequisite. Answer "Yes" or "No".
-4. Width Query: Ask for the number of modules at advanced depth d (non-negative integer).
+2. **Trial Swap**: Specify two different order positions i and j (between 1 and {n}), temporarily swap the modules at these positions in the teaching research system, return the disconnection degree after swapping, then automatically restore to the original syllabus (does not change the formal teaching plan).
 
-Note: Queries can only be made for known module IDs or defined integer parameters.
+3. **Actual Swap**: Specify two different order positions i and j (between 1 and {n}), actually adjust the teaching order of the modules at these positions in the academic system, update the current syllabus, and return the new current syllabus and new disconnection degree.
 
-When you have gathered enough information, submit your final answer. If the answer is incorrect or the format is invalid, the curriculum planning task fails.
+4. **Completion Check**: Ask whether the current syllabus meets the optimal standard, returns "Yes" or "No".
 
-## Query and Answer Format (strictly required)
+- Current syllabus sequence: {initial_perm}
+- You can query the current disconnection degree or perform other operations at any time.
 
-Each query must contain only one tag. Use the following XML format:
+- Your goal is to use as few **Actual Swap** operations as possible to make the current syllabus equal to the optimal teaching sequence.
+- **Trial Swap** and **Distance Query** are unlimited, but the number of **Actual Swap** operations should be minimized to avoid frequent changes in the academic system.
+- When you believe the syllabus organization is complete, you can submit your final answer.
 
-- Children Query (e.g., querying successor modules of module 5):
-<query_children>5</query_children>
+Each operation must contain only one tag. Use the following XML format:
 
-- Depth Query (e.g., querying depth of module 3):
-<query_depth>3</query_depth>
+- Distance Query:
+<query_distance></query_distance>
 
-- Parent Query (e.g., querying if module 7 directly depends on module 3):
-<query_parent>3,7</query_parent>
+- Trial Swap (e.g., trial swap positions 2 and 5):
+<query_trial>2,5</query_trial>
 
-- Width Query (e.g., querying number of modules at depth 2):
-<query_width>2</query_width>
+- Actual Swap (e.g., actually swap positions 3 and 7):
+<action_swap>3,7</action_swap>
 
-When submitting the final answer, list all knowledge module IDs at advanced depth {k} (comma-separated, order does not matter), using this format:
+- Completion Check:
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- Submit Final Answer (when you confirm the current syllabus is the target, or directly submit the optimal teaching sequence):
+<answer>Complete</answer> (if current syllabus is already the target)
+<answer>[2, 3, 4, 1]</answer> (directly submit the optimal teaching sequence)
 """
 
     contextualized_rule_zh_4 = """\
-欢迎使用“产品 BOM (物料清单) 解析系统”。你作为一名工业制造工程师，需要反向拆解一款精密设备的部件装配层级。
+工厂正在进行流水线装配工序优化，规则如下：
 
-系统内载入了一款产品的固定 BOM 树，包含 {n} 个零部件，每个零部件有唯一的物料 ID。最终组装成品的 ID 为 {root}，其拆解层级定义为 0。任意其他零部件的拆解层级，定义为该零件到最终成品唯一装配路径上的拆解嵌套次数（边数）。
+产线上包含 {n} 个互异的装配工序（用数字 1 到 {n} 表示），这些工序按执行先后位置 1 到 {n} 排成一个当前装配流程。同时，存在一个最高效的最优装配流程（未知）。
 
-初始时，你仅掌握成品的物料 ID {root}，其他底层零部件的 ID 需要通过查阅系统图纸获得。
+你的目标是通过一系列操作，将当前流程转化为最优装配流程。
 
-你的目标是：唯一确定拆解层级为 {k} 的全部零部件 ID 的集合（即第 {k} 级子装配体/零件）。
+你可以进行以下四种操作（每次仅限一个操作）：
 
-你可以反复向系统提出以下四类查询（每次仅限一个查询），系统会根据真实的物理装配结构如实反馈：
+1. **读数查询**：测算当前流程与最优流程之间的效能损失值（一个非负整数，损失为 0 表示流程达到最高效）。
 
-1. 孩子查询：询问零部件 X 的所有直接下级组成零件 ID 列表。若无下级零件，返回空列表。
-2. 层数查询：询问零部件 X 的拆解层级（非负整数）。
-3. 直连查询：询问零部件 C 是否为零部件 P 的直接下属装配组件。回答“是”或“否”。
-4. 层宽查询：询问拆解层级为 d 的零部件数量（非负整数）。
+2. **试探交换**：指定两个不同的工序位置 i 和 j（1 到 {n} 之间），在数字孪生系统中暂时交换这两个位置的工序，返回交换后的效能损失值，然后自动恢复为原流程（不改变物理产线）。
 
-注意：查询只能针对已知的零部件 ID 或已定义的整数参数发起。
+3. **实际交换**：指定两个不同的工序位置 i 和 j（1 到 {n} 之间），在物理产线上实际调换这两个工序的位置，实际更新当前流程，并返回新的当前流程和新的效能损失值。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，解析任务失败。
+4. **完成检查**：询问当前流程是否已经达到最优配置，返回"是"或"否"。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 当前流程为：{initial_perm}
+- 你可以随时查询当前的效能损失值或进行其他操作。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 你的目标是尽可能少地使用**实际交换**操作，使当前流程等于最优装配流程。
+- **试探交换**和**读数查询**不限次数，但**实际交换**的次数应当尽可能少，以降低产线停机调试成本。
+- 当你认为优化完成时，可以提交最终答案。
 
-- 孩子查询（例如查询零部件 5 的直接下级组件）：
-<query_children>5</query_children>
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-- 层数查询（例如查询零部件 3 的拆解层级）：
-<query_depth>3</query_depth>
+- 读数查询：
+<query_distance></query_distance>
 
-- 直连查询（例如查询零部件 7 是否为零部件 3 的直接组成部分）：
-<query_parent>3,7</query_parent>
+- 试探交换（例如试探位置 2 和 5）：
+<query_trial>2,5</query_trial>
 
-- 层宽查询（例如查询拆解层级为 2 的零部件数量）：
-<query_width>2</query_width>
+- 实际交换（例如实际交换位置 3 和 7）：
+<action_swap>3,7</action_swap>
 
-提交最终答案时，必须列出拆解层级为 {k} 的所有零部件 ID（用逗号隔开，顺序不限），格式如下：
+- 完成检查：
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- 提交最终答案（当你确认当前流程已经是目标流程时，或者直接提交最优装配流程）：
+<answer>完成</answer> （当当前流程已经是目标流程时）
+<answer>[2, 3, 4, 1]</answer> （直接提交最优装配流程）
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Welcome to the "Product BOM (Bill of Materials) Parsing System". As an industrial manufacturing engineer, you need to reverse-engineer the component assembly hierarchy of a precision device.
+[Manufacturing Scenario]
+The factory is optimizing the assembly line process, and the rules are as follows:
 
-The system loads a fixed BOM tree for a product, encompassing {n} parts, each with a unique material ID. The final assembled product has the ID {root}, and its disassembly level is defined as 0. The disassembly level of any other part is defined as the number of nesting layers (edges) on its unique assembly path up to the final product.
+The production line contains {n} distinct assembly procedures (represented by numbers 1 to {n}), arranged in execution order from position 1 to {n} as the current assembly process. There also exists a highly efficient optimal assembly process (unknown).
 
-Initially, you only possess the material ID of the final product {root}. The IDs of other underlying components must be retrieved by consulting the system's blueprints.
+Your goal is to transform the current process into the optimal assembly process through a series of operations.
 
-Your goal is: to uniquely determine the complete set of component IDs at disassembly level {k} (i.e., the {k}-th level sub-assemblies/parts).
+You can perform the following four types of operations (one per turn):
 
-You can repeatedly ask the system four types of queries (one per turn), and the system will answer truthfully based on the actual physical assembly structure:
+1. **Distance Query**: Calculate the efficiency loss value between the current process and the optimal process (a non-negative integer; loss 0 means the process is at maximum efficiency).
 
-1. Children Query: Ask for the list of all direct lower-level sub-component IDs for part X. Returns an empty list if none exist.
-2. Depth Query: Ask for the disassembly level (non-negative integer) of part X.
-3. Parent Query: Ask if part C is a direct sub-assembly component of part P. Answer "Yes" or "No".
-4. Width Query: Ask for the number of parts at disassembly level d (non-negative integer).
+2. **Trial Swap**: Specify two different procedure positions i and j (between 1 and {n}), temporarily swap the procedures at these positions in the digital twin system, return the efficiency loss value after swapping, then automatically restore to the original process (does not change the physical production line).
 
-Note: Queries can only be made for known part IDs or defined integer parameters.
+3. **Actual Swap**: Specify two different procedure positions i and j (between 1 and {n}), physically swap the procedures at these positions on the production line, update the current process, and return the new current process and new efficiency loss value.
 
-When you have gathered enough information, submit your final answer. If the answer is incorrect or the format is invalid, the parsing task fails.
+4. **Completion Check**: Ask whether the current process has achieved the optimal configuration, returns "Yes" or "No".
 
-## Query and Answer Format (strictly required)
+- Current process: {initial_perm}
+- You can query the current efficiency loss value or perform other operations at any time.
 
-Each query must contain only one tag. Use the following XML format:
+- Your goal is to use as few **Actual Swap** operations as possible to make the current process equal to the optimal assembly process.
+- **Trial Swap** and **Distance Query** are unlimited, but the number of **Actual Swap** operations should be minimized to reduce the cost of production line downtime for debugging.
+- When you believe the optimization is complete, you can submit your final answer.
 
-- Children Query (e.g., querying direct sub-components of part 5):
-<query_children>5</query_children>
+Each operation must contain only one tag. Use the following XML format:
 
-- Depth Query (e.g., querying disassembly level of part 3):
-<query_depth>3</query_depth>
+- Distance Query:
+<query_distance></query_distance>
 
-- Parent Query (e.g., querying if part 7 is a direct structural element of part 3):
-<query_parent>3,7</query_parent>
+- Trial Swap (e.g., trial swap positions 2 and 5):
+<query_trial>2,5</query_trial>
 
-- Width Query (e.g., querying number of parts at disassembly level 2):
-<query_width>2</query_width>
+- Actual Swap (e.g., actually swap positions 3 and 7):
+<action_swap>3,7</action_swap>
 
-When submitting the final answer, list all part IDs at disassembly level {k} (comma-separated, order does not matter), using this format:
+- Completion Check:
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- Submit Final Answer (when you confirm the current process is the target, or directly submit the optimal assembly process):
+<answer>Complete</answer> (if current process is already the target)
+<answer>[2, 3, 4, 1]</answer> (directly submit the optimal assembly process)
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用“法律条款渊源与派生检索系统”。你作为一名法务资深研究员，需要理清某部庞大法典的条款层级结构。
+律所正在进行案件证据链的梳理，规则如下：
 
-系统收录了一棵固定的法典条款树，包含 {n} 项法条，每个条款有唯一的法条 ID。该法典的核心根本法案（上位法）ID 为 {root}，其派生深度定义为 0。任意其他细则的派生深度，定义为该条款回溯至根本法案的唯一法理渊源路径上的派生层数（边数）。
+案卷中包含 {n} 份互异的关键证据文件（用数字 1 到 {n} 表示），这些证据按展示顺序 1 到 {n} 排成一条当前证据链。同时，存在一条能够完美还原事实真相的目标证据链顺序（未知）。
 
-初始时，你仅知晓根本法案 {root} 的 ID，其他派生细则的 ID 需要通过法理检索获得。
+你的目标是通过一系列逻辑推理和调整，将当前证据链转化为正确的目标证据链。
 
-你的目标是：唯一确定派生深度为 {k} 的全部法律条款 ID 的集合（即第 {k} 级下位法/细则）。
+你可以进行以下四种操作（每次仅限一个操作）：
 
-你可以反复向系统提出以下四类查询（每次仅限一个查询），系统会根据真实的法典体系如实反馈：
+1. **读数查询**：评估当前证据链与正确目标链之间的矛盾指数（一个非负整数，指数为 0 表示证据链无矛盾且完美闭合）。
 
-1. 孩子查询：询问条款 X 的所有直接派生下位条款 ID 列表。若无下位条款，返回空列表。
-2. 层数查询：询问条款 X 的派生深度（非负整数）。
-3. 直连查询：询问条款 C 是否为条款 P 的直接派生细则。回答“是”或“否”。
-4. 层宽查询：询问派生深度为 d 的条款数量（非负整数）。
+2. **试探交换**：指定两个不同的顺序位置 i 和 j（1 到 {n} 之间），在案件分析推演板上假想交换两份证据的展示顺序，得出交换后的矛盾指数，然后自动恢复为原链（不打乱实际案卷卷宗）。
 
-注意：查询只能针对已知的条款 ID 或已定义的整数参数发起。
+3. **实际交换**：指定两个不同的顺序位置 i 和 j（1 到 {n} 之间），在正式案卷中实际调整这两份证据的顺序，实际更新当前证据链，并返回新的当前证据链和新的矛盾指数。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，法理梳理任务失败。
+4. **完成检查**：询问当前证据链是否已经完美闭合，返回"是"或"否"。
 
-## 查询与提交答案的格式（必须严格遵守）
+- 当前证据链顺序为：{initial_perm}
+- 你可以随时查询当前的矛盾指数或进行其他操作。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 你的目标是尽可能少地使用**实际交换**操作，使当前证据链等于目标证据链。
+- **试探交换**和**读数查询**不限次数，但**实际交换**的次数应当尽可能少，以维持卷宗管理的严谨性。
+- 当你认为证据链梳理完成时，可以提交最终答案。
 
-- 孩子查询（例如查询条款 5 的直接派生条款）：
-<query_children>5</query_children>
+每次操作只能包含一个标签。请使用以下 XML 格式：
 
-- 层数查询（例如查询条款 3 的派生深度）：
-<query_depth>3</query_depth>
+- 读数查询：
+<query_distance></query_distance>
 
-- 直连查询（例如查询条款 7 是否为条款 3 的直接下位条款）：
-<query_parent>3,7</query_parent>
+- 试探交换（例如试探位置 2 和 5）：
+<query_trial>2,5</query_trial>
 
-- 层宽查询（例如查询派生深度为 2 的条款数量）：
-<query_width>2</query_width>
+- 实际交换（例如实际交换位置 3 和 7）：
+<action_swap>3,7</action_swap>
 
-提交最终答案时，必须列出派生深度为 {k} 的所有法律条款 ID（用逗号隔开，顺序不限），格式如下：
+- 完成检查：
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- 提交最终答案（当你确认当前证据链已经是目标链时，或者直接提交目标证据链）：
+<answer>完成</answer> （当当前证据链已经是目标链时）
+<answer>[2, 3, 4, 1]</answer> （直接提交目标证据链）
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Legal Article Source and Derivation Retrieval System". As a senior legal researcher, you are required to clarify the hierarchical structure of a voluminous legal code.
+The law firm is sorting out the chain of evidence for a case, and the rules are as follows:
 
-The system encapsulates a fixed tree of legal articles, containing {n} clauses, each with a unique article ID. The core root act (superior law) of this code has the ID {root}, and its derivation depth is defined as 0. The derivation depth of any other specific rule is defined as the number of derivation layers (edges) on its unique jurisprudential path tracing back to the root act.
+The case file contains {n} distinct key evidence documents (represented by numbers 1 to {n}), arranged in presentation order from 1 to {n} as the current chain of evidence. There also exists a target chain of evidence (unknown) that perfectly restores the truth of the facts.
 
-Initially, you are only aware of the root act {root}. The IDs of other derived regulations must be retrieved through legal queries.
+Your goal is to transform the current chain of evidence into the correct target chain through a series of logical deductions and adjustments.
 
-Your goal is: to uniquely determine the complete set of legal article IDs at derivation depth {k} (i.e., the {k}-th level subordinate laws/regulations).
+You can perform the following four types of operations (one per turn):
 
-You can repeatedly ask the system four types of queries (one per turn), and the system will answer truthfully based on the actual legal framework:
+1. **Distance Query**: Evaluate the contradiction index between the current chain of evidence and the correct target chain (a non-negative integer; index 0 means the evidence chain is flawless and perfectly closed).
 
-1. Children Query: Ask for the list of all direct subordinate article IDs derived from article X. Returns an empty list if none exist.
-2. Depth Query: Ask for the derivation depth (non-negative integer) of article X.
-3. Parent Query: Ask if article C is a directly derived specific rule of article P. Answer "Yes" or "No".
-4. Width Query: Ask for the number of articles at derivation depth d (non-negative integer).
+2. **Trial Swap**: Specify two different order positions i and j (between 1 and {n}), hypothetically swap the presentation order of the two evidences on the case analysis inference board, obtain the contradiction index after swapping, then automatically restore to the original chain (does not mess up the actual case file).
 
-Note: Queries can only be made for known article IDs or defined integer parameters.
+3. **Actual Swap**: Specify two different order positions i and j (between 1 and {n}), actually adjust the order of these two evidences in the formal case file, update the current chain of evidence, and return the new current chain and new contradiction index.
 
-When you have gathered enough information, submit your final answer. If the answer is incorrect or the format is invalid, the jurisprudential mapping task fails.
+4. **Completion Check**: Ask whether the current chain of evidence is perfectly closed, returns "Yes" or "No".
 
-## Query and Answer Format (strictly required)
+- Current chain of evidence: {initial_perm}
+- You can query the current contradiction index or perform other operations at any time.
 
-Each query must contain only one tag. Use the following XML format:
+- Your goal is to use as few **Actual Swap** operations as possible to make the current chain equal to the target chain.
+- **Trial Swap** and **Distance Query** are unlimited, but the number of **Actual Swap** operations should be minimized to maintain the rigor of file management.
+- When you believe the evidence chain sorting is complete, you can submit your final answer.
 
-- Children Query (e.g., querying direct derived articles of article 5):
-<query_children>5</query_children>
+Each operation must contain only one tag. Use the following XML format:
 
-- Depth Query (e.g., querying derivation depth of article 3):
-<query_depth>3</query_depth>
+- Distance Query:
+<query_distance></query_distance>
 
-- Parent Query (e.g., querying if article 7 is a direct subordinate clause of article 3):
-<query_parent>3,7</query_parent>
+- Trial Swap (e.g., trial swap positions 2 and 5):
+<query_trial>2,5</query_trial>
 
-- Width Query (e.g., querying number of articles at derivation depth 2):
-<query_width>2</query_width>
+- Actual Swap (e.g., actually swap positions 3 and 7):
+<action_swap>3,7</action_swap>
 
-When submitting the final answer, list all legal article IDs at derivation depth {k} (comma-separated, order does not matter), using this format:
+- Completion Check:
+<query_check></query_check>
 
-<answer>1,2,3</answer>
+- Submit Final Answer (when you confirm the current chain of evidence is the target, or directly submit the target chain of evidence):
+<answer>Complete</answer> (if current chain of evidence is already the target)
+<answer>[2, 3, 4, 1]</answer> (directly submit the target chain of evidence)
 """
 
-    tags = ["answer", "query_children", "query_depth", "query_parent", "query_width"]
-
-    # 难度配置：
-    # 1 (简单)       - N=7,  k=2, 简单的完全二叉树
-    # 2 (中等偏下)   - N=10, k=3, 非对称树
-    # 3 (中等偏上)   - N=15, k=3, 较复杂的多叉树
-    # 4 (较难)       - N=20, k=4, 深度较大的不平衡树
-    # 5 (难)         - N=25, k=4, 复杂的多分支树
-
-    _SHARED_DIFFICULTY_CONFIG = {
-        1: {
-            "n": 7,
-            "root": 1,
-            "k": 2,
-            # 树结构: 1 -> [2,3], 2 -> [4,5], 3 -> [6,7]
-            "tree": {
-                1: [2, 3],
-                2: [4, 5],
-                3: [6, 7],
-                4: [],
-                5: [],
-                6: [],
-                7: []
-            }
-        },
-        2: {
-            "n": 10,
-            "root": 1,
-            "k": 3,
-            # 树结构: 1 -> [2,3], 2 -> [4,5,6], 3 -> [7], 4 -> [8,9], 5 -> [10]
-            "tree": {
-                1: [2, 3],
-                2: [4, 5, 6],
-                3: [7],
-                4: [8, 9],
-                5: [10],
-                6: [],
-                7: [],
-                8: [],
-                9: [],
-                10: []
-            }
-        },
-        3: {
-            "n": 15,
-            "root": 1,
-            "k": 3,
-            # 树结构: 1 -> [2,3,4], 2 -> [5,6], 3 -> [7,8,9], 4 -> [10], 5 -> [11,12], 7 -> [13,14], 8 -> [15]
-            "tree": {
-                1: [2, 3, 4],
-                2: [5, 6],
-                3: [7, 8, 9],
-                4: [10],
-                5: [11, 12],
-                6: [],
-                7: [13, 14],
-                8: [15],
-                9: [],
-                10: [],
-                11: [],
-                12: [],
-                13: [],
-                14: [],
-                15: []
-            }
-        },
-        4: {
-            "n": 20,
-            "root": 1,
-            "k": 4,
-            # 更复杂的树结构
-            "tree": {
-                1: [2, 3],
-                2: [4, 5, 6],
-                3: [7, 8],
-                4: [9, 10],
-                5: [11],
-                6: [12, 13],
-                7: [14, 15],
-                8: [16],
-                9: [17, 18],
-                10: [19],
-                12: [20],
-                11: [],
-                13: [],
-                14: [],
-                15: [],
-                16: [],
-                17: [],
-                18: [],
-                19: [],
-                20: []
-            }
-        },
-        5: {
-            "n": 25,
-            "root": 1,
-            "k": 4,
-            # 最复杂的树结构
-            "tree": {
-                1: [2, 3, 4],
-                2: [5, 6, 7],
-                3: [8, 9],
-                4: [10, 11, 12],
-                5: [13, 14],
-                6: [15],
-                7: [16, 17],
-                8: [18, 19],
-                9: [20],
-                10: [21],
-                11: [22, 23],
-                12: [24, 25],
-                13: [],
-                14: [],
-                15: [],
-                16: [],
-                17: [],
-                18: [],
-                19: [],
-                20: [],
-                21: [],
-                22: [],
-                23: [],
-                24: [],
-                25: []
-            }
-        }
-    }
+    tags = ["answer", "query_distance", "query_trial", "action_swap", "query_check"]
 
     DIFFICULTY_CONFIG = {
-        "zh": _SHARED_DIFFICULTY_CONFIG,
-        "en": _SHARED_DIFFICULTY_CONFIG
+        "zh": {
+            1: {
+                "n": 4,
+                "initial_perm": [3, 4, 2, 1],
+                "target_perm": [2, 3, 4, 1],
+            },
+            2: {
+                "n": 5,
+                "initial_perm": [4, 2, 5, 3, 1],
+                "target_perm": [2, 3, 4, 5, 1],
+            },
+            3: {
+                "n": 6,
+                "initial_perm": [5, 6, 3, 2, 1, 4],
+                "target_perm": [2, 3, 4, 5, 6, 1],
+            },
+            4: {
+                "n": 7,
+                "initial_perm": [6, 4, 1, 3, 2, 7, 5],
+                "target_perm": [2, 3, 4, 5, 6, 7, 1],
+            },
+            5: {
+                "n": 8,
+                "initial_perm": [7, 5, 1, 3, 8, 2, 6, 4],
+                "target_perm": [2, 3, 4, 5, 6, 7, 8, 1],
+            },
+        },
+        "en": {
+            1: {
+                "n": 4,
+                "initial_perm": [3, 4, 2, 1],
+                "target_perm": [2, 3, 4, 1],
+            },
+            2: {
+                "n": 5,
+                "initial_perm": [4, 2, 5, 3, 1],
+                "target_perm": [2, 3, 4, 5, 1],
+            },
+            3: {
+                "n": 6,
+                "initial_perm": [5, 6, 3, 2, 1, 4],
+                "target_perm": [2, 3, 4, 5, 6, 1],
+            },
+            4: {
+                "n": 7,
+                "initial_perm": [6, 4, 1, 3, 2, 7, 5],
+                "target_perm": [2, 3, 4, 5, 6, 7, 1],
+            },
+            5: {
+                "n": 8,
+                "initial_perm": [7, 5, 1, 3, 8, 2, 6, 4],
+                "target_perm": [2, 3, 4, 5, 6, 7, 8, 1],
+            },
+        },
     }
 
     def __init__(self, config):
@@ -659,228 +601,167 @@ When submitting the final answer, list all legal article IDs at derivation depth
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
-        self._game_info["root"] = cfg["root"]
-        self._game_info["k"] = cfg["k"]
         
-        # 保存树结构
-        self.tree = cfg["tree"]
-        self.root = cfg["root"]
-        self.target_depth = cfg["k"]
+        self.current_perm = cfg["initial_perm"][:]
+        self.target_perm = cfg["target_perm"][:]
         
-        # 计算每个节点的深度
-        self.node_depths = {}
-        self._compute_depths(self.root, 0)
+        self._game_info["initial_perm"] = str(cfg["initial_perm"])
         
-        # 计算目标深度的节点集合（Ground Truth）
-        self.target_nodes = set()
-        for node_id, depth in self.node_depths.items():
-            if depth == self.target_depth:
-                self.target_nodes.add(node_id)
+        self.swap_count = 0
+        self.initial_distance = self._compute_distance(self.current_perm, self.target_perm)
+
+    def _compute_distance(self, perm1, perm2):
+        n = len(perm1)
+        pos_in_perm2 = {v: i for i, v in enumerate(perm2)}
         
-        # 记录已知节点（初始只有根节点已知）
-        self.known_nodes = {self.root}
-
-    def _compute_depths(self, node, depth):
-        """递归计算所有节点的深度"""
-        self.node_depths[node] = depth
-        for child in self.tree[node]:
-            self._compute_depths(child, depth + 1)
-
-    def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        sigma = [pos_in_perm2[perm1[i]] for i in range(n)]
         
-        try:
-            # 解析答案中的节点 ID 列表
-            if not raw_ans:
-                return False
-            model_nodes = set(int(x.strip()) for x in raw_ans.split(",") if x.strip())
-        except:
-            return False
+        visited = [False] * n
+        cycle_count = 0
         
-        # 检查答案集合是否与目标集合完全一致
-        return model_nodes == self.target_nodes
+        for i in range(n):
+            if not visited[i]:
+                cycle_count += 1
+                j = i
+                while not visited[j]:
+                    visited[j] = True
+                    j = sigma[j]
+        
+        return n - cycle_count
 
-    def _cf_core_produce(self, parsed_info):
-        """原始的响应生成逻辑"""
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_unknown = "错误：节点 ID 未知或不存在。"
-            error_format = "错误：查询格式无效。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            error_unknown = "Error: Node ID is unknown or does not exist."
-            error_format = "Error: Invalid query format."
-
-        # 优先级：children > depth > parent > width
-        if "query_children" in parsed_info:
-            try:
-                node_id = int(parsed_info["query_children"].strip())
-                # 检查节点是否已知
-                if node_id not in self.known_nodes:
-                    return error_unknown
-                if node_id not in self.tree:
-                    return error_unknown
-                
-                children = self.tree[node_id]
-                # 将子节点加入已知节点集合
-                self.known_nodes.update(children)
-                
-                if not children:
-                    return "[]"
-                return "[" + ",".join(map(str, children)) + "]"
-            except:
-                return error_format
-
-        elif "query_depth" in parsed_info:
-            try:
-                node_id = int(parsed_info["query_depth"].strip())
-                # 检查节点是否已知
-                if node_id not in self.known_nodes:
-                    return error_unknown
-                if node_id not in self.node_depths:
-                    return error_unknown
-                return str(self.node_depths[node_id])
-            except:
-                return error_format
-
-        elif "query_parent" in parsed_info:
-            try:
-                raw = parsed_info["query_parent"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_format
-                parent_id = int(parts[0])
-                child_id = int(parts[1])
-                
-                # 检查节点是否已知
-                if parent_id not in self.known_nodes or child_id not in self.known_nodes:
-                    return error_unknown
-                if parent_id not in self.tree:
-                    return error_unknown
-                
-                is_child = child_id in self.tree[parent_id]
-                return yes_res if is_child else no_res
-            except:
-                return error_format
-
-        elif "query_width" in parsed_info:
-            try:
-                depth = int(parsed_info["query_width"].strip())
-                if depth < 0:
-                    return error_format
-                
-                # 统计指定深度的节点数量
-                count = sum(1 for d in self.node_depths.values() if d == depth)
-                return str(count)
-            except:
-                return error_format
-
-        else:
-            raise ValueError("No valid query tag found.")
-
-    def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        correct_str = str(correct).strip()
-
-        # 1. 纯整数 -> +1
-        try:
-            val = int(correct_str)
-            return str(val + 1)
-        except ValueError:
-            pass
-
-        # 2. Yes/No 关键词替换
-        if correct_str == "是":
-            return "否"
-        elif correct_str == "否":
-            return "是"
-        elif correct_str.lower() == "yes":
-            return "No"
-        elif correct_str.lower() == "no":
-            return "Yes"
-
-        # 3. 列表格式 -> 篡改内容
-        if correct_str.startswith("[") and correct_str.endswith("]"):
-            inner = correct_str[1:-1].strip()
-            if not inner:
-                # 空列表 -> 伪造一个节点
-                return "[999]"
-            else:
-                # 非空列表 -> 移除最后一个元素
-                parts = [x.strip() for x in inner.split(",") if x.strip()]
-                if len(parts) > 1:
-                    return "[" + ",".join(parts[:-1]) + "]"
-                else:
-                    # 只有一个元素 -> 替换为不同的值
-                    try:
-                        return "[" + str(int(parts[0]) + 100) + "]"
-                    except ValueError:
-                        return "[999]"
-
-        # 4. 其他情况 -> 追加 _WRONG
-        return f"{correct_str}_WRONG"
-
+    def _format_permutation(self, perm):
+        return str(perm)
+    
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
         queries = []
+        n = self._game_info["n"]
         
-        # 获取所有节点 ID 并排序
-        all_nodes = sorted(list(self.tree.keys()))
-        # 计算最大深度
-        max_depth = max(self.node_depths.values()) if self.node_depths else 0
-        
-        # 预定义回答文本
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
+            distance_msg = "距离值："
         else:
             yes_res, no_res = "Yes", "No"
+            distance_msg = "Distance value: "
 
-        # 1. 孩子查询
-        for node_id in all_nodes:
-            children = self.tree.get(node_id, [])
-            if not children:
-                ans = "[]"
-            else:
-                ans = "[" + ",".join(map(str, children)) + "]"
-            
-            queries.append({
-                "query": f"<query_children>{node_id}</query_children>",
-                "answer": ans
-            })
+        queries.append({
+            "query": "<query_distance></query_distance>",
+            "answer": f"{distance_msg}{self._compute_distance(self.current_perm, self.target_perm)}"
+        })
 
-        # 2. 层数查询
-        for node_id in all_nodes:
-            depth = self.node_depths.get(node_id, 0)
-            queries.append({
-                "query": f"<query_depth>{node_id}</query_depth>",
-                "answer": str(depth)
-            })
-
-        # 3. 直连查询 (Parent Query)
-        # 枚举所有节点对 (P, C)，这里简单起见枚举所有 P 和所有 C (除去 P=C)
-        for p_id in all_nodes:
-            for c_id in all_nodes:
-                if p_id == c_id:
-                    continue
-                
-                is_child = c_id in self.tree.get(p_id, [])
-                ans = yes_res if is_child else no_res
+        for i in range(1, n + 1):
+            for j in range(i + 1, n + 1):
+                temp_perm = self.current_perm[:]
+                temp_perm[i-1], temp_perm[j-1] = temp_perm[j-1], temp_perm[i-1]
+                dist = self._compute_distance(temp_perm, self.target_perm)
                 
                 queries.append({
-                    "query": f"<query_parent>{p_id},{c_id}</query_parent>",
-                    "answer": ans
+                    "query": f"<query_trial>{i},{j}</query_trial>",
+                    "answer": f"{distance_msg}{dist}"
                 })
 
-        # 4. 层宽查询
-        # 从 0 层到 max_depth + 1 (包含空层以展示0的情况)
-        for d in range(max_depth + 2):
-            count = sum(1 for depth in self.node_depths.values() if depth == d)
-            queries.append({
-                "query": f"<query_width>{d}</query_width>",
-                "answer": str(count)
-            })
+        is_complete = (self.current_perm == self.target_perm)
+        queries.append({
+            "query": "<query_check></query_check>",
+            "answer": yes_res if is_complete else no_res
+        })
 
         return queries
+
+    def evaluate(self, parsed_info):
+        answer_text = parsed_info.get("answer", "").strip()
+        
+        if self.current_perm == self.target_perm:
+            return True
+        
+        try:
+            nums = [int(x) for x in re.findall(r'\d+', answer_text)]
+            if nums == self.target_perm:
+                return True
+        except (ValueError, TypeError):
+            pass
+        
+        return False
+
+    def _cf_core_produce(self, parsed_info):
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            invalid_pos_msg = "错误：位置编号无效或相同。"
+            current_perm_msg = "当前排列："
+            distance_msg = "距离值："
+            multi_tag_msg = "警告：每次只能执行一个操作。仅处理第一个识别到的操作。\n"
+        else:
+            yes_res, no_res = "Yes", "No"
+            invalid_pos_msg = "Error: Invalid or identical position numbers."
+            current_perm_msg = "Current permutation: "
+            distance_msg = "Distance value: "
+            multi_tag_msg = "Warning: Only one operation per turn. Only the first recognized operation is processed.\n"
+
+        action_tags = [t for t in ["query_distance", "query_check", "query_trial", "action_swap"] if t in parsed_info]
+        prefix = multi_tag_msg if len(action_tags) > 1 else ""
+
+        if "query_distance" in parsed_info:
+            dist = self._compute_distance(self.current_perm, self.target_perm)
+            return prefix + f"{distance_msg}{dist}"
+
+        elif "query_check" in parsed_info:
+            is_complete = (self.current_perm == self.target_perm)
+            return prefix + (yes_res if is_complete else no_res)
+
+        elif "query_trial" in parsed_info:
+            try:
+                raw = parsed_info["query_trial"]
+                i, j = [int(x.strip()) for x in raw.split(",")]
+                if i < 1 or i > self._game_info["n"] or j < 1 or j > self._game_info["n"] or i == j:
+                    raise ValueError
+                
+                temp_perm = self.current_perm[:]
+                temp_perm[i-1], temp_perm[j-1] = temp_perm[j-1], temp_perm[i-1]
+                
+                dist_after = self._compute_distance(temp_perm, self.target_perm)
+                return prefix + f"{distance_msg}{dist_after}"
+            except (ValueError, IndexError, TypeError, AttributeError):
+                return prefix + invalid_pos_msg
+
+        elif "action_swap" in parsed_info:
+            try:
+                raw = parsed_info["action_swap"]
+                i, j = [int(x.strip()) for x in raw.split(",")]
+                if i < 1 or i > self._game_info["n"] or j < 1 or j > self._game_info["n"] or i == j:
+                    raise ValueError
+                
+                self.current_perm[i-1], self.current_perm[j-1] = self.current_perm[j-1], self.current_perm[i-1]
+                self.swap_count += 1
+                
+                dist_new = self._compute_distance(self.current_perm, self.target_perm)
+                
+                response = f"{current_perm_msg}{self._format_permutation(self.current_perm)}\n{distance_msg}{dist_new}"
+                return prefix + response
+            except (ValueError, IndexError, TypeError, AttributeError):
+                return prefix + invalid_pos_msg
+
+        else:
+            raise ValueError("No valid query or action tag found.")
+
+    def _cf_make_wrong(self, correct):
+        if self.config.language == "zh":
+            if correct.strip() == "是":
+                return "否"
+            if correct.strip() == "否":
+                return "是"
+        else:
+            if correct.strip() == "Yes":
+                return "No"
+            if correct.strip() == "No":
+                return "Yes"
+
+        lines = correct.split('\n')
+        
+        for idx in range(len(lines) - 1, -1, -1):
+            num_match = re.search(r'(\d+)\s*$', lines[idx])
+            if num_match:
+                val = int(num_match.group(1))
+                wrong_val = val + 1 if val == 0 else val - 1
+                lines[idx] = lines[idx][:num_match.start(1)] + str(wrong_val) + lines[idx][num_match.end(1):]
+                return '\n'.join(lines)
+
+        return correct + "_WRONG"

@@ -1,781 +1,589 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   祖先判断：某节点是否为另一节点的祖先
-# ============================================================
-
-import random
 from .base import Game
+import random
+import itertools
 
-
-class TreeAncestorMappingGame(Game):
+class SequencePatternDiscoveryGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"树祖先关系推理"游戏，规则如下：
+我们来玩一个"序列模式发现"游戏，规则如下：
 
-游戏设定了一棵未知结构的有根树，包含 {n} 个已标号的节点（标号为 {node_list}）。树的具体边和层级结构不会公开。
+游戏设定了一个隐藏的有序序列 S，长度为 {n}，由字母表 {alphabet} 中的字符组成。同时给定两个参数：
+- K = {k}：目标模式的长度
+- P = {p}：目标模式的出现次数
 
-## 关系定义
+你的目标是找出唯一满足条件的长度为 K 的子串 M*，该子串在序列 S 中恰好出现 P 次（采用可重叠计数方式，例如 "AA" 在 "AAA" 中出现 2 次）。游戏保证：存在且仅存在一个长度为 K 的子串其出现次数恰好等于 P，其他长度为 K 的子串出现次数都不等于 P。
 
-对于节点 A 和 B，祖先关系采用严格定义（即 A 不等于 B）：
-- **关系类别 C1**：A 是 B 的祖先（存在从 A 到 B 的向下路径）
-- **关系类别 C2**：B 是 A 的祖先（存在从 B 到 A 的向下路径）
-- **关系类别 C3**：A 和 B 互不为对方祖先（处于不同分支）
+你需要找出这个子串 M* 以及它在序列中首次出现的位置（位置编号从 1 开始）。
 
-## 黑箱测试
+你可以反复提出以下四类查询（每次仅限一个查询），我会根据隐藏序列如实回答：
 
-系统提供了三个二元判定测试：T1、T2、T3。存在一个固定但未知的一一对应映射 f，将这三个测试与三个关系类别一一配对。
+1. 存在性查询：询问长度为 K 的子串 X 是否在序列中出现过（出现次数大于 0）。回答"是"或"否"。
 
-当你查询 Ti(X, Y) 时：
-- 如果节点对 (X, Y) 的关系属于 f(Ti) 对应的类别，返回"是"
-- 否则返回"否"
+2. 次数查询：询问长度为 K 的子串 X 在序列中出现的次数。回答一个非负整数。
 
-注意：映射 f 在整个游戏过程中保持不变，同一查询重复调用返回一致结果。
+3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀 U 开头的所有长度为 K 的子串中，单个子串出现次数的最大值。回答一个非负整数。
 
-## 已知先验信息
+4. 最左位置查询：询问长度为 K 的子串 X 首次出现的位置。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回"不存在"。
 
-以下关系已经确定：
-{prior_info}
+请尽可能少地使用查询次数来找到答案。当你确定答案后，请提交最终结果。
 
-除此之外，树的其他结构信息不会公开。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 你的任务
+- 存在性查询（例如查询子串 "ABC"）：
+<query_exists>ABC</query_exists>
 
-你的目标是判断命题"{target_query}"的真值（是或否）。
+- 次数查询（例如查询子串 "ABC" 的出现次数）：
+<query_count>ABC</query_count>
 
-你可以通过查询来收集信息，但请尽可能少地使用查询次数。
+- 前缀最大次数查询（例如查询前缀 "AB" 的最大次数）：
+<query_prefix_max>AB</query_prefix_max>
 
-## 查询格式
+- 最左位置查询（例如查询子串 "ABC" 的最左位置）：
+<query_position>ABC</query_position>
 
-每次只能提交一个查询，使用以下 XML 格式：
+提交最终答案时，需要说明子串内容和最左起始位置，格式如下：
 
-查询测试 Ti 对节点对 (X, Y) 的结果（例如查询 T1 对节点对 (a, b)）：
-<query>T1, a, b</query>
-
-## 提交答案格式
-
-当你准备好提交最终答案时，请使用以下格式：
-
-<answer>是</answer>
-
-或
-
-<answer>否</answer>
-
-如果答案错误或格式不符，游戏失败。
+<answer>pattern=ABC, position=5</answer>
 """
 
     game_rule_en = """\
-Let's play a "Tree Ancestor Relationship Reasoning" game. Here are the rules:
+Let's play a "Sequence Pattern Discovery" game. Here are the rules:
 
-The game features an unknown rooted tree structure with {n} labeled nodes (labels: {node_list}). The specific edges and hierarchy of the tree are not disclosed.
+There is a hidden ordered sequence S of length {n}, composed of characters from the alphabet {alphabet}. Two parameters are given:
+- K = {k}: the length of the target pattern
+- P = {p}: the occurrence count of the target pattern
 
-## Relationship Definitions
+Your goal is to find the unique substring M* of length K that appears exactly P times in sequence S (using overlapping count, e.g., "AA" appears 2 times in "AAA"). The game guarantees: there exists exactly one substring of length K whose occurrence count equals P, and all other substrings of length K have different occurrence counts.
 
-For nodes A and B, the ancestor relationship uses a strict definition (A is not equal to B):
-- **Relationship Category C1**: A is an ancestor of B (there exists a downward path from A to B)
-- **Relationship Category C2**: B is an ancestor of A (there exists a downward path from B to A)
-- **Relationship Category C3**: A and B are not ancestors of each other (they are in different branches)
+You need to find this substring M* and its first occurrence position in the sequence (positions are numbered starting from 1).
 
-## Black Box Tests
+You can repeatedly ask the following four types of queries (one query per turn), and I will answer truthfully based on the hidden sequence:
 
-The system provides three binary decision tests: T1, T2, T3. There exists a fixed but unknown one-to-one mapping f that pairs these three tests with the three relationship categories.
+1. Existence Query: Ask whether a substring X of length K appears in the sequence (occurrence count greater than 0). Answer "Yes" or "No".
 
-When you query Ti(X, Y):
-- If the relationship of node pair (X, Y) belongs to the category corresponding to f(Ti), return "Yes"
-- Otherwise, return "No"
+2. Count Query: Ask for the number of times a substring X of length K appears in the sequence. Answer a non-negative integer.
 
-Note: The mapping f remains constant throughout the game, and the same query will return consistent results.
+3. Prefix Maximum Count Query: Ask for the maximum occurrence count among all substrings of length K that start with a prefix U of length t (where 1 to K-1). Answer a non-negative integer.
 
-## Known Prior Information
+4. Leftmost Position Query: Ask for the first occurrence position of a substring X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
 
-The following relationships are already established:
-{prior_info}
+Please use as few queries as possible to find the answer. When you are certain of the answer, submit your final result.
 
-Beyond this, no other structural information about the tree will be disclosed.
+Each query must contain only one tag. Use the following XML format:
 
-## Your Task
+- Existence Query (e.g., querying substring "ABC"):
+<query_exists>ABC</query_exists>
 
-Your goal is to determine the truth value (Yes or No) of the proposition "{target_query}".
+- Count Query (e.g., querying occurrence count of substring "ABC"):
+<query_count>ABC</query_count>
 
-You can collect information through queries, but please use as few queries as possible.
+- Prefix Maximum Count Query (e.g., querying maximum count for prefix "AB"):
+<query_prefix_max>AB</query_prefix_max>
 
-## Query Format
+- Leftmost Position Query (e.g., querying leftmost position of substring "ABC"):
+<query_position>ABC</query_position>
 
-You can only submit one query at a time, using the following XML format:
+When submitting the final answer, specify the pattern content and leftmost starting position in this format:
 
-To query test Ti on node pair (X, Y) (e.g., query T1 on node pair (a, b)):
-<query>T1, a, b</query>
-
-## Answer Submission Format
-
-When you are ready to submit your final answer, please use the following format:
-
-<answer>Yes</answer>
-
-or
-
-<answer>No</answer>
-
-If the answer is incorrect or the format is invalid, the game fails.
+<answer>pattern=ABC, position=5</answer>
 """
 
-    # ------------------ 场景 1：交通 ------------------
     contextualized_rule_zh_1 = """\
-【交通网络溯源系统】
-你现在被指派调查一个未知的单向分流交通拓扑网络（呈有根树结构）。该路网包含 {n} 个标号的枢纽节点（标号为 {node_list}）。具体路线图和分级结构处于加密状态。
+欢迎使用“智能交通流特征监控系统”。
 
-## 节点关系定义
+系统记录了一条长度为 {n} 的路段车辆卡口通行序列 S，由卡口编号 {alphabet} 组成。我们设定的监测参数为：
+- K = {k}：目标车辆连续经过的卡口数量（路径长度）
+- P = {p}：该通行路径模式在记录中出现的总次数
 
-在交通分析中，如果车辆可以从一个枢纽向下游顺行到达另一个枢纽，前者被称为后者的“祖先”。对于枢纽节点 A 和 B（A 不等于 B）：
-- **关系类别 C1**：A 是 B 的祖先（存在从 A 到 B 的顺行通路）
-- **关系类别 C2**：B 是 A 的祖先（存在从 B 到 A 的顺行通路）
-- **关系类别 C3**：A 和 B 互不为对方祖先（处于不同分流支路上，无法相互抵达）
+你的任务是找出唯一满足条件的长度为 K 的连续卡口路径 M*，该路径在记录序列 S 中恰好出现了 P 次（采用可重叠计算方式）。系统保证：存在且仅存在一个长度为 K 的路径其出现次数等于 P，其他长度为 K 的路径出现次数均不等于 P。
 
-## 黑箱探针测试
+你需要分析出这个特定路径 M* 以及它在监测时序中首次出现的位置（位置编号从 1 开始）。
 
-系统配备了三种电子探针测试：T1、T2、T3。存在一个固定但未知的一一对应映射 f，将这三个探针测试与三种路网关系类别一一配配。
+你可以反复调用以下四类数据查询接口（每次仅限一个查询），系统将基于隐藏的通行序列如实返回数据：
 
-当你调用探针 Ti(X, Y) 时：
-- 如果枢纽对 (X, Y) 的关系属于 f(Ti) 对应的类别，系统返回“是”
-- 否则返回“否”
+1. 存在性查询：询问长度为 K 的路径 X 是否在记录中出现过。回答“是”或“否”。
+2. 次数查询：询问长度为 K 的路径 X 在记录中出现的总次数。回答一个非负整数。
+3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀序列 U 开头的所有长度为 K 的路径中，单条路径出现次数的最大值。回答一个非负整数。
+4. 最左位置查询：询问长度为 K 的路径 X 首次出现的时间节点（位置）。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
 
-注意：映射 f 在整个勘测过程中保持稳定不变，同一查询重复调用将返回一致结果。
+请尽可能高效地使用查询接口。确定答案后，请提交最终结果。
 
-## 已知先验信息
+每次查询只能包含一个接口调用标签。请使用以下 XML 格式：
 
-通过早期路勘，以下关系已经确定：
-{prior_info}
+- 存在性查询（例如查询路径 "ABC"）：
+<query_exists>ABC</query_exists>
 
-除此之外，路网的其他结构信息不会公开。
+- 次数查询（例如查询路径 "ABC" 的出现次数）：
+<query_count>ABC</query_count>
 
-## 你的任务
+- 前缀最大次数查询（例如查询前缀 "AB" 的最大次数）：
+<query_prefix_max>AB</query_prefix_max>
 
-你的目标是研判关于交通路网的命题"{target_query}"的真值（是或否）。
+- 最左位置查询（例如查询路径 "ABC" 的最左位置）：
+<query_position>ABC</query_position>
 
-你可以通过调用探针测试来收集信息，但请尽可能少地使用测试次数以节约系统资源。
+提交最终报告时，需要说明路径内容和最左起始位置，格式如下：
 
-## 查询格式
-
-每次只能提交一个探针查询，使用以下 XML 格式：
-
-查询测试 Ti 对枢纽对 (X, Y) 的探测结果（例如查询 T1 对节点对 (a, b)）：
-<query>T1, a, b</query>
-
-## 提交答案格式
-
-当你准备好提交最终勘测结论时，请使用以下格式：
-
-<answer>是</answer>
-或
-<answer>否</answer>
-
-如果答案错误或格式不符，交通分析任务失败。
+<answer>pattern=ABC, position=5</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-【Traffic Network Tracing System】
-You are assigned to investigate an unknown one-way divergent traffic topology network (structured as a rooted tree). The road network contains {n} labeled hub nodes (labels: {node_list}). The specific route maps and hierarchical structures are encrypted.
+Welcome to the "Intelligent Traffic Flow Pattern Monitoring System".
 
-## Node Relationship Definitions
+The system has recorded a sequence S of length {n} representing vehicle pass-throughs at traffic checkpoints, composed of checkpoint IDs from the alphabet {alphabet}. The monitoring parameters are:
+- K = {k}: the number of consecutive checkpoints in the target path (pattern length)
+- P = {p}: the total number of times this path pattern occurs in the record
 
-In traffic analysis, if a vehicle can travel downstream from one hub to reach another, the former is considered the "ancestor" of the latter. For hub nodes A and B (A is not equal to B):
-- **Relationship Category C1**: A is an ancestor of B (there exists a valid downstream path from A to B)
-- **Relationship Category C2**: B is an ancestor of A (there exists a valid downstream path from B to A)
-- **Relationship Category C3**: A and B are not ancestors of each other (they are on different diverging branches and cannot reach each other)
+Your task is to find the unique continuous checkpoint path M* of length K that appears exactly P times in the recorded sequence S (using overlapping count). The system guarantees: there exists exactly one path of length K whose occurrence count equals P.
 
-## Black Box Probe Tests
+You need to identify this specific path M* and its first occurrence position in the monitoring timeline (positions are numbered starting from 1).
 
-The system is equipped with three types of electronic probe tests: T1, T2, T3. There exists a fixed but unknown one-to-one mapping f that pairs these three probes with the three traffic relationship categories.
+You can repeatedly call the following four data query interfaces (one query per turn):
 
-When you trigger probe Ti(X, Y):
-- If the relationship of hub pair (X, Y) belongs to the category corresponding to f(Ti), the system returns "Yes"
-- Otherwise, it returns "No"
+1. Existence Query: Ask whether a path X of length K appears in the record. Answer "Yes" or "No".
+2. Count Query: Ask for the total number of times a path X of length K appears in the record. Answer a non-negative integer.
+3. Prefix Maximum Count Query: Ask for the maximum occurrence count among all paths of length K that start with a prefix sequence U of length t (where 1 to K-1). Answer a non-negative integer.
+4. Leftmost Position Query: Ask for the first occurrence position of a path X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
 
-Note: The mapping f remains constant throughout the survey. Repeated identical queries will yield consistent results.
+Please use the queries as efficiently as possible. When you are certain, submit your final report.
 
-## Known Prior Information
+Each query must contain only one tag. Use the following XML format:
 
-Through early surveys, the following relationships have been confirmed:
-{prior_info}
+- Existence Query (e.g., querying path "ABC"):
+<query_exists>ABC</query_exists>
 
-Beyond this, no other structural information about the network will be disclosed.
+- Count Query (e.g., querying path "ABC" occurrence count):
+<query_count>ABC</query_count>
 
-## Your Task
+- Prefix Maximum Count Query (e.g., querying maximum count for prefix "AB"):
+<query_prefix_max>AB</query_prefix_max>
 
-Your goal is to determine the truth value (Yes or No) of the traffic proposition "{target_query}".
+- Leftmost Position Query (e.g., querying leftmost position of path "ABC"):
+<query_position>ABC</query_position>
 
-You can collect information by running probe tests, but please use as few queries as possible to save system resources.
+When submitting the final report, specify the path content and leftmost starting position in this format:
 
-## Query Format
-
-You can submit only one probe query at a time, using the following XML format:
-
-To query test Ti on hub pair (X, Y) (e.g., query T1 on node pair (a, b)):
-<query>T1, a, b</query>
-
-## Answer Submission Format
-
-When you are ready to submit your final survey conclusion, please use the following format:
-
-<answer>Yes</answer>
-or
-<answer>No</answer>
-
-If the answer is incorrect or the format is invalid, the traffic analysis task fails.
+<answer>pattern=ABC, position=5</answer>
 """
 
-    # ------------------ 场景 2：医疗 ------------------
     contextualized_rule_zh_2 = """\
-【病毒变异溯源系统】
-我们正在使用计算流行病学工具追踪一种新型病毒。该病毒的变异过程构成了一棵未知的变异有根树，包含 {n} 个已标记的毒株样本（标号为 {node_list}）。具体的变异路径不会公开。
+欢迎使用“临床基因组序列异常筛查系统”。
 
-## 演化关系定义
+系统已测得一段长度为 {n} 的患者特异性基因片段序列 S，由碱基/标志物 {alphabet} 组成。当前的筛查标定参数为：
+- K = {k}：目标异常靶向序列的长度
+- P = {p}：该靶向序列在片段中表达的频次
 
-在病毒发生学中，如果毒株通过变异衍生出下游毒株，前者即为后者的“祖先”毒株。对于样本 A 和 B（A 不等于 B）：
-- **关系类别 C1**：A 是 B 的祖先（存在从 A 变异演化到 B 的路径）
-- **关系类别 C2**：B 是 A 的祖先（存在从 B 变异演化到 A 的路径）
-- **关系类别 C3**：A 和 B 互不为对方祖先（属于完全平行的独立变异分支）
+你的目标是鉴定出唯一满足条件的长度为 K 的靶向序列 M*，该序列在片段 S 中恰好表达了 P 次（采用可重叠计数方式）。系统保证：存在且仅存在一个长度为 K 的序列其表达频次等于 P。
 
-## 基因序列黑箱比对
+你需要精准定位这个靶向序列 M* 以及它在基因片段中首发突变的位置（位置编号从 1 开始）。
 
-实验室提供了三种快速抗体比对测试：T1、T2、T3。存在一个固定但未知的映射 f，将这三种比对测试与上述三个关系类别一一配对。
+你可以反复调用以下四类生信分析工具（每次仅限一个调用），系统将根据隐藏的基因序列如实反馈：
 
-当你提交测试 Ti(X, Y) 时：
-- 如果毒株对 (X, Y) 的关系属于 f(Ti) 对应的变异关系类别，试剂呈阳性，返回“是”
-- 否则呈阴性，返回“否”
+1. 存在性查询：询问长度为 K 的序列 X 是否在片段中表达过。回答“是”或“否”。
+2. 次数查询：询问长度为 K 的序列 X 在片段中表达的准确频次。回答一个非负整数。
+3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀 U 开头的所有长度为 K 的序列中，单一序列表达频次的极值。回答一个非负整数。
+4. 最左位置查询：询问长度为 K 的序列 X 首次表达的碱基座次。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
 
-注意：映射 f 在整体验测过程中保持恒定，同一组合多次测试返回结果一致。
+请以最小的计算资源消耗找到答案。确诊后，请提交最终报告。
 
-## 已知先验信息
+每次调用只能包含一个工具标签。请使用以下 XML 格式：
 
-通过早期测序，以下演化关系已确认：
-{prior_info}
+- 存在性查询（例如查询序列 "ABC"）：
+<query_exists>ABC</query_exists>
 
-除此以外，病毒的其他变异链节点不会公开。
+- 次数查询（例如查询序列 "ABC" 的表达频次）：
+<query_count>ABC</query_count>
 
-## 你的任务
+- 前缀最大次数查询（例如查询前缀 "AB" 的最大频次）：
+<query_prefix_max>AB</query_prefix_max>
 
-你的核心目标是判定病理命题"{target_query}"的真值（是或否）。
+- 最左位置查询（例如查询序列 "ABC" 的首发座次）：
+<query_position>ABC</query_position>
 
-你可以通过试剂测试来获取数据，但请以最少的检测试剂消耗完成溯源。
+提交最终报告时，需要说明序列内容和最左起始座次，格式如下：
 
-## 查询格式
-
-每次只能提交一次比对测试请求，使用以下 XML 格式：
-
-测试 Ti 对毒株样本对 (X, Y) 的比对结果（例如测试 T1 对样本 (a, b)）：
-<query>T1, a, b</query>
-
-## 提交答案格式
-
-当你确认最终溯源结论时，请使用以下格式：
-
-<answer>是</answer>
-或
-<answer>否</answer>
-
-若结论错误或格式有误，疫情阻击任务失败。
+<answer>pattern=ABC, position=5</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-【Viral Mutation Tracing System】
-We are utilizing computational epidemiology tools to trace a novel virus. The mutation process of the virus forms an unknown rooted mutation tree, containing {n} labeled strain samples (labels: {node_list}). The specific mutation pathways will not be disclosed.
+Welcome to the "Clinical Genomic Sequence Anomaly Screening System".
 
-## Evolutionary Relationship Definitions
+The system has sequenced a patient-specific genomic fragment sequence S of length {n}, composed of bases/markers from {alphabet}. The screening parameters are:
+- K = {k}: the length of the target anomalous sequence
+- P = {p}: the expression frequency of the target sequence in the fragment
 
-In viral ontogeny, if a strain evolves into a downstream strain through mutation, the former is referred to as the "ancestor" strain of the latter. For samples A and B (A is not equal to B):
-- **Relationship Category C1**: A is an ancestor of B (there exists a mutation path evolving from A to B)
-- **Relationship Category C2**: B is an ancestor of A (there exists a mutation path evolving from B to A)
-- **Relationship Category C3**: A and B are not ancestors of each other (they belong to completely parallel, independent mutation branches)
+Your goal is to identify the unique target sequence M* of length K that is expressed exactly P times in fragment S (using overlapping count). The system guarantees: there exists exactly one sequence of length K whose expression frequency equals P.
 
-## Black Box Sequence Matching
+You need to precisely locate this target sequence M* and its first mutation position in the genomic fragment (positions are numbered starting from 1).
 
-The laboratory provides three types of rapid antibody matching tests: T1, T2, T3. There exists a fixed but unknown mapping f that pairs these three matching tests with the three relationship categories mentioned above.
+You can repeatedly invoke the following four bioinformatics analysis tools (one query per turn):
 
-When you submit test Ti(X, Y):
-- If the relationship of strain pair (X, Y) belongs to the evolutionary category corresponding to f(Ti), the reagent shows a positive reaction and returns "Yes"
-- Otherwise, it shows negative and returns "No"
+1. Existence Query: Ask whether a sequence X of length K is expressed in the fragment. Answer "Yes" or "No".
+2. Count Query: Ask for the exact expression frequency of a sequence X of length K in the fragment. Answer a non-negative integer.
+3. Prefix Maximum Count Query: Ask for the maximum expression frequency among all sequences of length K starting with a prefix U of length t (1 to K-1). Answer a non-negative integer.
+4. Leftmost Position Query: Ask for the first expression locus of a sequence X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
 
-Note: The mapping f remains constant during the entire tracing process, and the same combination of queries will consistently return the same results.
+Please find the answer with minimal computational resources. When diagnosed, submit your final report.
 
-## Known Prior Information
+Each invocation must contain only one tool tag. Use the following XML format:
 
-Through early sequencing, the following evolutionary relationships have been established:
-{prior_info}
+- Existence Query (e.g., querying sequence "ABC"):
+<query_exists>ABC</query_exists>
 
-Beyond this, no other nodes in the viral mutation chain will be disclosed.
+- Count Query (e.g., querying sequence "ABC" frequency):
+<query_count>ABC</query_count>
 
-## Your Task
+- Prefix Maximum Count Query (e.g., querying maximum frequency for prefix "AB"):
+<query_prefix_max>AB</query_prefix_max>
 
-Your core objective is to determine the truth value (Yes or No) of the pathological proposition "{target_query}".
+- Leftmost Position Query (e.g., querying leftmost locus of sequence "ABC"):
+<query_position>ABC</query_position>
 
-You can acquire data through reagent tests, but please achieve the tracing with the minimal consumption of test reagents.
+When submitting the final report, specify the sequence content and leftmost starting locus in this format:
 
-## Query Format
-
-You can only submit one matching test request at a time, using the following XML format:
-
-To test matching result of Ti on strain sample pair (X, Y) (e.g., test T1 on sample pair (a, b)):
-<query>T1, a, b</query>
-
-## Answer Submission Format
-
-When you confirm your final tracing conclusion, please use the following format:
-
-<answer>Yes</answer>
-or
-<answer>No</answer>
-
-If the conclusion is incorrect or the format is invalid, the outbreak mitigation task fails.
+<answer>pattern=ABC, position=5</answer>
 """
 
-    # ------------------ 场景 3：教育 ------------------
     contextualized_rule_zh_3 = """\
-【教学大纲依赖分析系统】
-你正在审查一套复杂的专业课程体系。该体系由 {n} 个知识模块（标号为 {node_list}）组成，整体构成一棵未知的有根先决条件树。各模块的具体修读先后顺序处于未解密状态。
+欢迎进入“学生学习行为图谱分析平台”。
 
-## 模块依赖关系定义
+平台提取了一名学生长度为 {n} 的在线学习行为序列 S，由行为代码 {alphabet} 组成（如A代表看视频，B代表做题等）。当前分析的焦点参数为：
+- K = {k}：目标行为模式包含的连续动作数
+- P = {p}：该行为模式在整个学习周期中发生的次数
 
-在教学体系中，如果某个模块是另一个模块的必修前置基础，我们称基础模块为后续模块的“祖先”。对于知识模块 A 和 B（A 不等于 B）：
-- **关系类别 C1**：A 是 B 的祖先（必须先学 A 并沿着修读路径才能学 B）
-- **关系类别 C2**：B 是 A 的祖先（必须先学 B 并沿着修读路径才能学 A）
-- **关系类别 C3**：A 和 B 互不为对方祖先（属于不同专业选修方向，互无前置依赖）
+你的任务是挖掘出唯一满足条件的长度为 K 的学习行为模式 M*，该模式在总序列 S 中恰好发生 P 次（采用可重叠计数方式）。平台保证：存在且仅存在一个长度为 K 的模式其发生次数等于 P。
 
-## 黑箱评估测试
+你需要识别出这个核心模式 M* 以及它在学习序列中首次被触发的位置（位置编号从 1 开始）。
 
-教务系统提供了三种数据接口测试：T1、T2、T3。存在一个固定但未知的规则 f，将这三种测试与上述三类依赖关系一一对应。
+你可以反复调用以下四类数据查询模块（每次仅限一个调用），平台将基于隐匿的行为序列表如实作答：
 
-当你调用接口 Ti(X, Y) 时：
-- 如果模块对 (X, Y) 实际关系匹配 f(Ti) 对应的依赖类别，接口响应“是”
-- 否则响应“否”
+1. 存在性查询：询问长度为 K 的行为模式 X 是否在周期内发生过。回答“是”或“否”。
+2. 次数查询：询问长度为 K 的行为模式 X 在周期内发生的总次数。回答一个非负整数。
+3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀行为 U 开头的所有长度为 K 的模式中，单一模式发生次数的最大值。回答一个非负整数。
+4. 最左位置查询：询问长度为 K 的行为模式 X 首次触发的学习节点。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
 
-注意：对应规则 f 在整个审查期内固定生效，相同请求必然获得相同响应。
+请用尽量少的查询步骤完成图谱分析。得出结论后，请提交最终报告。
 
-## 已知先验信息
+每次调用只能包含一个模块标签。请使用以下 XML 格式：
 
-教务处已公开以下核心修读关系：
-{prior_info}
+- 存在性查询（例如查询模式 "ABC"）：
+<query_exists>ABC</query_exists>
 
-其余模块的深层依赖逻辑仍然未知。
+- 次数查询（例如查询模式 "ABC" 的发生次数）：
+<query_count>ABC</query_count>
 
-## 你的任务
+- 前缀最大次数查询（例如查询前缀 "AB" 的最大次数）：
+<query_prefix_max>AB</query_prefix_max>
 
-请论证课程体系命题"{target_query}"的真实性（是或否）。
+- 最左位置查询（例如查询模式 "ABC" 的最左位置）：
+<query_position>ABC</query_position>
 
-允许通过接口请求收集线索，但请尽量精简你的查询步骤以符合系统速率限制。
+提交最终报告时，需要说明模式内容和最左起始节点，格式如下：
 
-## 查询格式
-
-每次只允许提交一次请求，严格遵守以下 XML 格式：
-
-通过接口 Ti 查询模块对 (X, Y)（例如查询 T1 对知识模块 (a, b)）：
-<query>T1, a, b</query>
-
-## 提交答案格式
-
-得到最终论证结果后，请采用如下格式提交：
-
-<answer>是</answer>
-或
-<answer>否</answer>
-
-一旦回答错误或格式校验失败，课程审查即告失败。
+<answer>pattern=ABC, position=5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-【Syllabus Prerequisite Dependency Analysis System】
-You are reviewing a complex professional curriculum system. This system consists of {n} knowledge modules (labels: {node_list}), forming an unknown rooted prerequisite tree. The specific sequential study order of each module remains unclassified.
+Welcome to the "Student Learning Behavior Graph Analysis Platform".
 
-## Module Dependency Relationship Definitions
+The platform has extracted an online learning behavior sequence S of length {n} for a student, composed of behavior codes {alphabet} (e.g., A for watching video, B for quiz). The focus parameters are:
+- K = {k}: the number of consecutive actions in the target behavior pattern
+- P = {p}: the occurrence count of this behavior pattern throughout the learning cycle
 
-In the educational framework, if a module is a mandatory prerequisite foundation for another module, the foundational module is termed the "ancestor" of the subsequent one. For knowledge modules A and B (A is not equal to B):
-- **Relationship Category C1**: A is an ancestor of B (you must study A first and follow the curriculum path to study B)
-- **Relationship Category C2**: B is an ancestor of A (you must study B first and follow the curriculum path to study A)
-- **Relationship Category C3**: A and B are not ancestors of each other (they belong to different elective tracks with no mutual prerequisite dependency)
+Your task is to mine the unique learning behavior pattern M* of length K that occurs exactly P times in sequence S (using overlapping count). The platform guarantees: there exists exactly one pattern of length K whose occurrence count equals P.
 
-## Black Box Evaluation Tests
+You need to identify this core pattern M* and its first triggered position in the learning sequence (positions are numbered starting from 1).
 
-The academic system provides three data interface tests: T1, T2, T3. There exists a fixed but unknown rule f that pairs these three tests with the three dependency categories.
+You can repeatedly invoke the following four data query modules (one query per turn):
 
-When you invoke interface Ti(X, Y):
-- If the actual relationship of module pair (X, Y) matches the dependency category designated by f(Ti), the interface responds with "Yes"
-- Otherwise, it responds with "No"
+1. Existence Query: Ask whether a behavior pattern X of length K occurred. Answer "Yes" or "No".
+2. Count Query: Ask for the total number of times a behavior pattern X of length K occurred. Answer a non-negative integer.
+3. Prefix Maximum Count Query: Ask for the maximum occurrence count among all patterns of length K that start with a prefix behavior U of length t (1 to K-1). Answer a non-negative integer.
+4. Leftmost Position Query: Ask for the first triggered node of a behavior pattern X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
 
-Note: The corresponding rule f remains rigidly in effect throughout the review period, and identical requests will invariably yield identical responses.
+Please complete the analysis with as few query steps as possible. When concluded, submit your final report.
 
-## Known Prior Information
+Each invocation must contain only one module tag. Use the following XML format:
 
-The registrar's office has disclosed the following core study relationships:
-{prior_info}
+- Existence Query (e.g., querying pattern "ABC"):
+<query_exists>ABC</query_exists>
 
-The deeper dependency logic for the remaining modules remains unknown.
+- Count Query (e.g., querying pattern "ABC" count):
+<query_count>ABC</query_count>
 
-## Your Task
+- Prefix Maximum Count Query (e.g., querying maximum count for prefix "AB"):
+<query_prefix_max>AB</query_prefix_max>
 
-Please verify the authenticity (Yes or No) of the curriculum proposition "{target_query}".
+- Leftmost Position Query (e.g., querying leftmost node of pattern "ABC"):
+<query_position>ABC</query_position>
 
-You are allowed to collect clues via interface requests, but please streamline your query steps as much as possible to comply with system rate limits.
+When submitting the final report, specify the pattern content and leftmost starting node in this format:
 
-## Query Format
-
-Only one request may be submitted at a time, strictly adhering to the following XML format:
-
-To query module pair (X, Y) through interface Ti (e.g., query T1 on knowledge module pair (a, b)):
-<query>T1, a, b</query>
-
-## Answer Submission Format
-
-Upon deriving your final verification result, please submit it using this format:
-
-<answer>Yes</answer>
-or
-<answer>No</answer>
-
-Any erroneous answer or format validation failure will result in the immediate failure of the curriculum review.
+<answer>pattern=ABC, position=5</answer>
 """
 
-    # ------------------ 场景 4：制造业/工业 ------------------
     contextualized_rule_zh_4 = """\
-【供应链BOM（物料清单）溯源系统】
-系统导入了一份复杂机电产品的制造层级树，共包含 {n} 个加工组件/总成（标号为 {node_list}）。树的顶部为基础原料，向下分层加工。具体的装配和拆解从属架构暂未公开。
+欢迎使用“工业传感日志故障排查系统”。
 
-## 制造层级定义
+流水线设备生成了一份长度为 {n} 的传感器状态日志 S，由离散状态码 {alphabet} 组成。工程师给定的排查参数为：
+- K = {k}：目标异常工序组合的长度
+- P = {p}：该工序组合在日志中出现的频数
 
-在物料追踪中，如果一个组件经过后续工序加工或组装流转为另一个组件，处于上游工序位置的组件被称为“祖先”组件。对于组件 A 和 B（A 不等于 B）：
-- **关系类别 C1**：A 是 B 的祖先（A 处于加工链上游，存在经由 A 最终装配/流转至 B 的路径）
-- **关系类别 C2**：B 是 A 的祖先（B 处于加工链上游，存在经由 B 最终装配/流转至 A 的路径）
-- **关系类别 C3**：A 和 B 互不为对方祖先（分属平行不同的生产加工支线）
+你的任务是排查出唯一满足条件的长度为 K 的异常状态组合 M*，该组合在日志 S 中恰好出现 P 次（采用可重叠计数方式）。系统保证：存在且仅存在一个长度为 K 的组合其出现频数等于 P。
 
-## 自动化黑箱检测
+你需要定位这个异常组合 M* 以及它在状态日志中首次触发的批次号（位置编号从 1 开始）。
 
-系统配备了三种工艺探伤指令：T1、T2、T3。存在一个内置且未知的固定映射 f，将三条指令与三类上下游层级关系一一对应。
+你可以反复输入以下四类排查指令（每次仅限一条指令），系统将根据底层的传感器数据如实响应：
 
-当你输入检测指令 Ti(X, Y) 时：
-- 若组件对 (X, Y) 的真实层级符合 f(Ti) 所指代的关系，诊断仪反馈“是”
-- 反之反馈“否”
+1. 存在性查询：询问长度为 K 的组合 X 是否在日志中出现过。回答“是”或“否”。
+2. 次数查询：询问长度为 K 的组合 X 在日志中出现的准确频数。回答一个非负整数。
+3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀工序 U 开头的所有长度为 K 的组合中，单一组合出现频数的峰值。回答一个非负整数。
+4. 最左位置查询：询问长度为 K 的组合 X 首次触发的批次号。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
 
-注意：映射机制 f 从始至终保持不变，重复测定不会产生数据偏差。
+请尽可能快速地排查出故障原因。确认结果后，请提交最终报告。
 
-## 已知先验信息
+每次指令只能包含一个查询标签。请使用以下 XML 格式：
 
-工厂数据库现阶段已查明的工序关系如下：
-{prior_info}
+- 存在性查询（例如查询组合 "ABC"）：
+<query_exists>ABC</query_exists>
 
-除所列项外，其余装配层级均无法直接阅览。
+- 次数查询（例如查询组合 "ABC" 的出现频数）：
+<query_count>ABC</query_count>
 
-## 你的任务
+- 前缀最大次数查询（例如查询前缀 "AB" 的最大频数）：
+<query_prefix_max>AB</query_prefix_max>
 
-请研判工艺验证命题"{target_query}"是否成立（是或否）。
+- 最左位置查询（例如查询组合 "ABC" 的最左位置）：
+<query_position>ABC</query_position>
 
-允许利用探伤指令排查层级架构，但要求用最少的诊断次数获取结果，以保证产线效率。
+提交最终报告时，需要说明组合内容和最左起始批次号，格式如下：
 
-## 查询格式
-
-每次仅限输入一条验证指令，标准 XML 语法如下：
-
-运用指令 Ti 检测组件对 (X, Y)（例如利用 T1 检测组件 (a, b)）：
-<query>T1, a, b</query>
-
-## 提交答案格式
-
-得出准确工艺判断后，按规范格式输出结案报告：
-
-<answer>是</answer>
-或
-<answer>否</answer>
-
-若判定失误或报告不合规，产线溯源立即终止。
+<answer>pattern=ABC, position=5</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing / Industry Scenario]
-【Supply Chain BOM (Bill of Materials) Tracing System】
-The system has imported the manufacturing hierarchy tree of a complex electromechanical product, comprising {n} processing components/assemblies (labels: {node_list}). The top of the tree represents fundamental raw materials that undergo layered downstream processing. The specific assembly and disassembly substructures are not disclosed.
+[Manufacturing/Industrial Scenario]
+Welcome to the "Industrial Sensor Log Troubleshooting System".
 
-## Manufacturing Hierarchy Definitions
+The assembly line equipment has generated a sensor state log S of length {n}, composed of discrete state codes {alphabet}. The troubleshooting parameters are:
+- K = {k}: the length of the target abnormal process combination
+- P = {p}: the frequency of this combination in the log
 
-In material tracking, if a component flows into another component through subsequent processing or assembly steps, the component positioned upstream is referred to as the "ancestor" component. For components A and B (A is not equal to B):
-- **Relationship Category C1**: A is an ancestor of B (A is upstream in the processing chain, and there is a path resulting in B via processing/assembly from A)
-- **Relationship Category C2**: B is an ancestor of A (B is upstream in the processing chain, and there is a path resulting in A via processing/assembly from B)
-- **Relationship Category C3**: A and B are not ancestors of each other (they belong to parallel and distinct production branches)
+Your task is to troubleshoot and find the unique abnormal state combination M* of length K that appears exactly P times in log S (using overlapping count). The system guarantees: there exists exactly one combination of length K whose frequency equals P.
 
-## Automated Black Box Diagnostics
+You need to locate this abnormal combination M* and its first triggered batch number in the state log (positions are numbered starting from 1).
 
-The system is equipped with three process defect-detection commands: T1, T2, T3. There is an embedded, unknown, yet fixed mapping f that pairs these three commands with the three hierarchical relationships.
+You can repeatedly input the following four types of diagnostic commands (one command per turn):
 
-When you input diagnostic command Ti(X, Y):
-- If the true hierarchy of component pair (X, Y) matches the relationship denoted by f(Ti), the diagnostic tool returns "Yes"
-- Conversely, it returns "No"
+1. Existence Query: Ask whether a combination X of length K appeared in the log. Answer "Yes" or "No".
+2. Count Query: Ask for the exact frequency of a combination X of length K in the log. Answer a non-negative integer.
+3. Prefix Maximum Count Query: Ask for the peak frequency among all combinations of length K that start with a prefix process U of length t (1 to K-1). Answer a non-negative integer.
+4. Leftmost Position Query: Ask for the first triggered batch number of a combination X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
 
-Note: The mapping mechanism f remains invariant from beginning to end, and repeated measurements will not produce data deviations.
+Please troubleshoot the fault cause as quickly as possible. Once confirmed, submit your final report.
 
-## Known Prior Information
+Each command must contain only one query tag. Use the following XML format:
 
-The relationships currently verified by the factory database are as follows:
-{prior_info}
+- Existence Query (e.g., querying combination "ABC"):
+<query_exists>ABC</query_exists>
 
-Apart from those listed, the other assembly hierarchies cannot be directly viewed.
+- Count Query (e.g., querying combination "ABC" frequency):
+<query_count>ABC</query_count>
 
-## Your Task
+- Prefix Maximum Count Query (e.g., querying maximum frequency for prefix "AB"):
+<query_prefix_max>AB</query_prefix_max>
 
-Please determine whether the process validation proposition "{target_query}" holds true (Yes or No).
+- Leftmost Position Query (e.g., querying leftmost batch number of combination "ABC"):
+<query_position>ABC</query_position>
 
-You are permitted to use defect-detection commands to deduce the hierarchical structure, but you are required to attain the result with the fewest possible diagnostic iterations to ensure production line efficiency.
+When submitting the final report, specify the combination content and leftmost starting batch number in this format:
 
-## Query Format
-
-Input is restricted to a single validation command per instance, using the standard XML syntax:
-
-To inspect component pair (X, Y) using command Ti (e.g., inspect component pair (a, b) using T1):
-<query>T1, a, b</query>
-
-## Answer Submission Format
-
-Once an accurate process judgment is reached, output the final report in the standardized format:
-
-<answer>Yes</answer>
-or
-<answer>No</answer>
-
-If the judgment is flawed or the report is non-compliant, the production line tracing terminates immediately.
+<answer>pattern=ABC, position=5</answer>
 """
 
-    # ------------------ 场景 5：法律 ------------------
     contextualized_rule_zh_5 = """\
-【企业股权穿透审计系统】
-你正在办理一起反垄断案件，需要理清某财团旗下 {n} 家关联公司（注册代号为 {node_list}）的实际控制网络。该网络表现为一棵单一顶层控制的有根树架构，具体的绝对控股链条属于商业机密。
+欢迎使用“金融证据链连环交易审计系统”。
 
-## 穿透控制关系定义
+审计系统封存了一份长度为 {n} 的嫌疑账户资金流转序列 S，由交易类型代码 {alphabet} 构成。当前的取证调查参数为：
+- K = {k}：目标连环交易行为的步骤数
+- P = {p}：该连环交易行为在账本中出现的次数
 
-在股权穿透审计中，若一家公司通过层层全资持股或绝对控股影响另一家公司，前者在法律地位上被认定为后者的母公司或“祖先”。对于实体 A 和实体 B（A 不等于 B）：
-- **关系类别 C1**：A 是 B 的祖先（A 处于控股链顶端/上游，存在自 A 向下穿透控制 B 的持股路径）
-- **关系类别 C2**：B 是 A 的祖先（B 处于控股链顶端/上游，存在自 B 向下穿透控制 A 的持股路径）
-- **关系类别 C3**：A 和 B 互不为对方祖先（分属不同的控制分支，无直接上下游控股关系）
+你的职责是审查出唯一满足条件的长度为 K 的连环交易模式 M*，该模式在流转序列 S 中恰好发生 P 次（采用可重叠计算方式）。系统保证：存在且仅存在一个长度为 K 的交易模式其发生次数等于 P。
 
-## 穿透核查黑箱
+你需要锁定这个违法交易模式 M* 以及它在证据链中首次作案的位置（位置编号从 1 开始）。
 
-金融监管局提供了三种独立的资本穿透核查函数：T1、T2、T3。存在一个未向调查员公布的固定映射 f，将这三种函数与上述三类控股关系绑定。
+你可以反复下达以下四类审计指令（每次仅限一条指令），系统将根据加密账本如实返回审计结果：
 
-当你执行穿透核查 Ti(X, Y) 时：
-- 假如实体对 (X, Y) 契合 f(Ti) 锁定的控制关系，系统提示“是”
-- 不契合则提示“否”
+1. 存在性查询：询问长度为 K 的交易模式 X 是否在账本中发生过。回答“是”或“否”。
+2. 次数查询：询问长度为 K 的交易模式 X 在账本中发生的精确次数。回答一个非负整数。
+3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀交易 U 开头的所有长度为 K 的模式中，单一模式发生次数的最高记录。回答一个非负整数。
+4. 最左位置查询：询问长度为 K 的交易模式 X 首次作案的流水节点。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
 
-注意：控制权映射法则 f 在全案侦查期间完全固定，同样的数据请求返回同样的结果。
+请用最严谨且高效的指令完成取证。固化证据后，请提交最终卷宗。
 
-## 已知先验信息
+每次指令只能包含一个查询标签。请使用以下 XML 格式：
 
-依据工商初步建档，已确认如下投资事实：
-{prior_info}
+- 存在性查询（例如查询模式 "ABC"）：
+<query_exists>ABC</query_exists>
 
-其余公司的深层投资持股架构皆无确切备案。
+- 次数查询（例如查询模式 "ABC" 的发生次数）：
+<query_count>ABC</query_count>
 
-## 你的任务
+- 前缀最大次数查询（例如查询前缀 "AB" 的最大次数）：
+<query_prefix_max>AB</query_prefix_max>
 
-你必须证实或证伪本次质询的核心法律命题："{target_query}"（是或否）。
+- 最左位置查询（例如查询模式 "ABC" 的最左位置）：
+<query_position>ABC</query_position>
 
-虽然允许随时调用穿透核查接口，但须遵循审计流程规范，最大限度减少调查动作。
+提交最终卷宗时，需要说明模式内容和最左起始节点，格式如下：
 
-## 查询格式
-
-单次发函只能发配一个核查请求，严格采取 XML 报文：
-
-通过核查函 Ti 穿透调查实体对 (X, Y)（例如函件 T1 核查实体 (a, b)）：
-<query>T1, a, b</query>
-
-## 提交答案格式
-
-当掌握足够的案卷证据时，以此格式提交审计定论：
-
-<answer>是</answer>
-或
-<answer>否</answer>
-
-如有误判或格式文书缺陷，案件线索即视为中断失败。
+<answer>pattern=ABC, position=5</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-【Corporate Equity Penetration Audit System】
-You are handling an antitrust case and need to untangle the actual control network of {n} affiliated entities (registration codes: {node_list}) under a certain conglomerate. This network manifests as a rooted tree architecture with a single ultimate parent control. The precise absolute controlling chains are classified as trade secrets.
+[Legal Scenario]
+Welcome to the "Financial Evidence Chain Sequential Transaction Audit System".
 
-## Penetrating Control Relationship Definitions
+The audit system has sealed a suspicious account fund transfer sequence S of length {n}, composed of transaction type codes {alphabet}. The current forensic parameters are:
+- K = {k}: the number of steps in the target sequential transaction behavior
+- P = {p}: the occurrence count of this sequential transaction behavior in the ledger
 
-In an equity penetration audit, if one company exerts influence over another through layered wholly-owned shares or absolute controlling stakes, the former is legally identified as the parent or "ancestor" company. For entities A and B (A is not equal to B):
-- **Relationship Category C1**: A is an ancestor of B (A is situated at the top/upstream of the controlling chain, and there exists a direct penetrating ownership path from A controlling B)
-- **Relationship Category C2**: B is an ancestor of A (B is situated at the top/upstream of the controlling chain, and there exists a direct penetrating ownership path from B controlling A)
-- **Relationship Category C3**: A and B are not ancestors of each other (they belong to different controlling branches with no direct upstream-downstream ownership relation)
+Your duty is to audit and identify the unique sequential transaction pattern M* of length K that occurs exactly P times in the transfer sequence S (using overlapping count). The system guarantees: there exists exactly one transaction pattern of length K whose occurrence count equals P.
 
-## Penetration Verification Black Box
+You need to lock onto this illegal transaction pattern M* and its first committed position in the evidence chain (positions are numbered starting from 1).
 
-The Financial Regulatory Bureau has provided three independent capital penetration verification functions: T1, T2, T3. There is an undisclosed but fixed mapping f that binds these three functions to the aforementioned three control relationship categories.
+You can repeatedly issue the following four types of audit commands (one command per turn):
 
-When you execute a penetration verification Ti(X, Y):
-- If the entity pair (X, Y) conforms to the control relationship locked by f(Ti), the system prompts "Yes"
-- If it does not conform, it prompts "No"
+1. Existence Query: Ask whether a transaction pattern X of length K occurred in the ledger. Answer "Yes" or "No".
+2. Count Query: Ask for the exact occurrence count of a transaction pattern X of length K in the ledger. Answer a non-negative integer.
+3. Prefix Maximum Count Query: Ask for the highest record of occurrence count among all patterns of length K that start with a prefix transaction U of length t (1 to K-1). Answer a non-negative integer.
+4. Leftmost Position Query: Ask for the first node of a transaction pattern X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
 
-Note: The control power mapping rule f is completely fixed during the entirety of the case investigation; identical data requests will return identical results.
+Please complete the forensics with rigorous and efficient commands. Once evidence is solidified, submit your final dossier.
 
-## Known Prior Information
+Each command must contain only one query tag. Use the following XML format:
 
-Based on preliminary corporate registry filings, the following investment facts have been confirmed:
-{prior_info}
+- Existence Query (e.g., querying pattern "ABC"):
+<query_exists>ABC</query_exists>
 
-The profound investment and shareholding structures of the remaining companies are not definitively documented.
+- Count Query (e.g., querying pattern "ABC" occurrence count):
+<query_count>ABC</query_count>
 
-## Your Task
+- Prefix Maximum Count Query (e.g., querying maximum count for prefix "AB"):
+<query_prefix_max>AB</query_prefix_max>
 
-You must validate or invalidate the core legal proposition of this inquiry: "{target_query}" (Yes or No).
+- Leftmost Position Query (e.g., querying leftmost node of pattern "ABC"):
+<query_position>ABC</query_position>
 
-While you may call the penetration verification interface at any time, you must strictly follow audit procedural norms and minimize investigation actions to the greatest extent possible.
+When submitting the final dossier, specify the pattern content and leftmost starting node in this format:
 
-## Query Format
-
-A single dispatch can only issue one verification request, strictly employing the XML payload:
-
-To penetrate and investigate entity pair (X, Y) via verification letter Ti (e.g., use T1 to verify entity pair (a, b)):
-<query>T1, a, b</query>
-
-## Answer Submission Format
-
-When sufficient docket evidence is secured, submit the final audit conclusion in this format:
-
-<answer>Yes</answer>
-or
-<answer>No</answer>
-
-Any misjudgment or defect in the formatting of the instrument will lead to the forfeiture of the case leads.
+<answer>pattern=ABC, position=5</answer>
 """
 
-    tags = ["answer", "query"]
-    reasoning_type = "归纳推理"
-    data_structure = "树"
+    tags = ["answer", "query_exists", "query_count", "query_prefix_max", "query_position"]
+
+    reasoning_type = "演绎推理"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 8,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h"],
-                # 树结构：root-a-b-c, a-d, root-e-f, e-g, e-h
-                # a是b的祖先，b是c的祖先，d和e不相关
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("a", "d"), 
-                         ("root", "e"), ("e", "f"), ("e", "g"), ("e", "h")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("d", "e", "C3")],
-                "target_pair": ("a", "c"),  # a是c的祖先
-                "target_answer": True,
-                "test_mapping": {"T1": "C1", "T2": "C2", "T3": "C3"},
+                "n": 10,
+                "k": 2,
+                "p": 3,
+                "alphabet": ["A", "B"],
+                "sequence": "ABAABABAAB",
+                "target_pattern": "BA",
+                "target_position": 2,
             },
             2: {
-                "n": 10,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
-                # root-a-b-c-d, a-e-f, root-g-h, g-i-j
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("c", "d"), ("a", "e"), ("e", "f"),
-                         ("root", "g"), ("g", "h"), ("g", "i"), ("i", "j")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("d", "g", "C3")],
-                "target_pair": ("e", "d"),  # e不是d的祖先
-                "target_answer": False,
-                "test_mapping": {"T1": "C2", "T2": "C1", "T3": "C3"},
+                "n": 15,
+                "k": 3,
+                "p": 2,
+                "alphabet": ["A", "B"],
+                "sequence": "ABABABABAABBBAA",
+                "target_pattern": "BAA",
+                "target_position": 8,
             },
             3: {
-                "n": 12,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"],
-                # root-a-b-c, b-d-e, a-f-g-h, root-i-j-k, i-l
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("b", "d"), ("d", "e"),
-                         ("a", "f"), ("f", "g"), ("g", "h"), ("root", "i"), ("i", "j"), 
-                         ("j", "k"), ("i", "l")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("e", "i", "C3")],
-                "target_pair": ("f", "h"),  # f是h的祖先
-                "target_answer": True,
-                "test_mapping": {"T1": "C3", "T2": "C1", "T3": "C2"},
+                "n": 20,
+                "k": 3,
+                "p": 3,
+                "alphabet": ["A", "B", "C"],
+                "sequence": "ABCABCABCABCAACBBBBA",
+                "target_pattern": "CAB",
+                "target_position": 3,
             },
             4: {
-                "n": 14,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"],
-                # root-a-b-c-d, b-e-f, a-g-h-i, root-j-k, j-l-m, j-n
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("c", "d"), ("b", "e"), ("e", "f"),
-                         ("a", "g"), ("g", "h"), ("h", "i"), ("root", "j"), ("j", "k"), 
-                         ("j", "l"), ("l", "m"), ("j", "n")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("d", "j", "C3")],
-                "target_pair": ("c", "f"),  # c不是f的祖先
-                "target_answer": False,
-                "test_mapping": {"T1": "C2", "T2": "C3", "T3": "C1"},
+                "n": 25,
+                "k": 4,
+                "p": 2,
+                "alphabet": ["A", "B", "C", "D"],
+                "sequence": "ABCDABCDABCDABABABABABABA",
+                "target_pattern": "DABC",
+                "target_position": 4,
             },
             5: {
-                "n": 16,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"],
-                # 复杂树结构
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("c", "d"), ("d", "e"),
-                         ("b", "f"), ("f", "g"), ("a", "h"), ("h", "i"), ("i", "j"),
-                         ("root", "k"), ("k", "l"), ("l", "m"), ("k", "n"), ("n", "o"), ("n", "p")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("e", "k", "C3")],
-                "target_pair": ("h", "j"),  # h是j的祖先
-                "target_answer": True,
-                "test_mapping": {"T1": "C3", "T2": "C2", "T3": "C1"},
+                "n": 28,
+                "k": 4,
+                "p": 2,
+                "alphabet": ["A", "B", "C", "D"],
+                "sequence": "ABCDABCDABCDABABABABABABABAB",
+                "target_pattern": "DABC",
+                "target_position": 4,
             },
         },
         "en": {
             1: {
-                "n": 8,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h"],
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("a", "d"), 
-                         ("root", "e"), ("e", "f"), ("e", "g"), ("e", "h")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("d", "e", "C3")],
-                "target_pair": ("a", "c"),
-                "target_answer": True,
-                "test_mapping": {"T1": "C1", "T2": "C2", "T3": "C3"},
+                "n": 10,
+                "k": 2,
+                "p": 3,
+                "alphabet": ["A", "B"],
+                "sequence": "ABAABABAAB",
+                "target_pattern": "BA",
+                "target_position": 2,
             },
             2: {
-                "n": 10,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("c", "d"), ("a", "e"), ("e", "f"),
-                         ("root", "g"), ("g", "h"), ("g", "i"), ("i", "j")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("d", "g", "C3")],
-                "target_pair": ("e", "d"),
-                "target_answer": False,
-                "test_mapping": {"T1": "C2", "T2": "C1", "T3": "C3"},
+                "n": 15,
+                "k": 3,
+                "p": 2,
+                "alphabet": ["A", "B"],
+                "sequence": "ABABABABAABBBAA",
+                "target_pattern": "BAA",
+                "target_position": 8,
             },
             3: {
-                "n": 12,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"],
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("b", "d"), ("d", "e"),
-                         ("a", "f"), ("f", "g"), ("g", "h"), ("root", "i"), ("i", "j"), 
-                         ("j", "k"), ("i", "l")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("e", "i", "C3")],
-                "target_pair": ("f", "h"),
-                "target_answer": True,
-                "test_mapping": {"T1": "C3", "T2": "C1", "T3": "C2"},
+                "n": 20,
+                "k": 3,
+                "p": 3,
+                "alphabet": ["A", "B", "C"],
+                "sequence": "ABCABCABCABCAACBBBBA",
+                "target_pattern": "CAB",
+                "target_position": 3,
             },
             4: {
-                "n": 14,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"],
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("c", "d"), ("b", "e"), ("e", "f"),
-                         ("a", "g"), ("g", "h"), ("h", "i"), ("root", "j"), ("j", "k"), 
-                         ("j", "l"), ("l", "m"), ("j", "n")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("d", "j", "C3")],
-                "target_pair": ("c", "f"),
-                "target_answer": False,
-                "test_mapping": {"T1": "C2", "T2": "C3", "T3": "C1"},
+                "n": 25,
+                "k": 4,
+                "p": 2,
+                "alphabet": ["A", "B", "C", "D"],
+                "sequence": "ABCDABCDABCDABABABABABABA",
+                "target_pattern": "DABC",
+                "target_position": 4,
             },
             5: {
-                "n": 16,
-                "nodes": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"],
-                "edges": [("root", "a"), ("a", "b"), ("b", "c"), ("c", "d"), ("d", "e"),
-                         ("b", "f"), ("f", "g"), ("a", "h"), ("h", "i"), ("i", "j"),
-                         ("root", "k"), ("k", "l"), ("l", "m"), ("k", "n"), ("n", "o"), ("n", "p")],
-                "prior_pairs": [("a", "b", "C1"), ("b", "c", "C1"), ("b", "a", "C2"), ("e", "k", "C3")],
-                "target_pair": ("h", "j"),
-                "target_answer": True,
-                "test_mapping": {"T1": "C3", "T2": "C2", "T3": "C1"},
+                "n": 28,
+                "k": 4,
+                "p": 2,
+                "alphabet": ["A", "B", "C", "D"],
+                "sequence": "ABCDABCDABCDABABABABABABABAB",
+                "target_pattern": "DABC",
+                "target_position": 4,
             },
         },
     }
-
-    def __init__(self, config):
-        super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
@@ -787,204 +595,206 @@ Any misjudgment or defect in the formatting of the instrument will lead to the f
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 使用随机种子对 test_mapping 进行洗牌，增加变化性
-        rng = random.Random()  # 不固定种子，每次不同
-        categories = ["C1", "C2", "C3"]
-        rng.shuffle(categories)
-        self.test_mapping = {f"T{i+1}": categories[i] for i in range(3)}
-        
-        # 基本信息
-        self._game_info["n"] = cfg["n"]
-        self._game_info["node_list"] = ", ".join(cfg["nodes"])
-        
-        # 构建树结构（用于计算祖先关系）
-        self.nodes = cfg["nodes"]
-        self.edges = cfg["edges"]
-        self.target_pair = cfg["target_pair"]
-        self.target_answer = cfg["target_answer"]
-        
-        # 构建祖先关系映射
-        self._build_ancestor_map()
-        
-        # 生成先验信息文本
-        prior_texts = []
-        for x, y, cat in cfg["prior_pairs"]:
-            if lang == "zh":
-                if cat == "C1":
-                    prior_texts.append(f"- {x} 是 {y} 的祖先")
-                elif cat == "C2":
-                    prior_texts.append(f"- {y} 是 {x} 的祖先")
-                else:  # C3
-                    prior_texts.append(f"- {x} 和 {y} 互不为对方祖先")
-            else:
-                if cat == "C1":
-                    prior_texts.append(f"- {x} is an ancestor of {y}")
-                elif cat == "C2":
-                    prior_texts.append(f"- {y} is an ancestor of {x}")
-                else:  # C3
-                    prior_texts.append(f"- {x} and {y} are not ancestors of each other")
-        
-        self._game_info["prior_info"] = "\n".join(prior_texts)
-        
-        # 目标查询文本
-        if lang == "zh":
-            self._game_info["target_query"] = f"{self.target_pair[0]} 是 {self.target_pair[1]} 的祖先"
-        else:
-            self._game_info["target_query"] = f"{self.target_pair[0]} is an ancestor of {self.target_pair[1]}"
+        self._game_info["n"] = len(cfg["sequence"])
+        self._game_info["k"] = cfg["k"]
+        self._game_info["p"] = cfg["p"]
+        self._game_info["alphabet"] = ", ".join(cfg["alphabet"])
+        self._game_info["max_pos"] = len(cfg["sequence"]) - cfg["k"] + 1
 
-    def _build_ancestor_map(self):
-        """构建祖先关系映射：对于每个节点，计算其所有祖先"""
-        # 首先构建父子关系
-        children = {}
-        for parent, child in self.edges:
-            if parent not in children:
-                children[parent] = []
-            children[parent].append(child)
-        
-        # 使用DFS计算每个节点的所有祖先
-        self.ancestors = {node: set() for node in self.nodes}
-        
-        def dfs(node, ancestor_set):
-            self.ancestors[node] = ancestor_set.copy()
-            if node in children:
-                for child in children[node]:
-                    dfs(child, ancestor_set | {node})
-        
-        # 从root开始DFS
-        dfs("root", set())
+        self.sequence = cfg["sequence"]
+        self.k = cfg["k"]
+        self.p = cfg["p"]
+        self.target_pattern = cfg["target_pattern"]
+        self.target_position = cfg["target_position"]
+        self.alphabet_set = set(cfg["alphabet"])
 
-    def _get_relationship(self, x, y):
-        """判断节点对(x, y)的关系类别"""
-        if x == y:
-            return None  # 不定义自环
-        
-        if x in self.ancestors.get(y, set()):
-            return "C1"  # x是y的祖先
-        elif y in self.ancestors.get(x, set()):
-            return "C2"  # y是x的祖先
-        else:
-            return "C3"  # 互不为祖先
+        self._precompute_patterns()
+
+    def _precompute_patterns(self):
+        self.pattern_counts = {}
+        self.pattern_positions = {}
+
+        n = len(self.sequence)
+        for i in range(n - self.k + 1):
+            pattern = self.sequence[i:i + self.k]
+            if pattern not in self.pattern_counts:
+                self.pattern_counts[pattern] = 0
+                self.pattern_positions[pattern] = []
+            self.pattern_counts[pattern] += 1
+            self.pattern_positions[pattern].append(i + 1)
+
+    def _count_pattern(self, pattern):
+        return self.pattern_counts.get(pattern, 0)
+
+    def _get_leftmost_position(self, pattern):
+        positions = self.pattern_positions.get(pattern, [])
+        return positions[0] if positions else None
+
+    def _get_prefix_max_count(self, prefix):
+        prefix_len = len(prefix)
+        if prefix_len >= self.k:
+            raise ValueError("Prefix length must be less than K")
+
+        max_count = 0
+        for pattern, count in self.pattern_counts.items():
+            if pattern.startswith(prefix):
+                max_count = max(max_count, count)
+        return max_count
 
     def evaluate(self, parsed_info):
-        """评估答案是否正确"""
-        answer = parsed_info["answer"].strip().lower()
+        raw_ans = parsed_info["answer"]
         
-        if self.config.language == "zh":
-            correct_answer = "是" if self.target_answer else "否"
-            return answer == correct_answer
-        else:
-            correct_answer = "yes" if self.target_answer else "no"
-            return answer == correct_answer
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            parts = kv.split("=", 1)
+            if len(parts) == 2:
+                k, v = parts
+                ans_dict[k.strip()] = v.strip()
+
+        if "pattern" not in ans_dict or "position" not in ans_dict:
+            return False
+
+        submitted_pattern = ans_dict["pattern"]
+        if submitted_pattern != self.target_pattern:
+            return False
+
+        try:
+            submitted_position = int(ans_dict["position"])
+        except ValueError:
+            return False
+
+        if submitted_position != self.target_position:
+            return False
+
+        if self._count_pattern(submitted_pattern) != self.p:
+            return False
+
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑（原 produce_response 的内容）"""
-        if "query" not in parsed_info:
-            raise ValueError("No valid query found.")
-        
-        query_str = parsed_info["query"].strip()
-        parts = [p.strip() for p in query_str.split(",")]
-        
-        if len(parts) != 3:
-            if self.config.language == "zh":
-                return "错误：查询格式无效，应为 'Ti, X, Y' 的形式。"
-            else:
-                return "Error: Invalid query format. Should be 'Ti, X, Y'."
-        
-        test_name, node_x, node_y = parts
-        
-        # 验证测试名称
-        if test_name not in ["T1", "T2", "T3"]:
-            if self.config.language == "zh":
-                return f"错误：测试名称 '{test_name}' 无效，应为 T1、T2 或 T3。"
-            else:
-                return f"Error: Invalid test name '{test_name}'. Should be T1, T2, or T3."
-        
-        # 验证节点
-        if node_x not in self.nodes or node_y not in self.nodes:
-            if self.config.language == "zh":
-                return "错误：节点不在允许的节点列表中。"
-            else:
-                return "Error: Node not in the allowed node list."
-        
-        if node_x == node_y:
-            if self.config.language == "zh":
-                return "错误：不能查询相同的节点。"
-            else:
-                return "Error: Cannot query the same node."
-        
-        # 获取关系类别
-        relationship = self._get_relationship(node_x, node_y)
-        
-        # 获取该测试对应的关系类别
-        test_category = self.test_mapping[test_name]
-        
-        # 判断是否匹配
-        matches = (relationship == test_category)
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            not_found_res = "不存在"
+            error_len_res = "错误：子串长度必须等于 {}"
+            error_prefix_len_res = "错误：前缀长度必须在 1 到 {} 之间"
+            error_char_res = "错误：子串包含非法字符"
+        else:
+            yes_res, no_res = "Yes", "No"
+            not_found_res = "not found"
+            error_len_res = "Error: substring length must equal {}"
+            error_prefix_len_res = "Error: prefix length must be between 1 and {}"
+            error_char_res = "Error: substring contains invalid characters"
+
+        if "query_exists" in parsed_info:
+            pattern = parsed_info["query_exists"].strip()
+            
+            if len(pattern) != self.k:
+                return error_len_res.format(self.k)
+            
+            if not all(c in self.alphabet_set for c in pattern):
+                return error_char_res
+            
+            exists = self._count_pattern(pattern) > 0
+            return yes_res if exists else no_res
+
+        elif "query_count" in parsed_info:
+            pattern = parsed_info["query_count"].strip()
+            
+            if len(pattern) != self.k:
+                return error_len_res.format(self.k)
+            
+            if not all(c in self.alphabet_set for c in pattern):
+                return error_char_res
+            
+            count = self._count_pattern(pattern)
+            return str(count)
+
+        elif "query_prefix_max" in parsed_info:
+            prefix = parsed_info["query_prefix_max"].strip()
+            
+            if len(prefix) < 1 or len(prefix) >= self.k:
+                return error_prefix_len_res.format(self.k - 1)
+            
+            if not all(c in self.alphabet_set for c in prefix):
+                return error_char_res
+            
+            max_count = self._get_prefix_max_count(prefix)
+            return str(max_count)
+
+        elif "query_position" in parsed_info:
+            pattern = parsed_info["query_position"].strip()
+            
+            if len(pattern) != self.k:
+                return error_len_res.format(self.k)
+            
+            if not all(c in self.alphabet_set for c in pattern):
+                return error_char_res
+            
+            position = self._get_leftmost_position(pattern)
+            return str(position) if position is not None else not_found_res
+
+        else:
+            raise ValueError("No valid query tag found.")
+
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        alphabet = sorted(list(self.alphabet_set))
         
         if self.config.language == "zh":
-            return "是" if matches else "否"
+            yes_res, no_res = "是", "否"
+            not_found_res = "不存在"
         else:
-            return "Yes" if matches else "No"
+            yes_res, no_res = "Yes", "No"
+            not_found_res = "not found"
+
+        all_patterns = [''.join(p) for p in itertools.product(alphabet, repeat=self.k)]
+        
+        for pattern in all_patterns:
+            exists = self._count_pattern(pattern) > 0
+            queries.append({
+                "query": f"<query_exists>{pattern}</query_exists>",
+                "answer": yes_res if exists else no_res
+            })
+            
+            count = self._count_pattern(pattern)
+            queries.append({
+                "query": f"<query_count>{pattern}</query_count>",
+                "answer": str(count)
+            })
+            
+            position = self._get_leftmost_position(pattern)
+            ans_pos = str(position) if position is not None else not_found_res
+            queries.append({
+                "query": f"<query_position>{pattern}</query_position>",
+                "answer": ans_pos
+            })
+
+        if self.k > 1:
+            for t in range(1, self.k):
+                all_prefixes = [''.join(p) for p in itertools.product(alphabet, repeat=t)]
+                for prefix in all_prefixes:
+                    max_count = self._get_prefix_max_count(prefix)
+                    queries.append({
+                        "query": f"<query_prefix_max>{prefix}</query_prefix_max>",
+                        "answer": str(max_count)
+                    })
+                    
+        return queries
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个明显不同的错误答案"""
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        # 中文替换
         if correct == "是":
             return "否"
         if correct == "否":
             return "是"
         
-        # 英文替换（忽略大小写，保持原始大小写风格）
         lower_correct = correct.lower()
         if lower_correct == "yes":
             return "No" if correct[0].isupper() else "no"
         if lower_correct == "no":
             return "Yes" if correct[0].isupper() else "yes"
             
-        # 若都不匹配，追加后缀
-        return f"{correct}_WRONG"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        test_names = ["T1", "T2", "T3"]
-        
-        # 遍历所有测试类型
-        for test_name in test_names:
-            # 遍历所有节点对 (x, y)
-            for node_x in self.nodes:
-                for node_y in self.nodes:
-                    # 排除自身查询，因为 _cf_core_produce 中禁止 node_x == node_y
-                    if node_x == node_y:
-                        continue
-                    
-                    # 构建查询字符串，包含 XML 标签
-                    query_content = f"<query>{test_name}, {node_x}, {node_y}</query>"
-                    
-                    # 获取真实关系
-                    relationship = self._get_relationship(node_x, node_y)
-                    
-                    # 获取测试映射对应的类别
-                    test_category = self.test_mapping[test_name]
-                    
-                    # 判断真假
-                    matches = (relationship == test_category)
-                    
-                    # 根据语言生成答案
-                    if self.config.language == "zh":
-                        ans = "是" if matches else "否"
-                    else:
-                        ans = "Yes" if matches else "No"
-                    
-                    queries.append({
-                        "query": query_content,
-                        "answer": ans
-                    })
-        
-        return queries
+        return correct + "_WRONG"

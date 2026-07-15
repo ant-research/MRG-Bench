@@ -1,509 +1,690 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   子集包含：某子集是否完全被另一子集包含
-# ============================================================
-
 from .base import Game
-import re
-import itertools
+import random
 
-
-class SubsetRuleIdentificationGame(Game):
+class TreeOrderRankGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"包含关系假设识别"的推理游戏，规则如下：
+我们来玩一个"树序推理"游戏，规则如下：
 
-游戏设定了一个全集 U = {{1, 2, 3, 4, 5, 6}}，包含 6 个不同的元素。我已秘密选定了一个非空真子集 M（M 是 U 的子集，且 M 不为空也不等于 U），并选择了一个判定规则 R。规则 R 从以下四种候选中选出：
+游戏设定了一棵有根且子节点有固定左右次序的有序树。节点总数为 {n}，节点编号为 1 到 {n}。树已经给定了根节点以及每个节点的有序子节点列表。
 
-1. R1：当且仅当你提交的集合 Q 是 M 的子集时接受
-2. R2：当且仅当 M 是你提交的集合 Q 的子集时接受
-3. R3：当且仅当你提交的集合 Q 是 M 的补集的子集时接受
-4. R4：当且仅当你提交的集合 Q 恰好等于 M 时接受
+我已经使用某个确定性规则对这棵树的所有节点生成了一个固定的全序排列 O（即对所有节点的一个排列顺序）。该排列在整个游戏过程中保持不变，没有任何随机性。但这个生成规则对你起初是不可见的。
 
-你的目标是通过试探性提交不同的子集来推断出真实的规则 R 以及隐藏的集合 M，然后构造一个能被该规则接受的最终子集。
+你的目标是：在本轮中，系统会给定一个目标节点 T，你需要确定该节点 T 在隐藏全序 O 中的名次（即它是第几个节点，名次范围为 1 到 {n}）。
 
-你可以进行以下两类操作：
+你可以使用以下查询来获取信息（每次只能进行一个查询）：
 
-1. 试询：提交一个子集 Q（可以是空集、全集或任意子集），我会告诉你该子集是"接受"还是"拒绝"。
-2. 终局宣告：当你认为已经收集足够信息后，同时提交你识别出的规则类型（R1/R2/R3/R4）和一个最终子集 Q*。
+1. **比较查询**：询问节点 A 和节点 B 哪个在全序 O 中更早出现（A 和 B 必须不同）。我会回答"A earlier than B"或"B earlier than A"。
 
-注意：你必须至少进行 3 次试询后才能进行终局宣告，否则游戏失败。
+2. **名次验证查询**：询问节点 X 是否恰好是全序中的第 k 位。我会回答"Yes"或"No"。
 
-## 询问与提交答案的格式（必须严格遵守）
+当你准备好后，请提交目标节点的名次作为最终答案。注意：
+- 你应当尽可能少地使用查询次数。
+- 每轮只能提交一次答案。
+- 如果答案错误或查询次数超出限制，游戏失败。
 
-- 试询（例如查询子集 {{1,3,5}}）：
-<query_subset>1,3,5</query_subset>
+根节点：{root}
 
-- 试询空集：
-<query_subset></query_subset>
+每个节点的子节点列表（按左到右顺序）：
+{tree_structure}
 
-- 终局宣告（例如识别规则为 R1，最终子集为 {{2,4}}）：
-<answer>rule=R1, subset=2,4</answer>
+目标节点：{target}
 
-- 终局宣告最终子集为空集：
-<answer>rule=R2, subset=</answer>
+每次只能包含一个查询标签。请使用以下 XML 格式：
 
-成功条件：在至少 3 次试询后，正确识别规则类型，且提交的最终子集能被该规则接受。
+- 比较查询（例如比较节点 1 和节点 3）：
+<query_compare>1,3</query_compare>
+
+- 名次验证查询（例如验证节点 5 是否是第 2 位）：
+<query_is_k>5,2</query_is_k>
+
+提交最终答案时，给出目标节点的名次（一个整数），格式如下：
+
+<answer>3</answer>
 """
 
     game_rule_en = """\
-Let's play a "Subset Rule Identification" deduction game. Here are the rules:
+Let's play a "Tree Order Ranking" game. Here are the rules:
 
-The game defines a universe U = {{1, 2, 3, 4, 5, 6}} containing 6 distinct elements. I have secretly selected a non-empty proper subset M (M is a subset of U, where M is neither empty nor equal to U), and chosen a judgment rule R. Rule R is selected from the following four candidates:
+The game uses a rooted ordered tree where child nodes have a fixed left-to-right order. There are {n} nodes in total, numbered from 1 to {n}. The tree has a given root node and each node has an ordered list of child nodes.
 
-1. R1: Accept if and only if your submitted set Q is a subset of M
-2. R2: Accept if and only if M is a subset of your submitted set Q
-3. R3: Accept if and only if your submitted set Q is a subset of the complement of M
-4. R4: Accept if and only if your submitted set Q equals M exactly
+I have generated a fixed total order O of all nodes in this tree using a deterministic rule. This order remains constant throughout the game with no randomness. However, the generation rule is initially hidden from you.
 
-Your goal is to infer the true rule R and the hidden set M through exploratory submissions of different subsets, then construct a final subset that can be accepted by the rule.
+Your goal is: In this round, the system will specify a target node T, and you need to determine the rank of node T in the hidden total order O (i.e., its position in the order, ranging from 1 to {n}).
 
-You can perform the following two types of operations:
+You can use the following queries to gather information (one query at a time):
 
-1. Query: Submit a subset Q (can be empty set, full set, or any subset), and I will tell you whether it is "Accept" or "Reject".
-2. Final Declaration: When you believe you have collected sufficient information, simultaneously submit the rule type you identified (R1/R2/R3/R4) and a final subset Q*.
+1. **Compare Query**: Ask which of two different nodes A and B appears earlier in the total order O. I will answer "A earlier than B" or "B earlier than A".
 
-Note: You must perform at least 3 queries before making a final declaration, otherwise the game fails.
+2. **Rank Verification Query**: Ask whether node X is exactly at position k in the total order. I will answer "Yes" or "No".
 
-## Query and Answer Format (must strictly follow)
+When ready, submit the rank of the target node as your final answer. Note:
+- You should use as few queries as possible.
+- You can only submit one answer per round.
+- If your answer is incorrect or you exceed the query limit, the game fails.
 
-- Query (e.g., querying subset {{1,3,5}}):
-<query_subset>1,3,5</query_subset>
+Root node: {root}
 
-- Query empty set:
-<query_subset></query_subset>
+Child node lists for each node (in left-to-right order):
+{tree_structure}
 
-- Final Declaration (e.g., identifying rule as R1, final subset as {{2,4}}):
-<answer>rule=R1, subset=2,4</answer>
+Target node: {target}
 
-- Final Declaration with empty final subset:
-<answer>rule=R2, subset=</answer>
+Each query must contain only one tag. Use the following XML format:
 
-Success condition: After at least 3 queries, correctly identify the rule type and submit a final subset that is accepted by the rule.
+- Compare Query (e.g., comparing nodes 1 and 3):
+<query_compare>1,3</query_compare>
+
+- Rank Verification Query (e.g., verifying if node 5 is at position 2):
+<query_is_k>5,2</query_is_k>
+
+When submitting the final answer, provide the rank of the target node (an integer) in this format:
+
+<answer>3</answer>
 """
 
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-欢迎接入“城市交通枢纽智能管控”系统。我们现在进行一项通行规则与重点管控区域的推断测试。
+智能交通巡检系统正在对城市路网进行排查，规则如下：
 
-系统设定了一个城市核心交通网络 U = {{1, 2, 3, 4, 5, 6}}，包含 6 个关键交通枢纽。目前交管部门已秘密划定了一个非空且非全集的重点监控枢纽集合 M，并启动了某种通行许可规则 R。规则 R 从以下四种管控策略中选出：
+系统管辖着一个呈有序树状拓扑结构的交通监控网络。站点总数为 {n}，编号为 1 到 {n}。树的根节点是主控中心，每个站点都有其固定的下级监控子站点列表（按从左到右的优先级排序）。
 
-1. R1（内控策略）：当且仅当你提交的巡逻计划 Q 完全在重点监控枢纽 M 范围内时，系统予以接受。
-2. R2（覆盖策略）：当且仅当重点监控枢纽 M 被你提交的巡逻计划 Q 完全包含时，系统予以接受。
-3. R3（规避策略）：当且仅当你提交的巡逻计划 Q 完全避开重点监控枢纽 M 时，系统予以接受。
-4. R4（精准策略）：当且仅当你提交的巡逻计划 Q 恰好等于重点监控枢纽集合 M 时，系统予以接受。
+系统已根据某个内部确定性算法，生成了一条固定的无人机全局巡检路线，产生了一个全序排列 O（即对所有站点的巡检先后顺序）。该路线在整个排查期间保持不变，且无任何随机性。但这个调度算法起初对你是保密的。
 
-你的目标是通过试探性提交不同的巡逻计划 Q 来推断出真实的通行规则 R 以及隐藏的监控枢纽集合 M，最终构造一个能被该规则接受的有效巡逻计划。
+你的任务是：本轮中，系统会给出一个目标站点 T，你需要推理出该站点 T 在全局巡检路线 O 中的确切顺位（即它是第几个被巡检的，顺位范围为 1 到 {n}）。
 
-你可以进行以下两类操作：
-1. 试询：提交一个巡逻计划枢纽集合 Q（可以是空集、全集或任意子集），系统会反馈“接受”或“拒绝”。
-2. 终局宣告：当你认为已掌握足够信息后，同时提交你识别出的规则类型（R1/R2/R3/R4）和一个最终巡逻计划 Q*。
+你可以使用以下查询指令来获取调度信息（每次只能执行一个查询）：
 
-注意：你必须至少进行 3 次试询后才能进行终局宣告，否则测试将被判定为不合格。
+1. **路线比较查询**：询问站点 A 和站点 B 哪个在巡检路线 O 中更早被访问（A 和 B 必须不同）。系统会回答"A earlier than B"或"B earlier than A"。
 
-## 询问与提交答案的格式（必须严格遵守）
+2. **顺位验证查询**：询问站点 X 是否恰好是巡检路线中的第 k 站。系统会回答"Yes"或"No"。
 
-- 试询（例如查询枢纽 {{1,3,5}}）：
-<query_subset>1,3,5</query_subset>
+当你推理出结果后，请提交目标站点的巡检顺位作为最终答案。注意：
+- 你应当尽可能少地占用查询带宽。
+- 每轮只能提交一次答案。
+- 如果答案错误或查询次数超出系统配额，排查任务失败。
 
-- 试询空集：
-<query_subset></query_subset>
+主控中心（根节点）：{root}
 
-- 终局宣告（例如识别规则为 R1，最终计划包含枢纽 {{2,4}}）：
-<answer>rule=R1, subset=2,4</answer>
+各站点的下级监控子站点列表（按优先级顺序）：
+{tree_structure}
 
-- 终局宣告最终计划为空集：
-<answer>rule=R2, subset=</answer>
+目标站点：{target}
 
-成功条件：在至少 3 次试询后，正确识别规则类型，且提交的最终巡逻计划能被该管控规则接受。
+每次只能包含一个查询标签。请使用以下 XML 格式：
+
+- 路线比较查询（例如比较站点 1 和 3）：
+<query_compare>1,3</query_compare>
+
+- 顺位验证查询（例如验证站点 5 是否为第 2 站）：
+<query_is_k>5,2</query_is_k>
+
+提交最终答案时，给出目标站点的顺位（一个整数），格式如下：
+
+<answer>3</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Urban Traffic Hub Intelligent Control" system. We are now conducting a deduction test on traffic rules and key control areas.
+An intelligent traffic inspection system is investigating the city's road network under the following rules:
 
-The system defines a core urban traffic network U = {{1, 2, 3, 4, 5, 6}}, containing 6 key traffic hubs. The traffic management department has secretly designated a non-empty proper subset M as the key monitoring hub set, and activated a certain pass permission rule R. Rule R is selected from the following four control strategies:
+The system manages a traffic monitoring network configured as an ordered tree topology. There are {n} stations in total, numbered from 1 to {n}. The tree has a given root node (the main control center), and each station has an ordered list of subordinate monitoring stations (prioritized from left to right).
 
-1. R1 (Internal Control Strategy): Accept if and only if your submitted patrol plan Q is a subset of the monitoring set M.
-2. R2 (Coverage Strategy): Accept if and only if the monitoring set M is a subset of your submitted patrol plan Q.
-3. R3 (Evasion Strategy): Accept if and only if your submitted patrol plan Q is a subset of the complement of M (completely avoiding M).
-4. R4 (Precise Strategy): Accept if and only if your submitted patrol plan Q equals M exactly.
+The system has generated a fixed global drone inspection route, resulting in a total order O of all stations, based on a deterministic internal algorithm. This route remains constant throughout the investigation with no randomness. However, the scheduling algorithm is initially hidden from you.
 
-Your goal is to infer the true rule R and the hidden hub set M through exploratory submissions of different patrol plans Q, then construct a final plan that can be accepted by the rule.
+Your task is: In this round, the system will specify a target station T, and you must deduce the exact inspection rank of station T in the global route O (i.e., its position in the sequence, ranging from 1 to {n}).
 
-You can perform the following two types of operations:
-1. Query: Submit a patrol plan hub set Q (can be empty set, full set, or any subset), and the system will feedback "Accept" or "Reject".
-2. Final Declaration: When you believe you have collected sufficient information, simultaneously submit the rule type you identified (R1/R2/R3/R4) and a final patrol plan Q*.
+You can use the following queries to gather scheduling information (one query at a time):
 
-Note: You must perform at least 3 queries before making a final declaration, otherwise the test fails.
+1. **Route Compare Query**: Ask which of two different stations A and B is visited earlier in the inspection route O. I will answer "A earlier than B" or "B earlier than A".
 
-## Query and Answer Format (must strictly follow)
+2. **Rank Verification Query**: Ask whether station X is exactly the k-th station in the route. I will answer "Yes" or "No".
 
-- Query (e.g., querying hubs {{1,3,5}}):
-<query_subset>1,3,5</query_subset>
+When you have deduced the result, submit the inspection rank of the target station as your final answer. Note:
+- You should use as few queries as possible to save bandwidth.
+- You can only submit one answer per round.
+- If your answer is incorrect or you exceed the query quota, the investigation fails.
 
-- Query empty set:
-<query_subset></query_subset>
+Main Control Center (Root node): {root}
 
-- Final Declaration (e.g., identifying rule as R1, final plan as {{2,4}}):
-<answer>rule=R1, subset=2,4</answer>
+Subordinate monitoring station lists for each station (in priority order):
+{tree_structure}
 
-- Final Declaration with empty final plan:
-<answer>rule=R2, subset=</answer>
+Target station: {target}
 
-Success condition: After at least 3 queries, correctly identify the rule type and submit a final patrol plan that is accepted by the control rule.
+Each query must contain only one tag. Use the following XML format:
+
+- Route Compare Query (e.g., comparing stations 1 and 3):
+<query_compare>1,3</query_compare>
+
+- Rank Verification Query (e.g., verifying if station 5 is the 2nd stop):
+<query_is_k>5,2</query_is_k>
+
+When submitting the final answer, provide the rank of the target station (an integer) in this format:
+
+<answer>3</answer>
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-欢迎进入“靶向药物联合用药”分析系统。我们现在来进行一项药物交互作用的推断分析。
+医疗AI助手正在执行病区查房规划，规则如下：
 
-系统设定了一个备选药物库 U = {{1, 2, 3, 4, 5, 6}}，包含 6 种靶向药物。研究中心已秘密发现了一个非空且非全集的特定交互药物组合 M，并设定了药物联合生效的判定规则 R。规则 R 从以下四种药理机制中选出：
+系统管理着一个呈有序树状结构的病区科室分布图。科室总数为 {n}，编号为 1 到 {n}。树结构给定了一个主治病区作为根节点，并且每个科室都有其固定的下辖子科室列表（按从左到右的空间流线顺序排列）。
 
-1. R1（保守用药）：当且仅当你提交的测试用药方案 Q 完全属于交互组合 M 时，系统判定为安全接受。
-2. R2（全面覆盖）：当且仅当交互组合 M 被你提交的测试用药方案 Q 完全包含时，系统判定为有效接受。
-3. R3（脱敏避开）：当且仅当你提交的测试用药方案 Q 完全避开交互组合 M 中的任何药物时，系统判定为安全接受。
-4. R4（靶向匹配）：当且仅当你提交的测试用药方案 Q 恰好等于交互组合 M 时，系统判定为精准接受。
+医疗系统已通过特定的临床确定性规则，为医疗机器人生成了一套固定的全局查房顺序 O（即对所有科室的访问全序排列）。该顺序在整个查房周期内保持不变，不含随机性。但生成规则对你起初是隐藏的。
 
-你的目标是通过试探性提交不同的用药方案 Q 来推断出真实的生效规则 R 以及隐藏的交互组合 M，最终开具一个能被该规则接受的最终处方。
+你的目标是：在本轮中，系统会指定一个目标科室 T，你需要确定该科室 T 在全局查房顺序 O 中的具体名次（即它是第几个被查房的，范围为 1 到 {n}）。
 
-你可以进行以下两类操作：
-1. 试询：提交一个用药方案 Q（可以是空集、全集或任意组合），系统会反馈“接受”或“拒绝”。
-2. 终局宣告：当你认为已掌握足够信息后，同时提交你识别出的规则类型（R1/R2/R3/R4）和一个最终处方 Q*。
+你可以使用以下指令来查询查房记录（每次只能进行一个查询）：
 
-注意：你必须至少进行 3 次试询后才能进行终局宣告，否则分析将被判定为失败。
+1. **查房先后查询**：询问科室 A 和科室 B 哪个在查房顺序 O 中更早被访问（A 和 B 必须不同）。系统会回答"A earlier than B"或"B earlier than A"。
 
-## 询问与提交答案的格式（必须严格遵守）
+2. **查房轮次验证查询**：询问科室 X 是否恰好是全局查房的第 k 站。系统会回答"Yes"或"No"。
 
-- 试询（例如查询药物组合 {{1,3,5}}）：
-<query_subset>1,3,5</query_subset>
+当你得出结论后，请提交目标科室的查房名次作为最终答案。注意：
+- 你应当尽可能少地调用查询接口。
+- 每轮只能提交一次答案。
+- 如果答案错误或查询次数超限，查房规划验证失败。
 
-- 试询空处方：
-<query_subset></query_subset>
+主治病区（根节点）：{root}
 
-- 终局宣告（例如识别规则为 R1，最终处方为 {{2,4}}）：
-<answer>rule=R1, subset=2,4</answer>
+每个科室的下辖子科室列表（按空间流线顺序）：
+{tree_structure}
 
-- 终局宣告最终处方为空：
-<answer>rule=R2, subset=</answer>
+目标科室：{target}
 
-成功条件：在至少 3 次试询后，正确识别规则类型，且提交的最终处方能被该药理规则接受。
+每次只能包含一个查询标签。请使用以下 XML 格式：
+
+- 查房先后查询（例如比较科室 1 和 3）：
+<query_compare>1,3</query_compare>
+
+- 查房轮次验证查询（例如验证科室 5 是否是第 2 站）：
+<query_is_k>5,2</query_is_k>
+
+提交最终答案时，给出目标科室的名次（一个整数），格式如下：
+
+<answer>3</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Targeted Drug Combination" analysis system. We are now conducting a deductive analysis of drug interactions.
+A Medical AI Assistant is planning ward rounds under the following rules:
 
-The system defines an alternative drug library U = {{1, 2, 3, 4, 5, 6}}, containing 6 targeted drugs. The research center has secretly discovered a non-empty proper subset M representing a specific interacting drug combination, and established a judgment rule R for the efficacy of the combination. Rule R is selected from the following four pharmacological mechanisms:
+The system manages a ward and department layout configured as an ordered tree. There are {n} departments in total, numbered from 1 to {n}. The tree specifies a primary ward as the root node, and each department has an ordered list of subordinate sub-departments (arranged from left to right following spatial flow).
 
-1. R1 (Conservative Medication): Accept if and only if your submitted test prescription Q is a subset of the interacting combination M.
-2. R2 (Comprehensive Coverage): Accept if and only if the interacting combination M is a subset of your submitted test prescription Q.
-3. R3 (Desensitization Evasion): Accept if and only if your submitted test prescription Q is a subset of the complement of M (completely avoiding M).
-4. R4 (Targeted Matching): Accept if and only if your submitted test prescription Q equals M exactly.
+The medical system has generated a fixed global round order O (a total order of visits to all departments) for the medical robot using a deterministic clinical rule. This order remains constant throughout the round cycle with no randomness. However, the generation rule is initially hidden from you.
 
-Your goal is to infer the true rule R and the hidden interacting combination M through exploratory submissions of different test prescriptions Q, then issue a final prescription that can be accepted by the rule.
+Your goal is: In this round, the system will specify a target department T, and you need to determine the exact rank of department T in the global round order O (i.e., its position in the sequence, ranging from 1 to {n}).
 
-You can perform the following two types of operations:
-1. Query: Submit a test prescription Q (can be empty set, full set, or any subset), and the system will feedback "Accept" or "Reject".
-2. Final Declaration: When you believe you have collected sufficient information, simultaneously submit the rule type you identified (R1/R2/R3/R4) and a final prescription Q*.
+You can use the following queries to check the round logs (one query at a time):
 
-Note: You must perform at least 3 queries before making a final declaration, otherwise the analysis fails.
+1. **Round Compare Query**: Ask which of two different departments A and B is visited earlier in the round order O. I will answer "A earlier than B" or "B earlier than A".
 
-## Query and Answer Format (must strictly follow)
+2. **Round Rank Verification Query**: Ask whether department X is exactly the k-th stop in the global round. I will answer "Yes" or "No".
 
-- Query (e.g., querying drug combination {{1,3,5}}):
-<query_subset>1,3,5</query_subset>
+When you have deduced the result, submit the rank of the target department as your final answer. Note:
+- You should use as few queries as possible.
+- You can only submit one answer per round.
+- If your answer is incorrect or you exceed the query limit, the round planning validation fails.
 
-- Query empty prescription:
-<query_subset></query_subset>
+Primary Ward (Root node): {root}
 
-- Final Declaration (e.g., identifying rule as R1, final prescription as {{2,4}}):
-<answer>rule=R1, subset=2,4</answer>
+Subordinate sub-department lists for each department (in spatial flow order):
+{tree_structure}
 
-- Final Declaration with empty final prescription:
-<answer>rule=R2, subset=</answer>
+Target department: {target}
 
-Success condition: After at least 3 queries, correctly identify the rule type and submit a final prescription that is accepted by the pharmacological rule.
+Each query must contain only one tag. Use the following XML format:
+
+- Round Compare Query (e.g., comparing departments 1 and 3):
+<query_compare>1,3</query_compare>
+
+- Round Rank Verification Query (e.g., verifying if department 5 is the 2nd stop):
+<query_is_k>5,2</query_is_k>
+
+When submitting the final answer, provide the rank of the target department (an integer) in this format:
+
+<answer>3</answer>
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-欢迎进入“学生核心素养考核与选课”评估系统。我们现在来进行一项专业课程要求的推断游戏。
+智能教学大纲排课系统正在规划课程讲授顺序，规则如下：
 
-系统设定了一个选修课程池 U = {{1, 2, 3, 4, 5, 6}}，包含 6 门不同课程。教务处已秘密设定了一个非空且非全集的重点必修先导课程集合 M，并为毕业资格审核制定了规则 R。规则 R 从以下四种考核标准中选出：
+一门课程的知识点构成了一棵有序的先修关系树。知识点总数为 {n}，编号为 1 到 {n}。树中给定了基础核心知识点作为根节点，且每个知识点都有其固定的后续延伸知识点列表（按从左到右的教学逻辑排列）。
 
-1. R1（基础深造）：当且仅当你提交的选课方案 Q 完全属于先导课程集合 M 时，系统审核接受。
-2. R2（全面达标）：当且仅当先导课程集合 M 被你提交的选课方案 Q 完全包含时，系统审核接受。
-3. R3（拓宽视野）：当且仅当你提交的选课方案 Q 完全避开先导课程集合 M（即仅选修其他通识课）时，系统审核接受。
-4. R4（精确修读）：当且仅当你提交的选课方案 Q 恰好等于先导课程集合 M 时，系统审核接受。
+系统已经使用某种确定性的教育学法则，为所有知识点生成了一个固定的教学绝对顺序 O（即一个全序排列）。该讲授顺序在整个学期内保持不变，没有任何随机性。但这个排课法则起初对你是不公开的。
 
-你的目标是通过试探性提交不同的选课方案 Q 来推断出真实的审核规则 R 以及隐藏的先导课程集合 M，最终制定一份能通过审核的最终选课方案。
+你的目标是：本轮中，系统会指定一个目标知识点 T，你需要推理出该知识点 T 在全局教学顺序 O 中的课时顺位（即它是第几个被讲授的，顺位范围为 1 到 {n}）。
 
-你可以进行以下两类操作：
-1. 试询：提交一个选课方案 Q（可以是空集、全选或任意组合），系统会反馈“接受”或“拒绝”。
-2. 终局宣告：当你认为已掌握足够信息后，同时提交你识别出的规则类型（R1/R2/R3/R4）和一个最终选课方案 Q*。
+你可以使用以下查询来获取排课信息（每次只能进行一个查询）：
 
-注意：你必须至少进行 3 次试询后才能进行终局宣告，否则评估将失败。
+1. **讲授先后查询**：询问知识点 A 和知识点 B 哪个在教学顺序 O 中更早讲授（A 和 B 必须不同）。系统会回答"A earlier than B"或"B earlier than A"。
 
-## 询问与提交答案的格式（必须严格遵守）
+2. **课时顺位验证查询**：询问知识点 X 是否恰好安排在第 k 个顺位讲授。系统会回答"Yes"或"No"。
 
-- 试询（例如查询选课方案 {{1,3,5}}）：
-<query_subset>1,3,5</query_subset>
+准备就绪后，请提交目标知识点的课时顺位作为最终答案。注意：
+- 你应当尽量减少对排课系统的查询次数。
+- 每轮只能提交一次排课答案。
+- 如果顺位错误或查询次数超限，大纲规划即告失败。
 
-- 试询未选任何课：
-<query_subset></query_subset>
+核心知识点（根节点）：{root}
 
-- 终局宣告（例如识别规则为 R1，最终选课方案为 {{2,4}}）：
-<answer>rule=R1, subset=2,4</answer>
+每个知识点的后续延伸知识点列表（按教学逻辑顺序）：
+{tree_structure}
 
-- 终局宣告最终方案为不选课：
-<answer>rule=R2, subset=</answer>
+目标知识点：{target}
 
-成功条件：在至少 3 次试询后，正确识别规则类型，且提交的最终选课方案能被审核规则接受。
+每次只能包含一个查询标签。请使用以下 XML 格式：
+
+- 讲授先后查询（例如比较知识点 1 和 3）：
+<query_compare>1,3</query_compare>
+
+- 课时顺位验证查询（例如验证知识点 5 是否为第 2 顺位）：
+<query_is_k>5,2</query_is_k>
+
+提交最终答案时，给出目标知识点的课时顺位（一个整数），格式如下：
+
+<answer>3</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Student Core Competency Assessment and Course Selection" system. We are now playing a deduction game on major course requirements.
+An intelligent syllabus scheduling system is planning the teaching sequence under the following rules:
 
-The system defines an elective course pool U = {{1, 2, 3, 4, 5, 6}}, containing 6 different courses. The academic affairs office has secretly established a non-empty proper subset M representing the key prerequisite course set, and formulated a rule R for graduation qualification review. Rule R is selected from the following four assessment standards:
+The knowledge points of a course form an ordered prerequisite relationship tree. There are {n} knowledge points in total, numbered from 1 to {n}. The tree defines a core foundational point as the root node, and each knowledge point has an ordered list of subsequent extension points (arranged from left to right following pedagogical logic).
 
-1. R1 (Foundational Study): Accept if and only if your submitted course selection Q is a subset of the prerequisite course set M.
-2. R2 (Comprehensive Standard): Accept if and only if the prerequisite course set M is a subset of your submitted course selection Q.
-3. R3 (Broadening Horizons): Accept if and only if your submitted course selection Q is a subset of the complement of M (completely avoiding M).
-4. R4 (Precise Enrollment): Accept if and only if your submitted course selection Q equals M exactly.
+The system has generated a fixed absolute teaching sequence O (a total order) for all knowledge points using a deterministic educational algorithm. This teaching sequence remains constant throughout the semester with no randomness. However, the scheduling algorithm is initially unrevealed to you.
 
-Your goal is to infer the true rule R and the hidden prerequisite course set M through exploratory submissions of different course selections Q, then formulate a final course selection plan that passes the review.
+Your goal is: In this round, the system will specify a target knowledge point T, and you must deduce the exact lesson rank of point T in the global teaching sequence O (i.e., its position in the schedule, ranging from 1 to {n}).
 
-You can perform the following two types of operations:
-1. Query: Submit a course selection Q (can be empty set, full set, or any subset), and the system will feedback "Accept" or "Reject".
-2. Final Declaration: When you believe you have collected sufficient information, simultaneously submit the rule type you identified (R1/R2/R3/R4) and a final course selection Q*.
+You can use the following queries to gather scheduling information (one query at a time):
 
-Note: You must perform at least 3 queries before making a final declaration, otherwise the assessment fails.
+1. **Teaching Sequence Compare Query**: Ask which of two different knowledge points A and B is taught earlier in the sequence O. I will answer "A earlier than B" or "B earlier than A".
 
-## Query and Answer Format (must strictly follow)
+2. **Lesson Rank Verification Query**: Ask whether knowledge point X is scheduled exactly at the k-th position. I will answer "Yes" or "No".
 
-- Query (e.g., querying courses {{1,3,5}}):
-<query_subset>1,3,5</query_subset>
+When ready, submit the lesson rank of the target knowledge point as your final answer. Note:
+- You should minimize your queries to the scheduling system.
+- You can only submit one schedule answer per round.
+- If your rank is incorrect or you exceed the query limit, the syllabus planning fails.
 
-- Query empty selection:
-<query_subset></query_subset>
+Core foundational point (Root node): {root}
 
-- Final Declaration (e.g., identifying rule as R1, final course selection as {{2,4}}):
-<answer>rule=R1, subset=2,4</answer>
+Subsequent extension point lists for each knowledge point (in pedagogical logic order):
+{tree_structure}
 
-- Final Declaration with empty final selection:
-<answer>rule=R2, subset=</answer>
+Target knowledge point: {target}
 
-Success condition: After at least 3 queries, correctly identify the rule type and submit a final course selection that is accepted by the review rule.
+Each query must contain only one tag. Use the following XML format:
+
+- Teaching Sequence Compare Query (e.g., comparing points 1 and 3):
+<query_compare>1,3</query_compare>
+
+- Lesson Rank Verification Query (e.g., verifying if point 5 is at position 2):
+<query_is_k>5,2</query_is_k>
+
+When submitting the final answer, provide the lesson rank of the target knowledge point (an integer) in this format:
+
+<answer>3</answer>
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-欢迎使用“精密流水线质检流程”分析仪。我们现在进行一项关于核心缺陷检测规则的排查任务。
+自动化产线的质检追溯系统正在校验装配流程，规则如下：
 
-系统监控着一条拥有全集 U = {{1, 2, 3, 4, 5, 6}}（代表 6 个标准检测工序）的生产线。质量工程师已秘密圈定了一个非空且非全集的核心缺陷易发工序集合 M，并配置了质检放行规则 R。规则 R 从以下四种检验标准中选出：
+一条复杂产品的生产线被建模为一棵有序的装配依赖树。工位总数为 {n}，编号为 1 到 {n}。树结构中，总装工位是根节点，每个工位都有其依赖的前置子装配工位列表（按从左到右的工艺优先级排列）。
 
-1. R1（重点抽检）：当且仅当你提交的抽检计划 Q 仅包含易发工序（属于 M）时，系统接受方案。
-2. R2（全覆盖抽检）：当且仅当核心易发工序集合 M 被你提交的抽检计划 Q 完全覆盖时，系统接受方案。
-3. R3（常规避开）：当且仅当你提交的抽检计划 Q 仅针对非易发工序（完全避开 M）时，系统接受方案。
-4. R4（精准对标）：当且仅当你提交的抽检计划 Q 与易发工序集合 M 完全对应时，系统接受方案。
+系统已内置了某种确定性的工艺审查规则，对所有工位生成了一个固定的全局质检序列 O（即一个全序排列）。该序列在整个批次生产过程中严格保持不变，杜绝任何随机干扰。但该审查规则的底层逻辑起初是未知的。
 
-你的目标是通过试探性提交不同的抽检计划 Q 来推断出真实的放行规则 R 以及隐藏的易发工序集合 M，最终输出一个能被规则通过的标准抽检计划。
+你的任务是：本轮中，系统会圈定一个目标工位 T，你需要推导出该工位 T 在全局质检序列 O 中的确切批次位次（即它是第几个被质检的，位次范围为 1 到 {n}）。
 
-你可以进行以下两类操作：
-1. 试询：提交一个抽检计划 Q（可以是空集、全工序或任意组合），系统会反馈“接受”或“拒绝”。
-2. 终局宣告：当你认为已掌握足够信息后，同时提交你识别出的规则类型（R1/R2/R3/R4）和一个最终抽检计划 Q*。
+你可以利用以下指令来调取质检日志（每次只能下达一个指令）：
 
-注意：你必须至少进行 3 次试询后才能进行终局宣告，否则排查任务将被强制终止。
+1. **质检时序比较**：询问工位 A 和工位 B 哪个在质检序列 O 中更早执行（A 和 B 必须不同）。系统会返回"A earlier than B"或"B earlier than A"。
 
-## 询问与提交答案的格式（必须严格遵守）
+2. **位次校验指令**：询问工位 X 是否恰好处于质检序列的第 k 位。系统会返回"Yes"或"No"。
 
-- 试询（例如查询工序 {{1,3,5}}）：
-<query_subset>1,3,5</query_subset>
+分析完毕后，请提交目标工位的质检位次作为最终确认。注意：
+- 你应尽力优化指令调用次数以降低系统开销。
+- 每轮仅允许提交一次核对结果。
+- 如果位次核对失败或调用次数溢出，流水线校验报错。
 
-- 试询空工序：
-<query_subset></query_subset>
+总装工位（根节点）：{root}
 
-- 终局宣告（例如识别规则为 R1，最终计划为 {{2,4}}）：
-<answer>rule=R1, subset=2,4</answer>
+各工位的子装配工位列表（按工艺优先级顺序）：
+{tree_structure}
 
-- 终局宣告最终计划为空：
-<answer>rule=R2, subset=</answer>
+目标工位：{target}
 
-成功条件：在至少 3 次试询后，正确识别规则类型，且提交的最终抽检计划能被质检系统接受。
+每次只能包含一个查询标签。请使用以下 XML 格式：
+
+- 质检时序比较（例如比较工位 1 和 3）：
+<query_compare>1,3</query_compare>
+
+- 位次校验指令（例如验证工位 5 是否为第 2 位）：
+<query_is_k>5,2</query_is_k>
+
+提交最终答案时，给出目标工位的质检位次（一个整数），格式如下：
+
+<answer>3</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Precision Assembly Line Quality Inspection" analyzer. We are now conducting a troubleshooting task regarding core defect detection rules.
+[Manufacturing/Industry Scenario]
+An automated production line's quality inspection traceability system is verifying the assembly process under the following rules:
 
-The system monitors a production line with a universal set U = {{1, 2, 3, 4, 5, 6}} representing 6 standard inspection processes. Quality engineers have secretly pinpointed a non-empty proper subset M representing the core defect-prone processes, and configured a quality release rule R. Rule R is selected from the following four inspection standards:
+The production line of a complex product is modeled as an ordered assembly dependency tree. There are {n} stations in total, numbered from 1 to {n}. In the tree structure, the final assembly station is the root node, and each station has an ordered list of prerequisite sub-assembly stations (arranged from left to right by process priority).
 
-1. R1 (Focused Sampling): Accept if and only if your submitted sampling plan Q is a subset of the defect-prone processes M.
-2. R2 (Full Coverage Sampling): Accept if and only if the core defect-prone process set M is a subset of your submitted sampling plan Q.
-3. R3 (Routine Evasion): Accept if and only if your submitted sampling plan Q is a subset of the complement of M (completely avoiding M).
-4. R4 (Precise Alignment): Accept if and only if your submitted sampling plan Q equals M exactly.
+The system has built in a deterministic process review rule, generating a fixed global inspection sequence O (a total order) for all stations. This sequence remains strictly constant throughout the batch production, preventing any random interference. However, the underlying logic of this review rule is initially unknown to you.
 
-Your goal is to infer the true release rule R and the hidden defect-prone process set M through exploratory submissions of different sampling plans Q, then output a standard sampling plan that passes the rule.
+Your task is: In this round, the system will highlight a target station T, and you must deduce the exact batch rank of station T in the global inspection sequence O (i.e., its position in the sequence, ranging from 1 to {n}).
 
-You can perform the following two types of operations:
-1. Query: Submit a sampling plan Q (can be empty set, full processes, or any combination), and the system will feedback "Accept" or "Reject".
-2. Final Declaration: When you believe you have collected sufficient information, simultaneously submit the rule type you identified (R1/R2/R3/R4) and a final sampling plan Q*.
+You can use the following commands to fetch inspection logs (one command at a time):
 
-Note: You must perform at least 3 queries before making a final declaration, otherwise the troubleshooting task will be forcefully terminated.
+1. **Inspection Timing Compare**: Ask which of two different stations A and B is executed earlier in the inspection sequence O. I will return "A earlier than B" or "B earlier than A".
 
-## Query and Answer Format (must strictly follow)
+2. **Rank Validation Command**: Ask whether station X is exactly at the k-th position in the inspection sequence. I will return "Yes" or "No".
 
-- Query (e.g., querying processes {{1,3,5}}):
-<query_subset>1,3,5</query_subset>
+Upon completing the analysis, submit the inspection rank of the target station as your final confirmation. Note:
+- You should optimize your command calls to reduce system overhead.
+- Only one verification result can be submitted per round.
+- If the rank verification fails or call limit is exceeded, the pipeline validation throws an error.
 
-- Query empty process:
-<query_subset></query_subset>
+Final Assembly Station (Root node): {root}
 
-- Final Declaration (e.g., identifying rule as R1, final plan as {{2,4}}):
-<answer>rule=R1, subset=2,4</answer>
+Sub-assembly station lists for each station (in process priority order):
+{tree_structure}
 
-- Final Declaration with empty final plan:
-<answer>rule=R2, subset=</answer>
+Target station: {target}
 
-Success condition: After at least 3 queries, correctly identify the rule type and submit a final sampling plan that is accepted by the quality inspection system.
+Each query must contain only one tag. Use the following XML format:
+
+- Inspection Timing Compare (e.g., comparing stations 1 and 3):
+<query_compare>1,3</query_compare>
+
+- Rank Validation Command (e.g., verifying if station 5 is at position 2):
+<query_is_k>5,2</query_is_k>
+
+When submitting the final answer, provide the inspection rank of the target station (an integer) in this format:
+
+<answer>3</answer>
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-欢迎使用“商业合规性与反垄断审查”系统。我们现在来进行一项高风险条款识别的模拟推演。
+司法证据链审查系统正在进行案卷逻辑推演，规则如下：
 
-系统载入了一份包含全集 U = {{1, 2, 3, 4, 5, 6}}（代表 6 项商业行为条款）的协议草案。法务合规官已秘密标记了一个非空且非全集的高风险反垄断审查条款集合 M，并应用了审查规则 R。规则 R 从以下四种合规口径中选出：
+案件的证据条目构成了一棵有序的法律逻辑推理树。证据条目总数为 {n}，编号为 1 到 {n}。树结构给定了一项核心指控作为根节点，每项证据都有其固定的支撑性附属证据列表（按从左到右的法理审查优先级排列）。
 
-1. R1（专项审查）：当且仅当你提交的协议条款 Q 仅包含高风险条款时，系统接受并立卷。
-2. R2（整体合规）：当且仅当高风险审查条款集合 M 被你提交的协议条款 Q 完整包含时，系统确认接受。
-3. R3（安全港豁免）：当且仅当你提交的协议条款 Q 完全不含高风险条款（避开 M）时，系统予以豁免接受。
-4. R4（精准备案）：当且仅当你提交的协议条款 Q 恰好等于高风险条款集合 M 时，系统予以备案接受。
+审查委员会已依据特定的确定性法定程序，为所有证据条目生成了一个固定的全局审查序列 O（即对所有证据的一个全序排列）。该审查序列在整个庭审推演中保持不变，不存在任何自由裁量引发的随机性。但该法定生成规则对你起初是保密的。
 
-你的目标是通过试探性提交不同的协议条款组合 Q 来推断出真实的审查规则 R 以及隐藏的高风险条款集合 M，最终出具一份能通过系统审查的有效协议组合。
+你的目标是：在本轮中，系统会提供一项目标证据 T，你需要确定该证据 T 在全局审查序列 O 中的准确位次（即它是第几个被审查的，位次范围为 1 到 {n}）。
 
-你可以进行以下两类操作：
-1. 试询：提交一个协议条款组合 Q（可以是空集、全部条款或任意子集），系统会反馈“接受”或“拒绝”。
-2. 终局宣告：当你认为已掌握足够信息后，同时提交你识别出的规则类型（R1/R2/R3/R4）和一个最终条款组合 Q*。
+你可以通过以下质询来获取审查进程信息（每次只能提出一个质询）：
 
-注意：你必须至少进行 3 次试询后才能进行终局宣告，否则审查流程将不予通过。
+1. **审查时序质询**：询问证据 A 和证据 B 哪个在审查序列 O 中更早进入审查环节（A 和 B 必须不同）。系统会回答"A earlier than B"或"B earlier than A"。
 
-## 询问与提交答案的格式（必须严格遵守）
+2. **环节位次验证**：询问证据 X 是否恰好是审查序列中的第 k 项。系统会回答"Yes"或"No"。
 
-- 试询（例如查询条款 {{1,3,5}}）：
-<query_subset>1,3,5</query_subset>
+质证完毕后，请提交目标证据的审查位次作为最终结论。注意：
+- 你应当尽量精简质询次数，提高诉讼效率。
+- 每轮只能提交一次结论。
+- 如果审查位次判定错误或质询次数超过法定限制，逻辑推演驳回。
 
-- 试询空条款：
-<query_subset></query_subset>
+核心指控（根节点）：{root}
 
-- 终局宣告（例如识别规则为 R1，最终组合为 {{2,4}}）：
-<answer>rule=R1, subset=2,4</answer>
+每项证据的附属证据列表（按法理审查优先级）：
+{tree_structure}
 
-- 终局宣告最终组合为空：
-<answer>rule=R2, subset=</answer>
+目标证据：{target}
 
-成功条件：在至少 3 次试询后，正确识别规则类型，且提交的最终条款组合能被系统合规审查接受。
+每次只能包含一个查询标签。请使用以下 XML 格式：
+
+- 审查时序质询（例如比较证据 1 和 3）：
+<query_compare>1,3</query_compare>
+
+- 环节位次验证（例如验证证据 5 是否为第 2 项）：
+<query_is_k>5,2</query_is_k>
+
+提交最终答案时，给出目标证据的审查位次（一个整数），格式如下：
+
+<answer>3</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Commercial Compliance and Antitrust Review" system. We are now conducting a mock deduction of high-risk clause identification.
+The Judicial Evidence Chain Review System is conducting case logic deduction under the following rules:
 
-The system has loaded a draft agreement containing a universal set U = {{1, 2, 3, 4, 5, 6}} representing 6 commercial behavior clauses. The legal compliance officer has secretly flagged a non-empty proper subset M representing high-risk antitrust review clauses, and applied a review rule R. Rule R is selected from the following four compliance standards:
+The evidence items of a case form an ordered legal logic deduction tree. There are {n} evidence items in total, numbered from 1 to {n}. The tree establishes a core allegation as the root node, and each evidence item has a fixed list of supporting subsidiary evidence (arranged from left to right by jurisprudential review priority).
 
-1. R1 (Special Review): Accept and file if and only if your submitted agreement clauses Q consist solely of high-risk clauses.
-2. R2 (Overall Compliance): Accept if and only if the high-risk clause set M is completely covered by your submitted agreement clauses Q.
-3. R3 (Safe Harbor Exemption): Accept for exemption if and only if your submitted agreement clauses Q is a subset of the complement of M (completely avoiding high-risk clauses).
-4. R4 (Precise Filing): Accept for filing if and only if your submitted agreement clauses Q equals M exactly.
+The review committee has generated a fixed global review sequence O (a total order for all evidence) based on a deterministic statutory procedure. This review sequence remains strictly constant throughout the trial deduction, with no randomness caused by discretionary powers. However, the statutory generation rule is initially confidential to you.
 
-Your goal is to infer the true review rule R and the hidden high-risk clause set M through exploratory submissions of different agreement clause combinations Q, then issue a valid clause combination that passes the system's review.
+Your goal is: In this round, the system will provide a target evidence item T, and you need to determine the precise rank of evidence T in the global review sequence O (i.e., its position in the review process, ranging from 1 to {n}).
 
-You can perform the following two types of operations:
-1. Query: Submit an agreement clause combination Q (can be empty set, full clauses, or any subset), and the system will feedback "Accept" or "Reject".
-2. Final Declaration: When you believe you have collected sufficient information, simultaneously submit the rule type you identified (R1/R2/R3/R4) and a final clause combination Q*.
+You can use the following inquiries to gather review process information (one inquiry at a time):
 
-Note: You must perform at least 3 queries before making a final declaration, otherwise the review process will not pass.
+1. **Review Timing Inquiry**: Ask which of two different evidence items A and B enters the review phase earlier in sequence O. I will answer "A earlier than B" or "B earlier than A".
 
-## Query and Answer Format (must strictly follow)
+2. **Phase Rank Verification**: Ask whether evidence X is exactly the k-th item in the review sequence. I will answer "Yes" or "No".
 
-- Query (e.g., querying clauses {{1,3,5}}):
-<query_subset>1,3,5</query_subset>
+Upon completing the cross-examination, submit the review rank of the target evidence as your final conclusion. Note:
+- You should streamline your inquiries to improve litigation efficiency.
+- You can only submit one conclusion per round.
+- If the review rank judgment is incorrect or inquiries exceed the statutory limit, the logic deduction is dismissed.
 
-- Query empty clause:
-<query_subset></query_subset>
+Core Allegation (Root node): {root}
 
-- Final Declaration (e.g., identifying rule as R1, final combination as {{2,4}}):
-<answer>rule=R1, subset=2,4</answer>
+Subsidiary evidence lists for each item (in jurisprudential review priority):
+{tree_structure}
 
-- Final Declaration with empty final combination:
-<answer>rule=R2, subset=</answer>
+Target evidence: {target}
 
-Success condition: After at least 3 queries, correctly identify the rule type and submit a final clause combination that is accepted by the compliance review system.
+Each query must contain only one tag. Use the following XML format:
+
+- Review Timing Inquiry (e.g., comparing evidence 1 and 3):
+<query_compare>1,3</query_compare>
+
+- Phase Rank Verification (e.g., verifying if evidence 5 is the 2nd item):
+<query_is_k>5,2</query_is_k>
+
+When submitting the final answer, provide the review rank of the target evidence (an integer) in this format:
+
+<answer>3</answer>
 """
 
-    tags = ["answer", "query_subset"]
-    reasoning_type = "溯因推理"
-    data_structure = "集合"
+    tags = ["answer", "query_compare", "query_is_k"]
+    
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "M": {2, 3, 5},
-                "rule": "R2",
+                "n": 5,
+                "root": 1,
+                "children": {
+                    1: [2, 3],
+                    2: [4],
+                    3: [5],
+                    4: [],
+                    5: []
+                },
+                "target": 1,
+                "max_queries": 6
             },
             2: {
-                "M": {1, 4},
-                "rule": "R1",
+                "n": 7,
+                "root": 1,
+                "children": {
+                    1: [2, 3],
+                    2: [4, 5],
+                    3: [6, 7],
+                    4: [],
+                    5: [],
+                    6: [],
+                    7: []
+                },
+                "target": 5,
+                "max_queries": 7
             },
             3: {
-                "M": {1, 3, 6},
-                "rule": "R3",
+                "n": 10,
+                "root": 1,
+                "children": {
+                    1: [2, 3, 4],
+                    2: [5, 6],
+                    3: [7],
+                    4: [8, 9],
+                    5: [],
+                    6: [10],
+                    7: [],
+                    8: [],
+                    9: [],
+                    10: []
+                },
+                "target": 10,
+                "max_queries": 8
             },
             4: {
-                "M": {2, 5},
-                "rule": "R4",
+                "n": 12,
+                "root": 1,
+                "children": {
+                    1: [2, 3],
+                    2: [4, 5, 6],
+                    3: [7, 8],
+                    4: [9],
+                    5: [],
+                    6: [10],
+                    7: [11],
+                    8: [12],
+                    9: [],
+                    10: [],
+                    11: [],
+                    12: []
+                },
+                "target": 11,
+                "max_queries": 9
             },
             5: {
-                "M": {1, 2, 4, 6},
-                "rule": "R4",
-            },
+                "n": 15,
+                "root": 1,
+                "children": {
+                    1: [2, 3, 4],
+                    2: [5, 6],
+                    3: [7, 8, 9],
+                    4: [10],
+                    5: [11],
+                    6: [12],
+                    7: [],
+                    8: [13, 14],
+                    9: [],
+                    10: [15],
+                    11: [],
+                    12: [],
+                    13: [],
+                    14: [],
+                    15: []
+                },
+                "target": 13,
+                "max_queries": 10
+            }
         },
         "en": {
             1: {
-                "M": {2, 3, 5},
-                "rule": "R2",
+                "n": 5,
+                "root": 1,
+                "children": {
+                    1: [2, 3],
+                    2: [4],
+                    3: [5],
+                    4: [],
+                    5: []
+                },
+                "target": 1,
+                "max_queries": 6
             },
             2: {
-                "M": {1, 4},
-                "rule": "R1",
+                "n": 7,
+                "root": 1,
+                "children": {
+                    1: [2, 3],
+                    2: [4, 5],
+                    3: [6, 7],
+                    4: [],
+                    5: [],
+                    6: [],
+                    7: []
+                },
+                "target": 5,
+                "max_queries": 7
             },
             3: {
-                "M": {1, 3, 6},
-                "rule": "R3",
+                "n": 10,
+                "root": 1,
+                "children": {
+                    1: [2, 3, 4],
+                    2: [5, 6],
+                    3: [7],
+                    4: [8, 9],
+                    5: [],
+                    6: [10],
+                    7: [],
+                    8: [],
+                    9: [],
+                    10: []
+                },
+                "target": 10,
+                "max_queries": 8
             },
             4: {
-                "M": {2, 5},
-                "rule": "R4",
+                "n": 12,
+                "root": 1,
+                "children": {
+                    1: [2, 3],
+                    2: [4, 5, 6],
+                    3: [7, 8],
+                    4: [9],
+                    5: [],
+                    6: [10],
+                    7: [11],
+                    8: [12],
+                    9: [],
+                    10: [],
+                    11: [],
+                    12: []
+                },
+                "target": 11,
+                "max_queries": 9
             },
             5: {
-                "M": {1, 2, 4, 6},
-                "rule": "R4",
-            },
-        },
+                "n": 15,
+                "root": 1,
+                "children": {
+                    1: [2, 3, 4],
+                    2: [5, 6],
+                    3: [7, 8, 9],
+                    4: [10],
+                    5: [11],
+                    6: [12],
+                    7: [],
+                    8: [13, 14],
+                    9: [],
+                    10: [15],
+                    11: [],
+                    12: [],
+                    13: [],
+                    14: [],
+                    15: []
+                },
+                "target": 13,
+                "max_queries": 10
+            }
+        }
     }
 
     def __init__(self, config):
-        self.U = {1, 2, 3, 4, 5, 6}  # 全集
-        self.query_count = 0  # 试询次数计数
+        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据难度配置设置隐藏集合 M 和判定规则 R"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保为整数
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -511,177 +692,179 @@ Success condition: After at least 3 queries, correctly identify the rule type an
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self.M = cfg["M"]  # 隐藏的主集
-        self.rule = cfg["rule"]  # 隐藏的判定规则
-        self._game_info["n"] = 6  # 用于格式化游戏规则（如果需要）
+        self._game_info["n"] = cfg["n"]
+        self._game_info["root"] = cfg["root"]
+        self.children = cfg["children"]
+        self.max_queries = cfg["max_queries"]
+        
+        self.target = cfg["target"]
+        
+        tree_lines = []
+        for node in sorted(self.children.keys()):
+            if self.children[node]:
+                children_str = ", ".join(map(str, self.children[node]))
+                tree_lines.append(f"Node {node}: [{children_str}]" if lang == "en" else f"节点 {node}：[{children_str}]")
+            else:
+                tree_lines.append(f"Node {node}: []" if lang == "en" else f"节点 {node}：[]")
+        
+        self._game_info["tree_structure"] = "\n".join(tree_lines)
+        self._game_info["target"] = self.target
+        
+        self.preorder = []
+        self._preorder_traverse(cfg["root"])
+        self.node_to_rank = {node: idx + 1 for idx, node in enumerate(self.preorder)}
 
-    def _check_rule(self, Q):
-        """
-        根据当前规则 R 判定提交的集合 Q 是否被接受
-        Q: 提交的集合
-        返回: True 表示接受，False 表示拒绝
-        """
-        if self.rule == "R1":
-            # R1: Q ⊆ M
-            return Q.issubset(self.M)
-        elif self.rule == "R2":
-            # R2: M ⊆ Q
-            return self.M.issubset(Q)
-        elif self.rule == "R3":
-            # R3: Q ⊆ (U \ M)
-            complement_M = self.U - self.M
-            return Q.issubset(complement_M)
-        elif self.rule == "R4":
-            # R4: Q = M
-            return Q == self.M
-        else:
-            raise ValueError(f"Unknown rule: {self.rule}")
+    def _preorder_traverse(self, node):
+        self.preorder.append(node)
+        for child in self.children[node]:
+            self._preorder_traverse(child)
 
     def evaluate(self, parsed_info):
-        """
-        评估终局宣告的答案
-        parsed_info: 包含 'answer' 键，格式为 "rule=R1, subset=1,2,3"
-        返回: True 表示答案正确，False 表示错误
-        """
-        # 注意：在冗余评估模式下，query_count 可能不会被正常递增
-        # 仅在标准游戏模式下检查最少试询次数
-        # 通过检查 enable_counterfactual 或直接跳过此检查（因为冗余评估走不同路径）
-        # 更安全的做法：只在标准交互模式下强制检查
-        if not getattr(self, '_skip_query_count_check', False) and getattr(self, 'query_count', 0) < 3:
-            return False
-
-        raw_ans = parsed_info["answer"]
-        
-        # 使用正则解析 rule 和 subset
-        rule_match = re.search(r'rule\s*=\s*(R[1-4])', raw_ans, re.IGNORECASE)
-        subset_match = re.search(r'subset\s*=\s*([\d,\s]*)', raw_ans)
-        
-        if not rule_match or subset_match is None:
-            return False
-        
-        # 1. 检查规则识别是否正确
-        identified_rule = rule_match.group(1).upper()
-        if identified_rule != self.rule:
-            return False
-        
-        # 2. 解析最终子集
         try:
-            subset_str = subset_match.group(1).strip()
-            if subset_str == "":
-                final_subset = set()
-            else:
-                final_subset = set(int(x.strip()) for x in subset_str.split(",") if x.strip())
-            
-            # 检查子集元素是否都在全集 U 中
-            if not final_subset.issubset(self.U):
-                return False
-                
-        except (ValueError, TypeError):
+            submitted_rank = int(parsed_info["answer"].strip())
+            correct_rank = self.node_to_rank[self.target]
+            return submitted_rank == correct_rank
+        except:
             return False
-        
-        # 3. 检查最终子集是否被规则接受
-        return self._check_rule(final_subset)
-
-    def _cf_make_wrong(self, correct):
-        """
-        将正确的接受/拒绝反馈反转，用于反事实干预模式。
-        correct: 正确的反馈字符串，如 "Accept" / "Reject" / "接受" / "拒绝"
-        返回: 错误的反馈字符串
-        """
-        if self.config.language == "zh":
-            if correct == "接受":
-                return "拒绝"
-            elif correct == "拒绝":
-                return "接受"
-            else:
-                return "拒绝"  # fallback
-        else:
-            if correct == "Accept":
-                return "Reject"
-            elif correct == "Reject":
-                return "Accept"
-            else:
-                return "Reject"  # fallback
 
     def _cf_core_produce(self, parsed_info):
-        """
-        处理试询请求并返回接受/拒绝的反馈（作为基类的内部调用节点）
-        """
         if self.config.language == "zh":
-            accept_res, reject_res = "接受", "拒绝"
-            error_msg = "错误：提交的集合包含无效元素或格式错误。"
+            yes_res, no_res = "Yes", "No"
+            earlier_template = "{} earlier than {}"
         else:
-            accept_res, reject_res = "Accept", "Reject"
-            error_msg = "Error: The submitted set contains invalid elements or format error."
+            yes_res, no_res = "Yes", "No"
+            earlier_template = "{} earlier than {}"
 
-        if "query_subset" in parsed_info:
-            # 增加试询计数
-            self.query_count += 1
-            
+        query_tags_present = [tag for tag in ["query_compare", "query_is_k"] if tag in parsed_info]
+        if len(query_tags_present) > 1:
+            return ("Error: Only one query per turn is allowed." 
+                    if self.config.language == "en" 
+                    else "错误：每次只能进行一个查询。")
+
+        if "query_compare" in parsed_info:
             try:
-                subset_str = parsed_info["query_subset"].strip()
+                raw = parsed_info["query_compare"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    raise ValueError("Expected exactly 2 parts")
+                node_a, node_b = int(parts[0]), int(parts[1])
                 
-                # 处理空集情况
-                if subset_str == "":
-                    Q = set()
+                if node_a == node_b:
+                    return "Error: Nodes must be different." if self.config.language == "en" else "错误：节点必须不同。"
+                if node_a not in self.node_to_rank or node_b not in self.node_to_rank:
+                    return "Error: Invalid node ID." if self.config.language == "en" else "错误：无效的节点编号。"
+                
+                if self.query_count + 1 > self.max_queries:
+                    raise ValueError(
+                        f"Query limit exceeded ({self.max_queries} queries allowed)." 
+                        if self.config.language == "en" 
+                        else f"查询次数超限（最多允许 {self.max_queries} 次查询）。"
+                    )
+                self.query_count += 1
+
+                rank_a = self.node_to_rank[node_a]
+                rank_b = self.node_to_rank[node_b]
+                
+                if rank_a < rank_b:
+                    return earlier_template.format(node_a, node_b)
                 else:
-                    Q = set(int(x.strip()) for x in subset_str.split(",") if x.strip())
+                    return earlier_template.format(node_b, node_a)
+            except (ValueError, IndexError) as e:
+                if "Query limit exceeded" in str(e) or "查询次数超限" in str(e):
+                    raise e
+                return "Error: Invalid compare query format." if self.config.language == "en" else "错误：比较查询格式无效。"
+
+        elif "query_is_k" in parsed_info:
+            try:
+                raw = parsed_info["query_is_k"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    raise ValueError("Expected exactly 2 parts")
+                node_x, k = int(parts[0]), int(parts[1])
                 
-                # 检查集合元素是否都在全集 U 中
-                if not Q.issubset(self.U):
-                    return error_msg
+                if node_x not in self.node_to_rank:
+                    return "Error: Invalid node ID." if self.config.language == "en" else "错误：无效的节点编号。"
+                if k < 1 or k > self._game_info["n"]:
+                    return "Error: Rank out of range." if self.config.language == "en" else "错误：名次超出范围。"
                 
-                # 根据规则判定是否接受
-                is_accepted = self._check_rule(Q)
-                return accept_res if is_accepted else reject_res
-                
-            except:
-                return error_msg
+                if self.query_count + 1 > self.max_queries:
+                    raise ValueError(
+                        f"Query limit exceeded ({self.max_queries} queries allowed)." 
+                        if self.config.language == "en" 
+                        else f"查询次数超限（最多允许 {self.max_queries} 次查询）。"
+                    )
+                self.query_count += 1
+
+                actual_rank = self.node_to_rank[node_x]
+                return yes_res if actual_rank == k else no_res
+            except (ValueError, IndexError) as e:
+                if "Query limit exceeded" in str(e) or "查询次数超限" in str(e):
+                    raise e
+                return "Error: Invalid rank verification query format." if self.config.language == "en" else "错误：名次验证查询格式无效。"
+
         else:
             raise ValueError("No valid query tag found.")
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        同时标记此实例用于冗余评估，
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        self._skip_query_count_check = True
-        self.__class__._skip_query_count_check = True
-
-        results = []
-        # U = {1, 2, 3, 4, 5, 6}
-        elements = sorted(list(self.U))
+        queries = []
+        n = self._game_info["n"]
+        node_to_rank = self.node_to_rank
         
-        # 根据语言配置确定返回文本
-        if self.config.language == "zh":
-            accept_res, reject_res = "接受", "拒绝"
-        else:
-            accept_res, reject_res = "Accept", "Reject"
-        
-        # 枚举 U 的所有子集 (2^6 = 64 个)
-        for r in range(len(elements) + 1):
-            for combo in itertools.combinations(elements, r):
-                subset = set(combo)
+        earlier_template = "{} earlier than {}"
+        yes_res = "Yes"
+        no_res = "No"
+
+        for a in range(1, n + 1):
+            for b in range(a + 1, n + 1):
+                query_str = f"<query_compare>{a},{b}</query_compare>"
                 
-                # 构造查询内容字符串
-                query_content = ",".join(map(str, sorted(list(subset))))
+                rank_a = node_to_rank[a]
+                rank_b = node_to_rank[b]
                 
-                # 包装为 XML 标签字符串
-                query_xml = f"<query_subset>{query_content}</query_subset>"
+                if rank_a < rank_b:
+                    ans = earlier_template.format(a, b)
+                else:
+                    ans = earlier_template.format(b, a)
                 
-                # 直接调用内部逻辑判定
-                is_accepted = self._check_rule(subset)
-                
-                results.append({
-                    "query": query_xml,
-                    "answer": accept_res if is_accepted else reject_res
+                queries.append({
+                    "query": query_str,
+                    "answer": ans
                 })
+
+        for x in range(1, n + 1):
+            for k in range(1, n + 1):
+                query_str = f"<query_is_k>{x},{k}</query_is_k>"
+                
+                actual_rank = node_to_rank[x]
+                ans = yes_res if actual_rank == k else no_res
+                
+                queries.append({
+                    "query": query_str,
+                    "answer": ans
+                })
+
+        return queries
+
+    def _cf_make_wrong(self, correct):
+        import re as _re
         
-        return results
+        m = _re.match(r'^(\S+)\s+earlier\s+than\s+(\S+)$', correct)
+        if m:
+            return f"{m.group(2)} earlier than {m.group(1)}"
+        
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        low = correct.lower()
+        if low == "yes":
+            return "No"
+        if low == "no":
+            return "Yes"
+
+        if "是" in correct:
+            return correct.replace("是", "否")
+        if "否" in correct:
+            return correct.replace("否", "是")
+
+        return correct + "_WRONG"
+

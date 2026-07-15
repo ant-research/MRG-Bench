@@ -1,729 +1,668 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   元素定位：某给定元素在序列中第一次/最后一次出现的位置
-# ============================================================
-
 from .base import Game
-import re
+import random
 
-
-class FirstOccurrenceFindingGame(Game):
+class TreeDepthQueryGame(Game):
+    tags = ["query_parent", "query_children", "query_subtree", "answer"]
+    reasoning_type = "演绎推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们来玩一个"首次出现位置查找"的推理游戏，规则如下：
+我们来玩一个"树深度推理"游戏，规则如下：
 
-游戏设定了一个长度为 {n} 的有序序列 S[1..{n}]，每个位置的元素取值为"X"或"非X"。序列在游戏开始前已固定，不会改变。序列中可能不存在任何 X，也可能存在一个或多个 X。
+游戏设定了一棵固定的有根树，节点编号为 1 到 {n}。根节点为 {root}，根的深度定义为 0。目标节点为 {target}。
 
-你的目标是：确定首次出现 X 的位置编号 t（即最小的满足 S[t] = X 的位置编号）；若序列中不存在 X，则输出"不存在"。
+节点的深度定义为：从根节点到该节点的唯一路径上的边数。
 
-你可以通过以下两种查询方式来获取信息（每次只能发起一种查询）：
+你的目标是推断出目标节点 {target} 的深度。你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据树的真实结构如实回答：
 
-1. **前缀存在性查询**：询问前 k 个位置中是否存在 X（1 到 k 位置范围内）。我会回答"是"或"否"。
-   - "是"表示在位置 1 到 k 中至少存在一个 X
-   - "否"表示在位置 1 到 k 中都不存在 X
+1. 父节点查询：询问节点 u 的父节点是谁。
+   - 若 u 不是根节点，回答其父节点编号（一个整数）。
+   - 若 u 是根节点，回答"NONE"。
 
-2. **单点查询**：询问某个特定位置 i 是否为 X。我会回答"是"或"否"。
-   - "是"表示位置 i 的元素是 X
-   - "否"表示位置 i 的元素不是 X
+2. 子节点列表查询：询问节点 u 有哪些子节点。
+   - 回答 u 的所有子节点编号列表（可能为空）。
 
-如果查询的索引超出有效范围（小于 1 或大于 {n}），我会返回"无效索引"。
+3. 子树包含关系查询：询问节点 x 是否在以节点 u 为根的子树中（包含 u 本身）。
+   - 若 x 在 u 的子树中，回答"YES"。
+   - 否则回答"NO"。
 
-请尽可能用较少的查询次数找到答案。当你收集到足够信息后，请提交最终答案。
+注意：所有回答仅基于树的局部结构，不会直接提供深度或距离信息。
 
-## 查询与提交答案的格式（必须严格遵守）
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
 每次查询只能包含一个标签。请使用以下 XML 格式：
 
-- 前缀存在性查询（例如查询前 5 个位置）：
-<query_prefix>5</query_prefix>
+- 父节点查询（例如查询节点 5 的父节点）：
+<query_parent>5</query_parent>
 
-- 单点查询（例如查询位置 3）：
-<query_single>3</query_single>
+- 子节点列表查询（例如查询节点 3 的子节点）：
+<query_children>3</query_children>
 
-提交最终答案时，请使用以下格式：
+- 子树包含关系查询（例如查询节点 2 的子树是否包含节点 7，格式为 u,x）：
+<query_subtree>2,7</query_subtree>
 
-- 如果找到首次出现的位置（例如位置 7）：
-<answer>7</answer>
+提交最终答案时，直接给出目标节点的深度（一个非负整数），格式如下：
 
-- 如果不存在 X：
-<answer>不存在</answer>
+<answer>5</answer>
 """
 
     game_rule_en = """\
-Let's play a "First Occurrence Finding" deduction game. Here are the rules:
+Let's play a "Tree Depth Reasoning" game. Here are the rules:
 
-The game has set up an ordered sequence S[1..{n}] of length {n}, where each element is either "X" or "non-X". The sequence is fixed before the game starts and does not change. The sequence may contain no X at all, or one or more X's.
+The game features a fixed rooted tree with nodes numbered from 1 to {n}. The root node is {root}, and the root's depth is defined as 0. The target node is {target}.
 
-Your goal is: to determine the position t of the first occurrence of X (i.e., the minimum position where S[t] = X); if no X exists in the sequence, output "NotExist".
+A node's depth is defined as: the number of edges on the unique path from the root to that node.
 
-You can obtain information through the following two types of queries (only one query per turn):
+Your goal is to determine the depth of the target node {target}. You can repeatedly ask me three types of queries (one per turn), and I will answer truthfully based on the tree's actual structure:
 
-1. **Prefix Existence Query**: Ask whether there exists an X in the first k positions (range from 1 to k). I will answer "Yes" or "No".
-   - "Yes" means at least one X exists in positions 1 to k
-   - "No" means no X exists in positions 1 to k
+1. Parent Query: Ask for the parent of node u.
+   - If u is not the root, answer with its parent's node number (an integer).
+   - If u is the root, answer "NONE".
 
-2. **Single Point Query**: Ask whether a specific position i contains X. I will answer "Yes" or "No".
-   - "Yes" means the element at position i is X
-   - "No" means the element at position i is not X
+2. Children Query: Ask for the children of node u.
+   - Answer with the list of all child node numbers of u (may be empty).
 
-If the query index is out of valid range (less than 1 or greater than {n}), I will return "Invalid index".
+3. Subtree Containment Query: Ask whether node x is in the subtree rooted at node u (including u itself).
+   - If x is in u's subtree, answer "YES".
+   - Otherwise answer "NO".
 
-Please try to find the answer with as few queries as possible. When you have collected enough information, submit your final answer.
+Note: All answers are based solely on the tree's local structure and do not directly provide depth or distance information.
 
-## Query and Answer Format (must strictly follow)
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Prefix Existence Query (e.g., query first 5 positions):
-<query_prefix>5</query_prefix>
+- Parent Query (e.g., query parent of node 5):
+<query_parent>5</query_parent>
 
-- Single Point Query (e.g., query position 3):
-<query_single>3</query_single>
+- Children Query (e.g., query children of node 3):
+<query_children>3</query_children>
 
-When submitting the final answer, use the following format:
+- Subtree Containment Query (e.g., query if subtree of node 2 contains node 7, format is u,x):
+<query_subtree>2,7</query_subtree>
 
-- If the first occurrence position is found (e.g., position 7):
-<answer>7</answer>
+When submitting the final answer, provide the depth of the target node (a non-negative integer) in this format:
 
-- If X does not exist:
-<answer>NotExist</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_zh_1 = """\
-我们来玩一个"拥堵起点定位"的交通排查游戏，规则如下：
+欢迎来到"轨道交通路网测算系统"。
 
-城市主干道被划分为长度相同的 {n} 个连续路段，按车辆行驶方向依次编号为 1 到 {n}。系统在游戏开始前已记录了当前时刻的路况，每个路段的状态分为"拥堵"或"畅通"。这道路况在排查期间保持固定。整条主干道可能完全畅通，也可能包含一个或多个拥堵路段。
+本系统记录了一个呈严格树形发散的轨道交通网，站点编号为 1 到 {n}。中央枢纽站为 {root}，其区段层级定义为 0。你需要定位的目标站点为 {target}。
 
-你的目标是：确定主干道上首个"拥堵"路段的编号 t（即最小的满足路段 t 为拥堵的编号）；若全线均无拥堵，则输出"不存在"。
+站点的区段层级定义为：从中央枢纽站到该站点的唯一线路上的区间数（边数）。
 
-你可以通过调用交通监控系统的两个接口来获取信息（每次只能调用一种接口）：
+你的任务是推断出目标站点 {target} 的区段层级。你可以反复向系统提出以下三类查询（每次仅限一个查询），系统将根据真实路网结构如实反馈：
 
-1. **区间拥堵监测（前缀查询）**：询问从起点到第 k 个路段范围内（1 到 k 段）是否发生过拥堵。系统会返回"是"或"否"。
-   - "是"表示第 1 到 k 段中至少有一处路段拥堵
-   - "否"表示第 1 到 k 段全部畅通
+1. 上一级站点查询：询问站点 u 向中央枢纽方向相邻的站点是谁。
+   - 若 u 不是中央枢纽站，返回其上一级站点编号（一个整数）。
+   - 若 u 是中央枢纽站，返回"NONE"。
 
-2. **单点探头查询（单点查询）**：询问特定路段 i 当前是否拥堵。系统会返回"是"或"否"。
-   - "是"表示第 i 段处于拥堵状态
-   - "否"表示第 i 段处于畅通状态
+2. 下一级站点列表查询：询问站点 u 有哪些远离中央枢纽方向的直接相邻站点。
+   - 返回 u 的所有下一级站点编号列表（可能为空）。
 
-如果查询的路段编号超出有效范围（小于 1 或大于 {n}），系统会返回"无效索引"。
+3. 分支路网包含关系查询：询问站点 x 是否在以站点 u 为起点的分支路网中（包含 u 本身）。
+   - 若 x 在 u 的分支路网中，返回"YES"。
+   - 否则返回"NO"。
 
-请尽可能用较少的查询次数找到首个拥堵点。当你收集到足够信息后，请提交最终排查结果。
+注意：所有回答仅基于路网的局部连接结构，不会直接提供层级或距离信息。
 
-## 查询与提交答案的格式（必须严格遵守）
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，测算失败。
 
 每次查询只能包含一个标签。请使用以下 XML 格式：
 
-- 区间拥堵监测（例如查询前 5 个路段）：
-<query_prefix>5</query_prefix>
+- 上一级站点查询（例如查询站点 5 的上一级站点）：
+<query_parent>5</query_parent>
 
-- 单点探头查询（例如查询第 3 个路段）：
-<query_single>3</query_single>
+- 下一级站点列表查询（例如查询站点 3 的下一级站点）：
+<query_children>3</query_children>
 
-提交最终排查结果时，请使用以下格式：
+- 分支路网包含关系查询（例如查询站点 2 的分支路网是否包含站点 7，格式为 u,x）：
+<query_subtree>2,7</query_subtree>
 
-- 如果找到首个拥堵路段（例如第 7 段）：
-<answer>7</answer>
+提交最终答案时，直接给出目标站点的区段层级（一个非负整数），格式如下：
 
-- 如果全线不存在拥堵：
-<answer>不存在</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Let's play a "Congestion Starting Point Localization" traffic monitoring game. Here are the rules:
+[Traffic/Transportation Scenario]
+Welcome to the "Rail Transit Network Calculation System".
 
-A main city avenue is divided into {n} equal consecutive segments, numbered 1 to {n} in the direction of traffic flow. The system has recorded the traffic conditions before the game starts, with each segment categorized as either "Congested" or "Clear". These conditions remain fixed during the investigation. The entire avenue might be completely clear, or it may contain one or more congested segments.
+This system records a strictly tree-shaped rail transit network with stations numbered from 1 to {n}. The central hub station is {root}, and its section level is defined as 0. The target station you need to locate is {target}.
 
-Your goal is: to determine the segment number t of the first "Congested" segment (i.e., the minimum segment number that is congested); if there is no congestion along the entire avenue, output "NotExist".
+A station's section level is defined as: the number of sections (edges) on the unique route from the central hub to that station.
 
-You can obtain information by calling two traffic monitoring system interfaces (only one interface per turn):
+Your task is to deduce the section level of the target station {target}. You can repeatedly ask the system three types of queries (one per turn), and the system will answer truthfully based on the actual network structure:
 
-1. **Interval Congestion Monitor (Prefix Query)**: Ask whether there is any congestion from the starting point up to segment k (range 1 to k). The system will return "Yes" or "No".
-   - "Yes" means at least one segment between 1 and k is congested
-   - "No" means all segments from 1 to k are clear
+1. Upstream Station Query: Ask for the station adjacent to u in the direction of the central hub.
+   - If u is not the central hub, answer with its upstream station number (an integer).
+   - If u is the central hub, answer "NONE".
 
-2. **Single Point Camera Query (Single Point Query)**: Ask whether a specific segment i is currently congested. The system will return "Yes" or "No".
-   - "Yes" means segment i is congested
-   - "No" means segment i is clear
+2. Downstream Stations Query: Ask for the stations directly adjacent to u in the direction away from the central hub.
+   - Answer with the list of all downstream station numbers of u (may be empty).
 
-If the queried segment index is out of valid range (less than 1 or greater than {n}), the system will return "Invalid index".
+3. Branch Network Containment Query: Ask whether station x is in the branch network starting at station u (including u itself).
+   - If x is in u's branch network, answer "YES".
+   - Otherwise answer "NO".
 
-Please try to pinpoint the first congested segment with as few queries as possible. When you have collected enough information, submit your final investigation result.
+Note: All answers are based solely on the network's local connection structure and do not directly provide level or distance information.
 
-## Query and Answer Format (must strictly follow)
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the calculation fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Interval Congestion Monitor (e.g., query first 5 segments):
-<query_prefix>5</query_prefix>
+- Upstream Station Query (e.g., query upstream station of node 5):
+<query_parent>5</query_parent>
 
-- Single Point Camera Query (e.g., query segment 3):
-<query_single>3</query_single>
+- Downstream Stations Query (e.g., query downstream stations of node 3):
+<query_children>3</query_children>
 
-When submitting the final investigation result, use the following format:
+- Branch Network Containment Query (e.g., query if the branch of node 2 contains node 7, format is u,x):
+<query_subtree>2,7</query_subtree>
 
-- If the first congested segment is found (e.g., segment 7):
-<answer>7</answer>
+When submitting the final answer, provide the section level of the target station (a non-negative integer) in this format:
 
-- If no congestion exists:
-<answer>NotExist</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_zh_2 = """\
-我们来玩一个"首次异常指标排查"的医疗诊断游戏，规则如下：
+欢迎进入"流行病传播链追踪系统"。
 
-患者的一套连续动态心电监测数据被划分为 {n} 个时间窗口，按时间先后编号为 1 到 {n}。系统在游戏开始前已固化了监测结果，每个时间窗口的指标状态分为"异常"或"正常"。该患者的整套数据中可能完全没有异常，也可能在一个或多个时间窗口出现异常。
+本系统记录了一次呈树状发散的传染病传播事件，已知感染者编号为 1 到 {n}。零号病人（最初感染源）为 {root}，其传播代数定义为 0 代。你需要分析的目标感染者为 {target}。
 
-你的目标是：确定首次出现"异常"指标的时间窗口编号 t（即最小的满足窗口 t 为异常的编号）；若所有记录均正常，则输出"不存在"。
+感染者的传播代数定义为：从零号病人到该感染者的唯一传播路径上的传染次数。
 
-你可以通过调用医疗分析辅助系统的两种筛查模式来获取信息（每次只能调用一种模式）：
+你的任务是推断出目标感染者 {target} 的传播代数。你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据真实的流行病学调查数据如实回答：
 
-1. **阶段性综合筛查（前缀查询）**：询问从初始到第 k 个时间窗口范围内（1 到 k 窗口）是否发生过异常。系统会返回"是"或"否"。
-   - "是"表示第 1 到 k 窗口中至少有一处异常
-   - "否"表示第 1 到 k 窗口全部正常
+1. 传染源查询：询问感染者 u 是被谁直接传染的。
+   - 若 u 不是零号病人，回答其传染源编号（一个整数）。
+   - 若 u 是零号病人，回答"NONE"。
 
-2. **精准切片分析（单点查询）**：询问特定的第 i 个时间窗口是否存在异常。系统会返回"是"或"否"。
-   - "是"表示第 i 个窗口存在异常
-   - "否"表示第 i 个窗口表现正常
+2. 直接传播对象列表查询：询问感染者 u 直接传染了哪些人。
+   - 回答 u 的所有直接传播对象编号列表（可能为空）。
 
-如果查询的窗口编号超出有效范围（小于 1 或大于 {n}），系统会返回"无效索引"。
+3. 传播链包含关系查询：询问感染者 x 是否在以感染者 u 为起点的后续传播链中（包含 u 本身）。
+   - 若 x 在 u 的传播链中，回答"YES"。
+   - 否则回答"NO"。
 
-请尽可能用较少的查询次数找到首个异常发生点。当你收集到足够信息后，请提交最终诊断结果。
+注意：所有回答仅基于局部的传染接触关系，不会直接提供代数或整体路径信息。
 
-## 查询与提交答案的格式（必须严格遵守）
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，追踪失败。
 
 每次查询只能包含一个标签。请使用以下 XML 格式：
 
-- 阶段性综合筛查（例如查询前 5 个窗口）：
-<query_prefix>5</query_prefix>
+- 传染源查询（例如查询感染者 5 的传染源）：
+<query_parent>5</query_parent>
 
-- 精准切片分析（例如查询第 3 个窗口）：
-<query_single>3</query_single>
+- 直接传播对象列表查询（例如查询感染者 3 的传播对象）：
+<query_children>3</query_children>
 
-提交最终诊断结果时，请使用以下格式：
+- 传播链包含关系查询（例如查询感染者 2 的传播链是否包含感染者 7，格式为 u,x）：
+<query_subtree>2,7</query_subtree>
 
-- 如果找到首次异常的窗口（例如第 7 个窗口）：
-<answer>7</answer>
+提交最终答案时，直接给出目标感染者的传播代数（一个非负整数），格式如下：
 
-- 如果完全不存在异常：
-<answer>不存在</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Let's play a "First Abnormal Indicator Detection" medical diagnosis game. Here are the rules:
+[Medical/Epidemiology Scenario]
+Welcome to the "Epidemic Transmission Chain Tracking System".
 
-A patient's continuous dynamic ECG monitoring data is divided into {n} time windows, numbered 1 to {n} in chronological order. The system has fixed the monitoring results before the game starts, with each window's indicator state classified as either "Abnormal" or "Normal". The entire set of data may contain no abnormalities at all, or one or more abnormal windows.
+This system records an infectious disease outbreak that spread in a tree-like structure, with known infected individuals numbered from 1 to {n}. Patient Zero (the initial source) is {root}, and their transmission generation is defined as generation 0. The target infected individual you need to analyze is {target}.
 
-Your goal is: to determine the time window number t of the first "Abnormal" indicator (i.e., the minimum window number that is abnormal); if all records are normal, output "NotExist".
+An individual's transmission generation is defined as: the number of infection events on the unique transmission path from Patient Zero to that individual.
 
-You can obtain information by invoking two screening modes of the medical analysis assist system (only one mode per turn):
+Your task is to deduce the transmission generation of the target individual {target}. You can repeatedly ask me three types of queries (one per turn), and I will answer truthfully based on the actual epidemiological investigation data:
 
-1. **Phased Comprehensive Screening (Prefix Query)**: Ask whether there is any abnormality from the initial up to the k-th time window (range 1 to k). The system will return "Yes" or "No".
-   - "Yes" means at least one abnormality exists in windows 1 to k
-   - "No" means all windows from 1 to k are normal
+1. Source of Infection Query: Ask who directly infected individual u.
+   - If u is not Patient Zero, answer with their source's number (an integer).
+   - If u is Patient Zero, answer "NONE".
 
-2. **Precise Slice Analysis (Single Point Query)**: Ask whether a specific time window i is abnormal. The system will return "Yes" or "No".
-   - "Yes" means the i-th window is abnormal
-   - "No" means the i-th window is normal
+2. Direct Transmittees Query: Ask whom individual u directly infected.
+   - Answer with the list of all individual numbers directly infected by u (may be empty).
 
-If the queried window index is out of valid range (less than 1 or greater than {n}), the system will return "Invalid index".
+3. Transmission Chain Containment Query: Ask whether individual x is in the subsequent transmission chain starting from individual u (including u itself).
+   - If x is in u's transmission chain, answer "YES".
+   - Otherwise answer "NO".
 
-Please try to pinpoint the first abnormal occurrence with as few queries as possible. When you have collected enough information, submit your final diagnosis.
+Note: All answers are based solely on local infection contact relationships and do not directly provide generation or overall path information.
 
-## Query and Answer Format (must strictly follow)
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracking fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Phased Comprehensive Screening (e.g., query first 5 windows):
-<query_prefix>5</query_prefix>
+- Source of Infection Query (e.g., query the source of individual 5):
+<query_parent>5</query_parent>
 
-- Precise Slice Analysis (e.g., query window 3):
-<query_single>3</query_single>
+- Direct Transmittees Query (e.g., query the transmittees of individual 3):
+<query_children>3</query_children>
 
-When submitting the final diagnosis, use the following format:
+- Transmission Chain Containment Query (e.g., query if the transmission chain of individual 2 contains individual 7, format is u,x):
+<query_subtree>2,7</query_subtree>
 
-- If the first abnormal window is found (e.g., window 7):
-<answer>7</answer>
+When submitting the final answer, provide the transmission generation of the target individual (a non-negative integer) in this format:
 
-- If no abnormality exists:
-<answer>NotExist</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_zh_3 = """\
-我们来玩一个"首次认知薄弱点定位"的教育评估游戏，规则如下：
+欢迎进入"学科知识图谱解析系统"。
 
-一份标准化评估试卷包含了按难度递增排列的 {n} 道题目，编号为 1 到 {n}。系统在游戏开始前已批改完毕，每道题的作答状态分为"错误"或"正确"。学生的答卷可能全对，也可能包含一道或多道错题。
+本系统记录了一个呈严格树形发散的知识体系架构，知识模块编号为 1 到 {n}。核心基础学科模块为 {root}，其知识深度层级定义为 0。你需要评估的目标知识模块为 {target}。
 
-你的目标是：确定首次出现"错误"的题目编号 t（即最小的满足第 t 题为错误的编号），这通常代表了学生的认知薄弱起点；若全卷满分无错题，则输出"不存在"。
+知识模块的深度层级定义为：从核心基础学科到该模块的唯一前置依赖路径上的衍生次数（边数）。
 
-你可以通过调用智能阅卷系统的两个分析接口来获取信息（每次只能调用一种接口）：
+你的任务是推断出目标知识模块 {target} 的深度层级。你可以反复向系统提出以下三类查询（每次仅限一个查询），系统将根据真实的知识图谱结构如实反馈：
 
-1. **前序卷面扫描（前缀查询）**：询问从第 1 题到第 k 题的范围内是否出现过错题。系统会返回"是"或"否"。
-   - "是"表示第 1 到 k 题中至少有一道错题
-   - "否"表示第 1 到 k 题全部回答正确
+1. 前置模块查询：询问知识模块 u 的直接前置（上一级）模块是谁。
+   - 若 u 不是核心基础模块，返回其前置模块编号（一个整数）。
+   - 若 u 是核心基础模块，返回"NONE"。
 
-2. **单题作答调阅（单点查询）**：询问特定的第 i 题是否回答错误。系统会返回"是"或"否"。
-   - "是"表示第 i 题回答错误
-   - "否"表示第 i 题回答正确
+2. 衍生细分模块列表查询：询问知识模块 u 有哪些直接衍生的下一级模块。
+   - 返回 u 的所有直接衍生模块编号列表（可能为空）。
 
-如果查询的题目编号超出有效范围（小于 1 或大于 {n}），系统会返回"无效索引"。
+3. 知识分支包含关系查询：询问模块 x 是否在以模块 u 为起点的知识体系分支中（包含 u 本身）。
+   - 若 x 在 u 的知识分支中，返回"YES"。
+   - 否则返回"NO"。
 
-请尽可能用较少的查询次数找到首道错题。当你收集到足够信息后，请提交最终评估结论。
+注意：所有回答仅基于知识点之间的局部依赖结构，不会直接提供深度或跨度信息。
 
-## 查询与提交答案的格式（必须严格遵守）
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，解析失败。
 
 每次查询只能包含一个标签。请使用以下 XML 格式：
 
-- 前序卷面扫描（例如查询前 5 题）：
-<query_prefix>5</query_prefix>
+- 前置模块查询（例如查询模块 5 的前置模块）：
+<query_parent>5</query_parent>
 
-- 单题作答调阅（例如查询第 3 题）：
-<query_single>3</query_single>
+- 衍生细分模块列表查询（例如查询模块 3 的衍生模块）：
+<query_children>3</query_children>
 
-提交最终评估结论时，请使用以下格式：
+- 知识分支包含关系查询（例如查询模块 2 的知识分支是否包含模块 7，格式为 u,x）：
+<query_subtree>2,7</query_subtree>
 
-- 如果找到首道错题（例如第 7 题）：
-<answer>7</answer>
+提交最终答案时，直接给出目标知识模块的深度层级（一个非负整数），格式如下：
 
-- 如果全卷无错题：
-<answer>不存在</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "First Cognitive Weakness Localization" educational assessment game. Here are the rules:
+Welcome to the "Curriculum Knowledge Graph Parsing System".
 
-A standardized assessment paper consists of {n} questions arranged in increasing difficulty, numbered 1 to {n} in chronological order. The system has finished grading before the game starts, with each question's answer state categorized as either "Incorrect" or "Correct". The student's paper might be flawless, or it may contain one or more incorrect answers.
+This system records a knowledge architecture that diverges in a strict tree structure, with knowledge module numbers ranging from 1 to {n}. The core foundation discipline module is {root}, and its knowledge depth level is defined as 0. The target knowledge module you need to evaluate is {target}.
 
-Your goal is: to determine the question number t of the first "Incorrect" answer (i.e., the minimum question number that is incorrect), which typically represents the starting point of the student's cognitive weakness; if the paper is perfectly answered with no errors, output "NotExist".
+The depth level of a knowledge module is defined as: the number of derivations (edges) on the unique prerequisite dependency path from the core foundation discipline to that module.
 
-You can obtain information by calling two analytical interfaces of the smart grading system (only one interface per turn):
+Your task is to deduce the depth level of the target module {target}. You can repeatedly ask the system three types of queries (one per turn), and the system will answer truthfully based on the actual knowledge graph structure:
 
-1. **Preliminary Section Scan (Prefix Query)**: Ask whether there are any incorrect answers from question 1 up to question k. The system will return "Yes" or "No".
-   - "Yes" means at least one question between 1 and k is incorrect
-   - "No" means all questions from 1 to k are answered correctly
+1. Prerequisite Module Query: Ask which is the direct prerequisite (upstream) module of knowledge module u.
+   - If u is not the core foundation module, answer with its prerequisite module number (an integer).
+   - If u is the core foundation module, answer "NONE".
 
-2. **Single Question Review (Single Point Query)**: Ask whether a specific question i is answered incorrectly. The system will return "Yes" or "No".
-   - "Yes" means question i is incorrect
-   - "No" means question i is correct
+2. Derivative Sub-modules Query: Ask what directly derivative downstream modules knowledge module u has.
+   - Answer with the list of all direct derivative module numbers of u (may be empty).
 
-If the queried question index is out of valid range (less than 1 or greater than {n}), the system will return "Invalid index".
+3. Knowledge Branch Containment Query: Ask whether module x is in the knowledge system branch starting from module u (including u itself).
+   - If x is in u's knowledge branch, answer "YES".
+   - Otherwise answer "NO".
 
-Please try to pinpoint the first incorrect question with as few queries as possible. When you have collected enough information, submit your final assessment conclusion.
+Note: All answers are based solely on local dependency structures between knowledge points and do not directly provide depth or span information.
 
-## Query and Answer Format (must strictly follow)
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the parsing fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Preliminary Section Scan (e.g., query first 5 questions):
-<query_prefix>5</query_prefix>
+- Prerequisite Module Query (e.g., query prerequisite of module 5):
+<query_parent>5</query_parent>
 
-- Single Question Review (e.g., query question 3):
-<query_single>3</query_single>
+- Derivative Sub-modules Query (e.g., query derivatives of module 3):
+<query_children>3</query_children>
 
-When submitting the final assessment conclusion, use the following format:
+- Knowledge Branch Containment Query (e.g., query if the branch of module 2 contains module 7, format is u,x):
+<query_subtree>2,7</query_subtree>
 
-- If the first incorrect question is found (e.g., question 7):
-<answer>7</answer>
+When submitting the final answer, provide the depth level of the target knowledge module (a non-negative integer) in this format:
 
-- If no incorrect answer exists:
-<answer>NotExist</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_zh_4 = """\
-我们来玩一个"首件不良品追溯"的工业质检游戏，规则如下：
+欢迎使用"产品 BOM (物料清单) 架构分析系统"。
 
-一条自动化流水线刚刚生产了一批共 {n} 个连续下线的零部件，按生产先后顺序编号为 1 到 {n}。质检结果在游戏开始前已录入数据库，每个零部件的质检状态分为"不良"或"合格"。整批产品可能全部合格，也可能包含一个或多个不良品。
+本系统记录了一个呈严格树形发散的复杂产品装配结构，零部件编号为 1 到 {n}。最终总成（顶层产品）为 {root}，其装配层级定义为 0。你需要定位的目标零部件为 {target}。
 
-你的目标是：确定首次出现"不良"品的流水线编号 t（即最小的满足编号 t 为不良品的序号），以便定位生产线模具偏移的确切时机；若全批次均无不良品，则输出"不存在"。
+零部件的装配层级定义为：从最终总成往下分解到该零部件的唯一装配路径上的层级跨度数（边数）。
 
-你可以通过调用质检数据库的两种检索指令来获取信息（每次只能调用一种指令）：
+你的任务是推断出目标零部件 {target} 的装配层级。你可以反复向系统提出以下三类查询（每次仅限一个查询），系统将根据真实的 BOM 结构如实反馈：
 
-1. **批量抽样核查（前缀查询）**：询问从第 1 件到第 k 件产品的范围内是否出现过不良品。系统会返回"是"或"否"。
-   - "是"表示第 1 到 k 件中至少有一件不良品
-   - "否"表示第 1 到 k 件全部合格
+1. 所属上级组件查询：询问零部件 u 直接拼装到哪个上级组件中。
+   - 若 u 不是最终总成，返回其上级组件编号（一个整数）。
+   - 若 u 是最终总成，返回"NONE"。
 
-2. **单件终检追溯（单点查询）**：询问特定的第 i 件产品是否为不良品。系统会返回"是"或"否"。
-   - "是"表示第 i 件产品为不良品
-   - "否"表示第 i 件产品为合格品
+2. 下级子零件列表查询：询问组件 u 直接包含了哪些下级子零件。
+   - 返回 u 直接包含的所有子零件编号列表（可能为空）。
 
-如果查询的零部件编号超出有效范围（小于 1 或大于 {n}），系统会返回"无效索引"。
+3. 装配子树包含关系查询：询问零部件 x 是否属于以组件 u 为根节点的装配子系统（包含 u 本身）。
+   - 若 x 在 u 的装配子系统中，返回"YES"。
+   - 否则返回"NO"。
 
-请尽可能用较少的查询次数找到首个不良品。当你收集到足够信息后，请提交最终追溯报告。
+注意：所有回答仅基于局部的装配拆解关系，不会直接提供具体层级或深度信息。
 
-## 查询与提交答案的格式（必须严格遵守）
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，分析失败。
 
 每次查询只能包含一个标签。请使用以下 XML 格式：
 
-- 批量抽样核查（例如查询前 5 件产品）：
-<query_prefix>5</query_prefix>
+- 所属上级组件查询（例如查询零部件 5 的上级组件）：
+<query_parent>5</query_parent>
 
-- 单件终检追溯（例如查询第 3 件产品）：
-<query_single>3</query_single>
+- 下级子零件列表查询（例如查询组件 3 的直接子零件）：
+<query_children>3</query_children>
 
-提交最终追溯报告时，请使用以下格式：
+- 装配子树包含关系查询（例如查询组件 2 的装配子系统是否包含零部件 7，格式为 u,x）：
+<query_subtree>2,7</query_subtree>
 
-- 如果找到首个不良品（例如第 7 件）：
-<answer>7</answer>
+提交最终答案时，直接给出目标零部件的装配层级（一个非负整数），格式如下：
 
-- 如果全批次无不良品：
-<answer>不存在</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Let's play a "First Defective Product Traceability" industrial quality inspection game. Here are the rules:
+[Manufacturing/Industry Scenario]
+Welcome to the "Product BOM Architecture Analysis System".
 
-An automated assembly line has just produced a continuous batch of {n} components, numbered 1 to {n} in production order. The quality inspection results have been logged into the database before the game starts, with each component's status classified as either "Defective" or "Qualified". The entire batch might be completely qualified, or it may contain one or more defective products.
+This system records a complex product assembly structure that diverges in a strict tree form, with component numbers ranging from 1 to {n}. The final assembly (top-level product) is {root}, and its assembly level is defined as 0. The target component you need to locate is {target}.
 
-Your goal is: to determine the serial number t of the first "Defective" product (i.e., the minimum serial number that is defective) to pinpoint the exact moment of potential equipment misalignment; if the entire batch has no defects, output "NotExist".
+The assembly level of a component is defined as: the number of level spans (edges) on the unique assembly path breaking down from the final assembly to that component.
 
-You can obtain information by using two retrieval commands in the quality database (only one command per turn):
+Your task is to deduce the assembly level of the target component {target}. You can repeatedly ask the system three types of queries (one per turn), and the system will answer truthfully based on the actual BOM structure:
 
-1. **Batch Sampling Check (Prefix Query)**: Ask whether there is any defective product from the 1st up to the k-th component. The system will return "Yes" or "No".
-   - "Yes" means at least one product between 1 and k is defective
-   - "No" means all products from 1 to k are qualified
+1. Upstream Component Query: Ask which upstream component the part u is directly assembled into.
+   - If u is not the final assembly, answer with its upstream component number (an integer).
+   - If u is the final assembly, answer "NONE".
 
-2. **Single Unit Final Trace (Single Point Query)**: Ask whether a specific product i is defective. The system will return "Yes" or "No".
-   - "Yes" means the i-th product is defective
-   - "No" means the i-th product is qualified
+2. Direct Sub-parts Query: Ask which subordinate sub-parts the component u directly includes.
+   - Answer with the list of all direct sub-part numbers included in u (may be empty).
 
-If the queried component number is out of valid range (less than 1 or greater than {n}), the system will return "Invalid index".
+3. Assembly Subsystem Containment Query: Ask whether component x belongs to the assembly subsystem rooted at component u (including u itself).
+   - If x is in u's assembly subsystem, answer "YES".
+   - Otherwise answer "NO".
 
-Please try to locate the first defective product with as few queries as possible. When you have collected enough information, submit your final traceability report.
+Note: All answers are based solely on local assembly breakdown relationships and do not directly provide specific level or depth information.
 
-## Query and Answer Format (must strictly follow)
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the analysis fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Batch Sampling Check (e.g., query first 5 products):
-<query_prefix>5</query_prefix>
+- Upstream Component Query (e.g., query upstream component of part 5):
+<query_parent>5</query_parent>
 
-- Single Unit Final Trace (e.g., query the 3rd product):
-<query_single>3</query_single>
+- Direct Sub-parts Query (e.g., query direct sub-parts of component 3):
+<query_children>3</query_children>
 
-When submitting the final traceability report, use the following format:
+- Assembly Subsystem Containment Query (e.g., query if the assembly subsystem of component 2 contains part 7, format is u,x):
+<query_subtree>2,7</query_subtree>
 
-- If the first defective product is found (e.g., the 7th product):
-<answer>7</answer>
+When submitting the final answer, provide the assembly level of the target component (a non-negative integer) in this format:
 
-- If no defect exists in the batch:
-<answer>NotExist</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_zh_5 = """\
-我们来玩一个"首发合规风险排查"的法律审查游戏，规则如下：
+欢迎使用"法律法规渊源结构审查系统"。
 
-一份长篇商业合同包含了 {n} 条核心条款，按文本顺序编号为 1 到 {n}。智能法务系统在游戏开始前已完成了后台定性分析，每个条款的合规状态分为"违约风险"或"合规"。整份合同可能完全合规，也可能在一个或多个条款中潜藏违约风险。
+本系统记录了一个呈严格树形发散的法律条文渊源体系，法条编号为 1 到 {n}。该体系的根本大法（基准法条）为 {root}，其法理层级定义为 0。你需要审查的目标法条为 {target}。
 
-你的目标是：确定首次出现"违约风险"的条款编号 t（即最小的满足第 t 条存在风险的编号），以此确立合同谈判的初步防线；若全篇条款均合规，则输出"不存在"。
+法条的法理层级定义为：从根本大法推演细化到该法条的唯一法理路径上的衍生次数（边数）。
 
-你可以通过调用智能审查系统的两类审查探针来获取信息（每次只能调用一类探针）：
+你的任务是推断出目标法条 {target} 的法理层级。你可以反复向系统提出以下三类查询（每次仅限一个查询），系统将根据真实的法律从属结构如实反馈：
 
-1. **前端篇章尽调（前缀查询）**：询问从第 1 条到第 k 条的范围内是否存在任何违约风险条款。系统会返回"是"或"否"。
-   - "是"表示第 1 到 k 条中至少存在一条违约风险条款
-   - "否"表示第 1 到 k 条全部合规
+1. 上位法查询：询问法条 u 的直接上位法（授权来源）是谁。
+   - 若 u 不是根本大法，返回其直接上位法编号（一个整数）。
+   - 若 u 是根本大法，返回"NONE"。
 
-2. **单一条款质询（单点查询）**：询问特定的第 i 条是否存在违约风险。系统会返回"是"或"否"。
-   - "是"表示第 i 条存在违约风险
-   - "否"表示第 i 条状态合规
+2. 下位细则列表查询：询问法条 u 直接授权衍生了哪些下位细则。
+   - 返回 u 的所有直接下位法条编号列表（可能为空）。
 
-如果查询的条款编号超出有效范围（小于 1 或大于 {n}），系统会返回"无效索引"。
+3. 适用范围包含关系查询：询问法条 x 是否在以法条 u 为法理依据的衍生法律适用范围内（包含 u 本身）。
+   - 若 x 在 u 的衍生适用范围内，返回"YES"。
+   - 否则返回"NO"。
 
-请尽可能用较少的查询次数找到首个风险条款。当你收集到足够信息后，请提交最终审查意见。
+注意：所有回答仅基于局部的法理授权关系，不会直接提供层级或距离信息。
 
-## 查询与提交答案的格式（必须严格遵守）
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，审查失败。
 
 每次查询只能包含一个标签。请使用以下 XML 格式：
 
-- 前端篇章尽调（例如查询前 5 条）：
-<query_prefix>5</query_prefix>
+- 上位法查询（例如查询法条 5 的上位法）：
+<query_parent>5</query_parent>
 
-- 单一条款质询（例如查询第 3 条）：
-<query_single>3</query_single>
+- 下位细则列表查询（例如查询法条 3 的下位法条）：
+<query_children>3</query_children>
 
-提交最终审查意见时，请使用以下格式：
+- 适用范围包含关系查询（例如查询法条 2 的适用范围是否包含法条 7，格式为 u,x）：
+<query_subtree>2,7</query_subtree>
 
-- 如果找到首个风险条款（例如第 7 条）：
-<answer>7</answer>
+提交最终答案时，直接给出目标法条的法理层级（一个非负整数），格式如下：
 
-- 如果全篇合同均合规无风险：
-<answer>不存在</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Let's play a "First Compliance Risk Identification" legal review game. Here are the rules:
+[Law Scenario]
+Welcome to the "Legal Provisions Hierarchy Review System".
 
-A comprehensive commercial contract contains {n} core clauses, numbered 1 to {n} in textual order. An AI legal system has completed background qualitative analysis before the game starts, with each clause's compliance status classified as either "Breach Risk" or "Compliant". The entire contract might be completely compliant, or it may conceal breach risks in one or more clauses.
+This system records a hierarchy of legal provisions that diverges in a strict tree form, with provision numbers ranging from 1 to {n}. The fundamental basic law of this system is {root}, and its jurisprudential level is defined as 0. The target legal provision you need to review is {target}.
 
-Your goal is: to determine the clause number t of the first "Breach Risk" (i.e., the minimum clause number that poses a risk) to establish the preliminary defense line for contract negotiation; if all clauses are fully compliant, output "NotExist".
+The jurisprudential level of a provision is defined as: the number of derivations (edges) on the unique jurisprudential path from the basic law to that provision.
 
-You can obtain information by invoking two types of review probes from the smart legal system (only one probe per turn):
+Your task is to deduce the jurisprudential level of the target provision {target}. You can repeatedly ask the system three types of queries (one per turn), and the system will answer truthfully based on the actual legal subordination structure:
 
-1. **Front-End Section Due Diligence (Prefix Query)**: Ask whether there is any breach risk clause from clause 1 up to clause k. The system will return "Yes" or "No".
-   - "Yes" means at least one clause between 1 and k poses a breach risk
-   - "No" means all clauses from 1 to k are compliant
+1. Superior Law Query: Ask what is the direct superior law (source of authorization) of provision u.
+   - If u is not the basic law, answer with its direct superior provision number (an integer).
+   - If u is the basic law, answer "NONE".
 
-2. **Single Clause Interrogation (Single Point Query)**: Ask whether a specific clause i harbors a breach risk. The system will return "Yes" or "No".
-   - "Yes" means clause i poses a breach risk
-   - "No" means clause i is compliant
+2. Subordinate Rules Query: Ask which subordinate rules were directly authorized and derived by provision u.
+   - Answer with the list of all direct subordinate provision numbers of u (may be empty).
 
-If the queried clause index is out of valid range (less than 1 or greater than {n}), the system will return "Invalid index".
+3. Application Scope Containment Query: Ask whether provision x falls within the scope of derived laws legally based on provision u (including u itself).
+   - If x is in u's derived application scope, answer "YES".
+   - Otherwise answer "NO".
 
-Please try to pinpoint the first risk clause with as few queries as possible. When you have collected enough information, submit your final review opinion.
+Note: All answers are based solely on local jurisprudential authorization relationships and do not directly provide level or distance information.
 
-## Query and Answer Format (must strictly follow)
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the review fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Front-End Section Due Diligence (e.g., query first 5 clauses):
-<query_prefix>5</query_prefix>
+- Superior Law Query (e.g., query superior law of provision 5):
+<query_parent>5</query_parent>
 
-- Single Clause Interrogation (e.g., query clause 3):
-<query_single>3</query_single>
+- Subordinate Rules Query (e.g., query subordinate rules of provision 3):
+<query_children>3</query_children>
 
-When submitting the final review opinion, use the following format:
+- Application Scope Containment Query (e.g., query if the application scope of provision 2 contains provision 7, format is u,x):
+<query_subtree>2,7</query_subtree>
 
-- If the first risk clause is found (e.g., clause 7):
-<answer>7</answer>
+When submitting the final answer, provide the jurisprudential level of the target provision (a non-negative integer) in this format:
 
-- If the entire contract is compliant with no risks:
-<answer>NotExist</answer>
+<answer>5</answer>
 """
 
-    tags = ["answer", "query_prefix", "query_single"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
-
-    # 难度说明：
-    # 1 (easy)       - N=8,  第一个X在位置3
-    # 2 (medium_low) - N=16, 第一个X在位置5
-    # 3 (medium_high)- N=32, 第一个X在位置20
-    # 4 (hard)       - N=64, 第一个X在位置50
-    # 5 (very_hard)  - N=100, 不存在X
-
-    DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 8,
-                "sequence": [0, 0, 1, 0, 0, 1, 0, 1],  # 1表示X，0表示非X
-                "first_x": 3,  # 首次出现位置
-            },
-            2: {
-                "n": 16,
-                "sequence": [0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-                "first_x": 5,
-            },
-            3: {
-                "n": 32,
-                "sequence": [0]*19 + [1] + [0]*5 + [1] + [0]*6,
-                "first_x": 20,
-            },
-            4: {
-                "n": 64,
-                "sequence": [0]*49 + [1] + [0]*10 + [1] + [0]*3,
-                "first_x": 50,
-            },
-            5: {
-                "n": 100,
-                "sequence": [0]*100,
-                "first_x": None,  # 不存在
-            },
-        },
-        "en": {
-            1: {
-                "n": 8,
-                "sequence": [0, 0, 1, 0, 0, 1, 0, 1],
-                "first_x": 3,
-            },
-            2: {
-                "n": 16,
-                "sequence": [0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-                "first_x": 5,
-            },
-            3: {
-                "n": 32,
-                "sequence": [0]*19 + [1] + [0]*5 + [1] + [0]*6,
-                "first_x": 20,
-            },
-            4: {
-                "n": 64,
-                "sequence": [0]*49 + [1] + [0]*10 + [1] + [0]*3,
-                "first_x": 50,
-            },
-            5: {
-                "n": 100,
-                "sequence": [0]*100,
-                "first_x": None,
-            },
-        },
-    }
-
-    def __init__(self, config):
-        super().__init__(config)
-
     def _initialize_game(self):
-        """初始化游戏配置和序列"""
-        lang = self.config.language
-        diff = int(self.config.difficulty)
-
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
-            raise KeyError(f"Unsupported difficulty: {diff}")
-
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
+        seed = hash((self.config.difficulty, getattr(self.config, 'seed', 42))) % (2**32)
+        rng = random.Random(seed)
         
-        # 存储序列和答案
-        self.sequence = cfg["sequence"]  # 1表示X，0表示非X
-        self.first_x_position = cfg["first_x"]  # None表示不存在
-        self.n = cfg["n"]
+        try:
+            difficulty = int(self.config.difficulty)
+        except AttributeError:
+            difficulty = 1
+
+        if difficulty == 1:
+            n = rng.randint(10, 15)
+            min_depth = 2
+        elif difficulty == 2:
+            n = rng.randint(15, 25)
+            min_depth = 3
+        elif difficulty == 3:
+            n = rng.randint(20, 30)
+            min_depth = 4
+        elif difficulty == 4:
+            n = rng.randint(25, 40)
+            min_depth = 5
+        else:
+            n = rng.randint(30, 50)
+            min_depth = 6
+
+        for _ in range(100):
+            nodes = list(range(1, n + 1))
+            rng.shuffle(nodes)
+            root = nodes[0]
+            
+            self.parent_map = {root: "NONE"}
+            self.children_map = {node: [] for node in nodes}
+            
+            added_nodes = [root]
+            for node in nodes[1:]:
+                parent = rng.choice(added_nodes)
+                self.parent_map[node] = parent
+                self.children_map[parent].append(node)
+                added_nodes.append(node)
+                
+            self.depth_map = {root: 0}
+            queue = [root]
+            while queue:
+                curr = queue.pop(0)
+                for child in self.children_map[curr]:
+                    self.depth_map[child] = self.depth_map[curr] + 1
+                    queue.append(child)
+            
+            candidates = [nd for nd in nodes[1:] if self.depth_map[nd] >= min_depth]
+            if candidates:
+                target = rng.choice(candidates)
+                break
+        else:
+            target = max(nodes[1:], key=lambda nd: self.depth_map[nd])
+            
+        self.subtree_map = {node: set() for node in nodes}
+        def dfs(u):
+            self.subtree_map[u].add(u)
+            for v in self.children_map[u]:
+                self.subtree_map[u].update(dfs(v))
+            return self.subtree_map[u]
+        dfs(root)
         
-        # 查询计数（可选，用于统计）
-        self.query_count = 0
+        self._game_info = {
+            "n": n,
+            "root": root,
+            "target": target
+        }
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
-        
-        # 处理"不存在"的情况
-        if self.config.language == "zh":
-            not_exist_keywords = ["不存在", "无", "没有"]
-        else:
-            not_exist_keywords = ["NotExist", "notexist", "not exist", "none", "no"]
-        
-        is_not_exist_answer = any(keyword in raw_ans.lower() for keyword in [k.lower() for k in not_exist_keywords])
-        
-        # 情况1：答案是"不存在"
-        if is_not_exist_answer:
-            return self.first_x_position is None
-        
-        # 情况2：答案是一个位置编号
         try:
-            # 尝试从答案中提取数字
-            match = re.search(r'\d+', raw_ans)
-            if match:
-                position = int(match.group())
-                return position == self.first_x_position
-            else:
-                return False
-        except:
+            ans = int(parsed_info.get("answer", -1))
+            return ans == self.depth_map[self._game_info["target"]]
+        except ValueError:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑：根据查询类型产生真实响应"""
-        self.query_count += 1
-        
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            invalid_res = "无效索引"
-        else:
-            yes_res, no_res = "Yes", "No"
-            invalid_res = "Invalid index"
-
-        # 优先处理前缀查询
-        if "query_prefix" in parsed_info:
+        if "query_parent" in parsed_info:
             try:
-                k = int(parsed_info["query_prefix"].strip())
-                
-                # 检查索引有效性
-                if k < 1 or k > self.n:
-                    return invalid_res
-                
-                # 检查前k个位置中是否存在X
-                has_x = any(self.sequence[i] == 1 for i in range(k))
-                return yes_res if has_x else no_res
-                
+                u = int(parsed_info["query_parent"])
+                if u not in self.parent_map:
+                    return "Invalid node."
+                return str(self.parent_map[u])
             except ValueError:
-                return invalid_res
-
-        # 处理单点查询
-        elif "query_single" in parsed_info:
+                return "Invalid format."
+                
+        if "query_children" in parsed_info:
             try:
-                i = int(parsed_info["query_single"].strip())
-                
-                # 检查索引有效性
-                if i < 1 or i > self.n:
-                    return invalid_res
-                
-                # 检查位置i是否为X（注意：序列索引从0开始，位置从1开始）
-                is_x = self.sequence[i - 1] == 1
-                return yes_res if is_x else no_res
-                
+                u = int(parsed_info["query_children"])
+                if u not in self.children_map:
+                    return "Invalid node."
+                return str(self.children_map[u])
             except ValueError:
-                return invalid_res
+                return "Invalid format."
+                
+        if "query_subtree" in parsed_info:
+            try:
+                parts = parsed_info["query_subtree"].split(',')
+                if len(parts) != 2:
+                    return "Invalid format."
+                u = int(parts[0].strip())
+                x = int(parts[1].strip())
+                if u not in self.subtree_map or x not in self.parent_map:
+                    return "Invalid node."
+                if x in self.subtree_map[u]:
+                    return "YES"
+                else:
+                    return "NO"
+            except ValueError:
+                return "Invalid format."
+        return "Invalid query."
 
+    def get_all_possible_queries(self):
+        queries = []
+        for u in self.parent_map.keys():
+            query_str = f"<query_parent>{u}</query_parent>"
+            answer_str = str(self.parent_map[u])
+            queries.append({"query": query_str, "answer": answer_str})
+            
+            query_str = f"<query_children>{u}</query_children>"
+            answer_str = str(self.children_map[u])
+            queries.append({"query": query_str, "answer": answer_str})
+        
+        target = self._game_info["target"]
+        root = self._game_info["root"]
+        
+        node = target
+        while node != root:
+            parent = self.parent_map[node]
+            query_str = f"<query_subtree>{parent},{target}</query_subtree>"
+            answer_str = "YES"
+            queries.append({"query": query_str, "answer": answer_str})
+            node = parent
+        
+        ancestors = set()
+        node = target
+        while node != root:
+            node = self.parent_map[node]
+            ancestors.add(node)
+        ancestors.add(root)
+        
+        non_ancestors = [nd for nd in self.parent_map if nd not in ancestors and nd != target]
+        for nd in non_ancestors[:min(5, len(non_ancestors))]:
+            if target not in self.subtree_map.get(nd, set()):
+                query_str = f"<query_subtree>{nd},{target}</query_subtree>"
+                answer_str = "NO"
+                queries.append({"query": query_str, "answer": answer_str})
+        
+        return queries
+
+    def _cf_make_wrong(self, correct):
+        if correct == "YES":
+            return "NO"
+        elif correct == "NO":
+            return "YES"
+        elif correct == "NONE":
+            for node in self.parent_map:
+                if node != self._game_info["root"]:
+                    return str(node)
+            return "1"
+        elif correct.startswith("["):
+            if correct == "[]":
+                some_node = self._game_info["target"]
+                return f"[{some_node}]"
+            else:
+                return "[]"
         else:
-            raise ValueError("No valid query tag found.")
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """生成错误答案"""
-        # 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        # 关键词替换
-        mapping = {
-            "是": "否",
-            "否": "是",
-            "Yes": "No",
-            "No": "Yes",
-            "yes": "no",
-            "no": "yes",
-            "无效索引": "是",
-            "Invalid index": "Yes"
-        }
-        
-        if correct in mapping:
-            return mapping[correct]
-            
-        # 都不匹配则追加后缀
-        return correct + "_WRONG"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
-        
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
-            
-        for i in range(1, self.n + 1):
-            # 1. 前缀存在性查询
-            query_prefix = f"<query_prefix>{i}</query_prefix>"
-            # 计算逻辑：前k个位置中是否存在X (self.sequence索引0到k-1)
-            has_x = any(self.sequence[j] == 1 for j in range(i))
-            ans_prefix = yes_res if has_x else no_res
-            results.append({
-                "query": query_prefix,
-                "answer": ans_prefix
-            })
-            
-            # 2. 单点查询
-            query_single = f"<query_single>{i}</query_single>"
-            # 计算逻辑：位置i是否为X (self.sequence索引i-1)
-            is_x = self.sequence[i-1] == 1
-            ans_single = yes_res if is_x else no_res
-            results.append({
-                "query": query_single,
-                "answer": ans_single
-            })
-            
-        return results
+            try:
+                correct_int = int(correct)
+                for node in self.parent_map:
+                    if node != correct_int:
+                        return str(node)
+            except ValueError:
+                pass
+            return "1" if correct != "1" else "2"

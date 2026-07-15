@@ -1,897 +1,997 @@
+import random
+import re
 from .base import Game
 
-
-class StructureIdentificationGame(Game):
-    reasoning_type = "溯因推理"
-    data_structure = "树"
+class HiddenStatisticsRuleGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"交互式结构辨识"推理游戏，规则如下：
+我们来玩一个"隐藏统计规则"的推理游戏，规则如下：
 
-游戏设定了一个标签集合，包含 {n} 个标签：{labels}。
-候选树结构如下：
-{candidate_trees}
+游戏设定了一个有限集合 U，包含 N 个元素（N 未知）。每个元素具有两种二元属性：
+- 属性 A，取值为 A1 或 A2
+- 属性 B，取值为 B1 或 B2
 
-我已秘密选择了一棵有根有向树作为真实结构，该树从根节点 A 出发，每个节点可能有零个或多个直系子节点。
+已知四种组合（A1且B1、A1且B2、A2且B1、A2且B2）的元素数量均大于 0。
 
-你的目标是通过查询推断出这棵真实树的完整结构，并最终给出：
-1. 真实树的编号（T1, T2, T3 或 T4）
-2. 节点 C 的全部直系子节点列表（按字母序排列）
+我已秘密选定了一种"应答方案"，对你的所有查询都将按照同一方案计算。方案共有四种可能（具体定义保密），不同方案会对相同查询给出不同的比例值。
 
-你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据真实树如实回答：
+你的目标是通过提问推断出我使用的是哪一种方案，并给出验证。
 
-1. 子列表查询：询问某个节点的全部直系子节点。我会返回按字母序排序的列表，如果该节点没有子节点则返回空列表。
-2. 子数查询：询问某个节点的直系子节点数量。我会返回一个非负整数。
-3. 成员判定：询问某个节点 Y 是否为节点 X 的直系子节点。我会回答"是"或"否"。
+你可以反复向我提出以下两类问题（每次仅限一个问题）：
 
-当你确定答案后，请提交最终结论。若答案错误或格式不符，游戏失败。
+1. **数值查询**：指定一个目标条件 X 和一个过滤条件 F。
+   - X 可以是：A1、A2、B1、B2、A1且B1、A1且B2、A2且B1、A2且B2
+   - F 只能是：A1、A2、B1、B2
+   - 我会返回一个比例值（以分数或小数形式）
 
-## 查询与提交格式
+2. **相等性查询**：指定两个数值查询，询问它们的结果是否相等。
+   - 我会返回"是"或"否"
 
-每次只能提交一个查询标签。请使用以下 XML 格式：
+注意：若某查询导致分母为 0（如过滤条件对应的元素数为 0），我会返回"不可用"，该次查询不计入有效次数。
 
-- 子列表查询（例如查询节点 A 的子节点）：
-<query_children>A</query_children>
+每次只能包含一个查询标签，使用以下 XML 格式：
 
-- 子数查询（例如查询节点 B 的子节点数量）：
-<query_count>B</query_count>
+- 数值查询（例如目标为 A1且B1，过滤为 A1）：
+<query_value>X=A1且B1, F=A1</query_value>
 
-- 成员判定（例如询问 C 是否为 A 的直系子节点）：
-<query_member>A,C</query_member>
+- 相等性查询（例如询问两个数值查询是否相等）：
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-提交最终答案时，必须说明真实树的编号和节点 C 的直系子节点列表（用逗号隔开，按字母序排列），格式如下：
+当你确定方案后，请按以下格式提交：
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>方案=A, 验证查询=X=A1, F=B1, 计算式=|A1且B1|/|B1|, 历史值=0.5</answer>
 
-请尽可能用少的查询次数完成推理。
+其中：
+- **方案**：填写 A、B、C 或 D
+- **验证查询**：从你之前的某一条数值查询中选择一条（用 X=..., F=... 表示）
+- **计算式**：给出该查询在你判定的方案下的形式化表达式（用集合计数符号表示）
+- **历史值**：该查询当时我返回的数值
+
+验证将检查：
+1. 方案是否正确
+2. 计算式是否符合该方案的定义
+3. 根据计算式推导的结果是否与历史值一致
 """
 
     game_rule_en = """\
-Let's play a "Structure Identification" deduction game. Here are the rules:
+Let's play a "Hidden Statistics Rule" deduction game. Here are the rules:
 
-The game defines a set of {n} labels: {labels}.
-Candidate tree structures are as follows:
-{candidate_trees}
+There is a finite set U containing N elements (N is unknown). Each element has two binary attributes:
+- Attribute A, valued as A1 or A2
+- Attribute B, valued as B1 or B2
 
-I have secretly chosen a rooted directed tree as the true structure. The tree starts from root node A, and each node may have zero or more direct children.
+It is known that all four combinations (A1 and B1, A1 and B2, A2 and B1, A2 and B2) have positive counts.
 
-Your goal is to infer the complete structure of the true tree through queries, and finally provide:
-1. The ID of the true tree (T1, T2, T3, or T4)
-2. The complete list of direct children of node C (sorted alphabetically)
+I have secretly selected a "response scheme" that will be used consistently for all your queries. There are four possible schemes (definitions kept secret), and different schemes will return different ratio values for the same query.
 
-You can repeatedly ask me three types of queries (one query per turn), and I will answer truthfully based on the true tree:
+Your goal is to deduce which scheme I am using through queries, and provide verification.
 
-1. Children Query: Ask for all direct children of a node. I will return a list sorted alphabetically, or an empty list if the node has no children.
-2. Count Query: Ask for the number of direct children of a node. I will return a non-negative integer.
-3. Membership Query: Ask whether node Y is a direct child of node X. I will answer "Yes" or "No".
+You can repeatedly ask me the following two types of questions (one per turn):
 
-When you are confident about your answer, submit your final conclusion. If the answer is wrong or the format is invalid, the game fails.
+1. **Value Query**: Specify a target condition X and a filter condition F.
+   - X can be: A1, A2, B1, B2, A1 and B1, A1 and B2, A2 and B1, A2 and B2
+   - F can only be: A1, A2, B1, B2
+   - I will return a ratio value (as a fraction or decimal)
 
-## Query and Answer Format
+2. **Equality Query**: Specify two value queries and ask if their results are equal.
+   - I will return "Yes" or "No"
 
-Each turn you can submit only one query tag. Use the following XML format:
+Note: If a query causes a zero denominator (e.g., the filter condition has no elements), I will return "Unavailable", and this query will not count toward the limit.
 
-- Children Query (e.g., query children of node A):
-<query_children>A</query_children>
+Each turn must contain only one query tag, using the following XML format:
 
-- Count Query (e.g., query the number of children of node B):
-<query_count>B</query_count>
+- Value Query (e.g., target is A1 and B1, filter is A1):
+<query_value>X=A1 and B1, F=A1</query_value>
 
-- Membership Query (e.g., ask if C is a direct child of A):
-<query_member>A,C</query_member>
+- Equality Query (e.g., asking if two value queries are equal):
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-When submitting the final answer, you must specify the true tree ID and the direct children list of node C (comma-separated, sorted alphabetically), using this format:
+When you determine the scheme, submit in the following format:
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>scheme=A, verification_query=X=A1, F=B1, formula=|A1 and B1|/|B1|, historical_value=0.5</answer>
 
-Please complete the reasoning with as few queries as possible.
+Where:
+- **scheme**: Fill in A, B, C, or D
+- **verification_query**: Select one of your previous value queries (expressed as X=..., F=...)
+- **formula**: Provide the formal expression for this query under your determined scheme (using set cardinality notation)
+- **historical_value**: The numerical value I returned for that query
+
+Verification will check:
+1. Whether the scheme is correct
+2. Whether the formula matches the scheme's definition
+3. Whether the result derived from the formula is consistent with the historical value
 """
 
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-欢迎进入“交通调度层级辨识系统”。
+欢迎接入智慧交通流量监控系统。本系统旨在通过多维数据下钻，分析城市路网中不同车辆的分布特征。
 
-系统已载入当前区域的公共交通网络，包含 {n} 个调度节点：{labels}。
-候选系统架构如下：
-{candidate_trees}
+系统当前框定了一个特定时段的车流集合 U，包含 N 辆车（N 未知）。每辆车具有两种二元属性：
+- 属性 A（车型），取值为 A1（小型车） 或 A2（大型车）
+- 属性 B（动力），取值为 B1（新能源） 或 B2（燃油）
 
-经核实，该指挥网络是一棵严格的有根有向层级树，总指挥中心为 A，每个调度中心可能直接管辖零个或多个直属下级节点。
+已知四种组合（A1且B1、A1且B2、A2且B1、A2且B2）的车辆数量均大于 0。
 
-你的任务是通过系统交互查询，推断出完整的调度拓扑结构，并最终提交：
-1. 真实网络架构的系统编号（T1, T2, T3 或 T4）
-2. 区域中心 C 直接管辖的所有下级节点列表（按字母序排列）
+系统底层已秘密选定了一种"统计核算方案"，对你的所有查询都将按照同一方案计算占比。方案共有四种可能（具体定义保密），不同方案会对相同查询给出不同的比例值。
 
-你可以反复提交以下三类查询指令（每次仅限一条），系统将基于真实网络如实返回：
+你的目标是通过提问推断出系统使用的是哪一种方案，并给出验证。
 
-1. 子列表查询：查询某中心的所有直属下级节点。系统返回按字母序排列的列表，若无则返回空列表。
-2. 子数查询：查询某中心的直属下级节点数量。系统返回一个非负整数。
-3. 成员判定：查询节点 Y 是否为节点 X 的直属下级。系统回答"是"或"否"。
+你可以反复向我提出以下两类问题（每次仅限一个问题）：
 
-当你确信掌握了完整结构后，请提交最终结论。若答案错误或格式不符，排查任务失败。
+1. **数值查询**：指定一个目标条件 X 和一个过滤条件 F。
+   - X 可以是：A1、A2、B1、B2、A1且B1、A1且B2、A2且B1、A2且B2
+   - F 只能是：A1、A2、B1、B2
+   - 我会返回一个比例值（以分数或小数形式）
 
-## 查询与提交格式
+2. **相等性查询**：指定两个数值查询，询问它们的结果是否相等。
+   - 我会返回"是"或"否"
 
-每次只能提交一个查询标签。请严格使用以下 XML 格式：
+注意：若某查询导致分母为 0（如过滤条件对应的元素数为 0），我会返回"不可用"，该次查询不计入有效次数。
 
-- 子列表查询（例如查询中心 A 的下级）：
-<query_children>A</query_children>
+每次只能包含一个查询标签，使用以下 XML 格式：
 
-- 子数查询（例如查询中心 B 的下级数量）：
-<query_count>B</query_count>
+- 数值查询（例如目标为 A1且B1，过滤为 A1）：
+<query_value>X=A1且B1, F=A1</query_value>
 
-- 成员判定（例如询问中心 C 是否为 A 的直属下级）：
-<query_member>A,C</query_member>
+- 相等性查询（例如询问两个数值查询是否相等）：
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-提交最终答案时，必须说明真实网络的编号和中心 C 的直属下级列表（用逗号隔开，按字母序排列），格式如下：
+当你确定方案后，请按以下格式提交：
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>方案=A, 验证查询=X=A1, F=B1, 计算式=|A1且B1|/|B1|, 历史值=0.5</answer>
 
-请尽可能以最少的查询次数完成架构排查。
+其中：
+- **方案**：填写 A、B、C 或 D
+- **验证查询**：从你之前的某一条数值查询中选择一条（用 X=..., F=... 表示）
+- **计算式**：给出该查询在你判定的方案下的形式化表达式（用集合计数符号表示）
+- **历史值**：该查询当时我返回的数值
+
+验证将检查：
+1. 方案是否正确
+2. 计算式是否符合该方案的定义
+3. 根据计算式推导的结果是否与历史值一致
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Welcome to the "Transit Dispatch Hierarchy Identification System."
+[Traffic Scenario]
+Welcome to the Smart Traffic Flow Monitoring System. This system is designed to analyze the distribution characteristics of different vehicles in the urban road network through multi-dimensional data drill-down.
 
-The system has loaded the public transit network for the current region, comprising {n} dispatch nodes: {labels}.
-Candidate system architectures are as follows:
-{candidate_trees}
+The system has configured a finite set U containing N vehicles (N is unknown). Each vehicle has two binary attributes:
+- Attribute A (Vehicle Type), valued as A1 (Compact) or A2 (Heavy)
+- Attribute B (Power Source), valued as B1 (EV) or B2 (ICE)
 
-It has been verified that the command network forms a strict rooted directed tree. The Main Dispatch Center is A, and each center may directly control zero or more subordinate nodes.
+It is known that all four combinations (A1 and B1, A1 and B2, A2 and B1, A2 and B2) have positive counts.
 
-Your task is to infer the complete dispatch topology through interactive queries and ultimately submit:
-1. The system ID of the true network architecture (T1, T2, T3, or T4)
-2. The complete list of subordinate nodes directly controlled by Regional Center C (sorted alphabetically)
+The system has secretly selected a "statistical accounting scheme" that will be used consistently for all your queries. There are four possible schemes (definitions kept secret), and different schemes will return different ratio values for the same query.
 
-You can repeatedly submit the following three types of queries (one per turn), and the system will answer truthfully based on the actual network:
+Your goal is to deduce which scheme the system is using through queries, and provide verification.
 
-1. Children Query: Ask for all direct subordinate nodes of a center. The system returns an alphabetically sorted list, or an empty list if there are none.
-2. Count Query: Ask for the number of direct subordinate nodes of a center. The system returns a non-negative integer.
-3. Membership Query: Ask whether node Y is a direct subordinate of node X. The system will answer "Yes" or "No".
+You can repeatedly ask me the following two types of questions (one per turn):
 
-Once you have determined the correct architecture, please submit your final conclusion. If the answer is incorrect or the format is invalid, the investigation fails.
+1. **Value Query**: Specify a target condition X and a filter condition F.
+   - X can be: A1, A2, B1, B2, A1 and B1, A1 and B2, A2 and B1, A2 and B2
+   - F can only be: A1, A2, B1, B2
+   - I will return a ratio value (as a fraction or decimal)
 
-## Query and Submission Format
+2. **Equality Query**: Specify two value queries and ask if their results are equal.
+   - I will return "Yes" or "No"
 
-Submit only one query tag per turn. Please strictly use the following XML format:
+Note: If a query causes a zero denominator (e.g., the filter condition has no elements), I will return "Unavailable", and this query will not count toward the limit.
 
-- Children Query (e.g., query subordinates of Center A):
-<query_children>A</query_children>
+Each turn must contain only one query tag, using the following XML format:
 
-- Count Query (e.g., query the number of subordinates of Center B):
-<query_count>B</query_count>
+- Value Query (e.g., target is A1 and B1, filter is A1):
+<query_value>X=A1 and B1, F=A1</query_value>
 
-- Membership Query (e.g., ask if Center C is a direct subordinate of Center A):
-<query_member>A,C</query_member>
+- Equality Query (e.g., asking if two value queries are equal):
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-When submitting the final answer, you must specify the true network ID and the list of Center C's direct subordinates (comma-separated, sorted alphabetically), using this format:
+When you determine the scheme, submit in the following format:
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>scheme=A, verification_query=X=A1, F=B1, formula=|A1 and B1|/|B1|, historical_value=0.5</answer>
 
-Please complete the architecture investigation with as few queries as possible.
+Where:
+- **scheme**: Fill in A, B, C, or D
+- **verification_query**: Select one of your previous value queries (expressed as X=..., F=...)
+- **formula**: Provide the formal expression for this query under your determined scheme (using set cardinality notation)
+- **historical_value**: The numerical value I returned for that query
+
+Verification will check:
+1. Whether the scheme is correct
+2. Whether the formula matches the scheme's definition
+3. Whether the result derived from the formula is consistent with the historical value
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-欢迎使用“病毒传播链溯源系统”。
+欢迎使用医疗数据双盲分析系统。本模块用于评估不同亚群患者的治疗结果与临床特征的相关性。
 
-系统已锁定本次疫情的关联网络，包含 {n} 个确诊病例：{labels}。
-候选传播链结构如下：
-{candidate_trees}
+系统加载了一个临床研究队列 U，包含 N 名患者病例（N 未知）。每个病例具有两种二元属性：
+- 属性 A（家族史），取值为 A1（有家族史） 或 A2（无家族史）
+- 属性 B（治疗结果），取值为 B1（治愈） 或 B2（未愈）
 
-流调数据显示，该传播链是一棵有根有向树，零号病人为 A，每个病例可能直接感染了零个或多个下属病例。
+已知四种组合（A1且B1、A1且B2、A2且B1、A2且B2）的病例数量均大于 0。
 
-你的任务是通过系统核查推断出完整的传播链结构，并最终提交：
-1. 真实传播链的溯源编号（T1, T2, T3 或 T4）
-2. 病例 C 直接感染的所有病例列表（按字母序排列）
+系统底层已秘密选定了一种"基准换算方案"，对你的所有查询都将按照同一方案计算占比。方案共有四种可能（具体定义保密），不同方案会对相同查询给出不同的比例值。
 
-你可以反复向系统提出以下三类流调查询（每次仅限一个查询），系统会如实返回数据：
+你的目标是通过提问推断出系统使用的是哪一种方案，并给出验证。
 
-1. 子列表查询：查询某病例直接感染的所有病例。系统返回按字母序排列的列表，若无则返回空列表。
-2. 子数查询：查询某病例直接感染的人数。系统返回一个非负整数。
-3. 成员判定：查询病例 Y 是否由病例 X 直接感染。系统回答"是"或"否"。
+你可以反复向我提出以下两类问题（每次仅限一个问题）：
 
-当你确信掌握了完整传播链后，请提交最终结论。若答案错误或格式不符，溯源任务失败。
+1. **数值查询**：指定一个目标条件 X 和一个过滤条件 F。
+   - X 可以是：A1、A2、B1、B2、A1且B1、A1且B2、A2且B1、A2且B2
+   - F 只能是：A1、A2、B1、B2
+   - 我会返回一个比例值（以分数或小数形式）
 
-## 查询与提交格式
+2. **相等性查询**：指定两个数值查询，询问它们的结果是否相等。
+   - 我会返回"是"或"否"
 
-每次只能提交一个查询标签。请使用以下 XML 格式：
+注意：若某查询导致分母为 0（如过滤条件对应的元素数为 0），我会返回"不可用"，该次查询不计入有效次数。
 
-- 子列表查询（例如查询病例 A 的直接感染者）：
-<query_children>A</query_children>
+每次只能包含一个查询标签，使用以下 XML 格式：
 
-- 子数查询（例如查询病例 B 传染的人数）：
-<query_count>B</query_count>
+- 数值查询（例如目标为 A1且B1，过滤为 A1）：
+<query_value>X=A1且B1, F=A1</query_value>
 
-- 成员判定（例如询问病例 C 是否由病例 A 直接感染）：
-<query_member>A,C</query_member>
+- 相等性查询（例如询问两个数值查询是否相等）：
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-提交最终答案时，必须说明真实传播链编号和病例 C 直接感染的病例列表（用逗号隔开，按字母序排列），格式如下：
+当你确定方案后，请按以下格式提交：
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>方案=A, 验证查询=X=A1, F=B1, 计算式=|A1且B1|/|B1|, 历史值=0.5</answer>
 
-请尽可能以最少的查询次数完成流调溯源。
+其中：
+- **方案**：填写 A、B、C 或 D
+- **验证查询**：从你之前的某一条数值查询中选择一条（用 X=..., F=... 表示）
+- **计算式**：给出该查询在你判定的方案下的形式化表达式（用集合计数符号表示）
+- **历史值**：该查询当时我返回的数值
+
+验证将检查：
+1. 方案是否正确
+2. 计算式是否符合该方案的定义
+3. 根据计算式推导的结果是否与历史值一致
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Welcome to the "Virus Transmission Chain Tracing System."
+[Medical Scenario]
+Welcome to the Medical Double-Blind Data Analysis System. This module is used to evaluate the correlation between treatment outcomes and clinical characteristics in different patient subpopulations.
 
-The system has mapped the infection network for the current outbreak, containing {n} confirmed cases: {labels}.
-Candidate transmission chain structures are as follows:
-{candidate_trees}
+The system has configured a finite set U containing N patient cases (N is unknown). Each patient case has two binary attributes:
+- Attribute A (Family History), valued as A1 (Has Family History) or A2 (No Family History)
+- Attribute B (Treatment Outcome), valued as B1 (Cured) or B2 (Uncured)
 
-Epidemiological data shows that this transmission chain is a rooted directed tree. Patient Zero is A, and each patient may have directly infected zero or more subsequent cases.
+It is known that all four combinations (A1 and B1, A1 and B2, A2 and B1, A2 and B2) have positive counts.
 
-Your task is to infer the complete structure of the transmission chain through queries and ultimately submit:
-1. The exact ID of the true transmission chain (T1, T2, T3, or T4)
-2. The complete list of cases directly infected by Case C (sorted alphabetically)
+The system has secretly selected a "baseline conversion scheme" that will be used consistently for all your queries. There are four possible schemes (definitions kept secret), and different schemes will return different ratio values for the same query.
 
-You can repeatedly submit the following three types of epidemiological queries (one per turn), and the system will answer truthfully:
+Your goal is to deduce which scheme the system is using through queries, and provide verification.
 
-1. Children Query: Ask for all cases directly infected by a specific patient. The system returns an alphabetically sorted list, or an empty list if there are none.
-2. Count Query: Ask for the number of people directly infected by a patient. The system returns a non-negative integer.
-3. Membership Query: Ask whether Case Y was directly infected by Case X. The system will answer "Yes" or "No".
+You can repeatedly ask me the following two types of questions (one per turn):
 
-Once you are confident about the complete chain, submit your final conclusion. If the answer is incorrect or the format is invalid, the tracing task fails.
+1. **Value Query**: Specify a target condition X and a filter condition F.
+   - X can be: A1, A2, B1, B2, A1 and B1, A1 and B2, A2 and B1, A2 and B2
+   - F can only be: A1, A2, B1, B2
+   - I will return a ratio value (as a fraction or decimal)
 
-## Query and Submission Format
+2. **Equality Query**: Specify two value queries and ask if their results are equal.
+   - I will return "Yes" or "No"
 
-Submit only one query tag per turn. Please use the following XML format:
+Note: If a query causes a zero denominator (e.g., the filter condition has no elements), I will return "Unavailable", and this query will not count toward the limit.
 
-- Children Query (e.g., query direct infectees of Case A):
-<query_children>A</query_children>
+Each turn must contain only one query tag, using the following XML format:
 
-- Count Query (e.g., query the number of infections caused by Case B):
-<query_count>B</query_count>
+- Value Query (e.g., target is A1 and B1, filter is A1):
+<query_value>X=A1 and B1, F=A1</query_value>
 
-- Membership Query (e.g., ask if Case C was directly infected by Case A):
-<query_member>A,C</query_member>
+- Equality Query (e.g., asking if two value queries are equal):
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-When submitting the final answer, you must specify the true transmission chain ID and the list of Case C's direct infectees (comma-separated, sorted alphabetically), using this format:
+When you determine the scheme, submit in the following format:
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>scheme=A, verification_query=X=A1, F=B1, formula=|A1 and B1|/|B1|, historical_value=0.5</answer>
 
-Please complete the epidemiological tracing with as few queries as possible.
+Where:
+- **scheme**: Fill in A, B, C, or D
+- **verification_query**: Select one of your previous value queries (expressed as X=..., F=...)
+- **formula**: Provide the formal expression for this query under your determined scheme (using set cardinality notation)
+- **historical_value**: The numerical value I returned for that query
+
+Verification will check:
+1. Whether the scheme is correct
+2. Whether the formula matches the scheme's definition
+3. Whether the result derived from the formula is consistent with the historical value
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-欢迎访问“学术传承关系分析库”。
+欢迎登录教育质量追踪平台。本系统通过抽样数据，对比不同学习方式对学生成绩表现的潜在影响。
 
-数据库当前载入了一个学派网络，包含 {n} 名学者：{labels}。
-候选学术树结构如下：
-{candidate_trees}
+系统抽取了一个学生样本池 U，包含 N 名学生（N 未知）。每名学生具有两种二元属性：
+- 属性 A（学习方式），取值为 A1（线上） 或 A2（线下）
+- 属性 B（成绩表现），取值为 B1（达标） 或 B2（未达标）
 
-经考证，该学术传承图谱呈现严格的有根有向树结构，该学派的学术泰斗（祖师爷）为 A，每位导师可能直接指导零个或多个博士生。
+已知四种组合（A1且B1、A1且B2、A2且B1、A2且B2）的学生数量均大于 0。
 
-你的目标是通过检索引擎推断出该学派完整的师承树，并最终给出：
-1. 真实学术树的归档编号（T1, T2, T3 或 T4）
-2. 导师 C 直接指导的所有博士生列表（按字母序排列）
+系统底层已秘密选定了一种"统计核算方案"，对你的所有查询都将按照同一方案计算占比。方案共有四种可能（具体定义保密），不同方案会对相同查询给出不同的比例值。
 
-你可以反复调用以下三类检索指令（每次仅限一条），系统将基于真实史料如实返回：
+你的目标是通过提问推断出系统使用的是哪一种方案，并给出验证。
 
-1. 子列表查询：检索某位导师名下直接指导的所有学生。系统返回按字母序排列的列表，若无则返回空列表。
-2. 子数查询：检索某位导师直接指导的学生总数。系统返回一个非负整数。
-3. 成员判定：检索学者 Y 是否为学者 X 直接指导的学生。系统回答"是"或"否"。
+你可以反复向我提出以下两类问题（每次仅限一个问题）：
 
-当你确信还原了完整的学术树后，请提交最终结论。若答案错误或格式不符，考证任务失败。
+1. **数值查询**：指定一个目标条件 X 和一个过滤条件 F。
+   - X 可以是：A1、A2、B1、B2、A1且B1、A1且B2、A2且B1、A2且B2
+   - F 只能是：A1、A2、B1、B2
+   - 我会返回一个比例值（以分数或小数形式）
 
-## 查询与提交格式
+2. **相等性查询**：指定两个数值查询，询问它们的结果是否相等。
+   - 我会返回"是"或"否"
 
-每次只能提交一个查询标签。请严格遵循以下 XML 格式：
+注意：若某查询导致分母为 0（如过滤条件对应的元素数为 0），我会返回"不可用"，该次查询不计入有效次数。
 
-- 子列表查询（例如查询导师 A 的所有直属学生）：
-<query_children>A</query_children>
+每次只能包含一个查询标签，使用以下 XML 格式：
 
-- 子数查询（例如查询导师 B 的学生数量）：
-<query_count>B</query_count>
+- 数值查询（例如目标为 A1且B1，过滤为 A1）：
+<query_value>X=A1且B1, F=A1</query_value>
 
-- 成员判定（例如询问学者 C 是否为导师 A 的直属学生）：
-<query_member>A,C</query_member>
+- 相等性查询（例如询问两个数值查询是否相等）：
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-提交最终答案时，必须说明真实学术树的编号和导师 C 直接指导的学生列表（用逗号隔开，按字母序排列），格式如下：
+当你确定方案后，请按以下格式提交：
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>方案=A, 验证查询=X=A1, F=B1, 计算式=|A1且B1|/|B1|, 历史值=0.5</answer>
 
-请尽可能用最少的检索次数完成学术考证。
+其中：
+- **方案**：填写 A、B、C 或 D
+- **验证查询**：从你之前的某一条数值查询中选择一条（用 X=..., F=... 表示）
+- **计算式**：给出该查询在你判定的方案下的形式化表达式（用集合计数符号表示）
+- **历史值**：该查询当时我返回的数值
+
+验证将检查：
+1. 方案是否正确
+2. 计算式是否符合该方案的定义
+3. 根据计算式推导的结果是否与历史值一致
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Academic Lineage Analysis Database."
+Welcome to the Education Quality Tracking Platform. This system contrasts the potential impact of different learning modalities on students' performance using sampled data.
 
-The database has loaded an academic school network containing {n} scholars: {labels}.
-Candidate academic tree structures are as follows:
-{candidate_trees}
+The system has configured a finite set U containing N student samples (N is unknown). Each student sample has two binary attributes:
+- Attribute A (Learning Modality), valued as A1 (Online) or A2 (Offline)
+- Attribute B (Performance), valued as B1 (Passed) or B2 (Failed)
 
-Historical research confirms that this lineage forms a strict rooted directed tree. The founding academic (Dean) is A, and each supervisor may have directly mentored zero or more PhD students.
+It is known that all four combinations (A1 and B1, A1 and B2, A2 and B1, A2 and B2) have positive counts.
 
-Your goal is to infer the complete mentorship tree of this school through queries and ultimately provide:
-1. The archive ID of the true academic tree (T1, T2, T3, or T4)
-2. The complete list of PhD students directly supervised by Professor C (sorted alphabetically)
+The system has secretly selected a "statistical accounting scheme" that will be used consistently for all your queries. There are four possible schemes (definitions kept secret), and different schemes will return different ratio values for the same query.
 
-You can repeatedly execute the following three types of queries (one per turn), and the system will return factual historical data:
+Your goal is to deduce which scheme the system is using through queries, and provide verification.
 
-1. Children Query: Ask for all direct students supervised by a scholar. The system returns an alphabetically sorted list, or an empty list if there are none.
-2. Count Query: Ask for the total number of direct students supervised by a scholar. The system returns a non-negative integer.
-3. Membership Query: Ask whether Scholar Y is a direct student of Scholar X. The system will answer "Yes" or "No".
+You can repeatedly ask me the following two types of questions (one per turn):
 
-Once you have reconstructed the complete tree, submit your final conclusion. If the answer is incorrect or the format is invalid, the research task fails.
+1. **Value Query**: Specify a target condition X and a filter condition F.
+   - X can be: A1, A2, B1, B2, A1 and B1, A1 and B2, A2 and B1, A2 and B2
+   - F can only be: A1, A2, B1, B2
+   - I will return a ratio value (as a fraction or decimal)
 
-## Query and Submission Format
+2. **Equality Query**: Specify two value queries and ask if their results are equal.
+   - I will return "Yes" or "No"
 
-Submit only one query tag per turn. Please strictly use the following XML format:
+Note: If a query causes a zero denominator (e.g., the filter condition has no elements), I will return "Unavailable", and this query will not count toward the limit.
 
-- Children Query (e.g., query direct students of Professor A):
-<query_children>A</query_children>
+Each turn must contain only one query tag, using the following XML format:
 
-- Count Query (e.g., query the number of students of Professor B):
-<query_count>B</query_count>
+- Value Query (e.g., target is A1 and B1, filter is A1):
+<query_value>X=A1 and B1, F=A1</query_value>
 
-- Membership Query (e.g., ask if Scholar C is a direct student of Professor A):
-<query_member>A,C</query_member>
+- Equality Query (e.g., asking if two value queries are equal):
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-When submitting the final answer, you must specify the true academic tree ID and the list of Professor C's direct students (comma-separated, sorted alphabetically), using this format:
+When you determine the scheme, submit in the following format:
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>scheme=A, verification_query=X=A1, F=B1, formula=|A1 and B1|/|B1|, historical_value=0.5</answer>
 
-Please complete the lineage verification with as few queries as possible.
+Where:
+- **scheme**: Fill in A, B, C, or D
+- **verification_query**: Select one of your previous value queries (expressed as X=..., F=...)
+- **formula**: Provide the formal expression for this query under your determined scheme (using set cardinality notation)
+- **historical_value**: The numerical value I returned for that query
+
+Verification will check:
+1. Whether the scheme is correct
+2. Whether the formula matches the scheme's definition
+3. Whether the result derived from the formula is consistent with the historical value
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-欢迎进入“产品物料清单(BOM)解析仪”。
+欢迎访问工业良率分析终端。本系统用于深挖不同生产线体和质检批次之间的数据关联，以定位潜在的产能瓶颈。
 
-系统已读取该型装备的装配组件库，包含 {n} 个关键组件/模块：{labels}。
-候选BOM图谱版本如下：
-{candidate_trees}
+系统缓存了一个批次的生产部件集合 U，包含 N 个部件（N 未知）。每个部件具有两种二元属性：
+- 属性 A（生产线），取值为 A1（自动化线） 或 A2（人工线）
+- 属性 B（质检结果），取值为 B1（合格） 或 B2（瑕疵）
 
-工程设计表明，该装备的BOM构成一棵有根有向树，最终成品总成定为 A，每个组件可能由零个或多个直接子组件拼装而成。
+已知四种组合（A1且B1、A1且B2、A2且B1、A2且B2）的部件数量均大于 0。
 
-你的任务是通过系统诊断推断出完整的装配层级，并最终提交：
-1. 真实BOM图谱的版本编号（T1, T2, T3 或 T4）
-2. 模块 C 所包含的所有直接子组件列表（按字母序排列）
+系统底层已秘密选定了一种"良率基准核算方案"，对你的所有查询都将按照同一方案计算占比。方案共有四种可能（具体定义保密），不同方案会对相同查询给出不同的比例值。
 
-你可以反复向解析仪输入以下三类探测指令（每次仅限一条），仪器将如实返回结构参数：
+你的目标是通过提问推断出系统使用的是哪一种方案，并给出验证。
 
-1. 子列表查询：探测某组件包含的所有直接子组件。系统返回按字母序排列的列表，若该组件为最底层零件则返回空列表。
-2. 子数查询：探测某组件包含的直接子组件数量。系统返回一个非负整数。
-3. 成员判定：探测组件 Y 是否直接拼装于组件 X 之中。系统回答"是"或"否"。
+你可以反复向我提出以下两类问题（每次仅限一个问题）：
 
-当你确信解析出完整的BOM结构后，请提交最终报告。若答案错误或格式不符，解析作业失败。
+1. **数值查询**：指定一个目标条件 X 和一个过滤条件 F。
+   - X 可以是：A1、A2、B1、B2、A1且B1、A1且B2、A2且B1、A2且B2
+   - F 只能是：A1、A2、B1、B2
+   - 我会返回一个比例值（以分数或小数形式）
 
-## 查询与提交格式
+2. **相等性查询**：指定两个数值查询，询问它们的结果是否相等。
+   - 我会返回"是"或"否"
 
-每次只能提交一个查询标签。请使用以下 XML 格式：
+注意：若某查询导致分母为 0（如过滤条件对应的元素数为 0），我会返回"不可用"，该次查询不计入有效次数。
 
-- 子列表查询（例如查询成品 A 的直接子组件）：
-<query_children>A</query_children>
+每次只能包含一个查询标签，使用以下 XML 格式：
 
-- 子数查询（例如查询模块 B 的直接子组件数量）：
-<query_count>B</query_count>
+- 数值查询（例如目标为 A1且B1，过滤为 A1）：
+<query_value>X=A1且B1, F=A1</query_value>
 
-- 成员判定（例如询问组件 C 是否为成品 A 的直接子组件）：
-<query_member>A,C</query_member>
+- 相等性查询（例如询问两个数值查询是否相等）：
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-提交最终答案时，必须说明真实BOM的版本编号和模块 C 的直接子组件列表（用逗号隔开，按字母序排列），格式如下：
+当你确定方案后，请按以下格式提交：
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>方案=A, 验证查询=X=A1, F=B1, 计算式=|A1且B1|/|B1|, 历史值=0.5</answer>
 
-请尽可能以最少的探测指令完成结构解析。
+其中：
+- **方案**：填写 A、B、C 或 D
+- **验证查询**：从你之前的某一条数值查询中选择一条（用 X=..., F=... 表示）
+- **计算式**：给出该查询在你判定的方案下的形式化表达式（用集合计数符号表示）
+- **历史值**：该查询当时我返回的数值
+
+验证将检查：
+1. 方案是否正确
+2. 计算式是否符合该方案的定义
+3. 根据计算式推导的结果是否与历史值一致
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Product Bill of Materials (BOM) Analyzer."
+[Manufacturing/Industrial Scenario]
+Welcome to the Industrial Yield Analysis Terminal. This system is used to mine data associations between different production lines and quality inspection batches to locate potential capacity bottlenecks.
 
-The system has loaded the assembly components for this equipment, containing {n} key modules/parts: {labels}.
-Candidate BOM structures are as follows:
-{candidate_trees}
+The system has configured a finite set U containing N production components (N is unknown). Each production component has two binary attributes:
+- Attribute A (Production Line), valued as A1 (Auto Line) or A2 (Manual Line)
+- Attribute B (Inspection Result), valued as B1 (Passed) or B2 (Defective)
 
-Engineering designs indicate that this BOM forms a rooted directed tree. The Final Product is A, and each module may be directly composed of zero or more sub-components.
+It is known that all four combinations (A1 and B1, A1 and B2, A2 and B1, A2 and B2) have positive counts.
 
-Your task is to infer the complete assembly hierarchy through system diagnostics and ultimately submit:
-1. The version ID of the true BOM structure (T1, T2, T3, or T4)
-2. The complete list of direct sub-components that make up Module C (sorted alphabetically)
+The system has secretly selected a "yield baseline accounting scheme" that will be used consistently for all your queries. There are four possible schemes (definitions kept secret), and different schemes will return different ratio values for the same query.
 
-You can repeatedly input the following three types of diagnostic probes (one per turn), and the analyzer will return accurate structural parameters:
+Your goal is to deduce which scheme the system is using through queries, and provide verification.
 
-1. Children Query: Ask for all direct sub-components of a given module. The system returns an alphabetically sorted list, or an empty list if it is a base part.
-2. Count Query: Ask for the number of direct sub-components comprising a module. The system returns a non-negative integer.
-3. Membership Query: Ask whether Component Y is directly assembled into Component X. The system will answer "Yes" or "No".
+You can repeatedly ask me the following two types of questions (one per turn):
 
-Once you have successfully parsed the complete BOM, submit your final report. If the answer is incorrect or the format is invalid, the analysis fails.
+1. **Value Query**: Specify a target condition X and a filter condition F.
+   - X can be: A1, A2, B1, B2, A1 and B1, A1 and B2, A2 and B1, A2 and B2
+   - F can only be: A1, A2, B1, B2
+   - I will return a ratio value (as a fraction or decimal)
 
-## Query and Submission Format
+2. **Equality Query**: Specify two value queries and ask if their results are equal.
+   - I will return "Yes" or "No"
 
-Submit only one query tag per turn. Please use the following XML format:
+Note: If a query causes a zero denominator (e.g., the filter condition has no elements), I will return "Unavailable", and this query will not count toward the limit.
 
-- Children Query (e.g., query direct sub-components of Final Product A):
-<query_children>A</query_children>
+Each turn must contain only one query tag, using the following XML format:
 
-- Count Query (e.g., query the number of sub-components of Module B):
-<query_count>B</query_count>
+- Value Query (e.g., target is A1 and B1, filter is A1):
+<query_value>X=A1 and B1, F=A1</query_value>
 
-- Membership Query (e.g., ask if Component C is a direct sub-component of Final Product A):
-<query_member>A,C</query_member>
+- Equality Query (e.g., asking if two value queries are equal):
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-When submitting the final answer, you must specify the true BOM version ID and the list of Module C's direct sub-components (comma-separated, sorted alphabetically), using this format:
+When you determine the scheme, submit in the following format:
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>scheme=A, verification_query=X=A1, F=B1, formula=|A1 and B1|/|B1|, historical_value=0.5</answer>
 
-Please complete the structural analysis with as few probes as possible.
+Where:
+- **scheme**: Fill in A, B, C, or D
+- **verification_query**: Select one of your previous value queries (expressed as X=..., F=...)
+- **formula**: Provide the formal expression for this query under your determined scheme (using set cardinality notation)
+- **historical_value**: The numerical value I returned for that query
+
+Verification will check:
+1. Whether the scheme is correct
+2. Whether the formula matches the scheme's definition
+3. Whether the result derived from the formula is consistent with the historical value
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-欢迎启动“企业股权穿透核查系统”。
+欢迎进入司法判例检索系统。本系统基于海量卷宗，协助您计算特定前置条件组合下的判决比率。
 
-核查库当前锁定了一个庞大的商业帝国，包含 {n} 个法人实体：{labels}。
-候选股权架构如下：
-{candidate_trees}
+系统筛选了一个特定领域的过往案例库 U，包含 N 份卷宗（N 未知）。每份卷宗具有两种二元属性：
+- 属性 A（案件类型），取值为 A1（民事纠纷） 或 A2（刑事诉讼）
+- 属性 B（判决结果），取值为 B1（胜诉） 或 B2（败诉）
 
-工商穿透数据确认，该财团的控制架构是一棵有根有向树，绝对控股母公司为 A，每个公司可能直接全资控股零个或多个子公司。
+已知四种组合（A1且B1、A1且B2、A2且B1、A2且B2）的卷宗数量均大于 0。
 
-你的任务是通过工商调档推断出该财团真实的资本迷宫，并最终出具：
-1. 真实股权架构的备案编号（T1, T2, T3 或 T4）
-2. 公司 C 直接全资控股的所有子公司列表（按字母序排列）
+系统底层已秘密选定了一种"判例比率统计方案"，对你的所有查询都将按照同一方案计算占比。方案共有四种可能（具体定义保密），不同方案会对相同查询给出不同的比例值。
 
-你可以反复调用以下三类查档接口（每次仅限一次调用），系统将基于真实工商数据如实反馈：
+你的目标是通过提问推断出系统使用的是哪一种方案，并给出验证。
 
-1. 子列表查询：调取某公司名下直接全资控股的所有子公司。系统返回按字母序排列的列表，若无子公司则返回空列表。
-2. 子数查询：调取某公司直接控股的子公司数量。系统返回一个非负整数。
-3. 成员判定：核查公司 Y 是否为公司 X 的直接控股子公司。系统回答"是"或"否"。
+你可以反复向我提出以下两类问题（每次仅限一个问题）：
 
-当你确信理清了整个控股架构后，请提交最终结论。若核实错误或报告格式不符，穿透核查失败。
+1. **数值查询**：指定一个目标条件 X 和一个过滤条件 F。
+   - X 可以是：A1、A2、B1、B2、A1且B1、A1且B2、A2且B1、A2且B2
+   - F 只能是：A1、A2、B1、B2
+   - 我会返回一个比例值（以分数或小数形式）
 
-## 查询与提交格式
+2. **相等性查询**：指定两个数值查询，询问它们的结果是否相等。
+   - 我会返回"是"或"否"
 
-每次只能提交一个查询标签。请严格使用以下 XML 格式：
+注意：若某查询导致分母为 0（如过滤条件对应的元素数为 0），我会返回"不可用"，该次查询不计入有效次数。
 
-- 子列表查询（例如查询母公司 A 的直接子公司）：
-<query_children>A</query_children>
+每次只能包含一个查询标签，使用以下 XML 格式：
 
-- 子数查询（例如查询公司 B 的直接子公司数量）：
-<query_count>B</query_count>
+- 数值查询（例如目标为 A1且B1，过滤为 A1）：
+<query_value>X=A1且B1, F=A1</query_value>
 
-- 成员判定（例如询问公司 C 是否为母公司 A 的直接子公司）：
-<query_member>A,C</query_member>
+- 相等性查询（例如询问两个数值查询是否相等）：
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-提交最终答案时，必须说明真实架构的备案编号和公司 C 的直接子公司列表（用逗号隔开，按字母序排列），格式如下：
+当你确定方案后，请按以下格式提交：
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>方案=A, 验证查询=X=A1, F=B1, 计算式=|A1且B1|/|B1|, 历史值=0.5</answer>
 
-请尽可能以最少的查档次数完成股权穿透任务。
+其中：
+- **方案**：填写 A、B、C 或 D
+- **验证查询**：从你之前的某一条数值查询中选择一条（用 X=..., F=... 表示）
+- **计算式**：给出该查询在你判定的方案下的形式化表达式（用集合计数符号表示）
+- **历史值**：该查询当时我返回的数值
+
+验证将检查：
+1. 方案是否正确
+2. 计算式是否符合该方案的定义
+3. 根据计算式推导的结果是否与历史值一致
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the "Corporate Equity Penetration Audit System."
+[Legal Scenario]
+Welcome to the Judicial Case Retrieval System. This system assists you in calculating the judgment ratios under specific combinations of preconditions based on massive case files.
 
-The audit database has isolated a massive corporate conglomerate containing {n} legal entities: {labels}.
-Candidate corporate equity structures are as follows:
-{candidate_trees}
+The system has configured a finite set U containing N case files (N is unknown). Each case file has two binary attributes:
+- Attribute A (Case Type), valued as A1 (Civil Dispute) or A2 (Criminal Proceeding)
+- Attribute B (Judgment Result), valued as B1 (Won) or B2 (Lost)
 
-Penetration data confirms that the control architecture of this syndicate is a rooted directed tree. The Ultimate Parent Company is A, and each company may directly own/control zero or more subsidiaries.
+It is known that all four combinations (A1 and B1, A1 and B2, A2 and B1, A2 and B2) have positive counts.
 
-Your task is to infer the true capital labyrinth of the syndicate through corporate record retrieval and ultimately issue:
-1. The filing ID of the true corporate equity structure (T1, T2, T3, or T4)
-2. The complete list of direct subsidiaries wholly owned by Holding Company C (sorted alphabetically)
+The system has secretly selected a "case ratio statistics scheme" that will be used consistently for all your queries. There are four possible schemes (definitions kept secret), and different schemes will return different ratio values for the same query.
 
-You can repeatedly call the following three types of record retrieval interfaces (one call per turn), and the system will provide accurate corporate registry data:
+Your goal is to deduce which scheme the system is using through queries, and provide verification.
 
-1. Children Query: Retrieve all direct subsidiaries owned by a specific company. The system returns an alphabetically sorted list, or an empty list if there are none.
-2. Count Query: Retrieve the number of direct subsidiaries owned by a specific company. The system returns a non-negative integer.
-3. Membership Query: Audit whether Company Y is a direct subsidiary of Company X. The system will answer "Yes" or "No".
+You can repeatedly ask me the following two types of questions (one per turn):
 
-Once you are confident you have unravelled the entire ownership structure, submit your final conclusion. If the audit is incorrect or the report format is invalid, the penetration check fails.
+1. **Value Query**: Specify a target condition X and a filter condition F.
+   - X can be: A1, A2, B1, B2, A1 and B1, A1 and B2, A2 and B1, A2 and B2
+   - F can only be: A1, A2, B1, B2
+   - I will return a ratio value (as a fraction or decimal)
 
-## Query and Submission Format
+2. **Equality Query**: Specify two value queries and ask if their results are equal.
+   - I will return "Yes" or "No"
 
-Submit only one query tag per turn. Please strictly use the following XML format:
+Note: If a query causes a zero denominator (e.g., the filter condition has no elements), I will return "Unavailable", and this query will not count toward the limit.
 
-- Children Query (e.g., query direct subsidiaries of Parent Company A):
-<query_children>A</query_children>
+Each turn must contain only one query tag, using the following XML format:
 
-- Count Query (e.g., query the number of subsidiaries of Company B):
-<query_count>B</query_count>
+- Value Query (e.g., target is A1 and B1, filter is A1):
+<query_value>X=A1 and B1, F=A1</query_value>
 
-- Membership Query (e.g., ask if Company C is a direct subsidiary of Parent Company A):
-<query_member>A,C</query_member>
+- Equality Query (e.g., asking if two value queries are equal):
+<query_equal>Q1=(X=A1, F=B1), Q2=(X=B1, F=A1)</query_equal>
 
-When submitting the final answer, you must specify the true structure filing ID and the list of Company C's direct subsidiaries (comma-separated, sorted alphabetically), using this format:
+When you determine the scheme, submit in the following format:
 
-<answer>tree=T1, children_of_C=G</answer>
+<answer>scheme=A, verification_query=X=A1, F=B1, formula=|A1 and B1|/|B1|, historical_value=0.5</answer>
 
-Please complete the equity penetration audit with as few record retrievals as possible.
+Where:
+- **scheme**: Fill in A, B, C, or D
+- **verification_query**: Select one of your previous value queries (expressed as X=..., F=...)
+- **formula**: Provide the formal expression for this query under your determined scheme (using set cardinality notation)
+- **historical_value**: The numerical value I returned for that query
+
+Verification will check:
+1. Whether the scheme is correct
+2. Whether the formula matches the scheme's definition
+3. Whether the result derived from the formula is consistent with the historical value
 """
 
-    tags = ["answer", "query_children", "query_count", "query_member"]
+    tags = ["answer", "query_value", "query_equal"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "集合"
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T1",
-                "tree_structure": {
-                    "A": ["B", "C", "D"],
-                    "B": ["E", "F"],
-                    "C": ["G"],
-                    "D": ["H", "I"],
-                    "G": ["J"],
-                    "E": [], "F": [], "H": [], "I": [], "J": []
-                }
-            },
-            2: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T2",
-                "tree_structure": {
-                    "A": ["B", "C", "D"],
-                    "B": ["E"],
-                    "C": ["F", "G"],
-                    "D": ["H"],
-                    "F": ["I"],
-                    "H": ["J"],
-                    "E": [], "G": [], "I": [], "J": []
-                }
-            },
-            3: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T3",
-                "tree_structure": {
-                    "A": ["B", "C"],
-                    "B": ["D", "E"],
-                    "C": ["F", "G"],
-                    "D": ["H"],
-                    "E": ["I"],
-                    "F": [],
-                    "G": ["J"],
-                    "H": [], "I": [], "J": []
-                }
-            },
-            4: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T4",
-                "tree_structure": {
-                    "A": ["B"],
-                    "B": ["C", "D", "E"],
-                    "C": ["F", "G"],
-                    "D": ["H"],
-                    "E": ["I"],
-                    "F": [],
-                    "G": ["J"],
-                    "H": [], "I": [], "J": []
-                }
-            },
-            5: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T1",
-                "tree_structure": {
-                    "A": ["B", "C", "D"],
-                    "B": ["E"],
-                    "C": ["F", "G"],
-                    "D": ["H", "I"],
-                    "E": ["J"],
-                    "F": [], "G": [], "H": [], "I": [], "J": []
-                }
-            },
+        1: {
+            "N": 12,
+            "counts": {"A1_B1": 3, "A1_B2": 3, "A2_B1": 3, "A2_B2": 3},
+            "scheme": "A",
         },
-        "en": {
-            1: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T1",
-                "tree_structure": {
-                    "A": ["B", "C", "D"],
-                    "B": ["E", "F"],
-                    "C": ["G"],
-                    "D": ["H", "I"],
-                    "G": ["J"],
-                    "E": [], "F": [], "H": [], "I": [], "J": []
-                }
-            },
-            2: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T2",
-                "tree_structure": {
-                    "A": ["B", "C", "D"],
-                    "B": ["E"],
-                    "C": ["F", "G"],
-                    "D": ["H"],
-                    "F": ["I"],
-                    "H": ["J"],
-                    "E": [], "G": [], "I": [], "J": []
-                }
-            },
-            3: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T3",
-                "tree_structure": {
-                    "A": ["B", "C"],
-                    "B": ["D", "E"],
-                    "C": ["F", "G"],
-                    "D": ["H"],
-                    "E": ["I"],
-                    "F": [],
-                    "G": ["J"],
-                    "H": [], "I": [], "J": []
-                }
-            },
-            4: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T4",
-                "tree_structure": {
-                    "A": ["B"],
-                    "B": ["C", "D", "E"],
-                    "C": ["F", "G"],
-                    "D": ["H"],
-                    "E": ["I"],
-                    "F": [],
-                    "G": ["J"],
-                    "H": [], "I": [], "J": []
-                }
-            },
-            5: {
-                "n": 10,
-                "labels": "A, B, C, D, E, F, G, H, I, J",
-                "tree_id": "T1",
-                "tree_structure": {
-                    "A": ["B", "C", "D"],
-                    "B": ["E"],
-                    "C": ["F", "G"],
-                    "D": ["H", "I"],
-                    "E": ["J"],
-                    "F": [], "G": [], "H": [], "I": [], "J": []
-                }
-            },
-        }
+        2: {
+            "N": 20,
+            "counts": {"A1_B1": 4, "A1_B2": 6, "A2_B1": 5, "A2_B2": 5},
+            "scheme": "B",
+        },
+        3: {
+            "N": 24,
+            "counts": {"A1_B1": 6, "A1_B2": 4, "A2_B1": 8, "A2_B2": 6},
+            "scheme": "C",
+        },
+        4: {
+            "N": 30,
+            "counts": {"A1_B1": 8, "A1_B2": 7, "A2_B1": 6, "A2_B2": 9},
+            "scheme": "D",
+        },
+        5: {
+            "N": 40,
+            "counts": {"A1_B1": 12, "A1_B2": 8, "A2_B1": 10, "A2_B2": 10},
+            "scheme": "B",
+        },
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据语言和难度加载树结构"""
-        lang = self.config.language
-        diff = self.config.difficulty
-        
-        # 确保 difficulty 是整数
-        if isinstance(diff, str):
-            diff = int(diff)
-
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        diff = int(self.config.difficulty)
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 设置游戏信息用于填充规则文本
-        self._game_info["n"] = cfg["n"]
-        self._game_info["labels"] = cfg["labels"]
-        
-        # 生成所有候选树的描述
-        candidate_descriptions = []
-        for tid_num in range(1, 5):
-            tid = f"T{tid_num}"
-            # 查找对应难度的树结构
-            for d, dcfg in self.DIFFICULTY_CONFIG[lang].items():
-                if dcfg["tree_id"] == tid:
-                    tree_desc = "; ".join(
-                        f"{node} -> [{', '.join(children)}]" if children else f"{node} -> []"
-                        for node, children in sorted(dcfg["tree_structure"].items())
-                    )
-                    candidate_descriptions.append(f"{tid}: {tree_desc}")
-                    break
-        
-        self._game_info["candidate_trees"] = "\n".join(candidate_descriptions)
-        
-        # 加载真实树结构和编号
-        self.true_tree_id = cfg["tree_id"]
-        self.tree_structure = cfg["tree_structure"]
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        self.N = cfg["N"]
+        self.counts = cfg["counts"]
+        self.scheme = cfg["scheme"]
+
+        self.count_A1 = self.counts["A1_B1"] + self.counts["A1_B2"]
+        self.count_A2 = self.counts["A2_B1"] + self.counts["A2_B2"]
+        self.count_B1 = self.counts["A1_B1"] + self.counts["A2_B1"]
+        self.count_B2 = self.counts["A1_B2"] + self.counts["A2_B2"]
+
+        self.query_history = []
+
+        self._game_info = {}
+
+    def _parse_condition(self, cond_str):
+        cond_str = cond_str.strip()
+
+        if "且" in cond_str:
+            parts = cond_str.split("且")
+        elif " and " in cond_str.lower():
+            parts = cond_str.lower().split(" and ")
+        else:
+            return ("simple", cond_str.upper())
+
+        if len(parts) == 2:
+            attr_a = parts[0].strip().upper()
+            attr_b = parts[1].strip().upper()
+            if attr_a.startswith("B") and attr_b.startswith("A"):
+                attr_a, attr_b = attr_b, attr_a
+            return ("conj", (attr_a, attr_b))
+        else:
+            raise ValueError(f"Invalid condition format: {cond_str}")
+
+    def _get_count(self, cond_type, cond_val):
+        if cond_type == "simple":
+            attr = cond_val
+            if attr == "A1":
+                return self.count_A1
+            elif attr == "A2":
+                return self.count_A2
+            elif attr == "B1":
+                return self.count_B1
+            elif attr == "B2":
+                return self.count_B2
+            else:
+                raise ValueError(f"Unknown attribute: {attr}")
+        elif cond_type == "conj":
+            attr_a, attr_b = cond_val
+            key = f"{attr_a}_{attr_b}"
+            if key in self.counts:
+                return self.counts[key]
+            else:
+                raise ValueError(f"Unknown conjunction: {key}")
+        else:
+            raise ValueError(f"Unknown condition type: {cond_type}")
+
+    def _calculate_value(self, X_type, X_val, F_type, F_val):
+        count_X = self._get_count(X_type, X_val)
+        count_F = self._get_count(F_type, F_val)
+
+        count_X_intersect_F = self._calculate_intersection(X_type, X_val, F_type, F_val)
+
+        count_not_F = self.N - count_F
+
+        count_X_intersect_not_F = count_X - count_X_intersect_F
+
+        if self.scheme == "A":
+            if self.N == 0:
+                return None, "unavailable"
+            return count_X / self.N, "ok"
+
+        elif self.scheme == "B":
+            if count_F == 0:
+                return None, "unavailable"
+            return count_X_intersect_F / count_F, "ok"
+
+        elif self.scheme == "C":
+            if count_X == 0:
+                return None, "unavailable"
+            return count_X_intersect_F / count_X, "ok"
+
+        elif self.scheme == "D":
+            if count_not_F == 0:
+                return None, "unavailable"
+            return count_X_intersect_not_F / count_not_F, "ok"
+
+        else:
+            raise ValueError(f"Unknown scheme: {self.scheme}")
+
+    def _calculate_intersection(self, X_type, X_val, F_type, F_val):
+        if X_type == "simple" and F_type == "simple":
+            X_attr = X_val
+            F_attr = F_val
+
+            if X_attr[0] == F_attr[0]:
+                if X_attr == F_attr:
+                    return self._get_count(X_type, X_val)
+                else:
+                    return 0
+            else:
+                if X_attr.startswith("A"):
+                    key = f"{X_attr}_{F_attr}"
+                else:
+                    key = f"{F_attr}_{X_attr}"
+                return self.counts.get(key, 0)
+
+        elif X_type == "conj" and F_type == "simple":
+            attr_a, attr_b = X_val
+            F_attr = F_val
+
+            if F_attr == attr_a or F_attr == attr_b:
+                return self._get_count(X_type, X_val)
+            elif F_attr[0] == attr_a[0]:
+                return 0
+            elif F_attr[0] == attr_b[0]:
+                return 0
+            else:
+                return 0
+
+        else:
+            raise ValueError(f"Unexpected condition types: X_type={X_type}, F_type={F_type}")
 
     def evaluate(self, parsed_info):
-        """
-        评估最终答案是否正确
-        答案格式：tree=T1, children_of_C=F,G
-        需要同时满足：
-        1. 树编号正确
-        2. 节点C的直系子节点列表正确（按字母序）
-        """
         raw_ans = parsed_info["answer"]
-        
-        import re
-        
-        ans_dict = {}
-        
-        # 匹配 tree=xxx
-        tree_match = re.search(r'tree\s*=\s*(\S+)', raw_ans)
-        if tree_match:
-            # 去掉可能的尾部逗号
-            tree_val = tree_match.group(1).rstrip(',').strip()
-            ans_dict["tree"] = tree_val
-        
-        # 匹配 children_of_C=xxx（取等号后面的所有内容）
-        children_match = re.search(r'children_of_C\s*=\s*(.*)', raw_ans)
-        if children_match:
-            ans_dict["children_of_C"] = children_match.group(1).strip()
-        
-        # 检查必需字段
-        if "tree" not in ans_dict or "children_of_C" not in ans_dict:
+
+        is_zh = self.config.language == "zh"
+
+        if is_zh:
+            scheme_pattern = r'方案\s*=\s*([A-Da-d])'
+            verify_pattern = r'验证查询\s*=\s*(X\s*=\s*.+?,\s*F\s*=\s*\S+)'
+            formula_pattern = r'计算式\s*=\s*(.+?)(?:,\s*历史值|$)'
+            history_pattern = r'历史值\s*=\s*([\d.]+)'
+        else:
+            scheme_pattern = r'scheme\s*=\s*([A-Da-d])'
+            verify_pattern = r'verification_query\s*=\s*(X\s*=\s*.+?,\s*F\s*=\s*\S+)'
+            formula_pattern = r'formula\s*=\s*(.+?)(?:,\s*historical_value|$)'
+            history_pattern = r'historical_value\s*=\s*([\d.]+)'
+
+        scheme_match = re.search(scheme_pattern, raw_ans, re.IGNORECASE)
+        verify_match = re.search(verify_pattern, raw_ans, re.IGNORECASE)
+        formula_match = re.search(formula_pattern, raw_ans, re.IGNORECASE)
+        history_match = re.search(history_pattern, raw_ans, re.IGNORECASE)
+
+        if not all([scheme_match, verify_match, formula_match, history_match]):
             return False
-        
-        # 1. 检查树编号是否正确
-        if ans_dict["tree"] != self.true_tree_id:
-            return False
-        
-        # 2. 检查节点C的直系子节点列表
+
+        claimed_scheme = scheme_match.group(1).strip().upper()
+        verify_query_str = verify_match.group(1).strip()
+        claimed_formula = formula_match.group(1).strip()
         try:
-            # 获取真实的C节点子列表
-            true_children_of_c = sorted(self.tree_structure.get("C", []))
-            
-            # 解析模型提交的C节点子列表
-            model_children_str = ans_dict["children_of_C"].strip()
-            if model_children_str == "":
-                model_children = []
-            else:
-                model_children = sorted([x.strip() for x in model_children_str.split(",") if x.strip()])
-            
-            # 比较两个列表
-            return model_children == true_children_of_c
-            
+            claimed_history_val = float(history_match.group(1).strip())
         except:
             return False
 
+        if claimed_scheme != self.scheme:
+            return False
+
+        norm_verify = re.sub(r'\s+', '', verify_query_str)
+        found = False
+        for hist_query, hist_value in self.query_history:
+            norm_hist = re.sub(r'\s+', '', hist_query)
+            if norm_hist == norm_verify and abs(hist_value - claimed_history_val) < 1e-4:
+                found = True
+                break
+
+        if not found:
+            return False
+
+        formula = claimed_formula.replace(" ", "").upper()
+        if self.scheme == "A":
+            if "/N" not in formula and "/|U|" not in formula:
+                return False
+        elif self.scheme == "B":
+            if "/" not in formula:
+                return False
+        elif self.scheme == "C":
+            if "/" not in formula:
+                return False
+        elif self.scheme == "D":
+            if "/" not in formula:
+                return False
+
+        return True
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        
+        atoms = ["A1", "A2", "B1", "B2"]
+        filters = atoms
+        
+        targets_simple = atoms
+        
+        targets_conj = []
+        is_zh = self.config.language == "zh"
+        conn = "且" if is_zh else " and "
+        
+        for a in ["A1", "A2"]:
+            for b in ["B1", "B2"]:
+                targets_conj.append((f"{a}{conn}{b}", ("conj", (a, b))))
+
+        for x_str in targets_simple:
+            x_type, x_val = "simple", x_str
+            for f_str in filters:
+                f_type, f_val = "simple", f_str
+                
+                query_content = f"X={x_str}, F={f_str}"
+                full_query = f"<query_value>{query_content}</query_value>"
+                
+                val, status = self._calculate_value(x_type, x_val, f_type, f_val)
+                
+                if status == "unavailable":
+                    ans = "不可用" if is_zh else "Unavailable"
+                else:
+                    ans = f"{val:.4f}"
+                    
+                results.append({"query": full_query, "answer": ans})
+                
+        for x_str, (x_type, x_val) in targets_conj:
+            for f_str in filters:
+                f_type, f_val = "simple", f_str
+                
+                query_content = f"X={x_str}, F={f_str}"
+                full_query = f"<query_value>{query_content}</query_value>"
+                
+                val, status = self._calculate_value(x_type, x_val, f_type, f_val)
+                
+                if status == "unavailable":
+                    ans = "不可用" if is_zh else "Unavailable"
+                else:
+                    ans = f"{val:.4f}"
+                    
+                results.append({"query": full_query, "answer": ans})
+                
+        return results
+
     def _cf_core_produce(self, parsed_info):
-        """
-        核心业务逻辑，优先级：query_children > query_count > query_member
-        """
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_invalid_node = "错误：节点不存在。"
-            error_invalid_format = "错误：格式无效。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            error_invalid_node = "Error: Node does not exist."
-            error_invalid_format = "Error: Invalid format."
-
-        # 优先处理子列表查询
-        if "query_children" in parsed_info:
-            node = parsed_info["query_children"].strip().upper()
-            
-            # 检查节点是否存在
-            if node not in self.tree_structure:
-                return error_invalid_node
-            
-            # 返回该节点的直系子节点列表（已按字母序排序）
-            children = self.tree_structure[node]
-            if not children:
-                return "[]"
-            else:
-                return "[" + ", ".join(children) + "]"
-
-        # 处理子数查询
-        elif "query_count" in parsed_info:
-            node = parsed_info["query_count"].strip().upper()
-            
-            # 检查节点是否存在
-            if node not in self.tree_structure:
-                return error_invalid_node
-            
-            # 返回该节点的直系子节点数量
-            count = len(self.tree_structure[node])
-            return str(count)
-
-        # 处理成员判定查询
-        elif "query_member" in parsed_info:
-            try:
-                raw = parsed_info["query_member"]
-                parts = [x.strip().upper() for x in raw.split(",")]
-                
-                if len(parts) != 2:
-                    return error_invalid_format
-                
-                parent, child = parts[0], parts[1]
-                
-                # 检查节点是否存在
-                if parent not in self.tree_structure or child not in self.tree_structure:
-                    return error_invalid_node
-                
-                # 判断child是否为parent的直系子节点
-                is_child = child in self.tree_structure[parent]
-                return yes_res if is_child else no_res
-                
-            except:
-                return error_invalid_format
-
+        if "query_value" in parsed_info:
+            return self._handle_value_query(parsed_info["query_value"])
+        elif "query_equal" in parsed_info:
+            return self._handle_equal_query(parsed_info["query_equal"])
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个明显不同的错误答案"""
-        # 1. 如果是纯整数
-        if correct.isdigit():
-            val = int(correct)
-            return str(val + 1) if val > 0 else "1"
-        
-        # 2. 关键词替换
-        if self.config.language == "zh":
-            if correct == "是": return "否"
-            if correct == "否": return "是"
-        else:
-            lower_c = correct.lower()
-            if lower_c == "yes": return "No"
-            if lower_c == "no": return "Yes"
-        
-        # 3. 列表型返回值（如 "[E, F]" 或 "[]"）
-        if correct.startswith("[") and correct.endswith("]"):
-            inner = correct[1:-1].strip()
-            if inner == "":
-                # 空列表 -> 返回一个包含虚假节点的列表
-                return "[Z]"
-            else:
-                items = [x.strip() for x in inner.split(",") if x.strip()]
-                if len(items) > 1:
-                    # 删掉一个元素
-                    return "[" + ", ".join(items[:-1]) + "]"
-                else:
-                    # 只有一个元素，替换为另一个
-                    all_labels = list(self.tree_structure.keys())
-                    for label in all_labels:
-                        if label != items[0]:
-                            return "[" + label + "]"
-                    return "[]"
-        
-        # 4. 默认错误
-        return correct + "_WRONG"
+    def _handle_value_query(self, query_str):
+        try:
+            match = re.match(r'(.+?),\s*F\s*=\s*(.+)', query_str)
+            if not match:
+                raise ValueError("Value query must have X and F")
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        
-        # 获取所有标签
-        raw_labels = self._game_info.get("labels", "")
-        labels = [x.strip() for x in raw_labels.split(",") if x.strip()]
-        
-        # 1. 枚举子列表查询 (query_children)
-        for node in labels:
-            parsed_info = {"query_children": node}
-            answer = self._cf_core_produce(parsed_info)
-            queries.append({
-                "query": f"<query_children>{node}</query_children>",
-                "answer": answer
-            })
-            
-        # 2. 枚举子数查询 (query_count)
-        for node in labels:
-            parsed_info = {"query_count": node}
-            answer = self._cf_core_produce(parsed_info)
-            queries.append({
-                "query": f"<query_count>{node}</query_count>",
-                "answer": answer
-            })
-            
-        # 3. 枚举成员判定查询 (query_member)
-        # 对每对节点 (Parent, Child) 进行查询
-        for parent in labels:
-            for child in labels:
-                content = f"{parent},{child}"
-                parsed_info = {"query_member": content}
-                answer = self._cf_core_produce(parsed_info)
-                queries.append({
-                    "query": f"<query_member>{content}</query_member>",
-                    "answer": answer
-                })
-                
-        return queries
+            X_part = match.group(1).strip()
+            F_str = match.group(2).strip()
+
+            if not X_part.startswith("X="):
+                raise ValueError("Value query format error: missing X=")
+
+            X_str = X_part[2:].strip()
+
+            X_type, X_val = self._parse_condition(X_str)
+            F_type, F_val = self._parse_condition(F_str)
+
+            if F_type != "simple":
+                raise ValueError("Filter condition F must be atomic")
+
+            result, status = self._calculate_value(X_type, X_val, F_type, F_val)
+
+            if status == "unavailable":
+                return "不可用" if self.config.language == "zh" else "Unavailable"
+
+            self.query_history.append((query_str, result))
+
+            return f"{result:.4f}"
+
+        except Exception as e:
+            return f"错误：查询格式无效 ({str(e)})" if self.config.language == "zh" else f"Error: Invalid query format ({str(e)})"
+
+    def _handle_equal_query(self, query_str):
+        try:
+            if "Q1=" not in query_str or "Q2=" not in query_str:
+                raise ValueError("Equal query must have Q1 and Q2")
+
+            q1_start = query_str.find("Q1=") + 3
+            q2_start = query_str.find("Q2=") + 3
+
+            if q2_start < q1_start:
+                q2_start, q1_start = q1_start - 3, q2_start - 3
+                q1_str = query_str[q1_start + 3:].strip()
+                q2_str = query_str[q2_start + 3:q1_start].strip()
+            else:
+                q1_str = query_str[q1_start:q2_start - 3].strip()
+                q2_str = query_str[q2_start:].strip()
+
+            q1_str = q1_str.strip("() ")
+            q2_str = q2_str.strip("() ")
+
+            if q1_str.endswith(","):
+                q1_str = q1_str[:-1].strip()
+            if q2_str.endswith(","):
+                q2_str = q2_str[:-1].strip()
+
+            val1, status1 = self._parse_and_calculate_query(q1_str)
+            val2, status2 = self._parse_and_calculate_query(q2_str)
+
+            if status1 == "unavailable" or status2 == "unavailable":
+                return "不可用" if self.config.language == "zh" else "Unavailable"
+
+            is_equal = abs(val1 - val2) < 1e-6
+
+            if self.config.language == "zh":
+                return "是" if is_equal else "否"
+            else:
+                return "Yes" if is_equal else "No"
+
+        except Exception as e:
+            if self.config.language == "zh":
+                return f"错误：查询格式无效 ({str(e)})"
+            else:
+                return f"Error: Invalid query format ({str(e)})"
+
+    def _parse_and_calculate_query(self, query_str):
+        match = re.match(r'(.+?),\s*F\s*=\s*(.+)', query_str)
+        if not match:
+            raise ValueError("Query must have X and F")
+
+        X_part = match.group(1).strip()
+        F_str = match.group(2).strip()
+
+        if not X_part.startswith("X="):
+            raise ValueError("Query format error")
+
+        X_str = X_part[2:].strip()
+
+        X_type, X_val = self._parse_condition(X_str)
+        F_type, F_val = self._parse_condition(F_str)
+
+        if F_type != "simple":
+            raise ValueError("Filter F must be atomic")
+
+        return self._calculate_value(X_type, X_val, F_type, F_val)
+
+    def _cf_make_wrong(self, correct):
+        if correct in ["是", "Yes"]:
+            return "否" if self.config.language == "zh" else "No"
+        elif correct in ["否", "No"]:
+            return "是" if self.config.language == "zh" else "Yes"
+        elif correct in ["不可用", "Unavailable"]:
+            return "0.1234"
+        elif correct.startswith("错误") or correct.startswith("Error"):
+            return "0.1234"
+        else:
+            try:
+                val = float(correct)
+                wrong_val = val + 0.1
+                if wrong_val > 1.0:
+                    wrong_val = val - 0.1
+                return f"{wrong_val:.4f}"
+            except:
+                return "不可用" if self.config.language == "zh" else "Unavailable"

@@ -1,1041 +1,850 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   属性共享：两个给定元素是否共享某属性
-# ============================================================
-
 from .base import Game
-import random
+from typing import Dict, List
 
+class GraphEccentricityGame(Game):
 
-class EquivalencePartitionGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "集合"
-    enable_counterfactual = False   # 设为 True 时开启反事实干预模式
+    reasoning_type = "溯因推理"
+    data_structure = "图"
 
     game_rule_zh = """\
-我们来玩一个"等价关系推理"游戏，规则如下：
+我们来玩一个"图模式推理"游戏，规则如下：
 
-游戏设定了 {n} 个元素，标识为 E1, E2, ..., E{n}。这些标识仅用于指称，不包含顺序、数值或位置含义。
+游戏设定了一个无向连通图 G，包含 9 个顶点：A, B, C, D, E, F, G, H, I。
+图的边及其类别标签如下：
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-系统已秘密确定了一个等价关系 R，将这 {n} 个元素划分为若干个不相交的等价类（分组）。等价类的数量未知且不会事先告知。两个元素是否"同类"完全由它们是否位于同一等价类决定。
+我已秘密选择了一个"模式"，该模式决定了每种类别标签对应的边权重。共有四种可能的模式：
+- M1: T1权重为1, T2权重为1, T3权重为1
+- M2: T1权重为1, T2权重为2, T3权重为1
+- M3: T1权重为1, T2权重为2, T3权重为2
+- M4: T1权重为2, T2权重为2, T3权重为2
 
-你的目标是通过查询推断出完整的等价类划分。你有 {query_budget} 次查询预算，可以进行以下操作：
+在给定模式下，图中任意两点间的距离为加权最短路径长度。
 
-## 操作类型
+定义：
+- 顶点 X 的"离心率"：从 X 到所有其他顶点的最短路径长度的最大值
+- 图的"直径"：所有顶点离心率中的最大值
 
-1. **配提查询**：询问两个不同元素 Ei 和 Ej 是否属于同一等价类。
-   - 系统会回答"同类"或"不同类"。
+你的目标是推断出正确的模式以及在该模式下图的直径。
 
-2. **分组提交**：提交你推断出的完整划分方案。
-   - 若划分完全正确，游戏成功。
-   - 若划分错误，系统会返回一个反例对，指出冲突：
-     * 类型A：你声称同组，但实际为不同类。
-     * 类型B：你声称不同组，但实际为同类。
-     - 反例不计入查询预算。
+你可以进行以下三类操作：
 
-3. **终局验证**（当查询预算用尽但未成功提交时触发）：
-   - 系统会选择 {challenge_count} 个未被查询过的元素对，逐一询问你的判断。
-   - 若全部答对，也视为游戏成功。
-   - 若存在至少一对答错，游戏失败。
+1. 查询离心率：询问某个顶点的离心率
+2. 猜测模式：提交你认为的模式
+3. 猜测直径：提交你认为的直径
 
-## 查询与提交格式（必须严格遵守）
+你总共最多可进行 {max_queries} 次操作（包含查询与猜测），请谨慎使用。
 
-每次只能包含一个标签。请使用以下 XML 格式：
+最终判定以你最后一次同时给出的模式与直径为准。
 
-- 配对查询（例如询问 E3 和 E7）：
-<query_pair>E3,E7</query_pair>
+- 查询顶点 X 的离心率：
+<query_ecc>X</query_ecc>
 
-- 分组提交（用分号分隔各组，组内元素用逗号分隔）：
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
+- 猜测模式为 Mi（i为1到4之一）：
+<guess_mode>Mi</guess_mode>
 
-- 终局验证回答（当系统询问某对元素时，回答同类或不同类）：
-<challenge_answer>同类</challenge_answer>
-或
-<challenge_answer>不同类</challenge_answer>
+- 猜测直径为 k（k为非负整数）：
+<guess_diameter>k</guess_diameter>
 
-## 提示
+- 提交最终答案（同时给出模式和直径）：
+<answer>mode=Mi, diameter=k</answer>
 
-- 等价关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
-- 合理利用传递性可减少必要的查询次数。
-- 每个元素必须恰好属于一个等价类。
+注意：只有使用 answer 标签同时提交模式和直径，才会进行最终判定。
 """
 
     game_rule_en = """\
-Let's play an "Equivalence Relation Inference" game. Here are the rules:
+Let's play a "Graph Mode Inference" game. Here are the rules:
 
-The game has {n} elements, labeled as E1, E2, ..., E{n}. These labels are for identification only and carry no ordering, numerical, or positional meaning.
+The game involves an undirected connected graph G with 9 vertices: A, B, C, D, E, F, G, H, I.
+The edges and their category labels are:
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-The system has secretly determined an equivalence relation R that partitions these {n} elements into several disjoint equivalence classes (groups). The number of equivalence classes is unknown and will not be disclosed in advance. Whether two elements are "equivalent" is determined entirely by whether they belong to the same equivalence class.
+I have secretly selected a "mode" that determines the edge weight for each category label. There are four possible modes:
+- M1: T1 weight is 1, T2 weight is 1, T3 weight is 1
+- M2: T1 weight is 1, T2 weight is 2, T3 weight is 1
+- M3: T1 weight is 1, T2 weight is 2, T3 weight is 2
+- M4: T1 weight is 2, T2 weight is 2, T3 weight is 2
 
-Your goal is to infer the complete equivalence class partition through queries. You have {query_budget} query budget and can perform the following operations:
+Under a given mode, the distance between any two vertices is the weighted shortest path length.
 
-## Operation Types
+Definitions:
+- "Eccentricity" of vertex X: the maximum shortest path length from X to all other vertices
+- "Diameter" of the graph: the maximum eccentricity among all vertices
 
-1. **Pair Query**: Ask whether two different elements Ei and Ej belong to the same equivalence class.
-   - The system will answer "Same" or "Different".
+Your goal is to infer the correct mode and the graph's diameter under that mode.
 
-2. **Partition Submission**: Submit your inferred complete partition.
-   - If the partition is completely correct, the game succeeds.
-   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
-     * Type A: You claimed same group, but actually different.
-     * Type B: You claimed different groups, but actually same.
-   - Counterexamples do not count toward the query budget.
+You can perform the following three types of operations:
 
-3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
-   - The system will select {challenge_count} element pairs that have never been queried and ask for your judgment one by one.
-   - If all answers are correct, the game also succeeds.
-   - If at least one pair is wrong, the game fails.
+1. Query eccentricity: ask for the eccentricity of a specific vertex
+2. Guess mode: submit your guess for the mode
+3. Guess diameter: submit your guess for the diameter
 
-## Query and Submission Format (must be strictly followed)
+You have at most {max_queries} operations in total (queries and guesses combined), use wisely.
 
-Each turn must contain only one tag. Use the following XML format:
+The final judgment is based on the last mode and diameter you submit together.
 
-- Pair Query (e.g., asking about E3 and E7):
-<query_pair>E3,E7</query_pair>
+- Query eccentricity of vertex X:
+<query_ecc>X</query_ecc>
 
-- Partition Submission (use semicolons to separate groups, commas within groups):
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
+- Guess mode as Mi (i is one of 1 to 4):
+<guess_mode>Mi</guess_mode>
 
-- Challenge Answer (when the system asks about a pair, answer same or different):
-<challenge_answer>Same</challenge_answer>
-or
-<challenge_answer>Different</challenge_answer>
+- Guess diameter as k (k is a non-negative integer):
+<guess_diameter>k</guess_diameter>
 
-## Hints
+- Submit final answer (mode and diameter together):
+<answer>mode=Mi, diameter=k</answer>
 
-- Equivalence relations have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
-- Proper use of transitivity can reduce the number of necessary queries.
-- Each element must belong to exactly one equivalence class.
+Note: Only by using the answer tag to submit both mode and diameter together will trigger final judgment.
 """
 
     contextualized_rule_zh_1 = """\
-我们来解决一个“交通枢纽网络连通性”的排查问题，规则如下：
+这是一个智慧城市交通调度评估系统。你需要通过探测不同拥堵模式下的耗时，找出路网的关键瓶颈。
 
-游戏设定了 {n} 个交通节点，标识为 E1, E2, ..., E{n}。这些标识仅用于指称，不包含顺序、数值或位置含义。
+游戏设定了一个交通路网 G，包含 9 个关键交通枢纽：A, B, C, D, E, F, G, H, I。
+路网中的连接路段及其道路类型（T1, T2, T3）如下：
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-目前已知这些节点被若干个互不交叉的“独立运营网络”覆盖，系统秘密确定了这一划分。属于同一网络的节点之间可直接或间接互通（同类）。网络数量未知且不会事先告知。两个节点是否“同类”完全由它们是否位于同一运营网络决定。
+我已秘密选择了一种"路况模式"，该模式决定了每种道路类型所需的基础通行时间（权重）。共有四种可能的模式：
+- M1: T1耗时为1, T2耗时为1, T3耗时为1
+- M2: T1耗时为1, T2耗时为2, T3耗时为1
+- M3: T1耗时为1, T2耗时为2, T3耗时为2
+- M4: T1耗时为2, T2耗时为2, T3耗时为2
 
-你的目标是通过查询推断出完整的网络连通性划分。你有 {query_budget} 次查询预算，可以进行以下操作：
+在给定模式下，任意两枢纽间的最优行车耗时即为它们的最短加权路径长度。
 
-## 操作类型
+定义：
+- 枢纽 X 的"离心率"：从 X 出发，到达路网中其他所有枢纽所需最短行车耗时的最大值。
+- 路网的"直径"：所有枢纽离心率中的最大值（即全路网最坏情况下的通行保障时间）。
 
-1. **配对查询**：询问两个不同节点 Ei 和 Ej 是否属于同一运营网络。
-   - 系统会回答"同类"（同一网络）或"不同类"（不同网络）。
+你的目标是推断出当前正确的路况模式以及在该模式下路网的直径。
 
-2. **分组提交**：提交你推断出的完整划分方案。
-   - 若划分完全正确，游戏成功。
-   - 若划分错误，系统会返回一个反例对，指出冲突：
-     * 类型A：你声称同组，但实际为不同类。
-     * 类型B：你声称不同组，但实际为同类。
-     - 反例不计入查询预算。
+你可以进行以下三类操作：
+1. 查询离心率：询问某个枢纽的离心率
+2. 猜测模式：提交你认为的路况模式
+3. 猜测直径：提交你认为的路网直径
 
-3. **终局验证**（当查询预算用尽但未成功提交时触发）：
-   - 系统会选择 {challenge_count} 个未被查询过的节点对，逐一询问你的判断。
-   - 若全部答对，也视为游戏成功。
-   - 若存在至少一对答错，游戏失败。
+你总共最多可进行 {max_queries} 次操作（包含查询与猜测），请谨慎使用。
 
-## 查询与提交格式（必须严格遵守）
+最终判定以你最后一次同时给出的模式与直径为准。
 
-每次只能包含一个标签。请使用以下 XML 格式：
+- 查询枢纽 X 的离心率：
+<query_ecc>X</query_ecc>
+- 猜测模式为 Mi（i为1到4之一）：
+<guess_mode>Mi</guess_mode>
+- 猜测直径为 k（k为非负整数）：
+<guess_diameter>k</guess_diameter>
+- 提交最终答案（同时给出模式和直径）：
+<answer>mode=Mi, diameter=k</answer>
 
-- 配对查询（例如询问 E3 和 E7）：
-<query_pair>E3,E7</query_pair>
-
-- 分组提交（用分号分隔各网络组，组内节点用逗号分隔）：
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- 终局验证回答（当系统询问某对节点时，回答同类或不同类）：
-<challenge_answer>同类</challenge_answer>
-或
-<challenge_answer>不同类</challenge_answer>
-
-## 提示
-
-- 连通关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
-- 合理利用传递性可减少必要的查询次数。
-- 每个节点必须恰好属于一个网络。
+注意：只有使用 answer 标签同时提交模式和直径，才会进行最终判定。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's solve a "Traffic Node Network Connectivity" mapping problem. Here are the rules:
+This is a Smart City Traffic Dispatch Evaluation System. Your task is to identify critical bottlenecks in the road network by evaluating travel times under different congestion modes.
 
-The system has logged {n} traffic nodes, labeled as E1, E2, ..., E{n}. These labels are for identification only and carry no ordering, numerical, or positional meaning.
+The game involves a traffic network G with 9 key transit hubs: A, B, C, D, E, F, G, H, I.
+The road segments connecting the hubs and their road types (T1, T2, T3) are as follows:
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-These nodes are covered by several non-overlapping "independent operational networks." The system has secretly determined this partition. Nodes belonging to the same network can directly or indirectly communicate with each other (equivalent). The number of networks is unknown and will not be disclosed in advance. Whether two nodes are "equivalent" is determined entirely by whether they belong to the same operational network.
+I have secretly selected a "Traffic Condition Mode" that determines the base travel time (weight) for each road type. There are four possible modes:
+- M1: T1 travel time is 1, T2 is 1, T3 is 1
+- M2: T1 travel time is 1, T2 is 2, T3 is 1
+- M3: T1 travel time is 1, T2 is 2, T3 is 2
+- M4: T1 travel time is 2, T2 is 2, T3 is 2
 
-Your goal is to infer the complete network connectivity partition through queries. You have {query_budget} query budget and can perform the following operations:
+Under a given mode, the optimal travel time between any two hubs is the weighted shortest path length.
 
-## Operation Types
+Definitions:
+- "Eccentricity" of hub X: the maximum optimal travel time required to reach all other hubs starting from X.
+- "Diameter" of the network: the maximum eccentricity among all hubs (i.e., the worst-case guaranteed travel time for the entire network).
 
-1. **Pair Query**: Ask whether two different nodes Ei and Ej belong to the same network.
-   - The system will answer "Same" (same network) or "Different" (different networks).
+Your goal is to infer the correct traffic condition mode and the network's diameter under that mode.
 
-2. **Partition Submission**: Submit your inferred complete partition.
-   - If the partition is completely correct, the game succeeds.
-   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
-     * Type A: You claimed same group, but actually different.
-     * Type B: You claimed different groups, but actually same.
-   - Counterexamples do not count toward the query budget.
+You can perform the following three types of operations:
+1. Query eccentricity: ask for the eccentricity of a specific hub
+2. Guess mode: submit your guess for the traffic mode
+3. Guess diameter: submit your guess for the network diameter
 
-3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
-   - The system will select {challenge_count} node pairs that have never been queried and ask for your judgment one by one.
-   - If all answers are correct, the game also succeeds.
-   - If at least one pair is wrong, the game fails.
+You have at most {max_queries} operations in total (queries and guesses combined), use wisely.
 
-## Query and Submission Format (must be strictly followed)
+The final judgment is based on the last mode and diameter you submit together.
 
-Each turn must contain only one tag. Use the following XML format:
+- Query eccentricity of hub X:
+<query_ecc>X</query_ecc>
+- Guess mode as Mi (i is one of 1 to 4):
+<guess_mode>Mi</guess_mode>
+- Guess diameter as k (k is a non-negative integer):
+<guess_diameter>k</guess_diameter>
+- Submit final answer (mode and diameter together):
+<answer>mode=Mi, diameter=k</answer>
 
-- Pair Query (e.g., asking about E3 and E7):
-<query_pair>E3,E7</query_pair>
-
-- Partition Submission (use semicolons to separate network groups, commas within groups):
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- Challenge Answer (when the system asks about a pair, answer same or different):
-<challenge_answer>Same</challenge_answer>
-or
-<challenge_answer>Different</challenge_answer>
-
-## Hints
-
-- Network connectivity has transitivity: if Ea is connected to Eb, and Eb is connected to Ec, then Ea must be connected to Ec.
-- Proper use of transitivity can reduce the number of necessary queries.
-- Each node must belong to exactly one network.
+Note: Only by using the answer tag to submit both mode and diameter together will trigger final judgment.
 """
 
     contextualized_rule_zh_2 = """\
-我们来进行一次“病原体变异株溯源”分析，规则如下：
+这是一个医院急救资源调度推演系统。你需要通过评估不同应急响应等级下的转运耗时，找出医院流转的最长路径。
 
-系统采集了 {n} 份病毒样本，标识为 E1, E2, ..., E{n}。这些标识仅用于指称，不包含顺序、数值或临床严重程度含义。
+游戏设定了一个院内医疗转运网络 G，包含 9 个核心科室：A, B, C, D, E, F, G, H, I。
+科室间的转运通道及其类型（T1, T2, T3）如下：
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-系统已通过基因组测序秘密确定了一个等价关系，将这 {n} 个样本划分为若干个不相交的变异株毒系（分组）。变异株的数量未知且不会事先告知。两个样本是否“同类”完全由它们是否属于同一变异株毒系决定。
+我已秘密选择了一种"应急响应模式"，该模式决定了每种通道类型所需的标准转运时间（权重）。共有四种可能的模式：
+- M1: T1耗时为1, T2耗时为1, T3耗时为1
+- M2: T1耗时为1, T2耗时为2, T3耗时为1
+- M3: T1耗时为1, T2耗时为2, T3耗时为2
+- M4: T1耗时为2, T2耗时为2, T3耗时为2
 
-你的目标是通过检测推断出完整的毒系划分方案。你有 {query_budget} 次查询预算，可以进行以下操作：
+在给定模式下，任意两科室间的最优转运耗时即为它们的最短加权路径长度。
 
-## 操作类型
+定义：
+- 科室 X 的"离心率"：从 X 出发，将患者转运至网络中其他任何科室所需最优转运耗时的最大值。
+- 网络的"直径"：所有科室离心率中的最大值（即院内最坏情况下的极限转运时间）。
 
-1. **配对查询**：询问两个不同样本 Ei 和 Ej 是否属于同一变异株毒系。
-   - 系统会回答"同类"（同毒系）或"不同类"（不同毒系）。
+你的目标是推断出正确的应急响应模式以及在该模式下网络的直径。
 
-2. **分组提交**：提交你推断出的完整划分方案。
-   - 若划分完全正确，游戏成功。
-   - 若划分错误，系统会返回一个反例对，指出冲突：
-     * 类型A：你声称同组，但实际为不同类。
-     * 类型B：你声称不同组，但实际为同类。
-     - 反例不计入查询预算。
+你可以进行以下三类操作：
+1. 查询离心率：询问某个科室的离心率
+2. 猜测模式：提交你认为的响应模式
+3. 猜测直径：提交你认为的网络直径
 
-3. **终局验证**（当查询预算用尽但未成功提交时触发）：
-   - 系统会选择 {challenge_count} 个未被检测过的样本对，逐一询问你的判断。
-   - 若全部答对，也视为游戏成功。
-   - 若存在至少一对答错，游戏失败。
+你总共最多可进行 {max_queries} 次操作（包含查询与猜测），请谨慎使用。
 
-## 查询与提交格式（必须严格遵守）
+最终判定以你最后一次同时给出的模式与直径为准。
 
-每次只能包含一个标签。请使用以下 XML 格式：
+- 查询科室 X 的离心率：
+<query_ecc>X</query_ecc>
+- 猜测模式为 Mi（i为1到4之一）：
+<guess_mode>Mi</guess_mode>
+- 猜测直径为 k（k为非负整数）：
+<guess_diameter>k</guess_diameter>
+- 提交最终答案（同时给出模式和直径）：
+<answer>mode=Mi, diameter=k</answer>
 
-- 配对查询（例如询问 E3 和 E7）：
-<query_pair>E3,E7</query_pair>
-
-- 分组提交（用分号分隔各毒系，组内样本用逗号分隔）：
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- 终局验证回答（当系统询问某对样本时，回答同类或不同类）：
-<challenge_answer>同类</challenge_answer>
-或
-<challenge_answer>不同类</challenge_answer>
-
-## 提示
-
-- 同源关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
-- 合理利用传递性可减少必要的查询次数。
-- 每个样本必须恰好属于一个变异株毒系。
+注意：只有使用 answer 标签同时提交模式和直径，才会进行最终判定。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's conduct a "Pathogen Variant Traceability" analysis. Here are the rules:
+This is a Hospital Emergency Resource Dispatch Deduction System. Your task is to identify the critical path in hospital transfers by evaluating transit times under different emergency response levels.
 
-The system has collected {n} virus samples, labeled as E1, E2, ..., E{n}. These labels are for identification only and carry no sequence, numerical, or clinical severity meaning.
+The game involves an intra-hospital medical transfer network G with 9 core departments: A, B, C, D, E, F, G, H, I.
+The transfer routes between departments and their types (T1, T2, T3) are as follows:
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-Through genomic sequencing, the system has secretly determined an equivalence relation that partitions these {n} samples into several disjoint variant lineages (groups). The number of variants is unknown and will not be disclosed in advance. Whether two samples are "equivalent" is determined entirely by whether they belong to the same variant lineage.
+I have secretly selected an "Emergency Response Mode" that determines the standard transfer time (weight) for each route type. There are four possible modes:
+- M1: T1 transfer time is 1, T2 is 1, T3 is 1
+- M2: T1 transfer time is 1, T2 is 2, T3 is 1
+- M3: T1 transfer time is 1, T2 is 2, T3 is 2
+- M4: T1 transfer time is 2, T2 is 2, T3 is 2
 
-Your goal is to infer the complete lineage partition scheme through testing. You have {query_budget} query budget and can perform the following operations:
+Under a given mode, the optimal transfer time between any two departments is the weighted shortest path length.
 
-## Operation Types
+Definitions:
+- "Eccentricity" of department X: the maximum optimal transfer time required to move a patient from X to all other departments.
+- "Diameter" of the network: the maximum eccentricity among all departments (i.e., the worst-case ultimate transfer time within the hospital).
 
-1. **Pair Query**: Ask whether two different samples Ei and Ej belong to the same variant lineage.
-   - The system will answer "Same" (same lineage) or "Different" (different lineages).
+Your goal is to infer the correct emergency response mode and the network's diameter under that mode.
 
-2. **Partition Submission**: Submit your inferred complete partition.
-   - If the partition is completely correct, the game succeeds.
-   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
-     * Type A: You claimed same group, but actually different.
-     * Type B: You claimed different groups, but actually same.
-   - Counterexamples do not count toward the query budget.
+You can perform the following three types of operations:
+1. Query eccentricity: ask for the eccentricity of a specific department
+2. Guess mode: submit your guess for the response mode
+3. Guess diameter: submit your guess for the network diameter
 
-3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
-   - The system will select {challenge_count} sample pairs that have never been tested and ask for your judgment one by one.
-   - If all answers are correct, the game also succeeds.
-   - If at least one pair is wrong, the game fails.
+You have at most {max_queries} operations in total (queries and guesses combined), use wisely.
 
-## Query and Submission Format (must be strictly followed)
+The final judgment is based on the last mode and diameter you submit together.
 
-Each turn must contain only one tag. Use the following XML format:
+- Query eccentricity of department X:
+<query_ecc>X</query_ecc>
+- Guess mode as Mi (i is one of 1 to 4):
+<guess_mode>Mi</guess_mode>
+- Guess diameter as k (k is a non-negative integer):
+<guess_diameter>k</guess_diameter>
+- Submit final answer (mode and diameter together):
+<answer>mode=Mi, diameter=k</answer>
 
-- Pair Query (e.g., asking about E3 and E7):
-<query_pair>E3,E7</query_pair>
-
-- Partition Submission (use semicolons to separate lineages, commas within lineages):
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- Challenge Answer (when the system asks about a pair, answer same or different):
-<challenge_answer>Same</challenge_answer>
-or
-<challenge_answer>Different</challenge_answer>
-
-## Hints
-
-- Homologous relationships have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
-- Proper use of transitivity can reduce the number of necessary queries.
-- Each sample must belong to exactly one variant lineage.
+Note: Only by using the answer tag to submit both mode and diameter together will trigger final judgment.
 """
 
     contextualized_rule_zh_3 = """\
-我们来处理一项“学术研讨小组分配”任务，规则如下：
+这是一个智能教学辅助与知识图谱系统。你需要通过推演不同学习能力下的掌握耗时，找出课程体系的最难链路。
 
-系统录入了 {n} 名学生，标识为 E1, E2, ..., E{n}。这些标识仅用于指称，不代表学号、成绩或座位号。
+游戏设定了一个知识关联网络 G，包含 9 个核心知识模块：A, B, C, D, E, F, G, H, I。
+模块间的学习依赖路径及其难度类型（T1, T2, T3）如下：
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-系统已秘密生成了一份研讨小组名单，将这 {n} 名学生划分为若干个互不重叠的研讨小组。小组的数量未知且不会事先告知。两名学生是否属于“同类”完全由他们是否被分入同一研讨小组决定。
+我已秘密选择了一种"课程难度模式"，该模式决定了攻克每种依赖路径所需的标准学习周期（权重）。共有四种可能的模式：
+- M1: T1周期为1, T2周期为1, T3周期为1
+- M2: T1周期为1, T2周期为2, T3周期为1
+- M3: T1周期为1, T2周期为2, T3周期为2
+- M4: T1周期为2, T2周期为2, T3周期为2
 
-你的目标是通过问询推断出完整的学生分组方案。你有 {query_budget} 次查询预算，可以进行以下操作：
+在给定模式下，任意两知识模块间的最优学习成本即为它们的最短加权路径长度。
 
-## 操作类型
+定义：
+- 模块 X 的"离心率"：从知识模块 X 出发，触达并掌握图谱中其他所有模块所需最优学习周期的最大值。
+- 图谱的"直径"：所有模块离心率中的最大值（即最坏情况下的课程攻克总周期）。
 
-1. **配对查询**：询问两名不同学生 Ei 和 Ej 是否属于同一研讨小组。
-   - 系统会回答"同类"（同组）或"不同类"（不同组）。
+你的目标是推断出当前的课程难度模式以及在该模式下知识图谱的直径。
 
-2. **分组提交**：提交你推断出的完整划分方案。
-   - 若划分完全正确，游戏成功。
-   - 若划分错误，系统会返回一个反例对，指出冲突：
-     * 类型A：你声称同组，但实际为不同类。
-     * 类型B：你声称不同组，但实际为同类。
-     - 反例不计入查询预算。
+你可以进行以下三类操作：
+1. 查询离心率：询问某个知识模块的离心率
+2. 猜测模式：提交你认为的难度模式
+3. 猜测直径：提交你认为的图谱直径
 
-3. **终局验证**（当查询预算用尽但未成功提交时触发）：
-   - 系统会选择 {challenge_count} 个未被查询过的学生对，逐一询问你的判断。
-   - 若全部答对，也视为游戏成功。
-   - 若存在至少一对答错，游戏失败。
+你总共最多可进行 {max_queries} 次操作（包含查询与猜测），请谨慎使用。
 
-## 查询与提交格式（必须严格遵守）
+最终判定以你最后一次同时给出的模式与直径为准。
 
-每次只能包含一个标签。请使用以下 XML格式：
+- 查询知识模块 X 的离心率：
+<query_ecc>X</query_ecc>
+- 猜测模式为 Mi（i为1到4之一）：
+<guess_mode>Mi</guess_mode>
+- 猜测直径为 k（k为非负整数）：
+<guess_diameter>k</guess_diameter>
+- 提交最终答案（同时给出模式和直径）：
+<answer>mode=Mi, diameter=k</answer>
 
-- 配对查询（例如询问 E3 和 E7）：
-<query_pair>E3,E7</query_pair>
-
-- 分组提交（用分号分隔各小组，组内学生用逗号分隔）：
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- 终局验证回答（当系统询问某对学生时，回答同类或不同类）：
-<challenge_answer>同类</challenge_answer>
-或
-<challenge_answer>不同类</challenge_answer>
-
-## 提示
-
-- 同组关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
-- 合理利用传递性可减少必要的查询次数。
-- 每名学生必须恰好属于一个研讨小组。
+注意：只有使用 answer 标签同时提交模式和直径，才会进行最终判定。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's handle an "Academic Seminar Group Assignment" task. Here are the rules:
+This is an Intelligent Teaching Assistant and Knowledge Graph System. Your task is to deduce the hardest learning path by evaluating the mastery time required under different learning aptitudes.
 
-The system has enrolled {n} students, labeled as E1, E2, ..., E{n}. These labels are for identification only and do not represent student IDs, grades, or seat numbers.
+The game involves a knowledge dependency network G with 9 core knowledge modules: A, B, C, D, E, F, G, H, I.
+The learning paths between modules and their difficulty types (T1, T2, T3) are as follows:
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-The system has secretly generated a seminar group roster, partitioning these {n} students into several non-overlapping seminar groups. The number of groups is unknown and will not be disclosed in advance. Whether two students are "equivalent" is determined entirely by whether they are assigned to the same seminar group.
+I have secretly selected a "Curriculum Difficulty Mode" that determines the standard learning cycle (weight) required to overcome each path type. There are four possible modes:
+- M1: T1 learning cycle is 1, T2 is 1, T3 is 1
+- M2: T1 learning cycle is 1, T2 is 2, T3 is 1
+- M3: T1 learning cycle is 1, T2 is 2, T3 is 2
+- M4: T1 learning cycle is 2, T2 is 2, T3 is 2
 
-Your goal is to infer the complete student grouping scheme through inquiries. You have {query_budget} query budget and can perform the following operations:
+Under a given mode, the optimal learning cost between any two modules is the weighted shortest path length.
 
-## Operation Types
+Definitions:
+- "Eccentricity" of module X: the maximum optimal learning cycle required to reach and master all other modules in the graph starting from X.
+- "Diameter" of the graph: the maximum eccentricity among all modules (i.e., the worst-case total cycle required to conquer the curriculum).
 
-1. **Pair Query**: Ask whether two different students Ei and Ej belong to the same seminar group.
-   - The system will answer "Same" (same group) or "Different" (different groups).
+Your goal is to infer the correct curriculum difficulty mode and the graph's diameter under that mode.
 
-2. **Partition Submission**: Submit your inferred complete partition.
-   - If the partition is completely correct, the game succeeds.
-   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
-     * Type A: You claimed same group, but actually different.
-     * Type B: You claimed different groups, but actually same.
-   - Counterexamples do not count toward the query budget.
+You can perform the following three types of operations:
+1. Query eccentricity: ask for the eccentricity of a specific module
+2. Guess mode: submit your guess for the difficulty mode
+3. Guess diameter: submit your guess for the graph diameter
 
-3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
-   - The system will select {challenge_count} student pairs that have never been queried and ask for your judgment one by one.
-   - If all answers are correct, the game also succeeds.
-   - If at least one pair is wrong, the game fails.
+You have at most {max_queries} operations in total (queries and guesses combined), use wisely.
 
-## Query and Submission Format (must be strictly followed)
+The final judgment is based on the last mode and diameter you submit together.
 
-Each turn must contain only one tag. Use the following XML format:
+- Query eccentricity of module X:
+<query_ecc>X</query_ecc>
+- Guess mode as Mi (i is one of 1 to 4):
+<guess_mode>Mi</guess_mode>
+- Guess diameter as k (k is a non-negative integer):
+<guess_diameter>k</guess_diameter>
+- Submit final answer (mode and diameter together):
+<answer>mode=Mi, diameter=k</answer>
 
-- Pair Query (e.g., asking about E3 and E7):
-<query_pair>E3,E7</query_pair>
-
-- Partition Submission (use semicolons to separate groups, commas within groups):
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- Challenge Answer (when the system asks about a pair, answer same or different):
-<challenge_answer>Same</challenge_answer>
-or
-<challenge_answer>Different</challenge_answer>
-
-## Hints
-
-- Group relationships have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
-- Proper use of transitivity can reduce the number of necessary queries.
-- Each student must belong to exactly one seminar group.
+Note: Only by using the answer tag to submit both mode and diameter together will trigger final judgment.
 """
 
     contextualized_rule_zh_4 = """\
-我们来执行一项“工业零件生产批次”的质量追踪任务，规则如下：
+这是一个智能工厂物流规划系统。你需要通过分析不同产能负荷模式下的运输延迟，找出整个车间的物流瓶颈。
 
-系统锁定了 {n} 个待检零件，标识为 E1, E2, ..., E{n}。这些标识仅为追踪码，不包含加工顺序、重量或位置含义。
+游戏设定了一个厂内生产网络 G，包含 9 个核心生产工站：A, B, C, D, E, F, G, H, I。
+工站间的物流路线及其类型（T1, T2, T3）如下：
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-由于生产线调整，这些零件被划分为若干个不相交的生产批次。系统已秘密记录了这一划分，具体批次数量未知且不会事先告知。两个零件是否具有“同类”属性完全由它们是否出自同一生产批次决定。
+我已秘密选择了一种"产能负荷模式"，该模式决定了每种物流路线所需的标准运输延迟（权重）。共有四种可能的模式：
+- M1: T1延迟为1, T2延迟为1, T3延迟为1
+- M2: T1延迟为1, T2延迟为2, T3延迟为1
+- M3: T1延迟为1, T2延迟为2, T3延迟为2
+- M4: T1延迟为2, T2延迟为2, T3延迟为2
 
-你的目标是通过抽检查验推断出完整的零件批次划分。你有 {query_budget} 次查询预算，可以进行以下操作：
+在给定模式下，任意两工站间的最优物流延迟即为它们的最短加权路径长度。
 
-## 操作类型
+定义：
+- 工站 X 的"离心率"：从工站 X 出发，将物料运送至网络中其他任何工站所需最优运输延迟的最大值。
+- 网络的"直径"：所有工站离心率中的最大值（即全厂最长物流等待时间）。
 
-1. **配对查询**：询问两个不同零件 Ei 和 Ej 是否属于同一生产批次。
-   - 系统会回答"同类"（同批次）或"不同类"（不同批次）。
+你的目标是推断出当前的产能负荷模式以及在该模式下网络的直径。
 
-2. **分组提交**：提交你推断出的完整划分方案。
-   - 若划分完全正确，游戏成功。
-   - 若划分错误，系统会返回一个反例对，指出冲突：
-     * 类型A：你声称同组，但实际为不同类。
-     * 类型B：你声称不同组，但实际为同类。
-     - 反例不计入查询预算。
+你可以进行以下三类操作：
+1. 查询离心率：询问某个工站的离心率
+2. 猜测模式：提交你认为的产能模式
+3. 猜测直径：提交你认为的网络直径
 
-3. **终局验证**（当查询预算用尽但未成功提交时触发）：
-   - 系统会选择 {challenge_count} 个未被抽检过的零件对，逐一询问你的判断。
-   - 若全部答对，也视为游戏成功。
-   - 若存在至少一对答错，游戏失败。
+你总共最多可进行 {max_queries} 次操作（包含查询与猜测），请谨慎使用。
 
-## 查询与提交格式（必须严格遵守）
+最终判定以你最后一次同时给出的模式与直径为准。
 
-每次只能包含一个标签。请使用以下 XML 格式：
+- 查询工站 X 的离心率：
+<query_ecc>X</query_ecc>
+- 猜测模式为 Mi（i为1到4之一）：
+<guess_mode>Mi</guess_mode>
+- 猜测直径为 k（k为非负整数）：
+<guess_diameter>k</guess_diameter>
+- 提交最终答案（同时给出模式和直径）：
+<answer>mode=Mi, diameter=k</answer>
 
-- 配对查询（例如询问 E3 和 E7）：
-<query_pair>E3,E7</query_pair>
-
-- 分组提交（用分号分隔各批次，组内零件用逗号分隔）：
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- 终局验证回答（当系统询问某对零件时，回答同类或不同类）：
-<challenge_answer>同类</challenge_answer>
-或
-<challenge_answer>不同类</challenge_answer>
-
-## 提示
-
-- 同批次关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
-- 合理利用传递性可减少必要的查询次数。
-- 每个零件必须恰好属于一个生产批次。
+注意：只有使用 answer 标签同时提交模式和直径，才会进行最终判定。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Let's execute a quality tracking task for "Industrial Part Production Batches". Here are the rules:
+[Manufacturing Scenario]
+This is a Smart Factory Logistics Planning System. Your task is to identify logistics bottlenecks across the workshop by analyzing transport latencies under different production load modes.
 
-The system has locked onto {n} parts pending inspection, labeled as E1, E2, ..., E{n}. These labels are tracking codes only and carry no processing sequence, weight, or positional meaning.
+The game involves a factory production network G with 9 core production workstations: A, B, C, D, E, F, G, H, I.
+The logistics routes between workstations and their types (T1, T2, T3) are as follows:
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-Due to production line adjustments, these parts are partitioned into several disjoint production batches. The system has secretly recorded this partition, and the specific number of batches is unknown and will not be disclosed in advance. Whether two parts are "equivalent" is determined entirely by whether they originate from the same production batch.
+I have secretly selected a "Production Load Mode" that determines the standard transport latency (weight) for each route type. There are four possible modes:
+- M1: T1 latency is 1, T2 is 1, T3 is 1
+- M2: T1 latency is 1, T2 is 2, T3 is 1
+- M3: T1 latency is 1, T2 is 2, T3 is 2
+- M4: T1 latency is 2, T2 is 2, T3 is 2
 
-Your goal is to infer the complete part batch partition through spot checks. You have {query_budget} query budget and can perform the following operations:
+Under a given mode, the optimal logistics latency between any two workstations is the weighted shortest path length.
 
-## Operation Types
+Definitions:
+- "Eccentricity" of workstation X: the maximum optimal transport latency required to deliver materials from X to all other workstations.
+- "Diameter" of the network: the maximum eccentricity among all workstations (i.e., the longest logistics waiting time across the entire factory).
 
-1. **Pair Query**: Ask whether two different parts Ei and Ej belong to the same production batch.
-   - The system will answer "Same" (same batch) or "Different" (different batches).
+Your goal is to infer the correct production load mode and the network's diameter under that mode.
 
-2. **Partition Submission**: Submit your inferred complete partition.
-   - If the partition is completely correct, the game succeeds.
-   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
-     * Type A: You claimed same group, but actually different.
-     * Type B: You claimed different groups, but actually same.
-   - Counterexamples do not count toward the query budget.
+You can perform the following three types of operations:
+1. Query eccentricity: ask for the eccentricity of a specific workstation
+2. Guess mode: submit your guess for the production mode
+3. Guess diameter: submit your guess for the network diameter
 
-3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
-   - The system will select {challenge_count} part pairs that have never been spot-checked and ask for your judgment one by one.
-   - If all answers are correct, the game also succeeds.
-   - If at least one pair is wrong, the game fails.
+You have at most {max_queries} operations in total (queries and guesses combined), use wisely.
 
-## Query and Submission Format (must be strictly followed)
+The final judgment is based on the last mode and diameter you submit together.
 
-Each turn must contain only one tag. Use the following XML format:
+- Query eccentricity of workstation X:
+<query_ecc>X</query_ecc>
+- Guess mode as Mi (i is one of 1 to 4):
+<guess_mode>Mi</guess_mode>
+- Guess diameter as k (k is a non-negative integer):
+<guess_diameter>k</guess_diameter>
+- Submit final answer (mode and diameter together):
+<answer>mode=Mi, diameter=k</answer>
 
-- Pair Query (e.g., asking about E3 and E7):
-<query_pair>E3,E7</query_pair>
-
-- Partition Submission (use semicolons to separate batches, commas within batches):
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- Challenge Answer (when the system asks about a pair, answer same or different):
-<challenge_answer>Same</challenge_answer>
-or
-<challenge_answer>Different</challenge_answer>
-
-## Hints
-
-- Batch relationships have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
-- Proper use of transitivity can reduce the number of necessary queries.
-- Each part must belong to exactly one production batch.
+Note: Only by using the answer tag to submit both mode and diameter together will trigger final judgment.
 """
 
     contextualized_rule_zh_5 = """\
-我们来进行一次“涉案主体利益阵营”审查，规则如下：
+这是一个案卷证据链审查系统。你需要通过推演不同审查标准下的查证周期，找出本案的证据闭环最长耗时。
 
-系统整理了 {n} 个涉案主体，标识为 E1, E2, ..., E{n}。这些标识仅作代称，不代表诉讼地位、涉案金额或优先级含义。
+游戏设定了一个复杂的案件证据网络 G，包含 9 项核心证据：A, B, C, D, E, F, G, H, I。
+证据间的逻辑印证链及其关联类型（T1, T2, T3）如下：
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-基于商业关联，系统已查明并将这 {n} 个主体划分为若干个互不交叉的利益共同体（阵营）。利益共同体的数量未知且不会事先告知。两个主体是否属于“同类”完全由他们是否在同一利益阵营决定。
+我已秘密选择了一种"审查标准模式"，该模式决定了核实每种关联类型所需的标准查证周期（权重）。共有四种可能的模式：
+- M1: T1查证需1天, T2查证需1天, T3查证需1天
+- M2: T1查证需1天, T2查证需2天, T3查证需1天
+- M3: T1查证需1天, T2查证需2天, T3查证需2天
+- M4: T1查证需2天, T2查证需2天, T3查证需2天
 
-你的目标是通过尽职调查推断出完整的利益阵营划分。你有 {query_budget} 次查询预算，可以进行以下操作：
+在给定模式下，任意两项证据间的最优查证路径即为它们的最短加权关联长度。
 
-## 操作类型
+定义：
+- 证据 X 的"离心率"：以证据 X 为起点，推演并印证网络中其他所有证据所需最短查证周期的最大值。
+- 证据网络的"直径"：所有证据离心率中的最大值（即本案最长审查链的极限耗时）。
 
-1. **配对查询**：询问两个不同涉案主体 Ei 和 Ej 是否属于同一利益阵营。
-   - 系统会回答"同类"（同阵营）或"不同类"（不同阵营）。
+你的目标是推断出当前的审查标准模式以及在该模式下证据网络的直径。
 
-2. **分组提交**：提交你推断出的完整划分方案。
-   - 若划分完全正确，游戏成功。
-   - 若划分错误，系统会返回一个反例对，指出冲突：
-     * 类型A：你声称同组，但实际为不同类。
-     * 类型B：你声称不同组，但实际为同类。
-     - 反例不计入查询预算。
+你可以进行以下三类操作：
+1. 查询离心率：询问某项证据的离心率
+2. 猜测模式：提交你认为的审查模式
+3. 猜测直径：提交你认为的网络直径
 
-3. **终局验证**（当查询预算用尽但未成功提交时触发）：
-   - 系统会选择 {challenge_count} 个未被调查过的主体对，逐一询问你的判断。
-   - 若全部答对，也视为游戏成功。
-   - 若存在至少一对答错，游戏失败。
+你总共最多可进行 {max_queries} 次操作（包含查询与猜测），请谨慎使用。
 
-## 查询与提交格式（必须严格遵守）
+最终判定以你最后一次同时给出的模式与直径为准。
 
-每次只能包含一个标签。请使用以下 XML 格式：
+- 查询证据 X 的离心率：
+<query_ecc>X</query_ecc>
+- 猜测模式为 Mi（i为1到4之一）：
+<guess_mode>Mi</guess_mode>
+- 猜测直径为 k（k为非负整数）：
+<guess_diameter>k</guess_diameter>
+- 提交最终答案（同时给出模式和直径）：
+<answer>mode=Mi, diameter=k</answer>
 
-- 配对查询（例如询问 E3 和 E7）：
-<query_pair>E3,E7</query_pair>
-
-- 分组提交（用分号分隔各阵营，组内主体用逗号分隔）：
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- 终局验证回答（当系统询问某对主体时，回答同类或不同类）：
-<challenge_answer>同类</challenge_answer>
-或
-<challenge_answer>不同类</challenge_answer>
-
-## 提示
-
-- 利益关联具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
-- 合理利用传递性可减少必要的查询次数。
-- 每个涉案主体必须恰好属于一个利益阵营。
+注意：只有使用 answer 标签同时提交模式和直径，才会进行最终判定。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Let's conduct a "Subject Interest Faction" review. Here are the rules:
+[Law Scenario]
+This is a Case Evidence Chain Review System. Your task is to identify the longest time required to close the evidence loop by deducing verification periods under different scrutiny standards.
 
-The system has compiled {n} subjects involved in a case, labeled as E1, E2, ..., E{n}. These labels are for designation only and do not represent litigation status, amount involved, or priority meaning.
+The game involves a complex case evidence network G with 9 core evidence items: A, B, C, D, E, F, G, H, I.
+The logical corroboration chains between evidence items and their link types (T1, T2, T3) are as follows:
+- A–B (T1)
+- B–C (T2)
+- C–D (T1)
+- D–E (T1)
+- E–F (T3)
+- C–G (T2)
+- D–G (T3)
+- E–H (T2)
+- F–H (T3)
+- B–I (T1)
 
-Based on business affiliations, the system has identified and partitioned these {n} subjects into several non-overlapping communities of interest (factions). The number of interest communities is unknown and will not be disclosed in advance. Whether two subjects are "equivalent" is determined entirely by whether they belong to the same interest faction.
+I have secretly selected a "Scrutiny Standard Mode" that determines the standard verification period (weight) required to validate each link type. There are four possible modes:
+- M1: T1 period is 1 day, T2 is 1 day, T3 is 1 day
+- M2: T1 period is 1 day, T2 is 2 days, T3 is 1 day
+- M3: T1 period is 1 day, T2 is 2 days, T3 is 2 days
+- M4: T1 period is 2 days, T2 is 2 days, T3 is 2 days
 
-Your goal is to infer the complete faction partition through due diligence. You have {query_budget} query budget and can perform the following operations:
+Under a given mode, the optimal verification path between any two pieces of evidence is the weighted shortest connection length.
 
-## Operation Types
+Definitions:
+- "Eccentricity" of evidence X: the maximum optimal verification period required to deduce and corroborate all other evidence in the network starting from X.
+- "Diameter" of the network: the maximum eccentricity among all evidence items (i.e., the absolute time limit of the longest review chain for the case).
 
-1. **Pair Query**: Ask whether two different subjects Ei and Ej belong to the same interest faction.
-   - The system will answer "Same" (same faction) or "Different" (different factions).
+Your goal is to infer the correct scrutiny standard mode and the network's diameter under that mode.
 
-2. **Partition Submission**: Submit your inferred complete partition.
-   - If the partition is completely correct, the game succeeds.
-   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
-     * Type A: You claimed same group, but actually different.
-     * Type B: You claimed different groups, but actually same.
-   - Counterexamples do not count toward the query budget.
+You can perform the following three types of operations:
+1. Query eccentricity: ask for the eccentricity of a specific evidence item
+2. Guess mode: submit your guess for the scrutiny mode
+3. Guess diameter: submit your guess for the network diameter
 
-3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
-   - The system will select {challenge_count} subject pairs that have never been investigated and ask for your judgment one by one.
-   - If all answers are correct, the game also succeeds.
-   - If at least one pair is wrong, the game fails.
+You have at most {max_queries} operations in total (queries and guesses combined), use wisely.
 
-## Query and Submission Format (must be strictly followed)
+The final judgment is based on the last mode and diameter you submit together.
 
-Each turn must contain only one tag. Use the following XML format:
+- Query eccentricity of evidence X:
+<query_ecc>X</query_ecc>
+- Guess mode as Mi (i is one of 1 to 4):
+<guess_mode>Mi</guess_mode>
+- Guess diameter as k (k is a non-negative integer):
+<guess_diameter>k</guess_diameter>
+- Submit final answer (mode and diameter together):
+<answer>mode=Mi, diameter=k</answer>
 
-- Pair Query (e.g., asking about E3 and E7):
-<query_pair>E3,E7</query_pair>
-
-- Partition Submission (use semicolons to separate factions, commas within factions):
-<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
-
-- Challenge Answer (when the system asks about a pair, answer same or different):
-<challenge_answer>Same</challenge_answer>
-or
-<challenge_answer>Different</challenge_answer>
-
-## Hints
-
-- Interest affiliations have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
-- Proper use of transitivity can reduce the number of necessary queries.
-- Each subject must belong to exactly one interest faction.
+Note: Only by using the answer tag to submit both mode and diameter together will trigger final judgment.
 """
 
-    tags = ["answer", "query_pair", "challenge_answer"]
+    tags = ["answer", "query_ecc", "guess_mode", "guess_diameter"]
 
-    # 难度配置说明：
-    # 1 (简单)      - N=6,  K=2, Q=12
-    # 2 (中等偏下)  - N=9,  K=3, Q=18
-    # 3 (中等偏上)  - N=12, K=4, Q=20
-    # 4 (较难)      - N=15, K=5, Q=25
-    # 5 (难)        - N=18, K=6, Q=30
+    GRAPH_EDGES = [
+        ("A", "B", "T1"),
+        ("B", "C", "T2"),
+        ("C", "D", "T1"),
+        ("D", "E", "T1"),
+        ("E", "F", "T3"),
+        ("C", "G", "T2"),
+        ("D", "G", "T3"),
+        ("E", "H", "T2"),
+        ("F", "H", "T3"),
+        ("B", "I", "T1"),
+    ]
+
+    VERTICES = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+
+    MODES = {
+        "M1": {"T1": 1, "T2": 1, "T3": 1},
+        "M2": {"T1": 1, "T2": 2, "T3": 1},
+        "M3": {"T1": 1, "T2": 2, "T3": 2},
+        "M4": {"T1": 2, "T2": 2, "T3": 2},
+    }
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 6,
-                "partition": [[1, 2, 3], [4, 5, 6]],
-                "query_budget": 12,
-                "challenge_count": 3
-            },
-            2: {
-                "n": 9,
-                "partition": [[1, 4, 7], [2, 5, 8], [3, 6, 9]],
-                "query_budget": 18,
-                "challenge_count": 4
-            },
-            3: {
-                "n": 12,
-                "partition": [[1, 5, 9], [2, 6, 10], [3, 7, 11], [4, 8, 12]],
-                "query_budget": 20,
-                "challenge_count": 5
-            },
-            4: {
-                "n": 15,
-                "partition": [[1, 6, 11], [2, 7, 12], [3, 8, 13], [4, 9, 14], [5, 10, 15]],
-                "query_budget": 25,
-                "challenge_count": 5
-            },
-            5: {
-                "n": 18,
-                "partition": [[1, 7, 13], [2, 8, 14], [3, 9, 15], [4, 10, 16], [5, 11, 17], [6, 12, 18]],
-                "query_budget": 30,
-                "challenge_count": 6
-            }
-        },
-        "en": {
-            1: {
-                "n": 6,
-                "partition": [[1, 2, 3], [4, 5, 6]],
-                "query_budget": 12,
-                "challenge_count": 3
-            },
-            2: {
-                "n": 9,
-                "partition": [[1, 4, 7], [2, 5, 8], [3, 6, 9]],
-                "query_budget": 18,
-                "challenge_count": 4
-            },
-            3: {
-                "n": 12,
-                "partition": [[1, 5, 9], [2, 6, 10], [3, 7, 11], [4, 8, 12]],
-                "query_budget": 20,
-                "challenge_count": 5
-            },
-            4: {
-                "n": 15,
-                "partition": [[1, 6, 11], [2, 7, 12], [3, 8, 13], [4, 9, 14], [5, 10, 15]],
-                "query_budget": 25,
-                "challenge_count": 5
-            },
-            5: {
-                "n": 18,
-                "partition": [[1, 7, 13], [2, 8, 14], [3, 9, 15], [4, 10, 16], [5, 11, 17], [6, 12, 18]],
-                "query_budget": 30,
-                "challenge_count": 6
-            }
-        }
+        1: {"mode": "M1", "max_queries": 6},
+        2: {"mode": "M2", "max_queries": 5},
+        3: {"mode": "M3", "max_queries": 4},
+        4: {"mode": "M4", "max_queries": 3},
+        5: {"mode": "M3", "max_queries": 2},
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 查询计数器
-        self.queried_pairs = set()  # 已查询的元素对
-        self.in_challenge_mode = False  # 是否进入终局验证模式
-        self.challenge_pairs = []  # 终局验证的元素对列表
-        self.challenge_index = 0  # 当前终局验证的索引
-        self.challenge_correct_count = 0  # 终局验证答对的数量
+        self.query_count = 0
+        self.max_queries = 6
+        self.mode = None
+        self.diameter = None
+        self.eccentricities = {}
+        self.graph = {}
         super().__init__(config)
 
     def _initialize_game(self):
-        lang = self.config.language
         diff = self.config.difficulty
+        if isinstance(diff, str):
+            diff = int(diff)
 
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["query_budget"] = cfg["query_budget"]
-        self._game_info["challenge_count"] = cfg["challenge_count"]
-        
-        # 设置真实的等价类划分
-        original_partition = cfg["partition"]
-        self.query_budget = cfg["query_budget"]
-        self.challenge_count = cfg["challenge_count"]
-        self.n = cfg["n"]
-        
-        # 针对报告问题3的修复：随机打乱元素编号
-        elements = list(range(1, self.n + 1))
-        random.shuffle(elements)
-        mapping = dict(zip(range(1, self.n + 1), elements))
-        
-        self.true_partition = []
-        for group in original_partition:
-            self.true_partition.append([mapping[e] for e in group])
-        
-        # 构建元素到等价类的映射（用于快速判断）
-        self.element_to_class = {}
-        for class_id, elements_list in enumerate(self.true_partition):
-            for elem in elements_list:
-                self.element_to_class[elem] = class_id
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        self.mode = cfg["mode"]
+        self.max_queries = cfg["max_queries"]
 
-    def _parse_element(self, elem_str):
-        """解析元素标识，例如 'E3' -> 3"""
-        elem_str = elem_str.strip().upper()
-        if elem_str.startswith('E'):
-            try:
-                return int(elem_str[1:])
-            except:
-                raise ValueError(f"Invalid element format: {elem_str}")
-        raise ValueError(f"Invalid element format: {elem_str}")
+        self._build_graph()
 
-    def _are_same_class(self, elem1, elem2):
-        """判断两个元素是否属于同一等价类"""
-        return self.element_to_class.get(elem1) == self.element_to_class.get(elem2)
+        self._compute_eccentricities_and_diameter()
 
-    def _normalize_pair(self, elem1, elem2):
-        """标准化元素对（小号在前）"""
-        return tuple(sorted([elem1, elem2]))
+        self._game_info = {
+            "max_queries": self.max_queries,
+        }
+
+    def _build_graph(self):
+        weights = self.MODES[self.mode]
+        self.graph = {v: [] for v in self.VERTICES}
+
+        for u, v, label in self.GRAPH_EDGES:
+            weight = weights[label]
+            self.graph[u].append((v, weight))
+            self.graph[v].append((u, weight))
+
+    def _dijkstra(self, start: str) -> Dict[str, int]:
+        dist = {v: float('inf') for v in self.VERTICES}
+        dist[start] = 0
+        visited = set()
+        pq = [(0, start)]
+
+        while pq:
+            pq.sort()
+            d, u = pq.pop(0)
+            if u in visited:
+                continue
+            visited.add(u)
+
+            for v, weight in self.graph[u]:
+                if dist[u] + weight < dist[v]:
+                    dist[v] = dist[u] + weight
+                    pq.append((dist[v], v))
+
+        return dist
+
+    def _compute_eccentricities_and_diameter(self):
+        self.eccentricities = {}
+        max_ecc = 0
+
+        for v in self.VERTICES:
+            dist = self._dijkstra(v)
+            ecc = max(d for d in dist.values() if d != float('inf'))
+            self.eccentricities[v] = ecc
+            max_ecc = max(max_ecc, ecc)
+
+        self.diameter = max_ecc
 
     def evaluate(self, parsed_info):
-        """评估提交的分组答案是否正确，仅返回 True/False，不修改 state"""
-        if "answer" not in parsed_info:
-            return False
-            
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"]
         
-        # 解析提交的分组：分号分隔各组，逗号分隔组内元素
-        try:
-            submitted_groups = []
-            for group_str in raw_ans.split(';'):
-                group_str = group_str.strip()
-                if not group_str:
-                    continue
-                elements = []
-                for elem_str in group_str.split(','):
-                    elem_str = elem_str.strip()
-                    if elem_str:
-                        elements.append(self._parse_element(elem_str))
-                if elements:
-                    submitted_groups.append(set(elements))
-        except Exception:
-            return False
-        
-        # 检查是否覆盖所有元素且无重复
-        all_submitted = set()
-        for group in submitted_groups:
-            all_submitted.update(group)
-        
-        expected_elements = set(range(1, self.n + 1))
-        if all_submitted != expected_elements:
-            return False
-        
-        # 检查是否有重复元素
-        total_count = sum(len(group) for group in submitted_groups)
-        if total_count != len(all_submitted):
-            return False
-        
-        # 转换真实分组为集合形式便于比较
-        true_groups = [set(group) for group in self.true_partition]
-        
-        # 检查提交的分组是否与真实分组完全一致
-        if len(submitted_groups) != len(true_groups):
-            return False
-        
-        # 检查每个提交的组是否在真实分组中
-        matched = [False] * len(true_groups)
-        for sub_group in submitted_groups:
-            found = False
-            for i, true_group in enumerate(true_groups):
-                if sub_group == true_group and not matched[i]:
-                    matched[i] = True
-                    found = True
-                    break
-            if not found:
-                return False
-        
-        return True
+        kv_pairs = [x.strip() for x in raw_ans.split(",")]
+        ans_dict = {}
+        for kv in kv_pairs:
+            if "=" not in kv:
+                continue
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
 
-    def _find_counterexample(self, submitted_groups, true_groups):
-        """找到一个反例对，用于提示错误"""
-        # 类型A：声称同组但实际不同类
-        for sub_group in submitted_groups:
-            sub_list = list(sub_group)
-            if len(sub_list) >= 2:
-                for i in range(len(sub_list)):
-                    for j in range(i + 1, len(sub_list)):
-                        if not self._are_same_class(sub_list[i], sub_list[j]):
-                            return ('A', sub_list[i], sub_list[j])
-        
-        # 类型B：声称不同组但实际同类
-        for i in range(len(submitted_groups)):
-            for j in range(i + 1, len(submitted_groups)):
-                for elem1 in submitted_groups[i]:
-                    for elem2 in submitted_groups[j]:
-                        if self._are_same_class(elem1, elem2):
-                            return ('B', elem1, elem2)
-        
-        return None
+        if "mode" not in ans_dict or "diameter" not in ans_dict:
+            return False
+
+        if ans_dict["mode"] != self.mode:
+            return False
+
+        try:
+            guessed_diameter = int(ans_dict["diameter"])
+        except:
+            return False
+
+        return guessed_diameter == self.diameter
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑，用于处理查询并返回响应"""
-        is_zh = self.config.language == "zh"
-        
-        # 如果在终局验证模式
-        if self.in_challenge_mode:
-            if "challenge_answer" not in parsed_info:
-                return "请使用 <challenge_answer> 标签回答。" if is_zh else "Please use <challenge_answer> tag to answer."
-            
-            user_answer = parsed_info["challenge_answer"].strip()
-            if is_zh:
-                is_same = user_answer == "同类"
-            else:
-                is_same = user_answer.lower() == "same"
-            
-            # 获取当前挑战对
-            elem1, elem2 = self.challenge_pairs[self.challenge_index]
-            correct_same = self._are_same_class(elem1, elem2)
-            
-            if is_same == correct_same:
-                self.challenge_correct_count += 1
-            
-            self.challenge_index += 1
-            
-            # 检查是否完成所有终局验证
-            if self.challenge_index >= len(self.challenge_pairs):
-                if self.challenge_correct_count == len(self.challenge_pairs):
-                    self.state.set_state("success", "All challenge answers correct")
-                    return "终局验证全部正确！" if is_zh else "All challenge answers correct!"
-                else:
-                    self.state.set_state("failed", "Challenge answer incorrect")
-                    return f"终局验证失败，答对 {self.challenge_correct_count}/{len(self.challenge_pairs)} 题。" if is_zh else f"Challenge failed, {self.challenge_correct_count}/{len(self.challenge_pairs)} correct."
-            else:
-                # 继续下一个挑战
-                next_elem1, next_elem2 = self.challenge_pairs[self.challenge_index]
-                question = f"请判断 E{next_elem1} 和 E{next_elem2} 是否同类？" if is_zh else f"Are E{next_elem1} and E{next_elem2} equivalent?"
-                return question
-        
-        # 处理配对查询
-        if "query_pair" in parsed_info:
-            # 检查查询预算
-            if self.query_count >= self.query_budget:
-                # 进入终局验证模式
-                self.in_challenge_mode = True
-                self._generate_challenge_pairs()
-                if len(self.challenge_pairs) == 0:
-                    self.state.set_state("failed", "Query budget exceeded, no unqueried pairs for challenge")
-                    return "查询预算已用尽，没有足够的未查询元素对进行终局验证。" if is_zh else "Query budget exceeded, not enough unqueried pairs for challenge."
-                
-                elem1, elem2 = self.challenge_pairs[0]
-                question = f"查询预算已用尽，进入终局验证。请判断 E{elem1} 和 E{elem2} 是否同类？" if is_zh else f"Query budget exhausted, entering final challenge. Are E{elem1} and E{elem2} equivalent?"
-                return question
-            
-            try:
-                raw_pair = parsed_info["query_pair"].strip()
-                elem_strs = [s.strip() for s in raw_pair.split(',')]
-                if len(elem_strs) != 2:
-                    raise ValueError("Query must contain exactly two elements")
-                
-                elem1 = self._parse_element(elem_strs[0])
-                elem2 = self._parse_element(elem_strs[1])
-                
-                if elem1 == elem2:
-                    return "错误：不能查询相同的元素。" if is_zh else "Error: Cannot query the same element."
-                
-                if elem1 < 1 or elem1 > self.n or elem2 < 1 or elem2 > self.n:
-                    return "错误：元素编号超出范围。" if is_zh else "Error: Element ID out of range."
-                
-                # 记录已查询的元素对
-                pair = self._normalize_pair(elem1, elem2)
-                self.queried_pairs.add(pair)
-                self.query_count += 1
-                
-                # 判断是否同类
-                is_same = self._are_same_class(elem1, elem2)
-                
-                remaining = self.query_budget - self.query_count
-                result = "同类" if is_same else "不同类"
-                suffix = f"（剩余查询次数：{remaining}）" if is_zh else f" (Remaining queries: {remaining})"
-                
-                if is_zh:
-                    return result + suffix
-                else:
-                    return ("Same" if is_same else "Different") + suffix
-                    
-            except Exception as e:
-                return f"错误：{str(e)}" if is_zh else f"Error: {str(e)}"
-        
-        raise ValueError("No valid query tag found.")
-
-    def _generate_challenge_pairs(self):
-        """生成终局验证的元素对"""
-        # 找出所有未被查询过的元素对
-        all_pairs = []
-        for i in range(1, self.n + 1):
-            for j in range(i + 1, self.n + 1):
-                pair = (i, j)
-                if pair not in self.queried_pairs:
-                    all_pairs.append(pair)
-        
-        # 随机选择指定数量的元素对
-        if len(all_pairs) >= self.challenge_count:
-            self.challenge_pairs = random.sample(all_pairs, self.challenge_count)
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_limit = f"错误：查询次数已达上限（{self.max_queries}次）。"
+            error_vertex = "错误：无效的顶点名称。"
+            error_mode = "错误：无效的模式。"
         else:
-            self.challenge_pairs = all_pairs
+            yes_res, no_res = "Yes", "No"
+            error_limit = f"Error: Query limit reached ({self.max_queries} queries)."
+            error_vertex = "Error: Invalid vertex name."
+            error_mode = "Error: Invalid mode."
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
+        if "query_ecc" in parsed_info:
+            if self.query_count >= self.max_queries:
+                return error_limit
 
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        possible_queries = []
-        is_zh = self.config.language == "zh"
-        
-        # 遍历所有可能的元素对 (i, j) 其中 i < j
-        for i in range(1, self.n + 1):
-            for j in range(i + 1, self.n + 1):
-                # 构造查询字符串
-                query_str = f"<query_pair>E{i},E{j}</query_pair>"
-                
-                # 获取真实逻辑判断结果
-                is_same = self._are_same_class(i, j)
-                
-                # 构造回答（仅包含核心结论，不包含动态的剩余次数提示，以保持ground truth的一致性）
-                if is_zh:
-                    ans = "同类" if is_same else "不同类"
+            vertex = parsed_info["query_ecc"].strip().upper()
+            if vertex not in self.VERTICES:
+                return error_vertex
+
+            self.query_count += 1
+            ecc = self.eccentricities[vertex]
+            return str(ecc)
+
+        elif "guess_mode" in parsed_info:
+            if self.query_count >= self.max_queries:
+                return error_limit
+            self.query_count += 1
+            guessed_mode = parsed_info["guess_mode"].strip()
+            if guessed_mode not in self.MODES:
+                return error_mode
+            return yes_res if guessed_mode == self.mode else no_res
+
+        elif "guess_diameter" in parsed_info:
+            if self.query_count >= self.max_queries:
+                return error_limit
+            self.query_count += 1
+            try:
+                guessed_diameter = int(parsed_info["guess_diameter"].strip())
+                return yes_res if guessed_diameter == self.diameter else no_res
+            except:
+                if self.config.language == "zh":
+                    return "错误：直径必须是非负整数。"
                 else:
-                    ans = "Same" if is_same else "Different"
-                
-                possible_queries.append({
-                    "query": query_str,
-                    "answer": ans
-                })
-                
-        return possible_queries
+                    return "Error: Diameter must be a non-negative integer."
+
+        else:
+            raise ValueError("No valid query or guess tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        if correct.startswith("不同类"):
-            return correct.replace("不同类", "同类", 1)
-        if correct.startswith("同类"):
-            return correct.replace("同类", "不同类", 1)
-        if correct.startswith("Different"):
-            return correct.replace("Different", "Same", 1)
-        if correct.startswith("Same"):
-            return correct.replace("Same", "Different", 1)
-            
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        if correct == "是": return "否"
-        if correct == "否": return "是"
-        
-        lower_c = correct.lower()
-        if lower_c == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if lower_c == "no":
-            return "Yes" if correct[0].isupper() else "yes"
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
             
-        return correct + "_WRONG"
+        lower_correct = correct.lower()
+        if lower_correct == "yes":
+            if correct.isupper(): return "NO"
+            if correct.istitle(): return "No"
+            return "no"
+        if lower_correct == "no":
+            if correct.isupper(): return "YES"
+            if correct.istitle(): return "Yes"
+            return "yes"
+            
+        return f"{correct}_WRONG"
 
-    def step(self, response: str):
-        """处理模型的回复"""
-        try:
-            parsed_info = self.parse(response)
-            
-            # 如果在终局验证模式，强制走 produce_response 路径
-            if self.in_challenge_mode:
-                game_response = self.produce_response(parsed_info)
-                self.state.add_message("user", game_response)
-            elif "answer" in parsed_info:
-                # 处理分组提交
-                is_success = self.evaluate(parsed_info)
-                is_zh = self.config.language == "zh"
-                
-                if is_success:
-                    res = f"答案正确！等价类数量为 {len(self.true_partition)}。" if is_zh else f"Correct answer! Number of equivalence classes: {len(self.true_partition)}."
-                    self.state.set_state("success", "success")
-                    self.state.add_message("user", res)
-                else:
-                    # 找反例
-                    true_groups = [set(group) for group in self.true_partition]
-                    try:
-                        raw_ans = parsed_info["answer"].strip()
-                        submitted_groups = []
-                        for group_str in raw_ans.split(';'):
-                            group_str = group_str.strip()
-                            if not group_str:
-                                continue
-                            elements = []
-                            for elem_str in group_str.split(','):
-                                elem_str = elem_str.strip()
-                                if elem_str:
-                                    elements.append(self._parse_element(elem_str))
-                            if elements:
-                                submitted_groups.append(set(elements))
-                        
-                        counterexample = self._find_counterexample(submitted_groups, true_groups)
-                        if counterexample:
-                            ex_type, e1, e2 = counterexample
-                            if ex_type == 'A':
-                                res = f"答案错误。反例：你声称 E{e1} 和 E{e2} 同组，但它们实际为不同类。" if is_zh else f"Incorrect answer. Counterexample: You claimed E{e1} and E{e2} are in the same group, but they are actually different."
-                            else:
-                                res = f"答案错误。反例：你声称 E{e1} 和 E{e2} 不同组，但它们实际为同类。" if is_zh else f"Incorrect answer. Counterexample: You claimed E{e1} and E{e2} are in different groups, but they are actually same."
-                        else:
-                            res = "答案错误。" if is_zh else "Incorrect answer."
-                    except Exception:
-                        res = "答案错误。" if is_zh else "Incorrect answer."
-                    
-                    self.state.set_state("failed", "incorrect answer")
-                    self.state.add_message("user", res)
-            else:
-                # 处理查询或终局验证
-                game_response = self.produce_response(parsed_info)
-                self.state.add_message("user", game_response)
-                
-        except Exception as e:
-            self.state.set_state("failed", str(e))
+    def get_all_possible_queries(self) -> List[Dict]:
+        queries = []
+        for v in self.VERTICES:
+            ecc = self.eccentricities[v]
+            queries.append({
+                "query": f"<query_ecc>{v}</query_ecc>",
+                "answer": str(ecc)
+            })
         
-        return self.state
+        for mode_name in self.MODES:
+            if mode_name == self.mode:
+                queries.append({
+                    "query": f"<guess_mode>{mode_name}</guess_mode>",
+                    "answer": "Yes" if self.config.language == "en" else "是"
+                })
+            else:
+                queries.append({
+                    "query": f"<guess_mode>{mode_name}</guess_mode>",
+                    "answer": "No" if self.config.language == "en" else "否"
+                })
+        return queries

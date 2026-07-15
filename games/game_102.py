@@ -1,583 +1,541 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   路径最大边权：两节点间所有路径中最小的最大边权是多少
-# ============================================================
-
-from .base import Game
 import random
+import re
+from collections import deque
+from .base import Game
 
-class BottleneckPathGame(Game):
+class GraphDiameterGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"瓶颈路径推理"游戏，规则如下：
+我们来玩一个"图直径推断"游戏，规则如下：
 
-游戏设定了一个未知的无向加权图，包含以下已知信息：
-- 顶点集合：编号从 1 到 {n}
-- 起点：{start}
-- 终点：{goal}
-- 权重范围：所有边的权重为 0 到 {max_weight} 之间的整数
-- 保证起点与终点之间至少存在一条路径
+存在一个未知的连通、无向、无权图 G=(V,E)，顶点集 V 的规模为 {n} 个顶点，每个顶点有唯一标识。边集 E 不可见。所有边权为 1，最短路距离为整数。
 
-你的目标是找出从起点到终点的所有可能路径中，"最大边权"的最小可能值（即瓶颈值）。换句话说，就是找到最小的阈值 T，使得在仅保留权重小于等于 T 的边时，起点与终点首次连通。
+定义：
+- dist(u,v) 表示顶点 u 与 v 之间的最短路长度
+- ecc(v) = max_u dist(v,u) 表示顶点 v 的离心率（即从 v 出发到其他顶点的最大距离）
+- 图的直径 D = max_v ecc(v) = max_(u,v) dist(u,v)（即图中任意两点间的最大距离）
 
-你可以向我提出以下三类问题（每次提问计入次数，请尽可能少地提问）：
+你的目标是：通过允许的查询操作，推断出图的直径 D。
 
-1. **阈值连通性查询**：询问在仅保留权重小于等于 T 的边时，起点与终点是否连通。我会回答"是"或"否"。
+你可以进行以下三种操作：
 
-2. **边存在与权重查询**：询问两个不同顶点 X 和 Y 之间是否存在边。如果存在，我会告诉你边的权重；如果不存在，我会回答"无边"。
+1. **探测操作 PROBE X**（X 是顶点标识）：
+   - 返回该顶点的离心率 TIME T，其中 T = ecc(X)
+   - 返回距离 X 最远的所有顶点集合 FAR，即所有满足 dist(X,u) = T 的顶点 u
 
-3. **路径可行性与瓶颈查询**：给定一个顶点序列（至少 2 个顶点），询问相邻顶点之间是否都存在边。如果都存在，我会告诉你这条路径上的最大边权；如果任一相邻对不存在边，我会回答"非法路径"。
+2. **距离查询 DIST A B**（A、B 是顶点标识，A 不等于 B）：
+   - 仅当 A 和 B 都至少一次出现在某次 PROBE 的 FAR 集合中时，查询才有效
+   - 有效时返回 A 和 B 之间的最短路距离
+   - 若不满足条件，返回 REJECT
 
-当你收集到足够信息后，请提交最终答案。如果答案错误或格式不符，游戏失败。
+3. **提交答案 DECLARE D**（D 是非负整数）：
+   - 若 D 等于真实直径，游戏成功
+   - 否则游戏失败
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 探测操作（例如探测顶点 v1）：
+<probe>v1</probe>
 
-- 阈值连通性查询（例如询问阈值 5）：
-<query_threshold>5</query_threshold>
+- 距离查询（例如查询顶点 v1 和 v2 之间的距离）：
+<dist>v1,v2</dist>
 
-- 边存在与权重查询（例如询问顶点 1 和 3 之间的边）：
-<query_edge>1,3</query_edge>
+- 提交答案（例如声明直径为 5）：
+<answer>5</answer>
 
-- 路径可行性与瓶颈查询（例如询问路径 1→2→5）：
-<query_path>1,2,5</query_path>
-
-提交最终答案时，请说明从起点到终点的最小可能最大边权（瓶颈值），格式如下：
-
-<answer>瓶颈值</answer>
-
-例如：<answer>7</answer>
+请尽可能少地使用查询次数来推断出正确的直径。
 """
 
     game_rule_en = """\
-Let's play a "Bottleneck Path Reasoning" game. Here are the rules:
+Let's play a "Graph Diameter Inference" game. Here are the rules:
 
-The game involves an unknown undirected weighted graph with the following known information:
-- Vertex set: numbered from 1 to {n}
-- Start vertex: {start}
-- Goal vertex: {goal}
-- Weight range: all edge weights are integers from 0 to {max_weight}
-- It is guaranteed that at least one path exists between the start and goal vertices
+There is an unknown connected, undirected, unweighted graph G=(V,E), where vertex set V has {n} vertices, each with a unique identifier. Edge set E is not visible. All edges have weight 1, and shortest path distances are integers.
 
-Your objective is to find the minimum possible value of the "maximum edge weight" among all paths from start to goal (i.e., the bottleneck value). In other words, find the smallest threshold T such that the start and goal vertices are connected when only edges with weight less than or equal to T are retained.
+Definitions:
+- dist(u,v) denotes the shortest path length between vertices u and v
+- ecc(v) = max_u dist(v,u) denotes the eccentricity of vertex v (i.e., the maximum distance from v to any other vertex)
+- The diameter of the graph D = max_v ecc(v) = max_(u,v) dist(u,v) (i.e., the maximum distance between any two vertices)
 
-You can ask me the following three types of questions (each query counts toward your total, please minimize the number of queries):
+Your goal is: Infer the diameter D of the graph through allowed query operations.
 
-1. **Threshold Connectivity Query**: Ask whether the start and goal vertices are connected when only edges with weight less than or equal to T are retained. I will answer "Yes" or "No".
+You can perform the following three types of operations:
 
-2. **Edge Existence and Weight Query**: Ask whether an edge exists between two different vertices X and Y. If it exists, I will tell you the edge weight; if not, I will answer "No edge".
+1. **Probe operation PROBE X** (X is a vertex identifier):
+   - Returns the eccentricity TIME T, where T = ecc(X)
+   - Returns the set FAR of all farthest vertices from X, i.e., all vertices u satisfying dist(X,u) = T
 
-3. **Path Feasibility and Bottleneck Query**: Given a sequence of vertices (at least 2 vertices), ask whether edges exist between all adjacent vertices. If they all exist, I will tell you the maximum edge weight on this path; if any adjacent pair has no edge, I will answer "Invalid path".
+2. **Distance query DIST A B** (A, B are vertex identifiers, A not equal to B):
+   - Valid only if both A and B have appeared at least once in some PROBE's FAR set
+   - When valid, returns the shortest path distance between A and B
+   - If conditions not met, returns REJECT
 
-When you have collected enough information, submit your final answer. If the answer is incorrect or the format is invalid, the game fails.
+3. **Submit answer DECLARE D** (D is a non-negative integer):
+   - If D equals the true diameter, the game succeeds
+   - Otherwise, the game fails
 
-## Query and Answer Format (must be strictly followed)
+Each turn can perform only one operation. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Probe operation (e.g., probing vertex v1):
+<probe>v1</probe>
 
-- Threshold Connectivity Query (e.g., asking about threshold 5):
-<query_threshold>5</query_threshold>
+- Distance query (e.g., querying distance between v1 and v2):
+<dist>v1,v2</dist>
 
-- Edge Existence and Weight Query (e.g., asking about edge between vertices 1 and 3):
-<query_edge>1,3</query_edge>
+- Submit answer (e.g., declaring diameter as 5):
+<answer>5</answer>
 
-- Path Feasibility and Bottleneck Query (e.g., asking about path 1→2→5):
-<query_path>1,2,5</query_path>
-
-When submitting the final answer, specify the minimum possible maximum edge weight (bottleneck value) from start to goal, using this format:
-
-<answer>bottleneck_value</answer>
-
-For example: <answer>7</answer>
+Please use as few queries as possible to infer the correct diameter.
 """
 
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-【交通网络路由场景】
-我们来玩一个"交通瓶颈路径规划"游戏，规则如下：
+我们来推断“交通路网的最长通行时间”，规则如下：
 
-游戏设定了一个未知的城市交通路网（无向加权图），包含以下已知信息：
-- 城市节点集合：编号从 1 到 {n}
-- 出发城市：{start}
-- 目的城市：{goal}
-- 拥堵指数范围：所有路段的拥堵指数为 0 到 {max_weight} 之间的整数
-- 保证出发城市与目的城市之间至少存在一条连通路线
+存在一个未知的连通、双向通行且无权重的交通路网 G=(V,E)，路口集 V 的规模为 {n} 个路口，每个路口有唯一标识。道路集 E 不可见。所有道路通行时间为 1，最短通行时间为整数。
 
-你的目标是找出从出发城市到目的城市的所有可能路线中，"单段路程最大拥堵指数"的最小可能值（即找出拥堵瓶颈值）。换句话说，就是找到最小的指数阈值 T，使得在仅保留拥堵指数小于等于 T 的路段时，出发点与终点首次能够通达。
+定义：
+- dist(u,v) 表示路口 u 与 v 之间的最短通行时间
+- ecc(v) = max_u dist(v,u) 表示路口 v 的极远通行时间（即从 v 出发到达其他任意路口所需的最大时间）
+- 路网的最大通行跨度 D = max_v ecc(v) = max_(u,v) dist(u,v)（即路网中任意两个路口之间的最大通行时间）
 
-你可以向我提出以下三类问题（每次提问计入次数，请尽可能少地提问）：
+你的目标是：通过允许的查询操作，推断出路网的最大通行跨度 D。
 
-1. **阈值通达性查询**：询问在仅保留拥堵指数小于等于 T 的路段时，出发点与终点是否连通。我会回答"是"或"否"。
+你可以进行以下三种操作：
 
-2. **路段存在与指数查询**：询问两个不同城市 X 和 Y 之间是否存在直达路段。如果存在，我会告诉你该路段的拥堵指数；如果不存在，我会回答"无边"。
+1. **探测操作 PROBE X**（X 是路口标识）：
+   - 返回该路口的极远通行时间 TIME T，其中 T = ecc(X)
+   - 返回距离 X 耗时最远的所有路口集合 FAR，即所有满足 dist(X,u) = T 的路口 u
 
-3. **路线可行性与瓶颈查询**：给定一个城市序列（至少 2 个城市），询问相邻城市之间是否都有直达路段。如果都存在，我会告诉你这条路线上的最大拥堵指数；如果任一相邻对不存在直达路段，我会回答"非法路径"。
+2. **距离查询 DIST A B**（A、B 是路口标识，A 不等于 B）：
+   - 仅当 A 和 B 都至少一次出现在某次 PROBE 的 FAR 集合中时，查询才有效
+   - 有效时返回 A 和 B 之间的最短通行时间
+   - 若不满足条件，返回 REJECT
 
-当你收集到足够信息后，请提交最终答案。如果答案错误或格式不符，规划失败。
+3. **提交答案 DECLARE D**（D 是非负整数）：
+   - 若 D 等于真实最大通行跨度，系统验证成功
+   - 否则验证失败
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 探测操作（例如探测路口 v1）：
+<probe>v1</probe>
 
-- 阈值通达性查询（例如询问阈值 5）：
-<query_threshold>5</query_threshold>
+- 距离查询（例如查询路口 v1 和 v2 之间的通行时间）：
+<dist>v1,v2</dist>
 
-- 路段存在与指数查询（例如询问城市 1 和 3 之间的路段）：
-<query_edge>1,3</query_edge>
+- 提交答案（例如声明最大通行时间为 5）：
+<answer>5</answer>
 
-- 路线可行性与瓶颈查询（例如询问路线 1→2→5）：
-<query_path>1,2,5</query_path>
-
-提交最终答案时，请说明最小可能最大拥堵指数（瓶颈值），格式如下：
-
-<answer>瓶颈值</answer>
-
-例如：<answer>7</answer>
+请尽可能少地使用查询次数来推断出正确的时间。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Network Routing Scenario]
-Let's play a "Traffic Bottleneck Path Planning" game. Here are the rules:
+[Traffic Scenario]
+Let's infer the "Maximum Transit Time of a Traffic Network". Here are the rules:
 
-The game involves an unknown city traffic network (undirected weighted graph) with the following known information:
-- City nodes: numbered from 1 to {n}
-- Departure city: {start}
-- Destination city: {goal}
-- Congestion index range: all road segments have a congestion index from 0 to {max_weight}
-- It is guaranteed that at least one route exists between the departure and destination
+There is an unknown connected, two-way, unweighted traffic network G=(V,E), where intersection set V has {n} intersections, each with a unique identifier. Road set E is not visible. All roads take a transit time of 1, and shortest transit times are integers.
 
-Your objective is to find the minimum possible value of the "maximum congestion index" among all routes from departure to destination (i.e., the bottleneck value). In other words, find the smallest threshold T such that the start and goal are connected when only road segments with a congestion index less than or equal to T are retained.
+Definitions:
+- dist(u,v) denotes the shortest transit time between intersections u and v
+- ecc(v) = max_u dist(v,u) denotes the extreme transit time of intersection v (i.e., the maximum time to reach any other intersection from v)
+- The maximum transit span of the network D = max_v ecc(v) = max_(u,v) dist(u,v) (i.e., the maximum transit time between any two intersections)
 
-You can ask me the following three types of questions (each query counts toward your total, please minimize queries):
+Your goal is: Infer the maximum transit span D of the network through allowed query operations.
 
-1. **Threshold Connectivity Query**: Ask whether the start and goal are connected when only roads with a congestion index <= T are used. I will answer "Yes" or "No".
+You can perform the following three types of operations:
 
-2. **Road Existence and Index Query**: Ask whether a direct road exists between city X and Y. If it exists, I will tell you its congestion index; if not, I will answer "No edge".
+1. **Probe operation PROBE X** (X is an intersection identifier):
+   - Returns the extreme transit time TIME T, where T = ecc(X)
+   - Returns the set FAR of all farthest intersections from X, i.e., all intersections u satisfying dist(X,u) = T
 
-3. **Route Feasibility and Bottleneck Query**: Given a sequence of cities (at least 2), ask whether direct roads exist between all adjacent ones. If they all exist, I will tell you the maximum congestion index on this route; if any adjacent pair has no road, I will answer "Invalid path".
+2. **Distance query DIST A B** (A, B are intersection identifiers, A not equal to B):
+   - Valid only if both A and B have appeared at least once in some PROBE's FAR set
+   - When valid, returns the shortest transit time between A and B
+   - If conditions not met, returns REJECT
 
-When you have collected enough information, submit your final answer. If the answer is incorrect or the format is invalid, the planning fails.
+3. **Submit answer DECLARE D** (D is a non-negative integer):
+   - If D equals the true maximum transit span, the verification succeeds
+   - Otherwise, the verification fails
 
-## Query and Answer Format (must be strictly followed)
+Each turn can perform only one operation. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Probe operation (e.g., probing intersection v1):
+<probe>v1</probe>
 
-- Threshold Connectivity Query (e.g., asking about threshold 5):
-<query_threshold>5</query_threshold>
+- Distance query (e.g., querying transit time between v1 and v2):
+<dist>v1,v2</dist>
 
-- Road Existence and Index Query (e.g., asking about road between city 1 and 3):
-<query_edge>1,3</query_edge>
+- Submit answer (e.g., declaring maximum transit span as 5):
+<answer>5</answer>
 
-- Route Feasibility and Bottleneck Query (e.g., asking about route 1→2→5):
-<query_path>1,2,5</query_path>
-
-When submitting the final answer, specify the bottleneck value, using this format:
-
-<answer>bottleneck_value</answer>
-
-For example: <answer>7</answer>
+Please use as few queries as possible to infer the correct maximum transit span.
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-【医疗物资调配与转运场景】
-我们来玩一个"医疗转运风险瓶颈推断"游戏，规则如下：
+我们来推断“病毒传播链的最大隔离层级”，规则如下：
 
-游戏设定了一个未知的医院内部网络（无向加权图），包含以下已知信息：
-- 科室节点集合：编号从 1 到 {n}
-- 起点科室：{start}
-- 终点科室：{goal}
-- 污染风险等级范围：所有通道的单次转运污染风险等级为 0 到 {max_weight} 之间的整数
-- 保证起点科室与终点科室之间至少存在一条安全的转运路径
+存在一个未知的连通、无向、无权重的接触者网络 G=(V,E)，人员集 V 的规模为 {n} 人，每个人有唯一标识。接触关系集 E 不可见。所有直接接触的层级距离为 1，最短传播层级为整数。
 
-你的目标是找出从起点科室到终点科室的所有可能转运路径中，"单次跨科室转运最大污染风险"的最小可能值（即找出风险瓶颈值）。换句话说，就是找到最小的风险阈值 T，使得在仅保留风险等级小于等于 T 的转运通道时，起点与终点首次能够通达。
+定义：
+- dist(u,v) 表示人员 u 与 v 之间的最短传播层级
+- ecc(v) = max_u dist(v,u) 表示人员 v 的最远传播风险层级（即从 v 传播到网络中其他人所需的最大层级数）
+- 传播网络的最大层级跨度 D = max_v ecc(v) = max_(u,v) dist(u,v)（即网络中任意两人间的最大传播层级数）
 
-你可以向我提出以下三类问题（每次提问计入次数，请尽可能少地提问）：
+你的目标是：通过允许的流调查询操作，推断出该传播网络的最大层级跨度 D。
 
-1. **阈值转运可行性查询**：询问在仅保留污染风险小于等于 T 的通道时，起点与终点是否连通。我会回答"是"或"否"。
+你可以进行以下三种操作：
 
-2. **通道存在与风险查询**：询问两个不同科室 X 和 Y 之间是否存在直达转运通道。如果存在，我会告诉你该通道的污染风险等级；如果不存在，我会回答"无边"。
+1. **探测操作 PROBE X**（X 是人员标识）：
+   - 返回该人员的最远传播风险层级 TIME T，其中 T = ecc(X)
+   - 返回距离 X 传播层级最远的所有人员集合 FAR，即所有满足 dist(X,u) = T 的人员 u
 
-3. **转运序列可行性与瓶颈查询**：给定一个科室序列（至少 2 个科室），询问相邻科室之间是否都有直达通道。如果都存在，我会告诉你这条转运路线上的最大污染风险等级；如果任一相邻对不存在通道，我会回答"非法路径"。
+2. **层级查询 DIST A B**（A、B 是人员标识，A 不等于 B）：
+   - 仅当 A 和 B 都至少一次出现在某次 PROBE 的 FAR 集合中时，查询才有效
+   - 有效时返回 A 和 B 之间的最短传播层级
+   - 若不满足条件，返回 REJECT
 
-当你收集到足够信息后，请提交最终答案。如果答案错误或格式不符，规划失败。
+3. **提交答案 DECLARE D**（D 是非负整数）：
+   - 若 D 等于真实最大传播层级，流调分析成功
+   - 否则分析失败
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 探测操作（例如探测人员 v1）：
+<probe>v1</probe>
 
-- 阈值转运可行性查询（例如询问风险阈值 5）：
-<query_threshold>5</query_threshold>
+- 层级查询（例如查询人员 v1 和 v2 之间的传播层级）：
+<dist>v1,v2</dist>
 
-- 通道存在与风险查询（例如询问科室 1 和 3 之间的通道）：
-<query_edge>1,3</query_edge>
+- 提交答案（例如声明最大层级为 5）：
+<answer>5</answer>
 
-- 转运序列可行性与瓶颈查询（例如询问转运路线 1→2→5）：
-<query_path>1,2,5</query_path>
-
-提交最终答案时，请说明最小可能最大污染风险等级（瓶颈值），格式如下：
-
-<answer>瓶颈值</answer>
-
-例如：<answer>7</answer>
+请尽可能少地使用查询次数来推断出正确的最大层级。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Transfer Scenario]
-Let's play a "Contamination Risk Bottleneck Reasoning" game. Here are the rules:
+[Medical Scenario]
+Let's infer the "Maximum Isolation Level of a Virus Transmission Chain". Here are the rules:
 
-The game involves an unknown medical facility network (undirected weighted graph) with the following known information:
-- Department nodes: numbered from 1 to {n}
-- Start department: {start}
-- Goal department: {goal}
-- Contamination risk range: all transfer corridors have a risk level from 0 to {max_weight}
-- It is guaranteed that at least one safe transfer route exists between the start and goal
+There is an unknown connected, undirected, unweighted contact network G=(V,E), where the person set V has {n} individuals, each with a unique identifier. The contact relationship set E is not visible. All direct contacts have a level distance of 1, and shortest transmission levels are integers.
 
-Your objective is to find the minimum possible value of the "maximum contamination risk" among all transfer routes from start to goal (i.e., the bottleneck value). In other words, find the smallest risk threshold T such that the start and goal are connected when only corridors with a risk level less than or equal to T are retained.
+Definitions:
+- dist(u,v) denotes the shortest transmission level between individuals u and v
+- ecc(v) = max_u dist(v,u) denotes the extreme transmission risk level of person v (i.e., the maximum number of levels required for the virus to spread from v to anyone else)
+- The maximum transmission span of the network D = max_v ecc(v) = max_(u,v) dist(u,v) (i.e., the maximum transmission levels between any two individuals in the network)
 
-You can ask me the following three types of questions (each query counts toward your total, please minimize queries):
+Your goal is: Infer the maximum transmission span D of the network through allowed epidemiological query operations.
 
-1. **Threshold Transferability Query**: Ask whether the start and goal are connected when only corridors with a risk level <= T are used. I will answer "Yes" or "No".
+You can perform the following three types of operations:
 
-2. **Corridor Existence and Risk Query**: Ask whether a direct corridor exists between department X and Y. If it exists, I will tell you its contamination risk level; if not, I will answer "No edge".
+1. **Probe operation PROBE X** (X is a person identifier):
+   - Returns the extreme transmission risk level TIME T, where T = ecc(X)
+   - Returns the set FAR of all individuals farthest from X in terms of transmission levels, i.e., all individuals u satisfying dist(X,u) = T
 
-3. **Transfer Sequence Feasibility and Bottleneck Query**: Given a sequence of departments (at least 2), ask whether direct corridors exist between all adjacent ones. If they all exist, I will tell you the maximum risk level on this route; if any adjacent pair has no corridor, I will answer "Invalid path".
+2. **Distance query DIST A B** (A, B are person identifiers, A not equal to B):
+   - Valid only if both A and B have appeared at least once in some PROBE's FAR set
+   - When valid, returns the shortest transmission level between A and B
+   - If conditions not met, returns REJECT
 
-When you have collected enough information, submit your final answer. If the answer is incorrect or the format is invalid, the planning fails.
+3. **Submit answer DECLARE D** (D is a non-negative integer):
+   - If D equals the true maximum transmission span, the epidemiological analysis succeeds
+   - Otherwise, the analysis fails
 
-## Query and Answer Format (must be strictly followed)
+Each turn can perform only one operation. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Probe operation (e.g., probing person v1):
+<probe>v1</probe>
 
-- Threshold Transferability Query (e.g., asking about risk threshold 5):
-<query_threshold>5</query_threshold>
+- Distance query (e.g., querying transmission levels between v1 and v2):
+<dist>v1,v2</dist>
 
-- Corridor Existence and Risk Query (e.g., asking about corridor between department 1 and 3):
-<query_edge>1,3</query_edge>
+- Submit answer (e.g., declaring maximum level as 5):
+<answer>5</answer>
 
-- Transfer Sequence Feasibility and Bottleneck Query (e.g., asking about route 1→2→5):
-<query_path>1,2,5</query_path>
-
-When submitting the final answer, specify the bottleneck value, using this format:
-
-<answer>bottleneck_value</answer>
-
-For example: <answer>7</answer>
+Please use as few queries as possible to infer the correct maximum level.
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-【教育学习路径规划场景】
-我们来玩一个"知识图谱认知难度瓶颈推断"游戏，规则如下：
+我们来推断“知识图谱的最长前置学习路径”，规则如下：
 
-游戏设定了一个未知的学科知识图谱（无向加权图），包含以下已知信息：
-- 知识概念集合：编号从 1 到 {n}
-- 起点概念：{start}
-- 终点概念：{goal}
-- 认知难度范围：所有概念间学习关联的跨度难度为 0 到 {max_weight} 之间的整数
-- 保证起点概念与终点概念之间至少存在一条学习路线
+存在一个未知的连通、无向、无权重的知识概念图谱 G=(V,E)，知识点集 V 的规模为 {n} 个概念，每个概念有唯一标识。概念关联集 E 不可见。所有直接关联的跨度为 1，最短关联路径为整数。
 
-你的目标是找出从起点概念到终点概念的所有可能学习路线中，"单次概念跳跃最大认知难度"的最小可能值（即找出认知难度瓶颈值）。换句话说，就是找到最小的难度阈值 T，使得在仅保留认知难度小于等于 T 的关联路径时，起点与终点首次能够连通。
+定义：
+- dist(u,v) 表示知识点 u 与 v 之间的最短认知路径跨度
+- ecc(v) = max_u dist(v,u) 表示知识点 v 的最远认知跨度（即从 v 联想推导到图谱中其他概念所需的最大步数）
+- 图谱的最大认知直径 D = max_v ecc(v) = max_(u,v) dist(u,v)（即知识图谱中任意两个概念之间的最大认知跨度）
 
-你可以向我提出以下三类问题（每次提问计入次数，请尽可能少地提问）：
+你的目标是：通过允许的测验查询操作，推断出图谱的最大认知直径 D。
 
-1. **阈值学习连通性查询**：询问在仅保留认知难度小于等于 T 的关联时，起点与终点是否连通。我会回答"是"或"否"。
+你可以进行以下三种操作：
 
-2. **关联存在与难度查询**：询问两个不同概念 X 和 Y 之间是否存在直接的认知关联。如果存在，我会告诉你该关联的难度值；如果不存在，我会回答"无边"。
+1. **探测操作 PROBE X**（X 是知识点标识）：
+   - 返回该知识点的最远认知跨度 TIME T，其中 T = ecc(X)
+   - 返回距离 X 认知路径最远的所有知识点集合 FAR，即所有满足 dist(X,u) = T 的知识点 u
 
-3. **学习路线可行性与瓶颈查询**：给定一个概念序列（至少 2 个概念），询问相邻概念之间是否都有直接关联。如果都存在，我会告诉你这条学习路线上的最大认知难度；如果任一相邻对不存在直接关联，我会回答"非法路径"。
+2. **路径查询 DIST A B**（A、B 是知识点标识，A 不等于 B）：
+   - 仅当 A 和 B 都至少一次出现在某次 PROBE 的 FAR 集合中时，查询才有效
+   - 有效时返回 A 和 B 之间的最短认知跨度
+   - 若不满足条件，返回 REJECT
 
-当你收集到足够信息后，请提交最终答案。如果答案错误或格式不符，规划失败。
+3. **提交答案 DECLARE D**（D 是非负整数）：
+   - 若 D 等于真实最大认知跨度，教研分析成功
+   - 否则分析失败
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 探测操作（例如探测知识点 v1）：
+<probe>v1</probe>
 
-- 阈值学习连通性查询（例如询问难度阈值 5）：
-<query_threshold>5</query_threshold>
+- 路径查询（例如查询知识点 v1 和 v2 之间的认知跨度）：
+<dist>v1,v2</dist>
 
-- 关联存在与难度查询（例如询问概念 1 和 3 之间的关联）：
-<query_edge>1,3</query_edge>
+- 提交答案（例如声明最大跨度为 5）：
+<answer>5</answer>
 
-- 学习路线可行性与瓶颈查询（例如询问路线 1→2→5）：
-<query_path>1,2,5</query_path>
-
-提交最终答案时，请说明最小可能最大认知难度（瓶颈值），格式如下：
-
-<answer>瓶颈值</answer>
-
-例如：<answer>7</answer>
+请尽可能少地使用查询次数来推断出正确的最大跨度。
 """
 
     contextualized_rule_en_3 = """\
-[Educational Path Planning Scenario]
-Let's play a "Cognitive Barrier Bottleneck Reasoning" game. Here are the rules:
+[Education Scenario]
+Let's infer the "Longest Prerequisite Learning Path in a Knowledge Graph". Here are the rules:
 
-The game involves an unknown subject knowledge graph (undirected weighted graph) with the following known information:
-- Knowledge concepts: numbered from 1 to {n}
-- Initial concept: {start}
-- Target concept: {goal}
-- Cognitive difficulty range: all learning transitions have a difficulty from 0 to {max_weight}
-- It is guaranteed that at least one learning sequence exists between the initial and target concepts
+There is an unknown connected, undirected, unweighted knowledge concept graph G=(V,E), where the concept set V has {n} concepts, each with a unique identifier. The concept relationship set E is not visible. All direct relationships have a span of 1, and shortest cognitive paths are integers.
 
-Your objective is to find the minimum possible value of the "maximum cognitive difficulty" among all learning paths from start to goal (i.e., the bottleneck value). In other words, find the smallest difficulty threshold T such that the start and goal are connected when only learning transitions with a difficulty less than or equal to T are retained.
+Definitions:
+- dist(u,v) denotes the shortest cognitive path span between concepts u and v
+- ecc(v) = max_u dist(v,u) denotes the extreme cognitive span of concept v (i.e., the maximum number of steps required to associate or deduce from v to any other concept)
+- The maximum cognitive diameter of the graph D = max_v ecc(v) = max_(u,v) dist(u,v) (i.e., the maximum cognitive span between any two concepts in the graph)
 
-You can ask me the following three types of questions (each query counts toward your total, please minimize queries):
+Your goal is: Infer the maximum cognitive diameter D of the graph through allowed quiz query operations.
 
-1. **Threshold Learnability Query**: Ask whether the start and goal are connected when only transitions with difficulty <= T are used. I will answer "Yes" or "No".
+You can perform the following three types of operations:
 
-2. **Transition Existence and Difficulty Query**: Ask whether a direct learning association exists between concept X and Y. If it exists, I will tell you its cognitive difficulty; if not, I will answer "No edge".
+1. **Probe operation PROBE X** (X is a concept identifier):
+   - Returns the extreme cognitive span TIME T, where T = ecc(X)
+   - Returns the set FAR of all concepts farthest from X in terms of cognitive path, i.e., all concepts u satisfying dist(X,u) = T
 
-3. **Curriculum Feasibility and Bottleneck Query**: Given a sequence of concepts (at least 2), ask whether direct associations exist between all adjacent ones. If they all exist, I will tell you the maximum cognitive difficulty on this learning path; if any adjacent pair has no transition, I will answer "Invalid path".
+2. **Distance query DIST A B** (A, B are concept identifiers, A not equal to B):
+   - Valid only if both A and B have appeared at least once in some PROBE's FAR set
+   - When valid, returns the shortest cognitive span between A and B
+   - If conditions not met, returns REJECT
 
-When you have collected enough information, submit your final answer. If the answer is incorrect or the format is invalid, the planning fails.
+3. **Submit answer DECLARE D** (D is a non-negative integer):
+   - If D equals the true maximum cognitive span, the educational research analysis succeeds
+   - Otherwise, the analysis fails
 
-## Query and Answer Format (must be strictly followed)
+Each turn can perform only one operation. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Probe operation (e.g., probing concept v1):
+<probe>v1</probe>
 
-- Threshold Learnability Query (e.g., asking about difficulty threshold 5):
-<query_threshold>5</query_threshold>
+- Distance query (e.g., querying cognitive span between v1 and v2):
+<dist>v1,v2</dist>
 
-- Transition Existence and Difficulty Query (e.g., asking about link between concept 1 and 3):
-<query_edge>1,3</query_edge>
+- Submit answer (e.g., declaring maximum span as 5):
+<answer>5</answer>
 
-- Curriculum Feasibility and Bottleneck Query (e.g., asking about learning path 1→2→5):
-<query_path>1,2,5</query_path>
-
-When submitting the final answer, specify the bottleneck value, using this format:
-
-<answer>bottleneck_value</answer>
-
-For example: <answer>7</answer>
+Please use as few queries as possible to infer the correct maximum span.
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-【工业制造流转场景】
-我们来玩一个"流水线延迟瓶颈推断"游戏，规则如下：
+我们来推断“流水线工序的最大依赖跨度”，规则如下：
 
-游戏设定了一个未知的工厂装配网络（无向加权图），包含以下已知信息：
-- 装配工站集合：编号从 1 到 {n}
-- 起点工站：{start}
-- 终点工站：{goal}
-- 工序延迟时间范围：所有传送环节的延迟时间为 0 到 {max_weight} 之间的整数
-- 保证起点工站与终点工站之间至少存在一条完整的流转路径
+存在一个未知的连通、无向、无权重的工序依赖网络 G=(V,E)，工序集 V 的规模为 {n} 道工序，每道工序有唯一标识。工序流转关系集 E 不可见。所有直接流转的环节跨度为 1，最短流转环节为整数。
 
-你的目标是找出从起点工站到终点工站的所有可能流转路径中，"单段流转最大延迟时间"的最小可能值（即找出延迟瓶颈值）。换句话说，就是找到最小的延迟阈值 T，使得在仅保留延迟时间小于等于 T 的传送环节时，起点与终点首次能够接通。
+定义：
+- dist(u,v) 表示工序 u 与 v 之间的最短流转环节数
+- ecc(v) = max_u dist(v,u) 表示工序 v 的最大流转影响跨度（即从工序 v 传导至网络中其他任意工序所需的最大环节数）
+- 生产线的最大依赖跨度 D = max_v ecc(v) = max_(u,v) dist(u,v)（即生产线中任意两道工序之间的最大流转环节数）
 
-你可以向我提出以下三类问题（每次提问计入次数，请尽可能少地提问）：
+你的目标是：通过允许的排查查询操作，推断出生产线的最大依赖跨度 D。
 
-1. **阈值流转通达性查询**：询问在仅保留延迟时间小于等于 T 的传送环节时，起点与终点是否连通。我会回答"是"或"否"。
+你可以进行以下三种操作：
 
-2. **传送环节存在与延迟查询**：询问两个不同工站 X 和 Y 之间是否存在直接的物料传送带。如果存在，我会告诉你该环节的延迟时间；如果不存在，我会回答"无边"。
+1. **探测操作 PROBE X**（X 是工序标识）：
+   - 返回该工序的最大流转影响跨度 TIME T，其中 T = ecc(X)
+   - 返回距离 X 环节跨度最远的所有工序集合 FAR，即所有满足 dist(X,u) = T 的工序 u
 
-3. **流转路径可行性与瓶颈查询**：给定一个工站序列（至少 2 个工站），询问相邻工站之间是否都有直接传送带。如果都存在，我会告诉你这条流转路径上的最大延迟时间；如果任一相邻对不存在直接传送，我会回答"非法路径"。
+2. **环节查询 DIST A B**（A、B 是工序标识，A 不等于 B）：
+   - 仅当 A 和 B 都至少一次出现在某次 PROBE 的 FAR 集合中时，查询才有效
+   - 有效时返回 A 和 B 之间的最短流转环节数
+   - 若不满足条件，返回 REJECT
 
-当你收集到足够信息后，请提交最终答案。如果答案错误或格式不符，规划失败。
+3. **提交答案 DECLARE D**（D 是非负整数）：
+   - 若 D 等于真实最大依赖跨度，工艺链路解析成功
+   - 否则解析失败
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 探测操作（例如探测工序 v1）：
+<probe>v1</probe>
 
-- 阈值流转通达性查询（例如询问延迟阈值 5）：
-<query_threshold>5</query_threshold>
+- 环节查询（例如查询工序 v1 和 v2 之间的流转环节数）：
+<dist>v1,v2</dist>
 
-- 传送环节存在与延迟查询（例如询问工站 1 和 3 之间的传送带）：
-<query_edge>1,3</query_edge>
+- 提交答案（例如声明最大跨度为 5）：
+<answer>5</answer>
 
-- 流转路径可行性与瓶颈查询（例如询问流转序列 1→2→5）：
-<query_path>1,2,5</query_path>
-
-提交最终答案时，请说明最小可能最大延迟时间（瓶颈值），格式如下：
-
-<answer>瓶颈值</answer>
-
-例如：<answer>7</answer>
+请尽可能少地使用查询次数来推断出正确的最大跨度。
 """
 
     contextualized_rule_en_4 = """\
-[Industrial Manufacturing Scenario]
-Let's play a "Pipeline Delay Bottleneck Reasoning" game. Here are the rules:
+[Manufacturing Scenario]
+Let's infer the "Maximum Dependency Span of Assembly Line Processes". Here are the rules:
 
-The game involves an unknown factory assembly network (undirected weighted graph) with the following known information:
-- Assembly workstations: numbered from 1 to {n}
-- Start station: {start}
-- End station: {goal}
-- Process delay range: all conveyor links have a delay time from 0 to {max_weight}
-- It is guaranteed that at least one continuous pipeline routing exists between the start and end
+There is an unknown connected, undirected, unweighted process dependency network G=(V,E), where the process set V has {n} processes, each with a unique identifier. The process workflow set E is not visible. All direct workflow steps have a span of 1, and shortest workflow steps are integers.
 
-Your objective is to find the minimum possible value of the "maximum process delay" among all material flow routes from start to goal (i.e., the bottleneck value). In other words, find the smallest delay threshold T such that the start and goal are connected when only conveyor links with a delay time less than or equal to T are retained.
+Definitions:
+- dist(u,v) denotes the shortest workflow steps between processes u and v
+- ecc(v) = max_u dist(v,u) denotes the extreme workflow impact span of process v (i.e., the maximum number of steps required to propagate from process v to any other process in the network)
+- The maximum dependency span of the production line D = max_v ecc(v) = max_(u,v) dist(u,v) (i.e., the maximum workflow steps between any two processes on the line)
 
-You can ask me the following three types of questions (each query counts toward your total, please minimize queries):
+Your goal is: Infer the maximum dependency span D of the production line through allowed diagnostic query operations.
 
-1. **Threshold Flow Connectivity Query**: Ask whether the start and goal are connected when only conveyors with a delay <= T are used. I will answer "Yes" or "No".
+You can perform the following three types of operations:
 
-2. **Conveyor Existence and Delay Query**: Ask whether a direct conveyor link exists between station X and Y. If it exists, I will tell you its process delay time; if not, I will answer "No edge".
+1. **Probe operation PROBE X** (X is a process identifier):
+   - Returns the extreme workflow impact span TIME T, where T = ecc(X)
+   - Returns the set FAR of all processes farthest from X in terms of workflow steps, i.e., all processes u satisfying dist(X,u) = T
 
-3. **Production Routing Feasibility and Bottleneck Query**: Given a sequence of workstations (at least 2), ask whether direct conveyors exist between all adjacent ones. If they all exist, I will tell you the maximum delay on this route; if any adjacent pair has no conveyor, I will answer "Invalid path".
+2. **Distance query DIST A B** (A, B are process identifiers, A not equal to B):
+   - Valid only if both A and B have appeared at least once in some PROBE's FAR set
+   - When valid, returns the shortest workflow steps between A and B
+   - If conditions not met, returns REJECT
 
-When you have collected enough information, submit your final answer. If the answer is incorrect or the format is invalid, the routing fails.
+3. **Submit answer DECLARE D** (D is a non-negative integer):
+   - If D equals the true maximum dependency span, the process chain analysis succeeds
+   - Otherwise, the analysis fails
 
-## Query and Answer Format (must be strictly followed)
+Each turn can perform only one operation. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Probe operation (e.g., probing process v1):
+<probe>v1</probe>
 
-- Threshold Flow Connectivity Query (e.g., asking about delay threshold 5):
-<query_threshold>5</query_threshold>
+- Distance query (e.g., querying workflow steps between v1 and v2):
+<dist>v1,v2</dist>
 
-- Conveyor Existence and Delay Query (e.g., asking about link between station 1 and 3):
-<query_edge>1,3</query_edge>
+- Submit answer (e.g., declaring maximum span as 5):
+<answer>5</answer>
 
-- Production Routing Feasibility and Bottleneck Query (e.g., asking about route 1→2→5):
-<query_path>1,2,5</query_path>
-
-When submitting the final answer, specify the bottleneck value, using this format:
-
-<answer>bottleneck_value</answer>
-
-For example: <answer>7</answer>
+Please use as few queries as possible to infer the correct maximum span.
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-【法律证据链推演场景】
-我们来玩一个"逻辑漏洞瓶颈推断"游戏，规则如下：
+我们来推断“资金洗钱网络的最大追踪链路”，规则如下：
 
-游戏设定了一个未知的案情推演网络（无向加权图），包含以下已知信息：
-- 证据事实集合：编号从 1 到 {n}
-- 起点事实（初始线索）：{start}
-- 终点结论（最终判决）：{goal}
-- 逻辑漏洞指数范围：所有证据推论的漏洞指数为 0 到 {max_weight} 之间的整数
-- 保证起点事实与终点结论之间至少存在一条完整的推演链条
+存在一个未知的连通、无向、无权重的洗钱账户网络 G=(V,E)，账户集 V 的规模为 {n} 个账户，每个账户有唯一标识。资金往来关系集 E 不可见。所有直接的资金转账跳数为 1，最短资金追踪跳数为整数。
 
-你的目标是找出从起点事实到终点结论的所有可能证据链中，"单一推论最大逻辑漏洞指数"的最小可能值（即找出最薄弱环节的漏洞下限，即漏洞瓶颈值）。换句话说，就是找到最小的漏洞阈值 T，使得在仅采用漏洞指数小于等于 T 的推论时，起点线索与终点判决首次能够形成闭环。
+定义：
+- dist(u,v) 表示账户 u 与 v 之间的最短转账跳数
+- ecc(v) = max_u dist(v,u) 表示账户 v 的洗钱渗透极值（即从账户 v 转移资金至网络中其他任意账户所需的最大跳数）
+- 资金网络的最大隐匿链路 D = max_v ecc(v) = max_(u,v) dist(u,v)（即资金网络中任意两个账户之间的最大转账跳数）
 
-你可以向我提出以下三类问题（每次提问计入次数，请尽可能少地提问）：
+你的目标是：通过允许的司法调查查询操作，推断出资金网络的最大隐匿链路 D。
 
-1. **阈值证明连通性查询**：询问在仅保留逻辑漏洞指数小于等于 T 的推论时，起点与终点能否连通形成证据链。我会回答"是"或"否"。
+你可以进行以下三种操作：
 
-2. **推论存在与漏洞查询**：询问两个不同事实 X 和 Y 之间是否存在直接的逻辑推论。如果存在，我会告诉你该推论的逻辑漏洞指数；如果不存在，我会回答"无边"。
+1. **探测操作 PROBE X**（X 是账户标识）：
+   - 返回该账户的洗钱渗透极值 TIME T，其中 T = ecc(X)
+   - 返回距离 X 追踪跳数最远的所有账户集合 FAR，即所有满足 dist(X,u) = T 的账户 u
 
-3. **证据链可行性与瓶颈查询**：给定一个事实序列（至少 2 个事实），询问相邻事实之间是否都能直接互相推论。如果都能推论，我会告诉你这条链条上的最大逻辑漏洞指数；如果任一相邻对无法互相推论，我会回答"非法路径"。
+2. **链路查询 DIST A B**（A、B 是账户标识，A 不等于 B）：
+   - 仅当 A 和 B 都至少一次出现在某次 PROBE 的 FAR 集合中时，查询才有效
+   - 有效时返回 A 和 B 之间的最短转账跳数
+   - 若不满足条件，返回 REJECT
 
-当你收集到足够信息后，请提交最终答案。如果答案错误或格式不符，推演失败。
+3. **提交答案 DECLARE D**（D 是非负整数）：
+   - 若 D 等于真实最大隐匿链路，网络取证分析成功
+   - 否则取证失败
 
-## 询问与提交答案的格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+- 探测操作（例如探测账户 v1）：
+<probe>v1</probe>
 
-- 阈值证明连通性查询（例如询问漏洞阈值 5）：
-<query_threshold>5</query_threshold>
+- 链路查询（例如查询账户 v1 和 v2 之间的转账跳数）：
+<dist>v1,v2</dist>
 
-- 推论存在与漏洞查询（例如询问事实 1 和 3 之间的推论）：
-<query_edge>1,3</query_edge>
+- 提交答案（例如声明最大链路为 5）：
+<answer>5</answer>
 
-- 证据链可行性与瓶颈查询（例如询问推论顺序 1→2→5）：
-<query_path>1,2,5</query_path>
-
-提交最终答案时，请说明最小可能最大逻辑漏洞指数（瓶颈值），格式如下：
-
-<answer>瓶颈值</answer>
-
-例如：<answer>7</answer>
+请尽可能少地使用查询次数来推断出正确的最大链路。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Evidence Chain Scenario]
-Let's play a "Logical Vulnerability Bottleneck Reasoning" game. Here are the rules:
+[Legal Scenario]
+Let's infer the "Maximum Tracing Link in a Money Laundering Network". Here are the rules:
 
-The game involves an unknown evidentiary argumentation network (undirected weighted graph) with the following known information:
-- Evidentiary facts: numbered from 1 to {n}
-- Initial fact (Start): {start}
-- Final conclusion (Goal): {goal}
-- Vulnerability index range: all logical inferences have a vulnerability index from 0 to {max_weight}
-- It is guaranteed that at least one complete chain of inference exists between the start and goal
+There is an unknown connected, undirected, unweighted money laundering account network G=(V,E), where the account set V has {n} accounts, each with a unique identifier. The financial transaction set E is not visible. All direct fund transfers have a hop count of 1, and shortest tracing hops are integers.
 
-Your objective is to find the minimum possible value of the "maximum logical vulnerability" among all chains from start to goal (i.e., the bottleneck value). In other words, find the smallest vulnerability threshold T such that the start and goal are connected when only inferences with a vulnerability index less than or equal to T are permitted.
+Definitions:
+- dist(u,v) denotes the shortest transfer hops between accounts u and v
+- ecc(v) = max_u dist(v,u) denotes the extreme money laundering penetration of account v (i.e., the maximum number of hops required to transfer funds from account v to any other account in the network)
+- The maximum concealment link of the financial network D = max_v ecc(v) = max_(u,v) dist(u,v) (i.e., the maximum transfer hops between any two accounts in the network)
 
-You can ask me the following three types of questions (each query counts toward your total, please minimize queries):
+Your goal is: Infer the maximum concealment link D of the network through allowed judicial investigation queries.
 
-1. **Threshold Provability Query**: Ask whether the start and goal are connected when only inferences with vulnerability <= T are used. I will answer "Yes" or "No".
+You can perform the following three types of operations:
 
-2. **Inference Existence and Vulnerability Query**: Ask whether a direct logical inference exists between fact X and Y. If it exists, I will tell you its logical vulnerability index; if not, I will answer "No edge".
+1. **Probe operation PROBE X** (X is an account identifier):
+   - Returns the extreme laundering penetration TIME T, where T = ecc(X)
+   - Returns the set FAR of all accounts farthest from X in terms of tracing hops, i.e., all accounts u satisfying dist(X,u) = T
 
-3. **Logic Chain Feasibility and Bottleneck Query**: Given a sequence of evidentiary facts (at least 2), ask whether direct inferences exist between all adjacent ones. If they all exist, I will tell you the maximum vulnerability index on this chain; if any adjacent pair has no inference, I will answer "Invalid path".
+2. **Distance query DIST A B** (A, B are account identifiers, A not equal to B):
+   - Valid only if both A and B have appeared at least once in some PROBE's FAR set
+   - When valid, returns the shortest transfer hops between A and B
+   - If conditions not met, returns REJECT
 
-When you have collected enough information, submit your final answer. If the answer is incorrect or the format is invalid, the argumentation fails.
+3. **Submit answer DECLARE D** (D is a non-negative integer):
+   - If D equals the true maximum concealment link, the network forensics analysis succeeds
+   - Otherwise, the forensics fails
 
-## Query and Answer Format (must be strictly followed)
+Each turn can perform only one operation. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Probe operation (e.g., probing account v1):
+<probe>v1</probe>
 
-- Threshold Provability Query (e.g., asking about vulnerability threshold 5):
-<query_threshold>5</query_threshold>
+- Distance query (e.g., querying transfer hops between v1 and v2):
+<dist>v1,v2</dist>
 
-- Inference Existence and Vulnerability Query (e.g., asking about inference between fact 1 and 3):
-<query_edge>1,3</query_edge>
+- Submit answer (e.g., declaring maximum link as 5):
+<answer>5</answer>
 
-- Logic Chain Feasibility and Bottleneck Query (e.g., asking about chain 1→2→5):
-<query_path>1,2,5</query_path>
-
-When submitting the final answer, specify the bottleneck value, using this format:
-
-<answer>bottleneck_value</answer>
-
-For example: <answer>7</answer>
+Please use as few queries as possible to infer the correct maximum link.
 """
 
-    tags = ["answer", "query_threshold", "query_edge", "query_path"]
-
-    reasoning_type = "演绎推理"
+    tags = ["answer", "probe", "dist"]
+    reasoning_type = "归纳推理"
     data_structure = "图"
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 5, "start": 1, "goal": 5, "max_weight": 10, "max_queries": 12,
-                "edges": [(1, 2, 3), (2, 3, 5), (3, 5, 4), (1, 4, 8), (4, 5, 6)]
-            },
-            2: {
-                "n": 7, "start": 1, "goal": 7, "max_weight": 15, "max_queries": 12,
-                "edges": [(1, 2, 4), (1, 3, 7), (2, 4, 6), (3, 4, 3), (3, 5, 8), (4, 6, 5), (5, 6, 2), (5, 7, 9), (6, 7, 7)]
-            },
-            3: {
-                "n": 8, "start": 1, "goal": 8, "max_weight": 20, "max_queries": 12,
-                "edges": [(1, 2, 5), (1, 3, 10), (2, 3, 3), (2, 4, 8), (3, 5, 6), (4, 5, 4), (4, 6, 12), (5, 6, 7), (5, 7, 9), (6, 7, 2), (6, 8, 11), (7, 8, 8)]
-            },
-            4: {
-                "n": 10, "start": 1, "goal": 10, "max_weight": 25, "max_queries": 12,
-                "edges": [(1, 2, 6), (1, 3, 8), (1, 4, 12), (2, 3, 5), (2, 5, 9), (3, 4, 7), (3, 6, 11), (4, 6, 4), (5, 6, 10), (5, 7, 8), (6, 7, 6), (6, 8, 13), (7, 8, 7), (7, 9, 9), (8, 9, 5), (8, 10, 10), (9, 10, 8)]
-            },
-            5: {
-                "n": 12, "start": 1, "goal": 12, "max_weight": 30, "max_queries": 12,
-                "edges": [(1, 2, 7), (1, 3, 10), (1, 4, 15), (2, 3, 5), (2, 5, 12), (2, 6, 8), (3, 4, 6), (3, 6, 9), (4, 7, 11), (5, 6, 4), (5, 8, 13), (6, 7, 7), (6, 8, 10), (7, 9, 8), (7, 10, 14), (8, 9, 6), (8, 11, 12), (9, 10, 5), (9, 11, 9), (10, 11, 7), (10, 12, 11), (11, 12, 8)]
-            },
+        1: {
+            "n": 8,
+            "edges": [(0,1),(1,2),(2,3),(3,4),(4,5),(5,6),(6,7)],
         },
-        "en": {
-            1: {
-                "n": 5, "start": 1, "goal": 5, "max_weight": 10, "max_queries": 12,
-                "edges": [(1, 2, 3), (2, 3, 5), (3, 5, 4), (1, 4, 8), (4, 5, 6)]
-            },
-            2: {
-                "n": 7, "start": 1, "goal": 7, "max_weight": 15, "max_queries": 12,
-                "edges": [(1, 2, 4), (1, 3, 7), (2, 4, 6), (3, 4, 3), (3, 5, 8), (4, 6, 5), (5, 6, 2), (5, 7, 9), (6, 7, 7)]
-            },
-            3: {
-                "n": 8, "start": 1, "goal": 8, "max_weight": 20, "max_queries": 12,
-                "edges": [(1, 2, 5), (1, 3, 10), (2, 3, 3), (2, 4, 8), (3, 5, 6), (4, 5, 4), (4, 6, 12), (5, 6, 7), (5, 7, 9), (6, 7, 2), (6, 8, 11), (7, 8, 8)]
-            },
-            4: {
-                "n": 10, "start": 1, "goal": 10, "max_weight": 25, "max_queries": 12,
-                "edges": [(1, 2, 6), (1, 3, 8), (1, 4, 12), (2, 3, 5), (2, 5, 9), (3, 4, 7), (3, 6, 11), (4, 6, 4), (5, 6, 10), (5, 7, 8), (6, 7, 6), (6, 8, 13), (7, 8, 7), (7, 9, 9), (8, 9, 5), (8, 10, 10), (9, 10, 8)]
-            },
-            5: {
-                "n": 12, "start": 1, "goal": 12, "max_weight": 30, "max_queries": 12,
-                "edges": [(1, 2, 7), (1, 3, 10), (1, 4, 15), (2, 3, 5), (2, 5, 12), (2, 6, 8), (3, 4, 6), (3, 6, 9), (4, 7, 11), (5, 6, 4), (5, 8, 13), (6, 7, 7), (6, 8, 10), (7, 9, 8), (7, 10, 14), (8, 9, 6), (8, 11, 12), (9, 10, 5), (9, 11, 9), (10, 11, 7), (10, 12, 11), (11, 12, 8)]
-            },
+        2: {
+            "n": 10,
+            "edges": [(0,1),(0,2),(0,3),(0,4),(0,5),(5,6),(5,7),(7,8),(7,9)],
+        },
+        3: {
+            "n": 12,
+            "edges": [(0,1),(1,2),(2,3),(3,4),(4,5),(5,0),
+                     (1,6),(6,7),(3,8),(8,9),(5,10),(10,11)],
+        },
+        4: {
+            "n": 15,
+            "edges": [(0,1),(1,2),(2,3),(3,4),(4,0),
+                     (5,6),(6,7),(7,8),(8,9),(9,5),
+                     (2,5),
+                     (0,10),(10,11),(7,12),(12,13),(13,14)],
+        },
+        5: {
+            "n": 20,
+            "edges": [(0,1),(1,2),(2,3),(3,4),(4,5),(5,0),
+                     (6,7),(7,8),(8,6),
+                     (9,10),(10,11),(11,9),
+                     (1,6),(4,9),
+                     (3,12),(12,13),(13,14),(14,15),
+                     (8,16),(16,17),
+                     (11,18),(18,19)],
         },
     }
 
@@ -585,311 +543,189 @@ For example: <answer>7</answer>
         super().__init__(config)
 
     def _initialize_game(self):
-        lang = self.config.language
-        diff = self.config.difficulty
-
-        if isinstance(diff, str):
-            diff = int(diff)
-
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        diff = int(self.config.difficulty)
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 设置游戏信息
-        self._game_info["n"] = cfg["n"]
-        self._game_info["start"] = cfg["start"]
-        self._game_info["goal"] = cfg["goal"]
-        self._game_info["max_weight"] = cfg["max_weight"]
-        
-        self.n = cfg["n"]
-        self.start = cfg["start"]
-        self.goal = cfg["goal"]
-        self.max_weight = cfg["max_weight"]
-        self.max_queries = cfg["max_queries"]
-        
-        # 构建邻接表和边权重字典
-        self.graph = {i: [] for i in range(1, self.n + 1)}
-        self.edge_weights = {}
-        
-        for u, v, w in cfg["edges"]:
-            self.graph[u].append(v)
-            self.graph[v].append(u)
-            # 使用排序后的元组作为key，保证无向图的一致性
-            edge_key = tuple(sorted([u, v]))
-            self.edge_weights[edge_key] = w
-        
-        # 计算真实瓶颈值（使用二分搜索 + BFS）
-        self.bottleneck = self._compute_bottleneck()
-        
-        # 查询计数器
-        self.query_count = 0
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        n = cfg["n"]
+        edges = cfg["edges"]
 
-    def _compute_bottleneck(self):
-        """计算从起点到终点的最小瓶颈值"""
-        # 收集所有可能的权重值并排序
-        weights = sorted(set(self.edge_weights.values()))
-        
-        # 二分搜索找到最小的阈值使得起点和终点连通
-        left, right = 0, len(weights) - 1
-        result = weights[-1]  # 默认为最大权重
-        
-        while left <= right:
-            mid = (left + right) // 2
-            threshold = weights[mid]
-            
-            if self._is_connected(threshold):
-                result = threshold
-                right = mid - 1
-            else:
-                left = mid + 1
-        
-        return result
+        self._game_info["n"] = n
 
-    def _is_connected(self, threshold):
-        """使用BFS判断在给定阈值下起点和终点是否连通"""
-        visited = set()
-        queue = [self.start]
-        visited.add(self.start)
+        self.n = n
+        indices = list(range(n))
+        random.shuffle(indices)
+        self.vertices = [f"v{indices[i]}" for i in range(n)]
+        self.adj = {v: [] for v in self.vertices}
+
+        for u_idx, v_idx in edges:
+            u = self.vertices[u_idx]
+            v = self.vertices[v_idx]
+            self.adj[u].append(v)
+            self.adj[v].append(u)
+
+        self.dist_matrix = {}
+        for v in self.vertices:
+            self.dist_matrix[v] = self._bfs(v)
+
+        self.true_diameter = 0
+        for v in self.vertices:
+            ecc = max(self.dist_matrix[v].values())
+            if ecc > self.true_diameter:
+                self.true_diameter = ecc
+
+        self.eligible_for_dist = set()
+
+    def _bfs(self, start):
+        distances = {start: 0}
+        queue = deque([start])
         
         while queue:
-            current = queue.pop(0)
-            
-            if current == self.goal:
-                return True
-            
-            for neighbor in self.graph[current]:
-                if neighbor not in visited:
-                    edge_key = tuple(sorted([current, neighbor]))
-                    if self.edge_weights[edge_key] <= threshold:
-                        visited.add(neighbor)
-                        queue.append(neighbor)
+            u = queue.popleft()
+            for v in self.adj[u]:
+                if v not in distances:
+                    distances[v] = distances[u] + 1
+                    queue.append(v)
         
-        return False
+        return distances
+
+    def _get_eccentricity_and_far(self, vertex):
+        distances = self.dist_matrix[vertex]
+        ecc = max(distances.values())
+        far_set = sorted([v for v, d in distances.items() if d == ecc])
+        return ecc, far_set
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
         try:
-            answer_str = parsed_info["answer"].strip()
-            answer_value = int(answer_str)
-            return answer_value == self.bottleneck
-        except:
+            declared = int(parsed_info["answer"].strip())
+            return declared == self.true_diameter
+        except (ValueError, KeyError):
             return False
 
     def _cf_core_produce(self, parsed_info):
-        # 增加查询计数（不在超限时阻断，因为 max_turns 已经控制了总轮数）
-        self.query_count += 1
-        
-        # 检查是否包含多个查询标签
-        query_tags = [tag for tag in ["query_threshold", "query_edge", "query_path"] if tag in parsed_info]
-        if len(query_tags) > 1:
-            if self.config.language == "zh":
-                return "错误：每次询问只能包含一个标签。"
-            else:
-                return "Error: Each query must contain only one tag."
-
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            no_edge_res = "无边"
-            invalid_path_res = "非法路径"
+            reject_msg = "拒绝：该顶点对不符合查询条件"
+            invalid_vertex = "错误：无效的顶点标识"
+            invalid_format = "错误：格式无效"
         else:
-            yes_res, no_res = "Yes", "No"
-            no_edge_res = "No edge"
-            invalid_path_res = "Invalid path"
+            reject_msg = "REJECT: Pair not eligible"
+            invalid_vertex = "Error: Invalid vertex identifier"
+            invalid_format = "Error: Invalid format"
 
-        # 处理阈值连通性查询
-        if "query_threshold" in parsed_info:
-            try:
-                threshold = int(parsed_info["query_threshold"].strip())
-                if threshold < 0 or threshold > self.max_weight:
-                    if self.config.language == "zh":
-                        return f"错误：阈值必须在 0 到 {self.max_weight} 之间"
-                    else:
-                        return f"Error: Threshold must be between 0 and {self.max_weight}"
-                
-                is_connected = self._is_connected(threshold)
-                return yes_res if is_connected else no_res
-            except ValueError:
-                if self.config.language == "zh":
-                    return "错误：阈值必须是整数"
-                else:
-                    return "Error: Threshold must be an integer"
+        if "probe" in parsed_info:
+            vertex = parsed_info["probe"].strip()
+            if vertex not in self.vertices:
+                return invalid_vertex
+            
+            ecc, far_set = self._get_eccentricity_and_far(vertex)
+            
+            for v in far_set:
+                self.eligible_for_dist.add(v)
+            
+            far_str = ", ".join(far_set)
+            
+            if self.config.language == "zh":
+                return f"TIME {ecc}\nFAR {{{far_str}}}"
+            else:
+                return f"TIME {ecc}\nFAR {{{far_str}}}"
 
-        # 处理边查询
-        elif "query_edge" in parsed_info:
+        elif "dist" in parsed_info:
             try:
-                raw = parsed_info["query_edge"].strip()
+                raw = parsed_info["dist"]
                 parts = [x.strip() for x in raw.split(",")]
                 if len(parts) != 2:
-                    raise ValueError
+                    return invalid_format
                 
-                u, v = int(parts[0]), int(parts[1])
+                v1, v2 = parts
+                if v1 not in self.vertices or v2 not in self.vertices:
+                    return invalid_vertex
+                if v1 == v2:
+                    return invalid_format
                 
-                if u == v or u < 1 or u > self.n or v < 1 or v > self.n:
-                    if self.config.language == "zh":
-                        return f"错误：顶点编号必须在 1 到 {self.n} 之间且不能相同"
-                    else:
-                        return f"Error: Vertex IDs must be between 1 and {self.n} and different"
+                if v1 not in self.eligible_for_dist or v2 not in self.eligible_for_dist:
+                    return reject_msg
                 
-                edge_key = tuple(sorted([u, v]))
-                if edge_key in self.edge_weights:
-                    weight = self.edge_weights[edge_key]
-                    if self.config.language == "zh":
-                        return f"有边，权重={weight}"
-                    else:
-                        return f"Edge exists, weight={weight}"
-                else:
-                    return no_edge_res
-            except ValueError:
-                if self.config.language == "zh":
-                    return "错误：格式无效，应为两个逗号分隔的整数"
-                else:
-                    return "Error: Invalid format, should be two comma-separated integers"
-
-        # 处理路径查询
-        elif "query_path" in parsed_info:
-            try:
-                raw = parsed_info["query_path"].strip()
-                vertices = [int(x.strip()) for x in raw.split(",")]
-                
-                if len(vertices) < 2:
-                    if self.config.language == "zh":
-                        return "错误：路径至少需要 2 个顶点"
-                    else:
-                        return "Error: Path must have at least 2 vertices"
-                
-                # 检查所有顶点是否有效
-                for v in vertices:
-                    if v < 1 or v > self.n:
-                        if self.config.language == "zh":
-                            return f"错误：顶点编号必须在 1 到 {self.n} 之间"
-                        else:
-                            return f"Error: Vertex IDs must be between 1 and {self.n}"
-                
-                # 检查路径上的所有边是否存在，并找到最大权重
-                max_weight_on_path = 0
-                for i in range(len(vertices) - 1):
-                    u, v = vertices[i], vertices[i + 1]
-                    edge_key = tuple(sorted([u, v]))
-                    
-                    if edge_key not in self.edge_weights:
-                        return invalid_path_res
-                    
-                    max_weight_on_path = max(max_weight_on_path, self.edge_weights[edge_key])
+                dist = self.dist_matrix[v1][v2]
                 
                 if self.config.language == "zh":
-                    return f"合法路径，瓶颈={max_weight_on_path}"
+                    return f"DISTANCE {dist}"
                 else:
-                    return f"Valid path, bottleneck={max_weight_on_path}"
+                    return f"DISTANCE {dist}"
                     
-            except ValueError:
-                if self.config.language == "zh":
-                    return "错误：格式无效，应为逗号分隔的整数序列"
-                else:
-                    return "Error: Invalid format, should be comma-separated integers"
+            except (ValueError, KeyError, IndexError):
+                return invalid_format
 
         else:
             raise ValueError("No valid query tag found.")
-
-    def _cf_make_wrong(self, correct):
-        """生成一个与正确答案不同的错误答案（确定性版本）"""
-        import re as _re
-        
-        if correct.strip().isdigit():
-            val = int(correct.strip())
-            return str(val + 1) if val < self.max_weight else str(val - 1)
-        
-        is_zh = (self.config.language == "zh")
-        
-        if is_zh:
-            if correct == "是":
-                return "否"
-            elif correct == "否":
-                return "是"
-            elif correct == "无边":
-                # 使用确定性的伪造权重（取 max_weight 的中间值）
-                fake_weight = self.max_weight // 2 if self.max_weight > 1 else 1
-                return f"有边，权重={fake_weight}"
-            elif correct.startswith("有边"):
-                return "无边"
-            elif correct == "非法路径":
-                fake_bn = self.max_weight // 2 if self.max_weight > 1 else 1
-                return f"合法路径，瓶颈={fake_bn}"
-            elif correct.startswith("合法路径"):
-                m = _re.search(r'瓶颈=(\d+)', correct)
-                if m:
-                    old_val = int(m.group(1))
-                    new_val = old_val + 1 if old_val < self.max_weight else old_val - 1
-                    return correct.replace(f"瓶颈={old_val}", f"瓶颈={new_val}")
-                return "非法路径"
-        else:
-            if correct == "Yes":
-                return "No"
-            elif correct == "No":
-                return "Yes"
-            elif correct == "No edge":
-                fake_weight = self.max_weight // 2 if self.max_weight > 1 else 1
-                return f"Edge exists, weight={fake_weight}"
-            elif correct.startswith("Edge exists"):
-                return "No edge"
-            elif correct == "Invalid path":
-                fake_bn = self.max_weight // 2 if self.max_weight > 1 else 1
-                return f"Valid path, bottleneck={fake_bn}"
-            elif correct.startswith("Valid path"):
-                m = _re.search(r'bottleneck=(\d+)', correct)
-                if m:
-                    old_val = int(m.group(1))
-                    new_val = old_val + 1 if old_val < self.max_weight else old_val - 1
-                    return correct.replace(f"bottleneck={old_val}", f"bottleneck={new_val}")
-                return "Invalid path"
-        
-        return correct + " [WRONG]"
-
-    def get_all_possible_queries(self):
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        注意：仅枚举阈值查询和边查询（原子查询）。
-        路径查询因组合爆炸（N!）不在此枚举，但可通过边查询结果自行推导。
-        """
+            
+    def get_all_possible_queries(self) -> list[dict]:
         queries = []
-        is_zh = (self.config.language == "zh")
-
-        # 1. 枚举所有可能的阈值查询
-        # 阈值范围：0 到 max_weight
-        yes_res = "是" if is_zh else "Yes"
-        no_res = "否" if is_zh else "No"
-
-        for t in range(self.max_weight + 1):
-            is_connected = self._is_connected(t)
-            ans = yes_res if is_connected else no_res
-            queries.append({
-                "query": f"<query_threshold>{t}</query_threshold>",
-                "answer": ans
-            })
-
-        # 2. 枚举所有可能的边查询
-        # 顶点范围：1 到 n，遍历所有无向对 (u, v) 其中 u < v
-        no_edge_res = "无边" if is_zh else "No edge"
-
-        for u in range(1, self.n + 1):
-            for v in range(u + 1, self.n + 1):
-                query_str = f"<query_edge>{u},{v}</query_edge>"
-                edge_key = tuple(sorted([u, v]))
+        
+        for v in self.vertices:
+            query_str = f"<probe>{v}</probe>"
+            ecc, far_set = self._get_eccentricity_and_far(v)
+            far_str = ", ".join(far_set)
+            
+            if self.config.language == "zh":
+                answer = f"TIME {ecc}\nFAR {{{far_str}}}"
+            else:
+                answer = f"TIME {ecc}\nFAR {{{far_str}}}"
                 
-                if edge_key in self.edge_weights:
-                    weight = self.edge_weights[edge_key]
-                    if is_zh:
-                        ans = f"有边，权重={weight}"
-                    else:
-                        ans = f"Edge exists, weight={weight}"
+            queries.append({
+                "query": query_str,
+                "answer": answer
+            })
+            
+        for i in range(len(self.vertices)):
+            for j in range(i + 1, len(self.vertices)):
+                v1 = self.vertices[i]
+                v2 = self.vertices[j]
+                
+                query_str = f"<dist>{v1},{v2}</dist>"
+                dist = self.dist_matrix[v1][v2]
+                
+                if self.config.language == "zh":
+                    answer = f"DISTANCE {dist}"
                 else:
-                    ans = no_edge_res
+                    answer = f"DISTANCE {dist}"
                 
                 queries.append({
                     "query": query_str,
-                    "answer": ans
+                    "answer": answer
                 })
-
+                
         return queries
+
+    def _cf_make_wrong(self, correct):
+        time_match = re.search(r'TIME\s+(\d+)', correct)
+        if time_match:
+            old_val = int(time_match.group(1))
+            new_val = old_val + 1
+            return re.sub(r'TIME\s+\d+', f'TIME {new_val}', correct)
+            
+        dist_match = re.search(r'DISTANCE\s+(\d+)', correct)
+        if dist_match:
+            old_val = int(dist_match.group(1))
+            new_val = old_val + 1
+            return re.sub(r'DISTANCE\s+\d+', f'DISTANCE {new_val}', correct)
+
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if self.config.language == "zh":
+            if "是" in correct:
+                return correct.replace("是", "否")
+            elif "否" in correct:
+                return correct.replace("否", "是")
+        else:
+            if "Yes" in correct:
+                return correct.replace("Yes", "No")
+            elif "No" in correct:
+                return correct.replace("No", "Yes")
+            elif "yes" in correct:
+                return correct.replace("yes", "no")
+            elif "no" in correct:
+                return correct.replace("no", "yes")
+        
+        return correct + "_WRONG"

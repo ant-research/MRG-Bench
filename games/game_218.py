@@ -1,848 +1,536 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   条件边计数：权重满足某条件的边共有多少条
-# ============================================================
-
 from .base import Game
+import random
+import itertools
 import re
+from typing import List, Dict
 
-class HiddenPropertyGame(Game):
+class LongestCommonSubsequenceGame(Game):
 
-    # 1. 新增类属性
-    reasoning_type = "归纳推理"
-    data_structure = "图"
-
-    # [BUG FIX] 原问题：字符串包含 {E1,E2,E3}，被 format 方法误认为是占位符 key，导致 KeyError: 'E1,E2,E3'。
-    # 修改：将 {E1,E2,E3} 转义为 {{E1,E2,E3}}，使其在 format 后显示为普通的 {} 字符。
     game_rule_zh = """\
-我们现在来玩一个"隐藏性质推理"游戏，规则如下：
+我们现在来玩一个"最长公共子序列推断"游戏，规则如下：
 
-游戏设定了一个有限无向加权图 G=(V,E)，你可以看到全部顶点、边及其整数权重。图的具体信息如下：
+游戏设定了两个固定的隐藏序列 A 和 B，每个序列长度为 {n}，由字母表 {alphabet_display} 中的字符组成。
 
-顶点集合 V：{vertices}
+你的目标是推断出这两个序列的最长公共子序列（LCS）的长度 L。
 
-边集合 E 及权重：
-{edges_info}
+- 子序列：从原序列中删除若干个（可以为零）字符，保持剩余字符的相对顺序不变所得到的序列。
+- 最长公共子序列长度（LCS_len）：两个序列的所有公共子序列中最长的那个的长度。
 
-隐藏设定：
-存在一个固定且未知的布尔判定函数 P，它只依赖边的权重 w。对于任意边 e，当且仅当 P(w(e))=1 时，我们称边 e "满足性质"。函数 P 在整个游戏过程中保持不变。
+你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据隐藏序列如实回答：
 
-你的目标：
-通过查询推断出函数 P 的规则，并对一个新的边集合做出准确的计数预测。
+1. **LCS探测查询**：提交一个序列 S（长度不超过 {n}），我会返回两个数值：S与A的LCS长度，以及S与B的LCS长度。
 
-可用的查询类型（每次只能提交一个查询）：
+2. **公共子序列判定查询**：提交一个序列 T，我会回答 T 是否同时为 A 和 B 的子序列（回答"是"或"否"）。
 
-1. 边集合计数查询：询问指定边集合中有多少条边满足性质。
-   格式示例：<query_count_edges>E1,E3,E5</query_count_edges>
+3. **单序列子序列判定查询**：提交一个序列 U 并指明要判定的目标（A 或 B），我会回答 U 是否为指定序列的子序列（回答"是"或"否"）。
 
-2. 权重区间计数查询：询问权重在指定区间内的边中有多少条满足性质。
-   格式示例：<query_count_range>10,50</query_count_range>
-   （表示查询权重在 [10,50] 区间内的边）
+当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-3. 顶点邻接计数查询：询问与指定顶点相邻的所有边中有多少条满足性质。
-   格式示例：<query_count_incident>N1,N3</query_count_incident>
-   （查询所有与 N1 或 N3 相邻的边，每条边只计数一次）
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-4. 单边判定查询：询问某条边是否满足性质。
-   格式示例：<query_single>E5</query_single>
+- LCS探测查询（例如探测序列"ABC"）：
+<query_lcs>ABC</query_lcs>
 
-5. 比较查询：比较两个边集合中满足性质的边的数量。
-   格式示例：<query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   （比较显式边集 {{E1,E2,E3}} 与权重区间 [20,40] 内的边集）
-   支持的集合指定方式：edges:边列表、range:L,R、incident:顶点列表
+- 公共子序列判定查询（例如判定序列"AB"）：
+<query_common>AB</query_common>
 
-提交最终答案时，需要同时给出：
-1. 你推断出的 P 函数规则（假设）
-2. 对一个新边集合的计数预测
+- 单序列子序列判定查询（例如判定"AC"是否为A的子序列）：
+<query_single>seq=AC, target=A</query_single>
 
-答案格式：
-<answer>hypothesis=[你的规则描述], predict_set=[边列表], predict_count=[数字]</answer>
+提交最终答案时，必须给出你推断的最长公共子序列长度（一个非负整数），格式如下：
 
-示例：
-<answer>hypothesis=权重大于等于50, predict_set=E9,E10,E11, predict_count=3</answer>
-
-注意：
-- 每次只能提交一个查询标签
-- 规则描述需要清晰明确，能够对任意整数权重做出判定
-- 预测集合必须是之前未完整查询过的边集合
-- 答案错误将导致游戏失败
+<answer>5</answer>
 """
 
     game_rule_en = """\
-Let's play a "Hidden Property Inference" game. Here are the rules:
+Let's play a "Longest Common Subsequence Inference" game. Here are the rules:
 
-The game features a finite undirected weighted graph G=(V,E). You can see all vertices, edges, and their integer weights. The graph information is as follows:
+The game has set up two fixed hidden sequences A and B, each of length {n}, composed of characters from the alphabet {alphabet_display}.
 
-Vertex set V: {vertices}
+Your goal is to infer the length L of the longest common subsequence (LCS) of these two sequences.
 
-Edge set E and weights:
-{edges_info}
+- Subsequence: A sequence derived from the original by deleting some (possibly zero) characters while maintaining the relative order of the remaining characters.
+- Longest Common Subsequence Length (LCS_len): The length of the longest subsequence that is common to both sequences.
 
-Hidden Setting:
-There exists a fixed and unknown boolean decision function P that depends only on the edge weight w. For any edge e, we say edge e "satisfies the property" if and only if P(w(e))=1. Function P remains constant throughout the game.
+You can repeatedly ask me the following three types of queries (one per turn), and I will answer truthfully based on the hidden sequences:
 
-Your Goal:
-Infer the rule of function P through queries and make an accurate count prediction for a new edge set.
+1. **LCS Probe Query**: Submit a sequence S (length not exceeding {n}), and I will return two values: the LCS length between S and A, and the LCS length between S and B.
 
-Available Query Types (only one query per turn):
+2. **Common Subsequence Check Query**: Submit a sequence T, and I will answer whether T is a subsequence of both A and B (answer "Yes" or "No").
 
-1. Edge Set Count Query: Ask how many edges in a specified edge set satisfy the property.
-   Format example: <query_count_edges>E1,E3,E5</query_count_edges>
+3. **Single Sequence Subsequence Check Query**: Submit a sequence U and specify the target (A or B), and I will answer whether U is a subsequence of the specified sequence (answer "Yes" or "No").
 
-2. Weight Range Count Query: Ask how many edges with weights in a specified range satisfy the property.
-   Format example: <query_count_range>10,50</query_count_range>
-   (Query edges with weights in [10,50])
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-3. Vertex Incident Count Query: Ask how many edges incident to specified vertices satisfy the property.
-   Format example: <query_count_incident>N1,N3</query_count_incident>
-   (Query all edges incident to N1 or N3, each edge counted once)
+Each query must contain only one tag. Use the following XML format:
 
-4. Single Edge Decision Query: Ask if a specific edge satisfies the property.
-   Format example: <query_single>E5</query_single>
+- LCS Probe Query (e.g., probing sequence "ABC"):
+<query_lcs>ABC</query_lcs>
 
-5. Comparison Query: Compare the count of edges satisfying the property in two edge sets.
-   Format example: <query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   (Compare explicit edge set {{E1,E2,E3}} with edges in weight range [20,40])
-   Supported set specification: edges:edge_list, range:L,R, incident:vertex_list
+- Common Subsequence Check Query (e.g., checking sequence "AB"):
+<query_common>AB</query_common>
 
-When submitting the final answer, provide:
-1. Your inferred rule for function P (hypothesis)
-2. A count prediction for a new edge set
+- Single Sequence Subsequence Check Query (e.g., checking if "AC" is a subsequence of A):
+<query_single>seq=AC, target=A</query_single>
 
-Answer format:
-<answer>hypothesis=[your rule description], predict_set=[edge list], predict_count=[number]</answer>
+When submitting the final answer, provide your inferred longest common subsequence length (a non-negative integer) in this format:
 
-Example:
-<answer>hypothesis=weight greater than or equal to 50, predict_set=E9,E10,E11, predict_count=3</answer>
-
-Notes:
-- Only one query tag per turn
-- Rule description must be clear and applicable to any integer weight
-- Prediction set must be a previously unqueried complete edge set
-- Incorrect answer leads to game failure
+<answer>5</answer>
 """
 
-    # ================= 场景改造 1：交通 =================
     contextualized_rule_zh_1 = """\
-欢迎使用“智能交通路网分析系统”。
-系统映射了一个有限的无向交通路网图 G=(V,E)，你可以查阅所有的交通枢纽（顶点）、连接路段（边）及其日均车流量（整数权重）。路网的具体信息如下：
+欢迎进入城市交通路网分析系统。我们现在进行"城市路网关键共线枢纽推断"分析，规则如下：
 
-枢纽节点集合 V：{vertices}
+系统记录了两条主干道（路线 A 和 路线 B）沿途经过的交通枢纽序列。
+每条路线包含 {n} 个枢纽站点，由编号集合 {alphabet_display} 中的字符表示。
 
-路段集合 E 及日均车流量：
-{edges_info}
+你的目标是推断出这两条主干道按相同顺序途径的最长公共枢纽链路的长度 L。
 
-隐藏设定：
-路网中存在一个固定的布尔评估模型 P，该模型仅依赖路段的车流量 w。对于任意路段 e，当且仅当 P(w(e))=1 时，我们判定该路段为“高风险拥堵路段”。评估模型 P 在整个分析过程中保持不变。
+- 子路径（子序列）：按车辆实际行驶先后顺序经过的枢纽组合（可跳过部分非停靠站，但相对顺序不变）。
+- 最大共线站数（LCS_len）：两条路线的所有公共子路径中最长的那一条所包含的枢纽数量。
 
-你的目标：
-通过查询指令推断出评估模型 P 的判定规则，并对一组新的路段集合做出准确的高风险路段数量预测。
+你可以反复向系统提交以下三类探测查询（每次仅限一个查询）：
 
-可用的查询指令（每次只能提交一个查询）：
+1. **共线探测查询**：提交一个测试路径 S（长度不超过 {n}），系统会返回两个数值：S与路线A的共线枢纽数，以及S与路线B的共线枢纽数。
 
-1. 指定路段计数查询：询问特定路段集合中有多少条是高风险拥堵路段。
-   格式示例：<query_count_edges>E1,E3,E5</query_count_edges>
+2. **公共子路径判定查询**：提交一个测试路径 T，系统会回答 T 是否同时为路线 A 和 B 的子路径（回答"是"或"否"）。
 
-2. 流量区间计数查询：询问日均车流量在指定区间内的路段中，有多少条是高风险拥堵路段。
-   格式示例：<query_count_range>10,50</query_count_range>
-   （表示查询流量在 [10,50] 区间内的路段）
+3. **单一路线判定查询**：提交一个测试路径 U 并指明要判定的目标路线（A 或 B），系统会回答 U 是否为指定路线的子路径（回答"是"或"否"）。
 
-3. 枢纽邻接计数查询：询问与指定枢纽相连的所有路段中，有多少条是高风险拥堵路段。
-   格式示例：<query_count_incident>N1,N3</query_count_incident>
-   （查询所有接入 N1 或 N3 的路段，每条路段只计数一次）
+当你收集到足够信息后，请提交最终推断的共线站数。若答案错误或格式不符，分析任务将判定失败。
 
-4. 单一判定查询：询问某条特定路段是否为高风险拥堵路段。
-   格式示例：<query_single>E5</query_single>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. 对比分析查询：比较两组路段集合中高风险拥堵路段的数量。
-   格式示例：<query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   （比较显式指定的路段集合 {{E1,E2,E3}} 与车流量在 [20,40] 区间内的路段集合）
-   支持的集合指定方式：edges:路段列表、range:L,R、incident:枢纽列表
+- 共线探测查询（例如探测路径"ABC"）：
+<query_lcs>ABC</query_lcs>
 
-提交最终分析报告时，需要同时给出：
-1. 你推断出的 P 模型规则（假设）
-2. 对一个全新的路段集合的拥堵数量预测
+- 公共子路径判定查询（例如判定路径"AB"）：
+<query_common>AB</query_common>
 
-报告格式：
-<answer>hypothesis=[你的规则描述], predict_set=[路段列表], predict_count=[数字]</answer>
+- 单一路线判定查询（例如判定"AC"是否为路线A的子路径）：
+<query_single>seq=AC, target=A</query_single>
 
-示例：
-<answer>hypothesis=车流量大于等于50, predict_set=E9,E10,E11, predict_count=3</answer>
+提交最终答案时，必须给出你推断的最长公共枢纽链路长度（一个非负整数），格式如下：
 
-注意：
-- 每次只能提交一个查询标签
-- 规则描述需要清晰明确，能够对任意整数流量做出判定
-- 预测集合必须是之前未完整查询过的路段集合
-- 预测错误将导致分析任务失败
+<answer>5</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-Welcome to the "Intelligent Traffic Network Analysis System".
-The system maps a finite undirected traffic network graph G=(V,E). You can view all traffic hubs (vertices), connecting road segments (edges), and their average daily traffic volume (integer weights). The network information is as follows:
+Welcome to the Urban Traffic Network Analysis System. Let's conduct a "City Road Network Key Common Hub Inference" analysis. Here are the rules:
 
-Hub Node Set V: {vertices}
+The system has recorded the sequence of transit hubs for two main arterial roads, Route A and Route B.
+Each route consists of {n} hub stations, represented by characters from the set {alphabet_display}.
 
-Road Segment Set E and Daily Traffic Volume:
-{edges_info}
+Your goal is to infer the length L of the longest common sequence of transit hubs visited in the same relative order by both routes.
 
-Hidden Setting:
-There exists a fixed boolean evaluation model P that depends solely on the traffic volume w. For any road segment e, it is classified as a "High-Risk Congestion Road" if and only if P(w(e))=1. The model P remains constant throughout the analysis.
+- Sub-route (Subsequence): A combination of transit hubs visited in the actual chronological driving order (some non-stop stations can be skipped, but the relative order remains).
+- Maximum Common Hubs Length (LCS_len): The number of hubs in the longest common sub-route shared by both routes.
 
-Your Goal:
-Infer the evaluation rule of model P through queries and make an accurate prediction of the number of high-risk roads for a new set of road segments.
+You can repeatedly submit the following three types of probe queries to the system (one per turn):
 
-Available Query Directives (only one query per turn):
+1. **Collinear Probe Query**: Submit a test route S (length not exceeding {n}). The system will return two values: the collinear hub count between S and Route A, and the collinear hub count between S and Route B.
 
-1. Specified Road Count Query: Ask how many road segments in a specific set are high-risk.
-   Format example: <query_count_edges>E1,E3,E5</query_count_edges>
+2. **Common Sub-route Check Query**: Submit a test route T. The system will answer whether T is a valid sub-route for both A and B (answer "Yes" or "No").
 
-2. Volume Range Count Query: Ask how many road segments with traffic volume in a specified range are high-risk.
-   Format example: <query_count_range>10,50</query_count_range>
-   (Query roads with volume in [10,50])
+3. **Single Route Check Query**: Submit a test route U and specify the target route (A or B). The system will answer whether U is a valid sub-route of the specified route (answer "Yes" or "No").
 
-3. Hub Incident Count Query: Ask how many road segments connected to specified hubs are high-risk.
-   Format example: <query_count_incident>N1,N3</query_count_incident>
-   (Query all roads connected to N1 or N3, each road counted once)
+When you have gathered enough information, submit your final inferred maximum common hubs length. If the answer is incorrect or improperly formatted, the analysis task fails.
 
-4. Single Decision Query: Ask if a specific road segment is high-risk.
-   Format example: <query_single>E5</query_single>
+Each query must contain only one tag. Use the following XML format:
 
-5. Comparative Analysis Query: Compare the number of high-risk road segments between two sets.
-   Format example: <query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   (Compare explicit road set {{E1,E2,E3}} with roads in volume range [20,40])
-   Supported set specifications: edges:road_list, range:L,R, incident:hub_list
+- Collinear Probe Query (e.g., probing route "ABC"):
+<query_lcs>ABC</query_lcs>
 
-When submitting the final analysis report, provide:
-1. Your inferred rule for model P (hypothesis)
-2. A count prediction for a completely new set of road segments
+- Common Sub-route Check Query (e.g., checking route "AB"):
+<query_common>AB</query_common>
 
-Report format:
-<answer>hypothesis=[your rule description], predict_set=[road list], predict_count=[number]</answer>
+- Single Route Check Query (e.g., checking if "AC" is a sub-route of Route A):
+<query_single>seq=AC, target=A</query_single>
 
-Example:
-<answer>hypothesis=traffic volume greater than or equal to 50, predict_set=E9,E10,E11, predict_count=3</answer>
+When submitting the final answer, provide your inferred maximum common hubs length (a non-negative integer) in this format:
 
-Notes:
-- Only one query tag per turn
-- Rule description must be clear and applicable to any integer volume
-- Prediction set must be a previously unqueried complete road set
-- Incorrect prediction leads to task failure
+<answer>5</answer>
 """
 
-    # ================= 场景改造 2：医疗 =================
     contextualized_rule_zh_2 = """\
-欢迎使用“蛋白质相互作用网络推演系统”。
-系统构建了一个有限的无向生物分子图 G=(V,E)，你可以查阅所有蛋白质节点（顶点）、相互作用路径（边）及其结合亲和力指数（整数权重）。网络图的具体信息如下：
+欢迎使用临床医学诊断辅助系统。我们现在进行"患者病理演变路径比对"分析，规则如下：
 
-蛋白质节点集合 V：{vertices}
+系统记录了两名罕见病患者（患者 A 和 患者 B）的基因突变或症状演变序列。
+每位患者的完整演变记录包含 {n} 个阶段，由基因/症状标记集 {alphabet_display} 中的字符表示。
 
-相互作用路径集合 E 及结合亲和力：
-{edges_info}
+你的目标是推断出这两名患者按相同时间顺序表现出的最长公共演变路径的长度 L。
 
-隐藏设定：
-系统中存在一个固定的布尔靶向判定函数 P，该函数仅依赖路径的结合亲和力 w。对于任意路径 e，当且仅当 P(w(e))=1 时，我们称该路径具有“临床显著靶向性”。函数 P 在整个推演过程中保持不变。
+- 演变子路径（子序列）：按时间先后顺序发生的病情特征组合（可忽略部分次要中间特征，但整体发展顺序不变）。
+- 最长公共演变路径长度（LCS_len）：两名患者所有的共同演变子路径中最长的那一条的标记数量。
 
-你的目标：
-通过实验查询推断出函数 P 的判定规则，并对一组新的交互路径集合做出准确的靶向路径数量预测。
+你可以反复向系统提出以下三类病理探测查询（每次仅限一个查询）：
 
-可用的实验查询（每次只能提交一个查询）：
+1. **演变路径探测查询**：提交一个测试路径 S（长度不超过 {n}），系统会返回两个数值：S与患者A演变记录的匹配长度，以及S与患者B演变记录的匹配长度。
 
-1. 路径集合计数查询：询问指定相互作用路径集合中有多少条具有临床显著靶向性。
-   格式示例：<query_count_edges>E1,E3,E5</query_count_edges>
+2. **公共演变判定查询**：提交一个测试路径 T，系统会回答 T 是否同时为患者 A 和 B 经历过的演变子路径（回答"是"或"否"）。
 
-2. 亲和力区间计数查询：询问亲和力在指定区间内的路径中，有多少条具有临床显著靶向性。
-   格式示例：<query_count_range>10,50</query_count_range>
-   （表示查询亲和力在 [10,50] 区间内的路径）
+3. **单患者演变判定查询**：提交一个测试路径 U 并指明要判定的目标（A 或 B），系统会回答 U 是否为指定患者经历过的演变子路径（回答"是"或"否"）。
 
-3. 节点邻接计数查询：询问与指定蛋白质相邻的所有路径中，有多少条具有临床显著靶向性。
-   格式示例：<query_count_incident>N1,N3</query_count_incident>
-   （查询所有与 N1 或 N3 相邻的路径，每条路径只计数一次）
+当你收集到足够比对信息后，请提交最终推断的公共演变长度。若答案错误或格式不符，诊断分析将判定失败。
 
-4. 单一路径判定查询：询问某条特定相互作用路径是否具有临床显著靶向性。
-   格式示例：<query_single>E5</query_single>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. 对比分析查询：比较两组路径集合中具有临床显著靶向性的路径数量。
-   格式示例：<query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   （比较显式路径集合 {{E1,E2,E3}} 与亲和力区间 [20,40] 内的路径集合）
-   支持的集合指定方式：edges:路径列表、range:L,R、incident:蛋白质列表
+- 演变路径探测查询（例如探测路径"ABC"）：
+<query_lcs>ABC</query_lcs>
 
-提交最终推演结果时，需要同时给出：
-1. 你推断出的 P 函数规则（假设）
-2. 对一个新的路径集合的计数预测
+- 公共演变判定查询（例如判定路径"AB"）：
+<query_common>AB</query_common>
 
-结果格式：
-<answer>hypothesis=[你的规则描述], predict_set=[路径列表], predict_count=[数字]</answer>
+- 单患者演变判定查询（例如判定"AC"是否为患者A的演变子路径）：
+<query_single>seq=AC, target=A</query_single>
 
-示例：
-<answer>hypothesis=亲和力大于等于50, predict_set=E9,E10,E11, predict_count=3</answer>
+提交最终答案时，必须给出你推断的最长公共演变路径长度（一个非负整数），格式如下：
 
-注意：
-- 每次只能提交一个查询标签
-- 规则描述需要清晰明确，能够对任意整数亲和力做出判定
-- 预测集合必须是之前未完整查询过的路径集合
-- 预测错误将导致推演失败
+<answer>5</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Healthcare Scenario]
-Welcome to the "Protein Interaction Network Deduction System".
-The system constructs a finite undirected biomolecular graph G=(V,E). You can view all protein nodes (vertices), interaction pathways (edges), and their binding affinity indices (integer weights). The network details are as follows:
+Welcome to the Clinical Diagnostic Assistant System. Let's conduct a "Patient Pathological Evolution Path Alignment" analysis. Here are the rules:
 
-Protein Node Set V: {vertices}
+The system has recorded the genetic mutation or symptom evolution sequences for two patients with rare diseases, Patient A and Patient B.
+Each patient's complete evolution record spans {n} stages, represented by characters from the genetic/symptom marker set {alphabet_display}.
 
-Interaction Pathway Set E and Binding Affinity:
-{edges_info}
+Your goal is to infer the length L of the longest common evolution path exhibited by both patients in the same chronological order.
 
-Hidden Setting:
-There exists a fixed boolean targeting decision function P that depends only on the pathway's binding affinity w. For any pathway e, it possesses "Clinically Significant Targeting" if and only if P(w(e))=1. Function P remains constant throughout the deduction process.
+- Evolution Sub-path (Subsequence): A combination of pathological features occurring in chronological order (some minor intermediate features can be ignored, but the overall progression order remains unchanged).
+- Longest Common Evolution Path Length (LCS_len): The number of markers in the longest common evolution sub-path shared by both patients.
 
-Your Goal:
-Infer the rule of function P through experimental queries and make an accurate count prediction of targeted pathways for a new set of interaction pathways.
+You can repeatedly submit the following three types of pathological probe queries to the system (one per turn):
 
-Available Experimental Queries (only one query per turn):
+1. **Evolution Path Probe Query**: Submit a test path S (length not exceeding {n}). The system will return two values: the matching length between S and Patient A's record, and the matching length between S and Patient B's record.
 
-1. Pathway Set Count Query: Ask how many pathways in a specified set possess clinically significant targeting.
-   Format example: <query_count_edges>E1,E3,E5</query_count_edges>
+2. **Common Evolution Check Query**: Submit a test path T. The system will answer whether T is a valid evolution sub-path experienced by both Patient A and Patient B (answer "Yes" or "No").
 
-2. Affinity Range Count Query: Ask how many pathways with affinity in a specified range possess clinically significant targeting.
-   Format example: <query_count_range>10,50</query_count_range>
-   (Query pathways with affinity in [10,50])
+3. **Single Patient Evolution Check Query**: Submit a test path U and specify the target patient (A or B). The system will answer whether U is a valid evolution sub-path for the specified patient (answer "Yes" or "No").
 
-3. Node Incident Count Query: Ask how many pathways incident to specified proteins possess clinically significant targeting.
-   Format example: <query_count_incident>N1,N3</query_count_incident>
-   (Query all pathways incident to N1 or N3, each pathway counted once)
+When you have gathered enough alignment information, submit your final inferred common evolution length. If the answer is incorrect or improperly formatted, the diagnostic analysis fails.
 
-4. Single Pathway Decision Query: Ask if a specific interaction pathway possesses clinically significant targeting.
-   Format example: <query_single>E5</query_single>
+Each query must contain only one tag. Use the following XML format:
 
-5. Comparative Analysis Query: Compare the number of targeted pathways between two pathway sets.
-   Format example: <query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   (Compare explicit pathway set {{E1,E2,E3}} with pathways in affinity range [20,40])
-   Supported set specifications: edges:pathway_list, range:L,R, incident:protein_list
+- Evolution Path Probe Query (e.g., probing path "ABC"):
+<query_lcs>ABC</query_lcs>
 
-When submitting the final deduction result, provide:
-1. Your inferred rule for function P (hypothesis)
-2. A count prediction for a new pathway set
+- Common Evolution Check Query (e.g., checking path "AB"):
+<query_common>AB</query_common>
 
-Result format:
-<answer>hypothesis=[your rule description], predict_set=[pathway list], predict_count=[number]</answer>
+- Single Patient Evolution Check Query (e.g., checking if "AC" is an evolution sub-path of Patient A):
+<query_single>seq=AC, target=A</query_single>
 
-Example:
-<answer>hypothesis=affinity greater than or equal to 50, predict_set=E9,E10,E11, predict_count=3</answer>
+When submitting the final answer, provide your inferred longest common evolution path length (a non-negative integer) in this format:
 
-Notes:
-- Only one query tag per turn
-- Rule description must be clear and applicable to any integer affinity
-- Prediction set must be a previously unqueried complete pathway set
-- Incorrect prediction leads to deduction failure
+<answer>5</answer>
 """
 
-    # ================= 场景改造 3：教育 =================
     contextualized_rule_zh_3 = """\
-欢迎使用“学科知识图谱分析引擎”。
-引擎载入了一个有限的无向知识图谱 G=(V,E)，你可以看到所有知识概念（顶点）、认知关联路径（边）及其关联强度评估值（整数权重）。图谱的具体信息如下：
+欢迎进入教研大纲分析终端。我们现在进行"跨版本教材知识链路比对"分析，规则如下：
 
-概念节点集合 V：{vertices}
+系统收录了两套权威教材（版本 A 和 版本 B）的核心知识点教学大纲序列。
+每套教材大纲包含 {n} 个知识模块，由学科模块代码集 {alphabet_display} 中的字符表示。
 
-关联路径集合 E 及关联强度：
-{edges_info}
+你的目标是推断出这两套教材在教学顺序上最长的一致知识点链路长度 L。
 
-隐藏设定：
-课程体系中存在一个固定的布尔评估规则 P，它只依赖关联路径的强度值 w。对于任意关联路径 e，当且仅当 P(w(e))=1 时，我们称该路径为“核心先修依赖”。规则 P 在整个分析过程中保持不变。
+- 教学子链路（子序列）：按教材编排先后顺序出现的知识模块组合（可跳过部分拓展模块，但核心模块的教学相对顺序不变）。
+- 最大一致教学链路长度（LCS_len）：两套教材所有的共同教学子链路中最长的那一条所包含的模块数量。
 
-你的目标：
-通过探索查询推断出规则 P 的逻辑，并对一组新的关联路径集合做出准确的核心依赖数量预测。
+你可以反复向系统提交以下三类教研比对查询（每次仅限一个查询）：
 
-可用的探索查询（每次只能提交一个查询）：
+1. **知识链路探测查询**：提交一个测试链路 S（长度不超过 {n}），系统会返回两个数值：S与教材A大纲的匹配长度，以及S与教材B大纲的匹配长度。
 
-1. 路径集合计数查询：询问指定的关联路径集合中有多少条是核心先修依赖。
-   格式示例：<query_count_edges>E1,E3,E5</query_count_edges>
+2. **公共链路判定查询**：提交一个测试链路 T，系统会回答 T 是否同时为教材 A 和 B 共有的教学子链路（回答"是"或"否"）。
 
-2. 强度区间计数查询：询问关联强度在指定区间内的路径中，有多少条是核心先修依赖。
-   格式示例：<query_count_range>10,50</query_count_range>
-   （表示查询强度在 [10,50] 区间内的路径）
+3. **单一教材链路判定查询**：提交一个测试链路 U 并指明要判定的目标教材（A 或 B），系统会回答 U 是否为指定教材的教学子链路（回答"是"或"否"）。
 
-3. 概念邻接计数查询：询问与指定概念节点相连的所有路径中，有多少条是核心先修依赖。
-   格式示例：<query_count_incident>N1,N3</query_count_incident>
-   （查询所有与 N1 或 N3 相连的路径，每条路径只计数一次）
+当你收集到足够信息后，请提交最终推断的一致链路长度。若答案错误或格式不符，教研分析任务将判定失败。
 
-4. 单一判定查询：询问某条特定的关联路径是否为核心先修依赖。
-   格式示例：<query_single>E5</query_single>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. 对比评估查询：比较两组路径集合中核心先修依赖的数量。
-   格式示例：<query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   （比较显式路径集合 {{E1,E2,E3}} 与关联强度在 [20,40] 区间内的路径集合）
-   支持的集合指定方式：edges:路径列表、range:L,R、incident:概念节点列表
+- 知识链路探测查询（例如探测链路"ABC"）：
+<query_lcs>ABC</query_lcs>
 
-提交最终分析结论时，需要同时给出：
-1. 你推断出的 P 规则逻辑（假设）
-2. 对一个新的关联路径集合的计数预测
+- 公共链路判定查询（例如判定链路"AB"）：
+<query_common>AB</query_common>
 
-结论格式：
-<answer>hypothesis=[你的规则描述], predict_set=[路径列表], predict_count=[数字]</answer>
+- 单一教材链路判定查询（例如判定"AC"是否为教材A的教学子链路）：
+<query_single>seq=AC, target=A</query_single>
 
-示例：
-<answer>hypothesis=关联强度大于等于50, predict_set=E9,E10,E11, predict_count=3</answer>
+提交最终答案时，必须给出你推断的最长公共知识点链路长度（一个非负整数），格式如下：
 
-注意：
-- 每次只能提交一个查询标签
-- 规则描述需要清晰明确，能够对任意整数强度值做出判定
-- 预测集合必须是之前未完整查询过的路径集合
-- 预测错误将导致分析任务失败
+<answer>5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Subject Knowledge Graph Analysis Engine".
-The engine has loaded a finite undirected knowledge graph G=(V,E). You can see all knowledge concepts (vertices), cognitive association links (edges), and their association strength evaluation values (integer weights). The graph details are as follows:
+Welcome to the Syllabus Analysis Terminal. Let's conduct a "Cross-Version Textbook Knowledge Chain Alignment" analysis. Here are the rules:
 
-Concept Node Set V: {vertices}
+The system has cataloged the core knowledge syllabus sequences of two authoritative textbooks, Version A and Version B.
+Each syllabus contains {n} knowledge modules, represented by characters from the subject module code set {alphabet_display}.
 
-Association Link Set E and Association Strength:
-{edges_info}
+Your goal is to infer the length L of the longest consistent knowledge chain shared by both textbooks in their instructional order.
 
-Hidden Setting:
-Within the curriculum system, there exists a fixed boolean evaluation rule P that depends only on the link's association strength w. For any association link e, it is classified as a "Core Prerequisite Dependency" if and only if P(w(e))=1. Rule P remains constant throughout the analysis.
+- Instructional Sub-chain (Subsequence): A combination of knowledge modules appearing in the textbook's sequential order (some expansion modules can be skipped, but the relative teaching order of the core modules remains unchanged).
+- Maximum Consistent Instructional Chain Length (LCS_len): The number of modules in the longest common instructional sub-chain shared by both textbooks.
 
-Your Goal:
-Infer the logic of rule P through exploratory queries and make an accurate count prediction of core dependencies for a new set of association links.
+You can repeatedly submit the following three types of alignment queries to the system (one per turn):
 
-Available Exploratory Queries (only one query per turn):
+1. **Knowledge Chain Probe Query**: Submit a test chain S (length not exceeding {n}). The system will return two values: the matching length between S and Textbook A's syllabus, and the matching length between S and Textbook B's syllabus.
 
-1. Link Set Count Query: Ask how many links in a specified association link set are core prerequisite dependencies.
-   Format example: <query_count_edges>E1,E3,E5</query_count_edges>
+2. **Common Chain Check Query**: Submit a test chain T. The system will answer whether T is a valid instructional sub-chain shared by both Textbook A and Textbook B (answer "Yes" or "No").
 
-2. Strength Range Count Query: Ask how many links with association strength in a specified range are core prerequisite dependencies.
-   Format example: <query_count_range>10,50</query_count_range>
-   (Query links with strength in [10,50])
+3. **Single Textbook Chain Check Query**: Submit a test chain U and specify the target textbook (A or B). The system will answer whether U is a valid instructional sub-chain for the specified textbook (answer "Yes" or "No").
 
-3. Concept Incident Count Query: Ask how many links connected to specified concept nodes are core prerequisite dependencies.
-   Format example: <query_count_incident>N1,N3</query_count_incident>
-   (Query all links connected to N1 or N3, each link counted once)
+When you have gathered enough information, submit your final inferred consistent chain length. If the answer is incorrect or improperly formatted, the analysis task fails.
 
-4. Single Decision Query: Ask if a specific association link is a core prerequisite dependency.
-   Format example: <query_single>E5</query_single>
+Each query must contain only one tag. Use the following XML format:
 
-5. Comparative Evaluation Query: Compare the number of core prerequisite dependencies between two link sets.
-   Format example: <query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   (Compare explicit link set {{E1,E2,E3}} with links in strength range [20,40])
-   Supported set specifications: edges:link_list, range:L,R, incident:concept_list
+- Knowledge Chain Probe Query (e.g., probing chain "ABC"):
+<query_lcs>ABC</query_lcs>
 
-When submitting the final analysis conclusion, provide:
-1. Your inferred logic for rule P (hypothesis)
-2. A count prediction for a new association link set
+- Common Chain Check Query (e.g., checking chain "AB"):
+<query_common>AB</query_common>
 
-Conclusion format:
-<answer>hypothesis=[your rule description], predict_set=[link list], predict_count=[number]</answer>
+- Single Textbook Chain Check Query (e.g., checking if "AC" is an instructional sub-chain of Textbook A):
+<query_single>seq=AC, target=A</query_single>
 
-Example:
-<answer>hypothesis=association strength greater than or equal to 50, predict_set=E9,E10,E11, predict_count=3</answer>
+When submitting the final answer, provide your inferred longest common knowledge chain length (a non-negative integer) in this format:
 
-Notes:
-- Only one query tag per turn
-- Rule description must be clear and applicable to any integer strength value
-- Prediction set must be a previously unqueried complete link set
-- Incorrect prediction leads to analysis failure
+<answer>5</answer>
 """
 
-    # ================= 场景改造 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-欢迎使用“工业流水线瓶颈排查系统”。
-系统建立了一个有限的无向车间拓扑图 G=(V,E)，你可以监控所有生产工作站（顶点）、物料传送带（边）及其额定负载量（整数权重）。车间的具体拓扑信息如下：
+欢迎访问工业控制与工艺分析中台。我们现在进行"自动化产线核心装配工序比对"分析，规则如下：
 
-工作站集合 V：{vertices}
+系统记录了两条自动化生产线（流水线 A 和 流水线 B）的标准装配工序序列。
+每条流水线包含 {n} 个加工工位/工序节点，由工序代码集 {alphabet_display} 中的字符表示。
 
-传送带集合 E 及额定负载量：
-{edges_info}
+你的目标是推断出这两条生产线按相同顺序执行的最长公共核心装配流程的长度 L。
 
-隐藏设定：
-生产调度系统中存在一个固定的布尔安全判定函数 P，它仅取决于传送带的额定负载量 w。对于任意传送带 e，当且仅当 P(w(e))=1 时，我们判定该传送带“存在瓶颈风险”。函数 P 在整个排查过程中保持不变。
+- 工序子序列（子序列）：按流水线加工先后顺序执行的操作组合（可忽略部分辅助工步，但核心工艺操作的相对顺序不变）。
+- 最长一致装配流程长度（LCS_len）：两条流水线所有的公共工序子序列中最长的那一条所包含的工步数量。
 
-你的目标：
-通过系统查询推断出函数 P 的判定规则，并对一组新的传送带集合做出准确的瓶颈风险计数预测。
+你可以反复向工艺分析系统提交以下三类查询（每次仅限一个查询）：
 
-可用的系统查询（每次只能提交一个查询）：
+1. **工序段探测查询**：提交一个测试工序段 S（长度不超过 {n}），系统会返回两个数值：S与流水线A的工艺匹配长度，以及S与流水线B的工艺匹配长度。
 
-1. 传送带集合计数查询：询问指定的传送带集合中有多少条存在瓶颈风险。
-   格式示例：<query_count_edges>E1,E3,E5</query_count_edges>
+2. **公共工艺判定查询**：提交一个测试工序段 T，系统会回答 T 是否同时为流水线 A 和 B 的合法工序子序列（回答"是"或"否"）。
 
-2. 负载区间计数查询：询问额定负载量在指定区间内的传送带中，有多少条存在瓶颈风险。
-   格式示例：<query_count_range>10,50</query_count_range>
-   （表示查询负载在 [10,50] 区间内的传送带）
+3. **单线工艺判定查询**：提交一个测试工序段 U 并指明要判定的目标生产线（A 或 B），系统会回答 U 是否为指定流水线的合法工序子序列（回答"是"或"否"）。
 
-3. 工作站邻接计数查询：询问与指定工作站相连的所有传送带中，有多少条存在瓶颈风险。
-   格式示例：<query_count_incident>N1,N3</query_count_incident>
-   （查询所有连接到 N1 或 N3 的传送带，每条传送带只计数一次）
+当你收集到足够信息后，请提交最终推断的一致工序长度。若答案错误或格式不符，工艺分析将判定失败。
 
-4. 单一状态查询：询问某条特定传送带是否存在瓶颈风险。
-   格式示例：<query_single>E5</query_single>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. 对比排查查询：比较两组传送带集合中存在瓶颈风险的传送带数量。
-   格式示例：<query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   （比较显式传送带集合 {{E1,E2,E3}} 与负载在 [20,40] 区间内的传送带集合）
-   支持的集合指定方式：edges:传送带列表、range:L,R、incident:工作站列表
+- 工序段探测查询（例如探测工艺段"ABC"）：
+<query_lcs>ABC</query_lcs>
 
-提交最终排查报告时，需要同时给出：
-1. 你推断出的 P 判定规则（假设）
-2. 对一个新的传送带集合的风险计数预测
+- 公共工艺判定查询（例如判定工艺段"AB"）：
+<query_common>AB</query_common>
 
-报告格式：
-<answer>hypothesis=[你的规则描述], predict_set=[传送带列表], predict_count=[数字]</answer>
+- 单线工艺判定查询（例如判定"AC"是否为流水线A的工序子序列）：
+<query_single>seq=AC, target=A</query_single>
 
-示例：
-<answer>hypothesis=负载量大于等于50, predict_set=E9,E10,E11, predict_count=3</answer>
+提交最终答案时，必须给出你推断的最长公共核心装配流程长度（一个非负整数），格式如下：
 
-注意：
-- 每次只能提交一个查询标签
-- 规则描述需要清晰明确，能够对任意整数负载量做出判定
-- 预测集合必须是之前未完整查询过的传送带集合
-- 预测错误将导致排查任务失败
+<answer>5</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Welcome to the "Industrial Assembly Line Bottleneck Diagnostics System".
-The system establishes a finite undirected workshop topology graph G=(V,E). You can monitor all production workstations (vertices), material conveyor belts (edges), and their rated load capacities (integer weights). The specific workshop topology is as follows:
+[Manufacturing Scenario]
+Welcome to the Industrial Control and Process Analysis Hub. Let's conduct an "Automated Production Line Core Assembly Process Alignment" analysis. Here are the rules:
 
-Workstation Set V: {vertices}
+The system has recorded the standard assembly process sequences for two automated production lines, Assembly Line A and Assembly Line B.
+Each production line consists of {n} processing stations/nodes, represented by characters from the process code set {alphabet_display}.
 
-Conveyor Belt Set E and Rated Load Capacity:
-{edges_info}
+Your goal is to infer the length L of the longest common core assembly workflow executed in the same order by both production lines.
 
-Hidden Setting:
-The production scheduling system contains a fixed boolean safety decision function P, which depends solely on the conveyor belt's rated load capacity w. For any conveyor belt e, it is classified as having a "Bottleneck Risk Present" if and only if P(w(e))=1. Function P remains constant throughout the diagnostics process.
+- Process Subsequence: A combination of operations executed in the chronological order of the assembly line (some auxiliary steps can be ignored, but the relative order of core technical operations remains unchanged).
+- Maximum Consistent Assembly Workflow Length (LCS_len): The number of processing steps in the longest common process subsequence shared by both assembly lines.
 
-Your Goal:
-Infer the rule of function P through system queries and make an accurate count prediction of bottleneck risks for a new set of conveyor belts.
+You can repeatedly submit the following three types of queries to the process analysis system (one per turn):
 
-Available System Queries (only one query per turn):
+1. **Process Segment Probe Query**: Submit a test process segment S (length not exceeding {n}). The system will return two values: the process matching length between S and Assembly Line A, and the matching length between S and Assembly Line B.
 
-1. Conveyor Belt Set Count Query: Ask how many conveyor belts in a specified set have a bottleneck risk.
-   Format example: <query_count_edges>E1,E3,E5</query_count_edges>
+2. **Common Process Check Query**: Submit a test process segment T. The system will answer whether T is a valid process subsequence for both Line A and Line B (answer "Yes" or "No").
 
-2. Load Range Count Query: Ask how many conveyor belts with load capacities in a specified range have a bottleneck risk.
-   Format example: <query_count_range>10,50</query_count_range>
-   (Query conveyor belts with loads in [10,50])
+3. **Single Line Process Check Query**: Submit a test process segment U and specify the target production line (A or B). The system will answer whether U is a valid process subsequence of the specified line (answer "Yes" or "No").
 
-3. Workstation Incident Count Query: Ask how many conveyor belts connected to specified workstations have a bottleneck risk.
-   Format example: <query_count_incident>N1,N3</query_count_incident>
-   (Query all conveyor belts connected to N1 or N3, each belt counted once)
+When you have gathered enough information, submit your final inferred consistent process length. If the answer is incorrect or improperly formatted, the process analysis fails.
 
-4. Single Status Query: Ask if a specific conveyor belt has a bottleneck risk.
-   Format example: <query_single>E5</query_single>
+Each query must contain only one tag. Use the following XML format:
 
-5. Comparative Diagnostics Query: Compare the number of at-risk conveyor belts between two sets.
-   Format example: <query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   (Compare explicit belt set {{E1,E2,E3}} with belts in load range [20,40])
-   Supported set specifications: edges:belt_list, range:L,R, incident:workstation_list
+- Process Segment Probe Query (e.g., probing segment "ABC"):
+<query_lcs>ABC</query_lcs>
 
-When submitting the final diagnostics report, provide:
-1. Your inferred rule for function P (hypothesis)
-2. A risk count prediction for a new set of conveyor belts
+- Common Process Check Query (e.g., checking segment "AB"):
+<query_common>AB</query_common>
 
-Report format:
-<answer>hypothesis=[your rule description], predict_set=[belt list], predict_count=[number]</answer>
+- Single Line Process Check Query (e.g., checking if "AC" is a process subsequence of Assembly Line A):
+<query_single>seq=AC, target=A</query_single>
 
-Example:
-<answer>hypothesis=load capacity greater than or equal to 50, predict_set=E9,E10,E11, predict_count=3</answer>
+When submitting the final answer, provide your inferred longest common core assembly workflow length (a non-negative integer) in this format:
 
-Notes:
-- Only one query tag per turn
-- Rule description must be clear and applicable to any integer load capacity
-- Prediction set must be a previously unqueried complete conveyor belt set
-- Incorrect prediction leads to diagnostics failure
+<answer>5</answer>
 """
 
-    # ================= 场景改造 5：法律 =================
     contextualized_rule_zh_5 = """\
-欢迎使用“反洗钱资金链审计系统”。
-系统抓取了一个有限的无向资金转移图 G=(V,E)，你可以查看所有涉案实体账户（顶点）、资金交易流水（边）及其交易金额（整数权重）。资金图的具体信息如下：
+欢迎使用法务文档合规审查系统。我们现在进行"跨合同版本核心条款链比对"分析，规则如下：
 
-账户节点集合 V：{vertices}
+系统提取了两份复杂商业合同（合同 A 和 合同 B）的核心条款架构序列。
+每份合同正文包含 {n} 个条款模块，由条款类型代码集 {alphabet_display} 中的字符表示。
 
-交易流水集合 E 及交易金额：
-{edges_info}
+你的目标是比对并推断出这两份合同按相同顺序架构的最长公共核心条款链的长度 L。
 
-隐藏设定：
-合规系统中固化了一个未知的布尔审计规则 P，该规则只依赖流水的交易金额 w。对于任意交易 e，当且仅当 P(w(e))=1 时，我们认定该流水为“涉嫌洗钱的异常交易”。审计规则 P 在整个调查过程中保持不变。
+- 核心条款链（子序列）：按合同正文先后顺序排列的条款组合（可跳过部分补充说明性质的条款，但核心约定的层级与相对顺序不变）。
+- 最长一致条款架构长度（LCS_len）：两份合同所有的公共核心条款链中最长的那一条所包含的模块数量。
 
-你的目标：
-通过审计查询推断出规则 P 的判定逻辑，并对一组新的交易流水集合做出准确的异常流水数量预测。
+你可以反复向审查系统提交以下三类法务探测查询（每次仅限一个查询）：
 
-可用的审计查询（每次只能提交一个查询）：
+1. **条款链探测查询**：提交一个测试条款序列 S（长度不超过 {n}），系统会返回两个数值：S与合同A的架构匹配长度，以及S与合同B的架构匹配长度。
 
-1. 交易集合计数查询：询问指定的交易流水集合中有多少条是异常交易。
-   格式示例：<query_count_edges>E1,E3,E5</query_count_edges>
+2. **公共架构判定查询**：提交一个测试条款序列 T，系统会回答 T 是否同时为合同 A 和 B 共有的核心条款链（回答"是"或"否"）。
 
-2. 金额区间计数查询：询问交易金额在指定区间内的流水中，有多少条是异常交易。
-   格式示例：<query_count_range>10,50</query_count_range>
-   （表示查询金额在 [10,50] 区间内的流水）
+3. **单合同架构判定查询**：提交一个测试条款序列 U 并指明要判定的目标合同（A 或 B），系统会回答 U 是否为指定合同的合法条款链（回答"是"或"否"）。
 
-3. 账户关联计数查询：询问与指定账户相关联的所有流水中，有多少条是异常交易。
-   格式示例：<query_count_incident>N1,N3</query_count_incident>
-   （查询所有与 N1 或 N3 相关的交易流水，每条流水只计数一次）
+当你收集到足够信息后，请提交最终推断的一致架构长度。若答案错误或格式不符，合规审查分析将判定失败。
 
-4. 单一流水判定查询：询问某条特定的交易流水是否为异常交易。
-   格式示例：<query_single>E5</query_single>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. 对比穿透查询：比较两组交易流水集合中异常交易的数量。
-   格式示例：<query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   （比较显式流水集合 {{E1,E2,E3}} 与金额在 [20,40] 区间内的流水集合）
-   支持的集合指定方式：edges:流水列表、range:L,R、incident:账户列表
+- 条款链探测查询（例如探测条款"ABC"）：
+<query_lcs>ABC</query_lcs>
 
-提交最终审计结案报告时，需要同时给出：
-1. 你推断出的 P 审计规则（假设）
-2. 对一个新的交易流水集合的异常计数预测
+- 公共架构判定查询（例如判定条款链"AB"）：
+<query_common>AB</query_common>
 
-报告格式：
-<answer>hypothesis=[你的规则描述], predict_set=[流水列表], predict_count=[数字]</answer>
+- 单合同架构判定查询（例如判定"AC"是否为合同A的核心条款链）：
+<query_single>seq=AC, target=A</query_single>
 
-示例：
-<answer>hypothesis=交易金额大于等于50, predict_set=E9,E10,E11, predict_count=3</answer>
+提交最终答案时，必须给出你推断的最长公共核心条款链长度（一个非负整数），格式如下：
 
-注意：
-- 每次只能提交一个查询标签
-- 规则描述需要清晰明确，能够对任意整数金额做出判定
-- 预测集合必须是之前未完整查询过的交易流水集合
-- 预测错误将导致审计任务失败
+<answer>5</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the "Anti-Money Laundering Financial Chain Audit System".
-The system has captured a finite undirected fund transfer graph G=(V,E). You can view all involved entity accounts (vertices), financial transactions (edges), and their transaction amounts (integer weights). The financial graph details are as follows:
+[Legal Scenario]
+Welcome to the Legal Document Compliance Review System. Let's conduct a "Cross-Contract Core Clause Chain Alignment" analysis. Here are the rules:
 
-Account Node Set V: {vertices}
+The system has extracted the core clause architectural sequences of two complex commercial contracts, Contract A and Contract B.
+The main body of each contract consists of {n} clause modules, represented by characters from the clause type code set {alphabet_display}.
 
-Transaction Set E and Transaction Amounts:
-{edges_info}
+Your goal is to align and infer the length L of the longest common core clause chain structured in the same order across both contracts.
 
-Hidden Setting:
-The compliance system embeds an unknown boolean audit rule P that depends solely on the transaction amount w. For any transaction e, it is flagged as a "Suspicious Transaction of Money Laundering" if and only if P(w(e))=1. The audit rule P remains constant throughout the investigation.
+- Core Clause Chain (Subsequence): A combination of clauses arranged in the sequential order of the contract text (some supplementary clauses can be skipped, but the hierarchy and relative order of core agreements remain unchanged).
+- Maximum Consistent Clause Architecture Length (LCS_len): The number of modules in the longest common core clause chain shared by both contracts.
 
-Your Goal:
-Infer the logic of rule P through audit queries and make an accurate count prediction of suspicious transactions for a new set of financial transactions.
+You can repeatedly submit the following three types of legal probe queries to the review system (one per turn):
 
-Available Audit Queries (only one query per turn):
+1. **Clause Chain Probe Query**: Submit a test clause sequence S (length not exceeding {n}). The system will return two values: the architectural matching length between S and Contract A, and the matching length between S and Contract B.
 
-1. Transaction Set Count Query: Ask how many transactions in a specified set are suspicious.
-   Format example: <query_count_edges>E1,E3,E5</query_count_edges>
+2. **Common Architecture Check Query**: Submit a test clause sequence T. The system will answer whether T is a valid core clause chain shared by both Contract A and Contract B (answer "Yes" or "No").
 
-2. Amount Range Count Query: Ask how many transactions with amounts in a specified range are suspicious.
-   Format example: <query_count_range>10,50</query_count_range>
-   (Query transactions with amounts in [10,50])
+3. **Single Contract Architecture Check Query**: Submit a test clause sequence U and specify the target contract (A or B). The system will answer whether U is a valid clause chain within the specified contract (answer "Yes" or "No").
 
-3. Account Associated Count Query: Ask how many transactions associated with specified accounts are suspicious.
-   Format example: <query_count_incident>N1,N3</query_count_incident>
-   (Query all transactions involving N1 or N3, each transaction counted once)
+When you have gathered enough information, submit your final inferred consistent architecture length. If the answer is incorrect or improperly formatted, the compliance review analysis fails.
 
-4. Single Transaction Decision Query: Ask if a specific financial transaction is suspicious.
-   Format example: <query_single>E5</query_single>
+Each query must contain only one tag. Use the following XML format:
 
-5. Comparative Penetration Query: Compare the number of suspicious transactions between two sets.
-   Format example: <query_compare>edges:E1,E2,E3|range:20,40</query_compare>
-   (Compare explicit transaction set {{E1,E2,E3}} with transactions in amount range [20,40])
-   Supported set specifications: edges:transaction_list, range:L,R, incident:account_list
+- Clause Chain Probe Query (e.g., probing sequence "ABC"):
+<query_lcs>ABC</query_lcs>
 
-When submitting the final audit closure report, provide:
-1. Your inferred audit rule P (hypothesis)
-2. A suspicious count prediction for a new set of financial transactions
+- Common Architecture Check Query (e.g., checking chain "AB"):
+<query_common>AB</query_common>
 
-Report format:
-<answer>hypothesis=[your rule description], predict_set=[transaction list], predict_count=[number]</answer>
+- Single Contract Architecture Check Query (e.g., checking if "AC" is a core clause chain of Contract A):
+<query_single>seq=AC, target=A</query_single>
 
-Example:
-<answer>hypothesis=transaction amount greater than or equal to 50, predict_set=E9,E10,E11, predict_count=3</answer>
+When submitting the final answer, provide your inferred longest common core clause chain length (a non-negative integer) in this format:
 
-Notes:
-- Only one query tag per turn
-- Rule description must be clear and applicable to any integer amount
-- Prediction set must be a previously unqueried complete transaction set
-- Incorrect prediction leads to audit failure
+<answer>5</answer>
 """
 
-    tags = ["answer", "query_count_edges", "query_count_range", "query_count_incident", 
-            "query_single", "query_compare"]
-
-    # 难度配置：
-    # 1 (简单)        - 小图，简单规则：权重是偶数
-    # 2 (中等偏下)    - 中图，规则：权重大于等于50
-    # 3 (中等偏上)    - 中图，规则：权重是7的倍数
-    # 4 (较难)        - 大图，规则：权重模10的结果大于5
-    # 5 (难)          - 大图，复杂规则：权重是质数
+    tags = ["answer", "query_lcs", "query_common", "query_single"]
+    
+    reasoning_type = "归纳推理"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "vertices": ["N1", "N2", "N3", "N4"],
-                "edges": [
-                    ("E1", "N1", "N2", 8),
-                    ("E2", "N1", "N3", 15),
-                    ("E3", "N2", "N3", 22),
-                    ("E4", "N2", "N4", 37),
-                    ("E5", "N3", "N4", 44),
-                ],
-                "property_func": lambda w: w % 2 == 0,  # 权重是偶数
-                "property_desc": "权重是偶数",
+                "n": 5,
+                "alphabet": ["A", "B"],
+                "sequence_A": "AABBA",
+                "sequence_B": "ABAAB",
+                "lcs_length": 3,
             },
             2: {
-                "vertices": ["N1", "N2", "N3", "N4", "N5"],
-                "edges": [
-                    ("E1", "N1", "N2", 20),
-                    ("E2", "N1", "N3", 35),
-                    ("E3", "N2", "N3", 45),
-                    ("E4", "N2", "N4", 50),
-                    ("E5", "N3", "N4", 60),
-                    ("E6", "N3", "N5", 70),
-                    ("E7", "N4", "N5", 80),
-                ],
-                "property_func": lambda w: w >= 50,  # 权重大于等于50
-                "property_desc": "权重大于等于50",
+                "n": 6,
+                "alphabet": ["A", "B", "C"],
+                "sequence_A": "ABCABC",
+                "sequence_B": "ACBACB",
+                "lcs_length": 4,
             },
             3: {
-                "vertices": ["N1", "N2", "N3", "N4", "N5", "N6"],
-                "edges": [
-                    ("E1", "N1", "N2", 7),
-                    ("E2", "N1", "N3", 14),
-                    ("E3", "N2", "N3", 22),   # 非7的倍数
-                    ("E4", "N2", "N4", 28),
-                    ("E5", "N3", "N4", 35),
-                    ("E6", "N3", "N5", 41),   # 非7的倍数
-                    ("E7", "N4", "N5", 49),
-                    ("E8", "N4", "N6", 55),   # 非7的倍数
-                    ("E9", "N5", "N6", 63),
-                ],
-                "property_func": lambda w: w % 7 == 0,  # 权重是7的倍数
-                "property_desc": "权重是7的倍数",
+                "n": 8,
+                "alphabet": ["A", "B", "C", "D"],
+                "sequence_A": "ABCDABCD",
+                "sequence_B": "ACBDACBD",
+                "lcs_length": 6,
             },
             4: {
-                "vertices": ["N1", "N2", "N3", "N4", "N5", "N6", "N7"],
-                "edges": [
-                    ("E1", "N1", "N2", 12),
-                    ("E2", "N1", "N3", 23),
-                    ("E3", "N2", "N3", 34),
-                    ("E4", "N2", "N4", 47),
-                    ("E5", "N3", "N4", 56),
-                    ("E6", "N3", "N5", 68),
-                    ("E7", "N4", "N5", 79),
-                    ("E8", "N4", "N6", 81),
-                    ("E9", "N5", "N6", 92),
-                    ("E10", "N5", "N7", 105),
-                    ("E11", "N6", "N7", 118),
-                ],
-                "property_func": lambda w: w % 10 > 5,  # 权重模10大于5
-                "property_desc": "权重模10的结果大于5",
+                "n": 10,
+                "alphabet": ["A", "B", "C", "D", "E"],
+                "sequence_A": "ABCDEABCDE",
+                "sequence_B": "ACEBDACEBD",
+                "lcs_length": 6,
             },
             5: {
-                "vertices": ["N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8"],
-                "edges": [
-                    ("E1", "N1", "N2", 7),
-                    ("E2", "N1", "N3", 12),
-                    ("E3", "N2", "N3", 19),
-                    ("E4", "N2", "N4", 21),
-                    ("E5", "N3", "N4", 28),
-                    ("E6", "N3", "N5", 33),
-                    ("E7", "N4", "N5", 40),
-                    ("E8", "N4", "N6", 42),
-                    ("E9", "N5", "N6", 55),
-                    ("E10", "N5", "N7", 60),
-                    ("E11", "N6", "N7", 63),
-                    ("E12", "N6", "N8", 75),
-                    ("E13", "N7", "N8", 82),
-                    ("E14", "N1", "N8", 91),
-                    ("E15", "N2", "N7", 100),
-                    ("E16", "N3", "N8", 105),
-                ],
-                "property_func": lambda w: w > 1 and all(w % i != 0 for i in range(2, int(w**0.5) + 1)),  # 质数
-                "property_desc": "权重是质数",
+                "n": 12,
+                "alphabet": ["A", "B", "C", "D", "E", "F"],
+                "sequence_A": "ABCDEFABCDEF",
+                "sequence_B": "ACEDBFACEDBF",
+                "lcs_length": 8,
             },
         },
         "en": {
             1: {
-                "vertices": ["N1", "N2", "N3", "N4"],
-                "edges": [
-                    ("E1", "N1", "N2", 8),
-                    ("E2", "N1", "N3", 15),
-                    ("E3", "N2", "N3", 22),
-                    ("E4", "N2", "N4", 37),
-                    ("E5", "N3", "N4", 44),
-                ],
-                "property_func": lambda w: w % 2 == 0,
-                "property_desc": "weight is even",
+                "n": 5,
+                "alphabet": ["A", "B"],
+                "sequence_A": "AABBA",
+                "sequence_B": "ABAAB",
+                "lcs_length": 3,
             },
             2: {
-                "vertices": ["N1", "N2", "N3", "N4", "N5"],
-                "edges": [
-                    ("E1", "N1", "N2", 20),
-                    ("E2", "N1", "N3", 35),
-                    ("E3", "N2", "N3", 45),
-                    ("E4", "N2", "N4", 50),
-                    ("E5", "N3", "N4", 60),
-                    ("E6", "N3", "N5", 70),
-                    ("E7", "N4", "N5", 80),
-                ],
-                "property_func": lambda w: w >= 50,
-                "property_desc": "weight greater than or equal to 50",
+                "n": 6,
+                "alphabet": ["A", "B", "C"],
+                "sequence_A": "ABCABC",
+                "sequence_B": "ACBACB",
+                "lcs_length": 4,
             },
             3: {
-                "vertices": ["N1", "N2", "N3", "N4", "N5", "N6"],
-                "edges": [
-                    ("E1", "N1", "N2", 7),
-                    ("E2", "N1", "N3", 14),
-                    ("E3", "N2", "N3", 22),
-                    ("E4", "N2", "N4", 28),
-                    ("E5", "N3", "N4", 35),
-                    ("E6", "N3", "N5", 41),
-                    ("E7", "N4", "N5", 49),
-                    ("E8", "N4", "N6", 55),
-                    ("E9", "N5", "N6", 63),
-                ],
-                "property_func": lambda w: w % 7 == 0,
-                "property_desc": "weight is divisible by 7",
+                "n": 8,
+                "alphabet": ["A", "B", "C", "D"],
+                "sequence_A": "ABCDABCD",
+                "sequence_B": "ACBDACBD",
+                "lcs_length": 6,
             },
             4: {
-                "vertices": ["N1", "N2", "N3", "N4", "N5", "N6", "N7"],
-                "edges": [
-                    ("E1", "N1", "N2", 12),
-                    ("E2", "N1", "N3", 23),
-                    ("E3", "N2", "N3", 34),
-                    ("E4", "N2", "N4", 47),
-                    ("E5", "N3", "N4", 56),
-                    ("E6", "N3", "N5", 68),
-                    ("E7", "N4", "N5", 79),
-                    ("E8", "N4", "N6", 81),
-                    ("E9", "N5", "N6", 92),
-                    ("E10", "N5", "N7", 105),
-                    ("E11", "N6", "N7", 118),
-                ],
-                "property_func": lambda w: w % 10 > 5,
-                "property_desc": "weight modulo 10 is greater than 5",
+                "n": 10,
+                "alphabet": ["A", "B", "C", "D", "E"],
+                "sequence_A": "ABCDEABCDE",
+                "sequence_B": "ACEBDACEBD",
+                "lcs_length": 6,
             },
             5: {
-                "vertices": ["N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8"],
-                "edges": [
-                    ("E1", "N1", "N2", 7),
-                    ("E2", "N1", "N3", 12),
-                    ("E3", "N2", "N3", 19),
-                    ("E4", "N2", "N4", 21),
-                    ("E5", "N3", "N4", 28),
-                    ("E6", "N3", "N5", 33),
-                    ("E7", "N4", "N5", 40),
-                    ("E8", "N4", "N6", 42),
-                    ("E9", "N5", "N6", 55),
-                    ("E10", "N5", "N7", 60),
-                    ("E11", "N6", "N7", 63),
-                    ("E12", "N6", "N8", 75),
-                    ("E13", "N7", "N8", 82),
-                    ("E14", "N1", "N8", 91),
-                    ("E15", "N2", "N7", 100),
-                    ("E16", "N3", "N8", 105),
-                ],
-                "property_func": lambda w: w > 1 and all(w % i != 0 for i in range(2, int(w**0.5) + 1)),
-                "property_desc": "weight is prime",
+                "n": 12,
+                "alphabet": ["A", "B", "C", "D", "E", "F"],
+                "sequence_A": "ABCDEFABCDEF",
+                "sequence_B": "ACEDBFACEDBF",
+                "lcs_length": 8,
             },
         },
     }
@@ -851,12 +539,8 @@ Notes:
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据难度和语言设置图结构和性质函数"""
         lang = self.config.language
-        diff = self.config.difficulty
-        # 防御性转换：确保 difficulty 是 int
-        if isinstance(diff, str):
-            diff = int(diff)
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -864,302 +548,150 @@ Notes:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["alphabet_display"] = "{" + ", ".join(cfg["alphabet"]) + "}"
         
-        # 存储图信息
-        self.vertices = cfg["vertices"]
-        self.edges = cfg["edges"]  # 列表：[(edge_id, v1, v2, weight), ...]
-        self.property_func = cfg["property_func"]
-        self.property_desc = cfg["property_desc"]
-        
-        # 构建边ID到边信息的映射
-        self.edge_map = {e[0]: e for e in self.edges}
-        
-        # 构建顶点邻接表（顶点到边ID列表）
-        self.incident_map = {v: [] for v in self.vertices}
-        for eid, v1, v2, w in self.edges:
-            self.incident_map[v1].append(eid)
-            self.incident_map[v2].append(eid)
-        
-        # 记录已查询过的完整边集合（用于验证预测集合是否为新集合）
-        self.queried_sets = set()
-        
-        # 准备显示用的图信息
-        edges_info_lines = []
-        for eid, v1, v2, w in self.edges:
-            edges_info_lines.append(f"  {eid}: {v1}–{v2}, w={w}")
-        
-        self._game_info["vertices"] = ", ".join(self.vertices)
-        self._game_info["edges_info"] = "\n".join(edges_info_lines)
+        self.sequence_A = cfg["sequence_A"]
+        self.sequence_B = cfg["sequence_B"]
+        self.correct_lcs_length = cfg["lcs_length"]
+        self.alphabet = set(cfg["alphabet"])
 
-    def _count_satisfying_edges(self, edge_ids):
-        """统计给定边集合中满足性质的边数量"""
-        count = 0
-        for eid in edge_ids:
-            if eid in self.edge_map:
-                weight = self.edge_map[eid][3]
-                if self.property_func(weight):
-                    count += 1
-        return count
+    def _compute_lcs_length(self, seq1, seq2):
+        m, n = len(seq1), len(seq2)
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+        
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if seq1[i-1] == seq2[j-1]:
+                    dp[i][j] = dp[i-1][j-1] + 1
+                else:
+                    dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+        
+        return dp[m][n]
 
-    def _parse_edge_set_spec(self, spec):
-        """
-        解析边集合指定方式，返回边ID集合
-        支持格式：
-        - edges:E1,E2,E3  (显式边列表)
-        - range:L,R       (权重区间)
-        - incident:N1,N2  (顶点邻接)
-        """
-        spec = spec.strip()
-        
-        if spec.startswith("edges:"):
-            edge_list = spec[6:].strip()
-            return set(e.strip() for e in edge_list.split(",") if e.strip())
-        
-        elif spec.startswith("range:"):
-            range_part = spec[6:].strip()
-            try:
-                l_str, r_str = range_part.split(",")
-                L, R = int(l_str.strip()), int(r_str.strip())
-                result = set()
-                for eid, v1, v2, w in self.edges:
-                    if L <= w <= R:
-                        result.add(eid)
-                return result
-            except:
-                raise ValueError("Invalid range format")
-        
-        elif spec.startswith("incident:"):
-            vertex_list = spec[9:].strip()
-            vertices = set(v.strip() for v in vertex_list.split(",") if v.strip())
-            result = set()
-            for v in vertices:
-                if v in self.incident_map:
-                    result.update(self.incident_map[v])
-            return result
-        
-        else:
-            raise ValueError("Unknown edge set specification format")
+    def _is_subsequence(self, subseq, seq):
+        it = iter(seq)
+        return all(char in it for char in subseq)
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"]
-        
         try:
-            # 使用更健壮的正则：用贪婪匹配并从后向前定位
-            # 先找 predict_count（最后一个字段），再找 predict_set，再找 hypothesis
-            count_match = re.search(r'predict_count\s*=\s*(\d+)\s*$', raw_ans, re.IGNORECASE)
-            if not count_match:
-                return False
-            predict_count = int(count_match.group(1).strip())
-            
-            # 截取 predict_count 之前的部分
-            before_count = raw_ans[:count_match.start()].rstrip().rstrip(',').strip()
-            
-            # 从 before_count 中提取 predict_set（最后一个 predict_set= 字段）
-            set_match = re.search(r'predict_set\s*=\s*(.+)$', before_count, re.IGNORECASE)
-            if not set_match:
-                return False
-            predict_set_str = set_match.group(1).strip()
-            
-            # 截取 predict_set 之前的部分
-            before_set = before_count[:set_match.start()].rstrip().rstrip(',').strip()
-            
-            # 从 before_set 中提取 hypothesis
-            hyp_match = re.search(r'hypothesis\s*=\s*(.+)$', before_set, re.IGNORECASE)
-            if not hyp_match:
-                return False
-            hypothesis = hyp_match.group(1).strip()
-            
-        except Exception:
+            answer = int(parsed_info["answer"].strip())
+            return answer == self.correct_lcs_length
+        except:
             return False
-        
-        # 解析预测的边集合
-        try:
-            predict_edges = set(e.strip() for e in predict_set_str.split(",") if e.strip())
-        except Exception:
-            return False
-        
-        if not predict_edges:
-            return False
-        
-        # 检查预测的边是否都是有效的边ID
-        for eid in predict_edges:
-            if eid not in self.edge_map:
-                return False
-        
-        # 验证预测计数是否正确
-        actual_count = self._count_satisfying_edges(predict_edges)
-        if predict_count != actual_count:
-            return False
-        
-        return True
 
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑：处理查询并返回结果"""
-        # 1. 边集合计数查询
-        if "query_count_edges" in parsed_info:
-            edge_list_str = parsed_info["query_count_edges"].strip()
-            try:
-                edge_ids = set(e.strip() for e in edge_list_str.split(",") if e.strip())
-                # 记录查询过的集合
-                self.queried_sets.add(frozenset(edge_ids))
-                count = self._count_satisfying_edges(edge_ids)
-                return str(count)
-            except:
-                return "错误：无效的边列表格式。" if self.config.language == "zh" else "Error: Invalid edge list format."
-        
-        # 2. 权重区间计数查询
-        elif "query_count_range" in parsed_info:
-            range_str = parsed_info["query_count_range"].strip()
-            try:
-                l_str, r_str = range_str.split(",")
-                L, R = int(l_str.strip()), int(r_str.strip())
-                edge_ids = set()
-                for eid, v1, v2, w in self.edges:
-                    if L <= w <= R:
-                        edge_ids.add(eid)
-                count = self._count_satisfying_edges(edge_ids)
-                return str(count)
-            except:
-                return "错误：无效的区间格式。" if self.config.language == "zh" else "Error: Invalid range format."
-        
-        # 3. 顶点邻接计数查询
-        elif "query_count_incident" in parsed_info:
-            vertex_list_str = parsed_info["query_count_incident"].strip()
-            try:
-                vertices = set(v.strip() for v in vertex_list_str.split(",") if v.strip())
-                edge_ids = set()
-                for v in vertices:
-                    if v in self.incident_map:
-                        edge_ids.update(self.incident_map[v])
-                count = self._count_satisfying_edges(edge_ids)
-                return str(count)
-            except:
-                return "错误：无效的顶点列表。" if self.config.language == "zh" else "Error: Invalid vertex list."
-        
-        # 4. 单边判定查询
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_format = "错误：格式无效。"
+            error_target = "错误：目标必须是 A 或 B。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid format."
+            error_target = "Error: Target must be A or B."
+
+        if "query_lcs" in parsed_info:
+            seq_s = parsed_info["query_lcs"].strip()
+            lcs_a = self._compute_lcs_length(seq_s, self.sequence_A)
+            lcs_b = self._compute_lcs_length(seq_s, self.sequence_B)
+            return f"({lcs_a}, {lcs_b})"
+
+        elif "query_common" in parsed_info:
+            seq_t = parsed_info["query_common"].strip()
+            is_sub_a = self._is_subsequence(seq_t, self.sequence_A)
+            is_sub_b = self._is_subsequence(seq_t, self.sequence_B)
+            return yes_res if (is_sub_a and is_sub_b) else no_res
+
         elif "query_single" in parsed_info:
-            eid = parsed_info["query_single"].strip()
-            if eid not in self.edge_map:
-                return "错误：边不存在。" if self.config.language == "zh" else "Error: Edge does not exist."
-            weight = self.edge_map[eid][3]
-            is_satisfied = self.property_func(weight)
-            if self.config.language == "zh":
-                return "是" if is_satisfied else "否"
-            else:
-                return "Yes" if is_satisfied else "No"
-        
-        # 5. 比较查询
-        elif "query_compare" in parsed_info:
-            compare_str = parsed_info["query_compare"].strip()
             try:
-                # 格式：spec_a|spec_b
-                parts = compare_str.split("|")
-                if len(parts) != 2:
-                    raise ValueError("Need exactly two sets")
+                raw = parsed_info["query_single"]
+                parts = [x.strip() for x in raw.split(",")]
+                query_dict = {}
+                for part in parts:
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        query_dict[k.strip()] = v.strip()
                 
-                set_a = self._parse_edge_set_spec(parts[0].strip())
-                set_b = self._parse_edge_set_spec(parts[1].strip())
+                if "seq" not in query_dict or "target" not in query_dict:
+                    return error_format
                 
-                count_a = self._count_satisfying_edges(set_a)
-                count_b = self._count_satisfying_edges(set_b)
+                seq_u = query_dict["seq"]
+                target = query_dict["target"].upper()
                 
-                if count_a > count_b:
-                    return "A>B"
-                elif count_a < count_b:
-                    return "A<B"
+                if target == "A":
+                    result = self._is_subsequence(seq_u, self.sequence_A)
+                elif target == "B":
+                    result = self._is_subsequence(seq_u, self.sequence_B)
                 else:
-                    return "A=B"
-            except Exception as e:
-                return "错误：无效的比较查询格式。" if self.config.language == "zh" else "Error: Invalid comparison query format."
-        
+                    return error_target
+                
+                return yes_res if result else no_res
+            except:
+                return error_format
+
         else:
             raise ValueError("No valid query tag found.")
-    
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
 
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
+    def _cf_make_wrong(self, correct: str) -> str:
+        if self.config.language == "zh":
+            yes_str, no_str = "是", "否"
+        else:
+            yes_str, no_str = "Yes", "No"
+        
+        if correct == yes_str:
+            return no_str
+        if correct == no_str:
+            return yes_str
+        
+        match = re.match(r'\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*', correct)
+        if match:
+            a, b = int(match.group(1)), int(match.group(2))
+            wrong_a = a + 1 if a == 0 else a - 1
+            return f"({wrong_a}, {b})"
+        
+        return correct + " (modified)"
+
+    def get_all_possible_queries(self) -> List[Dict]:
         queries = []
+        n = self._game_info["n"]
+        alphabet = sorted(list(self.alphabet))
         
-        # 1. 单边判定查询 (query_single)
-        for eid in self.edge_map:
-            query_tag = "query_single"
-            query_content = eid
-            query_xml = f"<{query_tag}>{query_content}</{query_tag}>"
-            
-            weight = self.edge_map[eid][3]
-            is_satisfied = self.property_func(weight)
-            if self.config.language == "zh":
-                ans = "是" if is_satisfied else "否"
-            else:
-                ans = "Yes" if is_satisfied else "No"
-            
-            queries.append({"query": query_xml, "answer": ans})
+        limit_len = min(n, 2)
 
-        # 2. 边集合计数查询 (query_count_edges)
-        for eid in self.edge_map:
-            query_tag = "query_count_edges"
-            query_content = eid
-            query_xml = f"<{query_tag}>{query_content}</{query_tag}>"
-            
-            count = self._count_satisfying_edges({eid})
-            queries.append({"query": query_xml, "answer": str(count)})
+        if self.config.language == "zh":
+            yes_str, no_str = "是", "否"
+        else:
+            yes_str, no_str = "Yes", "No"
 
-        # 3. 顶点邻接计数查询 (query_count_incident)
-        for vid in self.vertices:
-            query_tag = "query_count_incident"
-            query_content = vid
-            query_xml = f"<{query_tag}>{query_content}</{query_tag}>"
-            
-            edge_ids = set()
-            if vid in self.incident_map:
-                edge_ids.update(self.incident_map[vid])
-            count = self._count_satisfying_edges(edge_ids)
-            
-            queries.append({"query": query_xml, "answer": str(count)})
-            
-        # 4. 权重区间计数查询 (query_count_range)
-        query_tag = "query_count_range"
-        query_content = "0,200"
-        query_xml = f"<{query_tag}>{query_content}</{query_tag}>"
-        
-        edge_ids = set()
-        for eid, _, _, w in self.edges:
-            if 0 <= w <= 200:
-                edge_ids.add(eid)
-        count = self._count_satisfying_edges(edge_ids)
-        queries.append({"query": query_xml, "answer": str(count)})
-
+        for length in range(1, limit_len + 1):
+            for p in itertools.product(alphabet, repeat=length):
+                seq_str = "".join(p)
+                
+                lcs_a = self._compute_lcs_length(seq_str, self.sequence_A)
+                lcs_b = self._compute_lcs_length(seq_str, self.sequence_B)
+                queries.append({
+                    "query": f"<query_lcs>{seq_str}</query_lcs>",
+                    "answer": f"({lcs_a}, {lcs_b})"
+                })
+                
+                is_sub_a = self._is_subsequence(seq_str, self.sequence_A)
+                is_sub_b = self._is_subsequence(seq_str, self.sequence_B)
+                ans_common = yes_str if (is_sub_a and is_sub_b) else no_str
+                queries.append({
+                    "query": f"<query_common>{seq_str}</query_common>",
+                    "answer": ans_common
+                })
+                
+                ans_a = yes_str if is_sub_a else no_str
+                queries.append({
+                    "query": f"<query_single>seq={seq_str}, target=A</query_single>",
+                    "answer": ans_a
+                })
+                
+                ans_b = yes_str if is_sub_b else no_str
+                queries.append({
+                    "query": f"<query_single>seq={seq_str}, target=B</query_single>",
+                    "answer": ans_b
+                })
+                
         return queries
-
-    def _cf_make_wrong(self, correct):
-        """根据正确答案生成错误答案"""
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-        
-        if correct.lower() == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if correct.lower() == "no":
-            return "Yes" if correct[0].isupper() else "yes"
-        
-        if correct == "A>B":
-            return "A<B"
-        if correct == "A<B":
-            return "A>B"
-        if correct == "A=B":
-            return "A>B"
-        
-        return correct + "_WRONG"

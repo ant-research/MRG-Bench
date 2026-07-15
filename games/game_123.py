@@ -1,662 +1,645 @@
 from .base import Game
 import re
 
-class HiddenSubsetRuleGame(Game):
+class MetricFunctionGame(Game):
 
-    # 原始通用规则保留
     game_rule_zh = """\
-我们现在来玩一个"隐藏子集推理"游戏，规则如下：
+我们来玩一个"度量函数推理"游戏。规则如下：
 
-游戏设定了一个包含12个元素的有限集合，编号为 1 到 12。每个元素都附带若干标签，标签来自集合 {{A,B,C,D,E,F,G,H}}。
+游戏设定了一个固定的有序序列，长度为 {n}，位置从左到右为 1 到 {n}。
+序列与标签对应关系：{label_mapping}
 
-元素与标签的对应关系如下（公开信息）：
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+对于任意两个不同的元素 x, y，记 pos(x) 为其在序列中的位置，位置差的绝对值记为 |pos(x)-pos(y)|。
 
-我已秘密选定了两个隐藏的标签子集 S正 和 S负，它们互不相交。目标集合 T 由那些"包含 S正 中所有标签且不含 S负 中任何标签"的元素构成。你的任务是通过提问推断出 S正 和 S负。
+我已秘密选择了一个度量函数 f，它必定属于以下四个候选函数之一，且在整个游戏过程中保持不变：
+- 函数 a：f(x,y) = |pos(x)-pos(y)| - 1
+- 函数 b：f(x,y) = |pos(x)-pos(y)|
+- 函数 c：f(x,y) = |pos(x)-pos(y)| + 1
+- 函数 d：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
 
-你可以使用以下三种提问方式：
+你的目标是：
+1. 通过查询推断出实际采用的度量函数是哪一个（a、b、c 或 d）
+2. 计算目标元素对 {target_pair} 在该度量函数下的函数值
 
-1. 筛选-计数查询：给定两个标签子集 I正 和 I负，我会告诉你两个数字：
-   - 总数：有多少个元素同时包含 I正 中所有标签且不含 I负 中任何标签
-   - 目标数：上述元素中有多少个属于目标集合 T
+你可以进行以下操作：
 
-2. 个体归属查询：询问指定编号的元素是否属于目标集合 T，我会回答"是"或"否"。
+1. 测量查询：询问任意两个不同且存在于序列中的元素 A, B 的度量值。我会返回 f(A,B) 的值（一个非负整数）。
+2. 查看序列：查看当前序列的长度和标签顺序（仅用于核对，不提供关于 f 的额外信息）。
+3. 宣告答案：当你确定度量函数后，提交你的最终答案，包括度量函数类型、目标对的函数值以及支持证据。
 
-3. 终局声明：当你认为已经找到答案时，提交你推断的 S正 和 S负。我会判断是否正确。
+注意：
+- 只能查询序列中存在的元素，且两个元素必须不同
+- 宣告答案时需要至少进行过两次测量查询
+- 证据需引用至少两次实际查询的结果
+- 系统会验证：1) 所有证据是否与宣称的度量一致；2) 目标对的数值是否正确
 
-## 提问与答案格式（必须严格遵守）
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-每次提问只能包含一个标签。请使用以下 XML 格式：
+- 测量查询（例如查询元素 F 和 K）：
+<query_measure>F,K</query_measure>
 
-- 筛选-计数查询（例如 I正={{A,B}}，I负={{C}}）：
-<query_filter>include=A,B;exclude=C</query_filter>
+- 查看序列（内容为空）：
+<query_sequence></query_sequence>
 
-如果 I正 或 I负 为空，可以省略或留空：
-<query_filter>include=A,B;exclude=</query_filter>
-<query_filter>include=;exclude=C</query_filter>
-<query_filter>include=A;exclude=</query_filter>
+- 宣告答案（需包含度量类型、目标答案和证据）：
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- 个体归属查询（例如询问编号 5）：
-<query_member>5</query_member>
-
-- 终局声明（例如 S正={{A,E}}，S负={{C}}）：
-<answer>S+=A,E;S-=C</answer>
-
-如果 S正 或 S负 为空：
-<answer>S+=A;S-=</answer>
-<answer>S+=;S-=C</answer>
-
-注意：请尽可能用最少的提问次数找到答案。
+格式说明：
+- metric: 必须是 a、b、c 或 d 之一
+- target: 目标对 {target_pair} 的函数值（整数）
+- evidence: 至少两个查询结果，格式为 [(元素1,元素2)->值, ...]
 """
 
     game_rule_en = """\
-Let's play a "Hidden Subset Deduction" game. Here are the rules:
+Let's play a "Metric Function Deduction" game. Here are the rules:
 
-The game has a finite set of 12 elements, numbered 1 to 12. Each element has several tags from the set {{A,B,C,D,E,F,G,H}}.
+The game has a fixed ordered sequence of length {n}, with positions numbered 1 to {n} from left to right.
+Sequence to label mapping: {label_mapping}
 
-The element-tag mapping is as follows (public information):
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+For any two different elements x, y, let pos(x) be its position in the sequence, and the absolute difference in positions is denoted as |pos(x)-pos(y)|.
 
-I have secretly selected two disjoint tag subsets S_pos and S_neg. The target set T consists of elements that "contain all tags in S_pos and contain none of the tags in S_neg". Your task is to deduce S_pos and S_neg through queries.
+I have secretly chosen a metric function f, which must be one of the following four candidate functions and remains fixed throughout the game:
+- Function a: f(x,y) = |pos(x)-pos(y)| - 1
+- Function b: f(x,y) = |pos(x)-pos(y)|
+- Function c: f(x,y) = |pos(x)-pos(y)| + 1
+- Function d: f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
 
-You can use the following three types of queries:
+Your goal is to:
+1. Infer which metric function (a, b, c, or d) is actually being used through queries
+2. Calculate the function value for the target element pair {target_pair} under that metric function
 
-1. Filter-Count Query: Given two tag subsets I_pos and I_neg, I will tell you two numbers:
-   - Total count: how many elements contain all tags in I_pos and contain none in I_neg
-   - Target count: among the above elements, how many belong to the target set T
+You can perform the following operations:
 
-2. Membership Query: Ask if a specific element belongs to the target set T. I will answer "Yes" or "No".
+1. Measure Query: Ask for the metric value between any two different elements A, B that exist in the sequence. I will return the value of f(A,B) (a non-negative integer).
+2. View Sequence: View the current sequence length and label order (for reference only, does not provide additional information about f).
+3. Declare Answer: When you have determined the metric function, submit your final answer including the metric type, target pair value, and supporting evidence.
 
-3. Final Declaration: When you think you have found the answer, submit your deduced S_pos and S_neg. I will judge if it is correct.
+Note:
+- You can only query elements that exist in the sequence, and the two elements must be different
+- Declaring an answer requires at least two measure queries
+- Evidence must reference at least two actual query results
+- The system will verify: 1) whether all evidence is consistent with the claimed metric; 2) whether the target pair value is correct
 
-## Query and Answer Format (must strictly follow)
+Each turn must contain only one operation tag. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Measure Query (e.g., querying elements F and K):
+<query_measure>F,K</query_measure>
 
-- Filter-Count Query (e.g., I_pos={{A,B}}, I_neg={{C}}):
-<query_filter>include=A,B;exclude=C</query_filter>
+- View Sequence (empty content):
+<query_sequence></query_sequence>
 
-If I_pos or I_neg is empty, you can omit or leave it blank:
-<query_filter>include=A,B;exclude=</query_filter>
-<query_filter>include=;exclude=C</query_filter>
-<query_filter>include=A;exclude=</query_filter>
+- Declare Answer (must include metric type, target answer, and evidence):
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- Membership Query (e.g., asking about element 5):
-<query_member>5</query_member>
-
-- Final Declaration (e.g., S_pos={{A,E}}, S_neg={{C}}):
-<answer>S+=A,E;S-=C</answer>
-
-If S_pos or S_neg is empty:
-<answer>S+=A;S-=</answer>
-<answer>S+=;S-=C</answer>
-
-Note: Try to find the answer with as few queries as possible.
+Format explanation:
+- metric: must be one of a, b, c, or d
+- target: the function value for target pair {target_pair} (integer)
+- evidence: at least two query results, format [(element1,element2)->value, ...]
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-欢迎使用城市交通路网智能分析系统。我们需要排查出符合特定通行逻辑的目标路线。
+欢迎来到“轨道交通计价模型推理”系统。规则如下：
 
-系统当前监控了 12 条核心交通路线，编号为 1 到 12。每条路线都具备特定的路况与规划特征，特征代码均来自集合 {{A,B,C,D,E,F,G,H}}。
+我们的城市有一条固定的单线轨道交通线路，包含 {n} 个站点，从首发站到终点站依次编号为 1 到 {n}。
+站点代号与真实站点的对应关系：{label_mapping}
 
-各路线与特征代码的公开对应关系如下：
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+对于任意两个不同的站点 x 和 y，记 pos(x) 为其在线路中的站点编号，两者之间的绝对站距记为 |pos(x)-pos(y)|。
 
-系统后台秘密设定了导致高危拥堵的“必有特征组合”(S正) 和能够缓解拥堵的“豁免特征组合”(S负)，两者互不相交。目标拥堵路线集 T 由那些“完全包含 S正 特征，且不含任何 S负 特征”的路线构成。你的任务是通过交互提问，推断出 S正 和 S负。
+系统目前秘密启用了一个新的计价度量函数 f，它必定属于以下四种候选模型之一，且在本次推断过程中保持不变：
+- 模型 a（中间站计价）：f(x,y) = |pos(x)-pos(y)| - 1 （即两站之间途经的中间站数量）
+- 模型 b（区间计价）：f(x,y) = |pos(x)-pos(y)| （即两站之间的区间数）
+- 模型 c（总站数计价）：f(x,y) = |pos(x)-pos(y)| + 1 （即包含起终点在内的总站数）
+- 模型 d（外围补贴计价）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （即两站分别到线路两端首末站的区间数之和）
 
-你可以使用以下三种提问方式：
+你的目标是：
+1. 通过查询推断出实际采用的计价度量函数是哪一个（a、b、c 或 d）
+2. 计算目标出行站点对 {target_pair} 在该度量函数下的计价函数值
 
-1. 筛选-计数查询：指定关注的特征 I正 和需排除的特征 I负，系统将返回：
-   - 总数：符合上述特征筛选的路线总数
-   - 目标数：上述路线中属于高危拥堵路线集 T 的数量
+你可以进行以下操作：
+1. 测量查询：询问任意两个不同且存在于线路中的站点 A, B 的计价值。系统会返回 f(A,B) 的值（一个非负整数）。
+2. 查看序列：查看当前线路的长度和站点顺序（仅用于核对，不提供关于 f 的额外信息）。
+3. 宣告答案：当你确定计价模型后，提交你的最终答案，包括模型类型、目标对的函数值以及支持证据。
 
-2. 个体归属查询：询问指定编号的路线是否属于目标拥堵路线集 T，系统回答“是”或“否”。
+注意：
+- 只能查询线路中存在的站点，且两个站点必须不同
+- 宣告答案时需要至少进行过两次测量查询
+- 证据需引用至少两次实际查询的结果
+- 系统会验证：1) 所有证据是否与宣称的模型一致；2) 目标对的数值是否正确
 
-3. 终局声明：提交你推断的 S正 和 S负，系统将校验是否准确。
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-## 提问与答案格式（必须严格遵守）
+- 测量查询（例如查询站点 F 和 K）：
+<query_measure>F,K</query_measure>
 
-每次提问只能包含一个特征代码。请使用以下 XML 格式：
+- 查看序列（内容为空）：
+<query_sequence></query_sequence>
 
-- 筛选-计数查询（例如 I正={{A,B}}，I负={{C}}）：
-<query_filter>include=A,B;exclude=C</query_filter>
+- 宣告答案（需包含模型类型、目标答案和证据）：
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- 个体归属查询（例如询问路线 5）：
-<query_member>5</query_member>
-
-- 终局声明（例如 S正={{A,E}}，S负={{C}}）：
-<answer>S+=A,E;S-=C</answer>
-
-(空值留白格式与通用规则一致，尽量减少提问次数以节约系统算力。)
+格式说明：
+- metric: 必须是 a、b、c 或 d 之一
+- target: 目标站点对 {target_pair} 的函数值（整数）
+- evidence: 至少两个查询结果，格式为 [(站点1,站点2)->值, ...]
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the Urban Traffic Network Intelligent Analysis System. We need to identify target routes that match specific transit logic.
+Welcome to the "Rail Transit Pricing Model Deduction" system. Here are the rules:
 
-The system currently monitors 12 core traffic routes, numbered 1 to 12. Each route possesses specific traffic and planning features, with feature codes from the set {{A,B,C,D,E,F,G,H}}.
+Our city has a fixed single-line rail transit route with {n} stations, numbered sequentially from 1 to {n} from the departure station to the terminal.
+Station code to real station mapping: {label_mapping}
 
-The public mapping between routes and feature codes is as follows:
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+For any two different stations x and y, let pos(x) be its station number on the route, and the absolute station distance between them is denoted as |pos(x)-pos(y)|.
 
-The system has secretly designated a "necessary feature combination" (S_pos) that causes high-risk congestion, and an "exemption feature combination" (S_neg) that alleviates it. The two sets are disjoint. The target congested route set T consists of routes that "contain all features in S_pos and none in S_neg". Your task is to deduce S_pos and S_neg via queries.
+The system has secretly activated a new pricing metric function f, which must be one of the following four candidate models and remains unchanged during this deduction:
+- Model a (Intermediate stations): f(x,y) = |pos(x)-pos(y)| - 1
+- Model b (Section distance): f(x,y) = |pos(x)-pos(y)|
+- Model c (Total stations): f(x,y) = |pos(x)-pos(y)| + 1
+- Model d (Peripheral subsidy): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
 
-You can use three query types:
+Your goal is to:
+1. Infer which pricing metric function (a, b, c, or d) is actually being used through queries
+2. Calculate the pricing function value for the target travel station pair {target_pair} under that metric function
 
-1. Filter-Count Query: Specify included features I_pos and excluded features I_neg. The system returns:
-   - Total count: How many routes match this filter
-   - Target count: Among those, how many belong to the target set T
+You can perform the following operations:
+1. Measure Query: Ask for the pricing metric value between any two different stations A, B that exist on the route. The system will return the value of f(A,B) (a non-negative integer).
+2. View Sequence: View the current route length and station order (for reference only, does not provide additional information about f).
+3. Declare Answer: When you have determined the pricing model, submit your final answer including the model type, target pair value, and supporting evidence.
 
-2. Membership Query: Ask if a specific route belongs to the target set T. The system will answer "Yes" or "No".
+Note:
+- You can only query stations that exist on the route, and the two stations must be different
+- Declaring an answer requires at least two measure queries
+- Evidence must reference at least two actual query results
+- The system will verify: 1) whether all evidence is consistent with the claimed model; 2) whether the target pair value is correct
 
-3. Final Declaration: Submit your deduced S_pos and S_neg for validation.
+Each turn must contain only one operation tag. Use the following XML format:
 
-## Query and Answer Format (must strictly follow)
+- Measure Query (e.g., querying stations F and K):
+<query_measure>F,K</query_measure>
 
-Each query must contain only one feature code. Use the following XML format:
+- View Sequence (empty content):
+<query_sequence></query_sequence>
 
-- Filter-Count Query (e.g., I_pos={{A,B}}, I_neg={{C}}):
-<query_filter>include=A,B;exclude=C</query_filter>
+- Declare Answer (must include model type, target answer, and evidence):
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- Membership Query (e.g., asking about route 5):
-<query_member>5</query_member>
-
-- Final Declaration (e.g., S_pos={{A,E}}, S_neg={{C}}):
-<answer>S+=A,E;S-=C</answer>
-
-(Omission rules for empty sets are identical to the base rules. Please optimize your queries.)
+Format explanation:
+- metric: must be one of a, b, c, or d
+- target: the function value for the target station pair {target_pair} (integer)
+- evidence: at least two query results, format [(station1,station2)->value, ...]
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-欢迎使用疑难重症靶点筛查系统。您需要通过基因测序数据锁定某种罕见病的致病靶点规则。
+欢迎进入“康复疗程指标推理”系统。规则如下：
 
-样本库中存有 12 份临床疑难病历，编号 1 到 12。每份病历的测序结果表现出特定的基因靶标，靶标代码取自集合 {{A,B,C,D,E,F,G,H}}。
+系统设定了一个标准康复疗程，包含 {n} 个连续的治疗节点，时间顺序从 1 到 {n}。
+节点代码与对应阶段映射：{label_mapping}
 
-病历与检出靶标的公开数据如下：
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+对于任意两个不同的治疗节点 x 和 y，记 pos(x) 为其在疗程中的顺序位次，位次差的绝对值记为 |pos(x)-pos(y)|。
 
-医学数据库中记录了该病症的“确诊必具阳性靶标”(S正) 和“排除该病的阴性靶标”(S负)，二者互不重叠。确诊患有该罕见病的病例集合 T 由“包含所有 S正 靶标，且不含任何 S负 靶标”的病历组成。请通过检索推断出 S正 和 S负。
+医疗AI已秘密选用了一个风险评估度量函数 f，它必定属于以下四个候选函数之一，且在评估期间保持不变：
+- 评估标准 a（纯间隔）：f(x,y) = |pos(x)-pos(y)| - 1 （两节点之间的纯间隔阶段数）
+- 评估标准 b（跨度）：f(x,y) = |pos(x)-pos(y)| （两节点跨越的阶段跨度）
+- 评估标准 c（总覆盖）：f(x,y) = |pos(x)-pos(y)| + 1 （涵盖首尾节点在内的总干预阶段数）
+- 评估标准 d（边缘风险）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （两节点向疗程首尾两端延伸的未干预阶段总和）
 
-您可执行三种检索操作：
+你的目标是：
+1. 通过查询推断出实际采用的风险评估度量函数是哪一个（a、b、c 或 d）
+2. 计算目标节点对 {target_pair} 在该度量函数下的指标值
 
-1. 筛选-计数查询：输入需包含的靶标 I正 与需排除的靶标 I负，系统返回：
-   - 总数：符合该基因表达特征的病历总数
-   - 目标数：其中属于确诊集合 T 的病历数
+你可以进行以下操作：
+1. 测量查询：询问任意两个不同且存在于疗程中的节点 A, B 的指标值。系统会返回 f(A,B) 的值（一个非负整数）。
+2. 查看序列：查看当前疗程的节点总数和顺序（仅用于核对，不提供关于 f 的额外信息）。
+3. 宣告答案：当你确定评估标准后，提交你的最终答案，包括度量函数类型、目标对的指标值以及临床证据。
 
-2. 个体归属查询：查询指定编号病历是否确诊属于集合 T，系统回答“是”或“否”。
+注意：
+- 只能查询疗程中存在的节点，且两个节点必须不同
+- 宣告答案时需要至少进行过两次测量查询
+- 证据需引用至少两次实际查询的结果
+- 系统会验证：1) 所有证据是否与宣称的评估标准一致；2) 目标对的数值是否正确
 
-3. 终局声明：提交您锁定的阳性与阴性靶标集合 S正 和 S负。
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-## 提问与答案格式（必须严格遵守）
+- 测量查询（例如查询节点 F 和 K）：
+<query_measure>F,K</query_measure>
 
-每次提问只能包含一个靶标代码。请使用以下 XML 格式：
+- 查看序列（内容为空）：
+<query_sequence></query_sequence>
 
-- 筛选-计数查询（例如 I正={{A,B}}，I负={{C}}）：
-<query_filter>include=A,B;exclude=C</query_filter>
+- 宣告答案（需包含评估标准类型、目标答案和证据）：
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- 个体归属查询（例如询问病历 5）：
-<query_member>5</query_member>
-
-- 终局声明（例如 S正={{A,E}}，S负={{C}}）：
-<answer>S+=A,E;S-=C</answer>
+格式说明：
+- metric: 必须是 a、b、c 或 d 之一
+- target: 目标节点对 {target_pair} 的指标值（整数）
+- evidence: 至少两个查询结果，格式为 [(节点1,节点2)->值, ...]
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the Critical Illness Target Screening System. You need to identify the pathogenic target rules for a rare disease using genomic sequencing data.
+Welcome to the "Rehabilitation Course Metric Deduction" system. Here are the rules:
 
-The database contains 12 clinical case files, numbered 1 to 12. Each case exhibits specific genetic targets from the set {{A,B,C,D,E,F,G,H}}.
+The system has established a standard rehabilitation course consisting of {n} consecutive treatment nodes, sequenced from 1 to {n} in chronological order.
+Node code to phase mapping: {label_mapping}
 
-The public data for cases and detected targets is as follows:
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+For any two different treatment nodes x and y, let pos(x) be its sequential position in the course, and the absolute position difference is denoted as |pos(x)-pos(y)|.
 
-The medical database records the "mandatory positive targets" (S_pos) and "excluding negative targets" (S_neg) for this disease; the two sets are disjoint. The confirmed patient set T consists of cases that "contain all S_pos targets and none of the S_neg targets". Deduce S_pos and S_neg via retrieval queries.
+The Medical AI has secretly selected a risk assessment metric function f, which must be one of the following four candidate functions and remains fixed during the evaluation:
+- Standard a (Pure interval): f(x,y) = |pos(x)-pos(y)| - 1
+- Standard b (Span): f(x,y) = |pos(x)-pos(y)|
+- Standard c (Total coverage): f(x,y) = |pos(x)-pos(y)| + 1
+- Standard d (Peripheral risk): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
 
-You can perform three types of operations:
+Your goal is to:
+1. Infer which assessment metric function (a, b, c, or d) is actually being used through queries
+2. Calculate the indicator value for the target node pair {target_pair} under that metric function
 
-1. Filter-Count Query: Input included targets I_pos and excluded targets I_neg. System returns:
-   - Total count: Total cases matching this genetic profile
-   - Target count: Cases among them that belong to the confirmed set T
+You can perform the following operations:
+1. Measure Query: Ask for the indicator value between any two different nodes A, B that exist in the course. The system will return the value of f(A,B) (a non-negative integer).
+2. View Sequence: View the current course length and node order (for reference only, does not provide additional information about f).
+3. Declare Answer: When you have determined the assessment standard, submit your final answer including the metric type, target pair value, and clinical evidence.
 
-2. Membership Query: Ask if a specific case is confirmed in set T. System answers "Yes" or "No".
+Note:
+- You can only query nodes that exist in the course, and the two nodes must be different
+- Declaring an answer requires at least two measure queries
+- Evidence must reference at least two actual query results
+- The system will verify: 1) whether all evidence is consistent with the claimed standard; 2) whether the target pair value is correct
 
-3. Final Declaration: Submit your identified S_pos and S_neg.
+Each turn must contain only one operation tag. Use the following XML format:
 
-## Query and Answer Format (must strictly follow)
+- Measure Query (e.g., querying nodes F and K):
+<query_measure>F,K</query_measure>
 
-Each query must contain only one target. Use the following XML format:
+- View Sequence (empty content):
+<query_sequence></query_sequence>
 
-- Filter-Count Query:
-<query_filter>include=A,B;exclude=C</query_filter>
+- Declare Answer (must include metric type, target answer, and evidence):
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- Membership Query (e.g., case 5):
-<query_member>5</query_member>
-
-- Final Declaration:
-<answer>S+=A,E;S-=C</answer>
+Format explanation:
+- metric: must be one of a, b, c, or d
+- target: the indicator value for target node pair {target_pair} (integer)
+- evidence: at least two query results, format [(node1,node2)->value, ...]
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-欢迎进入教务编排与课程评估系统。我们需要为下一代拔尖人才计划筛选出符合特定知识架构的目标课程模块。
+欢迎使用“课程认知负荷推演”工具。规则如下：
 
-教务处预备了 12 个核心教学模块，编号 1 到 12。每个模块都侧重于特定能力维度的培养，维度标签取自集合 {{A,B,C,D,E,F,G,H}}。
+教学大纲设定了一个固定的知识模块序列，共计 {n} 个模块，教学顺序从 1 到 {n}。
+模块代号与知识点对应关系：{label_mapping}
 
-各教学模块的能力维度分布情况公开如下：
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+对于任意两个不同的知识模块 x 和 y，记 pos(x) 为其在大纲中的教学次序，次序差的绝对值记为 |pos(x)-pos(y)|。
 
-委员会为拔尖项目隐秘设定了“必修维度指标”(S正) 与“不纳入考查的维度指标”(S负)，二者不重叠。最终入选该拔尖项目的模块集合 T 必须“全面覆盖 S正 中的维度，且绝对不涉及 S负 中的维度”。您需要通过系统质询，反推 S正 和 S负。
+教研系统已秘密应用了一个认知负荷度量函数 f，它必定属于以下四个候选模型之一，且在推演过程中保持不变：
+- 模型 a（间隔负荷）：f(x,y) = |pos(x)-pos(y)| - 1 （两模块间跳过的中间模块数）
+- 模型 b（进度跨度）：f(x,y) = |pos(x)-pos(y)| （两模块之间的进度跨步）
+- 模型 c（总学习量）：f(x,y) = |pos(x)-pos(y)| + 1 （包含首尾模块在内的总学习模块数）
+- 模型 d（基础与拓展距离）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （两模块偏离最基础起点和最高阶终点的模块数总和）
 
-可选的三种质询方式如下：
+你的目标是：
+1. 通过查询推断出实际采用的认知负荷模型是哪一个（a、b、c 或 d）
+2. 计算目标知识模块对 {target_pair} 在该模型下的认知负荷值
 
-1. 筛选-计数查询：设定必须包含的维度 I正 和需剔除的维度 I负，教务系统将反馈：
-   - 总数：符合该条件限制的模块总数
-   - 目标数：其中成功入选拔尖项目集合 T 的模块数
+你可以进行以下操作：
+1. 测量查询：询问任意两个不同且存在于大纲中的模块 A, B 的负荷值。系统会返回 f(A,B) 的值（一个非负整数）。
+2. 查看序列：查看当前大纲的模块总数和教学顺序（仅用于核对，不提供关于 f 的额外信息）。
+3. 宣告答案：当你确定认知负荷模型后，提交你的最终答案，包括模型类型、目标对的负荷值以及推断证据。
 
-2. 个体归属查询：验证特定编号的教学模块是否入选了集合 T，系统回答“是”或“否”。
+注意：
+- 只能查询大纲中存在的模块，且两个模块必须不同
+- 宣告答案时需要至少进行过两次测量查询
+- 证据需引用至少两次实际查询的结果
+- 系统会验证：1) 所有证据是否与宣称的模型一致；2) 目标对的数值是否正确
 
-3. 终局声明：提交您反推的 S正 与 S负，系统将评定准确性。
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-## 提问与答案格式（必须严格遵守）
+- 测量查询（例如查询模块 F 和 K）：
+<query_measure>F,K</query_measure>
 
-每次提问只能包含一个能力维度标签。请使用以下 XML 格式：
+- 查看序列（内容为空）：
+<query_sequence></query_sequence>
 
-- 筛选-计数查询（例如 I正={{A,B}}，I负={{C}}）：
-<query_filter>include=A,B;exclude=C</query_filter>
+- 宣告答案（需包含模型类型、目标答案和证据）：
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- 个体归属查询（例如询问模块 5）：
-<query_member>5</query_member>
-
-- 终局声明（例如 S正={{A,E}}，S负={{C}}）：
-<answer>S+=A,E;S-=C</answer>
+格式说明：
+- metric: 必须是 a、b、c 或 d 之一
+- target: 目标模块对 {target_pair} 的负荷值（整数）
+- evidence: 至少两个查询结果，格式为 [(模块1,模块2)->value, ...]
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Academic Scheduling and Course Evaluation System. We need to filter target course modules that fit a specific knowledge framework for the next-generation talent program.
+Welcome to the "Curriculum Cognitive Load Deduction" tool. Here are the rules:
 
-The Academic Affairs Office has prepared 12 core teaching modules, numbered 1 to 12. Each module focuses on specific competency dimensions from the set {{A,B,C,D,E,F,G,H}}.
+The syllabus sets a fixed sequence of knowledge modules, totaling {n} modules, with the teaching order from 1 to {n}.
+Module code to knowledge point mapping: {label_mapping}
 
-The public distribution of competency dimensions for each module is:
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+For any two different knowledge modules x and y, let pos(x) be its teaching sequence in the syllabus, and the absolute sequence difference is denoted as |pos(x)-pos(y)|.
 
-The committee has secretly established "mandatory required dimensions" (S_pos) and "excluded assessment dimensions" (S_neg), which do not overlap. The final selected module set T for the program must "cover all dimensions in S_pos and avoid any in S_neg". Reverse-engineer S_pos and S_neg via inquiries.
+The teaching research system has secretly applied a cognitive load metric function f, which must be one of the following four candidate models and remains unchanged during the deduction:
+- Model a (Interval load): f(x,y) = |pos(x)-pos(y)| - 1
+- Model b (Progress span): f(x,y) = |pos(x)-pos(y)|
+- Model c (Total learning volume): f(x,y) = |pos(x)-pos(y)| + 1
+- Model d (Distance to basics and extensions): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
 
-You have three inquiry methods:
+Your goal is to:
+1. Infer which cognitive load model (a, b, c, or d) is actually being used through queries
+2. Calculate the cognitive load value for the target module pair {target_pair} under that model
 
-1. Filter-Count Query: Set included dimensions I_pos and excluded dimensions I_neg. The system responds with:
-   - Total count: Total modules matching this constraint
-   - Target count: Among them, the number of modules successfully selected into set T
+You can perform the following operations:
+1. Measure Query: Ask for the load value between any two different modules A, B that exist in the syllabus. The system will return the value of f(A,B) (a non-negative integer).
+2. View Sequence: View the current module count and teaching order (for reference only, does not provide additional information about f).
+3. Declare Answer: When you have determined the cognitive load model, submit your final answer including the model type, target pair value, and deduction evidence.
 
-2. Membership Query: Verify if a specific module ID is selected into set T. System answers "Yes" or "No".
+Note:
+- You can only query modules that exist in the syllabus, and the two modules must be different
+- Declaring an answer requires at least two measure queries
+- Evidence must reference at least two actual query results
+- The system will verify: 1) whether all evidence is consistent with the claimed model; 2) whether the target pair value is correct
 
-3. Final Declaration: Submit your deduced S_pos and S_neg for validation.
+Each turn must contain only one operation tag. Use the following XML format:
 
-## Query and Answer Format (must strictly follow)
+- Measure Query (e.g., querying modules F and K):
+<query_measure>F,K</query_measure>
 
-Each query must contain only one competency dimension. Use the following XML format:
+- View Sequence (empty content):
+<query_sequence></query_sequence>
 
-- Filter-Count Query:
-<query_filter>include=A,B;exclude=C</query_filter>
+- Declare Answer (must include model type, target answer, and evidence):
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- Membership Query (e.g., module 5):
-<query_member>5</query_member>
-
-- Final Declaration:
-<answer>S+=A,E;S-=C</answer>
+Format explanation:
+- metric: must be one of a, b, c, or d
+- target: the load value for target module pair {target_pair} (integer)
+- evidence: at least two query results, format [(module1,module2)->value, ...]
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-欢迎进入工业制造良率溯源系统。近日产线出现一批极高标准的特级良品，我们需要找出导致这一结果的核心工艺组合。
+欢迎进入“工业流水线传输成本分析”系统。规则如下：
 
-当前系统记录了 12 批次核心晶圆物料，编号从 1 到 12。每个批次都经过了特定的工艺参数处理，参数代码集合为 {{A,B,C,D,E,F,G,H}}。
+车间内有一条固定的生产流水线，包含 {n} 个工位，物料流转顺序编号为 1 到 {n}。
+工位代码与工艺节点的对应关系：{label_mapping}
 
-批次与所受工艺参数的对应关系（已公开）：
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+对于任意两个不同的工位 x 和 y，记 pos(x) 为其在流水线上的物理位次，位次差的绝对值记为 |pos(x)-pos(y)|。
 
-品控部门锁定了达成特级良率的“核心赋能工艺”(S正) 以及导致良率劣化的“冲突工艺”(S负)，二者无交集。产出特级良品的物料集合 T 严格遵循“叠加了全部 S正 工艺，且未暴露于任何 S负 工艺”的条件。你的任务是推演排查出 S正 与 S负。
+中央调度系统已秘密加载了一个传输成本度量函数 f，它必定属于以下四个候选函数之一，且在分析期间保持不变：
+- 函数 a（缓冲成本）：f(x,y) = |pos(x)-pos(y)| - 1 （两工位之间的缓冲工位数量）
+- 函数 b（直接传输成本）：f(x,y) = |pos(x)-pos(y)| （两工位间的标准传输段数）
+- 函数 c（全链路占用）：f(x,y) = |pos(x)-pos(y)| + 1 （包含收发两端在内的总工位占用数）
+- 函数 d（端点折返成本）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （两工位分别到进料口和出料口的传输段数之和）
 
-支持以下三种数据探查指令：
+你的目标是：
+1. 通过查询推断出实际采用的传输成本函数是哪一个（a、b、c 或 d）
+2. 计算目标工位对 {target_pair} 在该成本函数下的传值
 
-1. 筛选-计数查询：选定叠加的工艺 I正 和排查的工艺 I负，系统将告知：
-   - 总数：经过对应筛选条件处理的物料批次总数
-   - 目标数：其中达到了特级良品标准（属于集合 T）的批次数量
+你可以进行以下操作：
+1. 测量查询：询问任意两个不同且存在于流水线中的工位 A, B 的传输成本值。系统会返回 f(A,B) 的值（一个非负整数）。
+2. 查看序列：查看当前流水线的工位总数和工艺顺序（仅用于核对，不提供关于 f 的额外信息）。
+3. 宣告答案：当你确定成本函数后，提交你的最终答案，包括函数类型、目标对的成本值以及测试证据。
 
-2. 个体归属查询：针对单一物料批次，查询其是否属于良品集合 T，系统反馈“是”或“否”。
+注意：
+- 只能查询流水线中存在的工位，且两个工位必须不同
+- 宣告答案时需要至少进行过两次测量查询
+- 证据需引用至少两次实际查询的结果
+- 系统会验证：1) 所有证据是否与宣称的函数一致；2) 目标对的数值是否正确
 
-3. 终局声明：上传你锁定的核心赋能与冲突工艺参数 S正 和 S负。
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-## 提问与答案格式（必须严格遵守）
+- 测量查询（例如查询工位 F 和 K）：
+<query_measure>F,K</query_measure>
 
-每次探查只能包含一个工艺代码。请使用以下 XML 格式：
+- 查看序列（内容为空）：
+<query_sequence></query_sequence>
 
-- 筛选-计数查询（例如 I正={{A,B}}，I负={{C}}）：
-<query_filter>include=A,B;exclude=C</query_filter>
+- 宣告答案（需包含函数类型、目标答案和证据）：
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- 个体归属查询（例如询问批次 5）：
-<query_member>5</query_member>
-
-- 终局声明（例如 S正={{A,E}}，S负={{C}}）：
-<answer>S+=A,E;S-=C</answer>
+格式说明：
+- metric: 必须是 a、b、c 或 d 之一
+- target: 目标工位对 {target_pair} 的成本值（整数）
+- evidence: 至少两个查询结果，格式为 [(工位1,工位2)->值, ...]
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Welcome to the Industrial Manufacturing Yield Traceability System. We need to identify the core process combination that results in premium-grade products.
+Welcome to the "Industrial Assembly Line Transfer Cost Analysis" system. Here are the rules:
 
-The system currently logs 12 batches of core wafer materials, numbered 1 to 12. Each batch underwent specific processing parameters, coded from the set {{A,B,C,D,E,F,G,H}}.
+The workshop has a fixed production assembly line containing {n} workstations, sequenced for material flow from 1 to {n}.
+Workstation code to process node mapping: {label_mapping}
 
-The public mapping between batches and applied processes is:
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+For any two different workstations x and y, let pos(x) be its physical sequence on the line, and the absolute sequence difference is denoted as |pos(x)-pos(y)|.
 
-Quality Control has pinpointed "core enabling processes" (S_pos) that achieve premium yield and "conflicting processes" (S_neg) that degrade it. The two sets are disjoint. The premium-grade material set T strictly includes batches that "underwent all S_pos processes and were never exposed to any S_neg processes". Your task is to trace and deduce S_pos and S_neg.
+The central scheduling system has secretly loaded a transfer cost metric function f, which must be one of the following four candidate functions and remains fixed during the analysis:
+- Function a (Buffer cost): f(x,y) = |pos(x)-pos(y)| - 1
+- Function b (Direct transfer cost): f(x,y) = |pos(x)-pos(y)|
+- Function c (Full-link occupation): f(x,y) = |pos(x)-pos(y)| + 1
+- Function d (Endpoint turnaround cost): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
 
-Three data probing commands are supported:
+Your goal is to:
+1. Infer which transfer cost function (a, b, c, or d) is actually being used through queries
+2. Calculate the cost value for the target workstation pair {target_pair} under that cost function
 
-1. Filter-Count Query: Select applied processes I_pos and excluded processes I_neg. The system replies with:
-   - Total count: Number of batches meeting this filtering criteria
-   - Target count: Number of batches among them that achieved premium grade (belong to set T)
+You can perform the following operations:
+1. Measure Query: Ask for the transfer cost value between any two different workstations A, B that exist on the line. The system will return the value of f(A,B) (a non-negative integer).
+2. View Sequence: View the current total number of workstations and process order (for reference only, does not provide additional information about f).
+3. Declare Answer: When you have determined the cost function, submit your final answer including the function type, target pair value, and testing evidence.
 
-2. Membership Query: Ask if a specific batch ID belongs to the premium set T. System responds "Yes" or "No".
+Note:
+- You can only query workstations that exist on the line, and the two workstations must be different
+- Declaring an answer requires at least two measure queries
+- Evidence must reference at least two actual query results
+- The system will verify: 1) whether all evidence is consistent with the claimed function; 2) whether the target pair value is correct
 
-3. Final Declaration: Upload your deduced core enabling and conflicting processes S_pos and S_neg.
+Each turn must contain only one operation tag. Use the following XML format:
 
-## Query and Answer Format (must strictly follow)
+- Measure Query (e.g., querying workstations F and K):
+<query_measure>F,K</query_measure>
 
-Each probe must contain only one process code. Use the following XML format:
+- View Sequence (empty content):
+<query_sequence></query_sequence>
 
-- Filter-Count Query:
-<query_filter>include=A,B;exclude=C</query_filter>
+- Declare Answer (must include function type, target answer, and evidence):
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- Membership Query (e.g., batch 5):
-<query_member>5</query_member>
-
-- Final Declaration:
-<answer>S+=A,E;S-=C</answer>
+Format explanation:
+- metric: must be one of a, b, c, or d
+- target: the cost value for target workstation pair {target_pair} (integer)
+- evidence: at least two query results, format [(station1,station2)->value, ...]
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-欢迎进入智能司法类案检索系统。您的任务是基于历史卷宗，归纳出法院在特定争议中适用特殊保全措施的法定要件组合。
+欢迎使用“司法程序阻力推演”系统。规则如下：
 
-系统收录了 12 宗重点商业纠纷判例，编号为 1 到 12。每宗判例均具备若干核心证据要素，要素代码选自集合 {{A,B,C,D,E,F,G,H}}。
+某法定审批程序设定了固定的环节序列，共包含 {n} 个步骤，流程顺序从 1 到 {n}。
+步骤代号与法律程序映射关系：{label_mapping}
 
-判例编号与提取证据要素的公开映射如下：
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+对于任意两个不同的程序步骤 x 和 y，记 pos(x) 为其在法典流程中的顺序位次，位次差的绝对值记为 |pos(x)-pos(y)|。
 
-根据内部司法裁判尺度，法院裁定保全措施时遵循一套隐性准则：必须具备“支持财产保全的法定要件”(S正)，且不能触发“阻却事由要件”(S负)，两要件集合互不交叉。最终准予保全的判例集合 T 必然“囊括 S正 的全部要素，并排除一切 S负 要素”。请通过法理检索查明 S正 与 S负。
+法务系统已秘密配置了一个程序阻力度量函数 f，它必定属于以下四个候选模型之一，且在推演过程中保持不变：
+- 模型 a（间隔阻力）：f(x,y) = |pos(x)-pos(y)| - 1 （两步骤间跳过的中间审查环节数）
+- 模型 b（跃迁阻力）：f(x,y) = |pos(x)-pos(y)| （两步骤之间的环节跃迁数）
+- 模型 c（总审查量）：f(x,y) = |pos(x)-pos(y)| + 1 （涵盖起止步骤在内的审查环节总数）
+- 模型 d（外部协调阻力）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （两步骤向程序立案和结案两端发散的外部环节数总和）
 
-您可以通过以下方式进行类案检索：
+你的目标是：
+1. 通过查询推断出实际采用的程序阻力模型是哪一个（a、b、c 或 d）
+2. 计算目标步骤对 {target_pair} 在该模型下的阻力值
 
-1. 筛选-计数查询：限定检索包含要素 I正 及排除要素 I负，卷宗系统将显示：
-   - 总数：案情符合上述证据要素结构的判例总数
-   - 目标数：其中法院裁定准予特殊保全（归属集合 T）的判例数
+你可以进行以下操作：
+1. 测量查询：询问任意两个不同且存在于程序中的步骤 A, B 的程序阻力值。系统会返回 f(A,B) 的值（一个非负整数）。
+2. 查看序列：查看当前程序的总环节数和法定顺序（仅用于核对，不提供关于 f 的额外信息）。
+3. 宣告答案：当你确定阻力模型后，提交你的最终答案，包括模型类型、目标对的阻力值以及法务证据。
 
-2. 个体归属查询：核实某指定卷宗编号是否属于准予保全的判例集 T，系统回答“是”或“否”。
+注意：
+- 只能查询程序中存在的步骤，且两个步骤必须不同
+- 宣告答案时需要至少进行过两次测量查询
+- 证据需引用至少两次实际查询的结果
+- 系统会验证：1) 所有证据是否与宣称的模型一致；2) 目标对的数值是否正确
 
-3. 终局声明：提交您归纳的法定要件 S正 及阻却事由 S负 进行权威检验。
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-## 提问与答案格式（必须严格遵守）
+- 测量查询（例如查询步骤 F 和 K）：
+<query_measure>F,K</query_measure>
 
-每次检索仅限附带一个证据要素代码。请使用以下 XML 格式：
+- 查看序列（内容为空）：
+<query_sequence></query_sequence>
 
-- 筛选-计数查询（例如 I正={{A,B}}，I负={{C}}）：
-<query_filter>include=A,B;exclude=C</query_filter>
+- 宣告答案（需包含模型类型、目标答案和证据）：
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- 个体归属查询（例如询问卷宗 5）：
-<query_member>5</query_member>
-
-- 终局声明（例如 S正={{A,E}}，S负={{C}}）：
-<answer>S+=A,E;S-=C</answer>
+格式说明：
+- metric: 必须是 a、b、c 或 d 之一
+- target: 目标步骤对 {target_pair} 的阻力值（整数）
+- evidence: 至少两个查询结果，格式为 [(步骤1,步骤2)->值, ...]
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the Intelligent Judicial Case Retrieval System. Your task is to deduce the combination of statutory elements required for the court to apply special preservation measures in specific disputes based on historical files.
+Welcome to the "Judicial Procedure Resistance Deduction" system. Here are the rules:
 
-The system incorporates 12 key commercial dispute precedents, numbered 1 to 12. Each precedent contains several core evidentiary elements coded from the set {{A,B,C,D,E,F,G,H}}.
+A statutory approval procedure has a fixed sequence of {n} steps, proceeding in order from 1 to {n}.
+Step code to legal procedure mapping: {label_mapping}
 
-The public mapping between case precedents and their evidentiary elements is:
-- 1: A,B,E,G
-- 2: A,C,D,F
-- 3: B,C,E,H
-- 4: A,D,E,F,H
-- 5: B,D,F,G
-- 6: C,E,F,G
-- 7: A,B,C,H
-- 8: B,E,F,H
-- 9: A,C,E,G
-- 10: D,E,G,H
-- 11: A,F,H
-- 12: B,C,D,G
+For any two different procedural steps x and y, let pos(x) be its sequential position in the legal process, and the absolute position difference is denoted as |pos(x)-pos(y)|.
 
-According to internal judicial standards, the court follows a hidden principle when ruling on preservation measures: it must include the "statutory elements supporting preservation" (S_pos) and must not trigger any "blocking factors" (S_neg). The two sets do not intersect. The set of precedents granted preservation T naturally "encompasses all elements in S_pos and excludes all elements in S_neg". Conduct legal retrieval to ascertain S_pos and S_neg.
+The legal system has secretly configured a procedural resistance metric function f, which must be one of the following four candidate models and remains fixed during the deduction:
+- Model a (Interval resistance): f(x,y) = |pos(x)-pos(y)| - 1
+- Model b (Transition resistance): f(x,y) = |pos(x)-pos(y)|
+- Model c (Total review volume): f(x,y) = |pos(x)-pos(y)| + 1
+- Model d (External coordination resistance): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
 
-You may conduct case retrieval via the following methods:
+Your goal is to:
+1. Infer which procedural resistance model (a, b, c, or d) is actually being used through queries
+2. Calculate the resistance value for the target step pair {target_pair} under that model
 
-1. Filter-Count Query: Restrict the search to include elements I_pos and exclude elements I_neg. The case file system displays:
-   - Total count: Total precedents matching this evidentiary structure
-   - Target count: Number of precedents among them where the court granted special preservation (belong to set T)
+You can perform the following operations:
+1. Measure Query: Ask for the procedural resistance value between any two different steps A, B that exist in the procedure. The system will return the value of f(A,B) (a non-negative integer).
+2. View Sequence: View the current total number of steps and statutory order (for reference only, does not provide additional information about f).
+3. Declare Answer: When you have determined the resistance model, submit your final answer including the model type, target pair value, and legal evidence.
 
-2. Membership Query: Verify whether a specific case file ID belongs to the granted preservation set T. System answers "Yes" or "No".
+Note:
+- You can only query steps that exist in the procedure, and the two steps must be different
+- Declaring an answer requires at least two measure queries
+- Evidence must reference at least two actual query results
+- The system will verify: 1) whether all evidence is consistent with the claimed model; 2) whether the target pair value is correct
 
-3. Final Declaration: Submit your deduced statutory elements S_pos and blocking factors S_neg for authoritative validation.
+Each turn must contain only one operation tag. Use the following XML format:
 
-## Query and Answer Format (must strictly follow)
+- Measure Query (e.g., querying steps F and K):
+<query_measure>F,K</query_measure>
 
-Each query is strictly limited to one evidentiary element code. Use the following XML format:
+- View Sequence (empty content):
+<query_sequence></query_sequence>
 
-- Filter-Count Query:
-<query_filter>include=A,B;exclude=C</query_filter>
+- Declare Answer (must include model type, target answer, and evidence):
+<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
 
-- Membership Query (e.g., case 5):
-<query_member>5</query_member>
-
-- Final Declaration:
-<answer>S+=A,E;S-=C</answer>
+Format explanation:
+- metric: must be one of a, b, c, or d
+- target: the resistance value for target step pair {target_pair} (integer)
+- evidence: at least two query results, format [(step1,step2)->value, ...]
 """
 
-    tags = ["answer", "query_filter", "query_member"]
-    reasoning_type = "归纳推理"
-    data_structure = "集合"
+    tags = ["answer", "query_measure", "query_sequence"]
 
-    # 元素-标签映射（公开数据）
-    ELEMENT_TAGS = {
-        1: {"A", "B", "E", "G"},
-        2: {"A", "C", "D", "F"},
-        3: {"B", "C", "E", "H"},
-        4: {"A", "D", "E", "F", "H"},
-        5: {"B", "D", "F", "G"},
-        6: {"C", "E", "F", "G"},
-        7: {"A", "B", "C", "H"},
-        8: {"B", "E", "F", "H"},
-        9: {"A", "C", "E", "G"},
-        10: {"D", "E", "G", "H"},
-        11: {"A", "F", "H"},
-        12: {"B", "C", "D", "G"},
-    }
+    reasoning_type = "溯因推理"
+    data_structure = "序列"
 
-    # 五种难度配置
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "S+": {"A"},
-                "S-": set(),
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "b",
+                "target_pair": ("K", "E"),
             },
             2: {
-                "S+": {"B", "E"},
-                "S-": set(),
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "a",
+                "target_pair": ("K", "E"),
             },
             3: {
-                "S+": {"E", "G"},
-                "S-": {"C"},
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "c",
+                "target_pair": ("K", "E"),
             },
             4: {
-                "S+": {"E", "F"},
-                "S-": {"D"},
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "d",
+                "target_pair": ("K", "E"),
             },
             5: {
-                "S+": {"E", "G"},
-                "S-": {"A", "D"},
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "d",
+                "target_pair": ("F", "B"),
             },
         },
         "en": {
             1: {
-                "S+": {"A"},
-                "S-": set(),
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "b",
+                "target_pair": ("K", "E"),
             },
             2: {
-                "S+": {"B", "E"},
-                "S-": set(),
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "a",
+                "target_pair": ("K", "E"),
             },
             3: {
-                "S+": {"E", "G"},
-                "S-": {"C"},
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "c",
+                "target_pair": ("K", "E"),
             },
             4: {
-                "S+": {"E", "F"},
-                "S-": {"D"},
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "d",
+                "target_pair": ("K", "E"),
             },
             5: {
-                "S+": {"E", "G"},
-                "S-": {"A", "D"},
+                "n": 9,
+                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
+                "metric_type": "d",
+                "target_pair": ("F", "B"),
             },
         },
     }
 
     def __init__(self, config):
-        self.query_filter_count = 0  # 筛选-计数查询次数
-        self.query_member_count = 0  # 个体归属查询次数
-        self.answer_count = 0  # 终局声明次数
         super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -664,69 +647,101 @@ Each query is strictly limited to one evidentiary element code. Use the followin
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self.S_pos = cfg["S+"]  # 隐藏的正向标签集
-        self.S_neg = cfg["S-"]  # 隐藏的负向标签集
         
-        # 计算目标集合 T
-        self.target_set = set()
-        for elem_id, tags in self.ELEMENT_TAGS.items():
-            # 检查是否包含 S+ 中所有标签且不含 S- 中任何标签
-            if self.S_pos.issubset(tags) and tags.isdisjoint(self.S_neg):
-                self.target_set.add(elem_id)
+        self._game_info["n"] = cfg["n"]
+        self.sequence = cfg["sequence"]
+        self.metric_type = cfg["metric_type"]
+        self.target_pair = cfg["target_pair"]
         
-        self._game_info["n"] = 12
+        self.label_to_pos = {label: idx + 1 for idx, label in enumerate(self.sequence)}
+        
+        mapping_str = ", ".join([f"{i+1}:{label}" for i, label in enumerate(self.sequence)])
+        self._game_info["label_mapping"] = mapping_str
+        self._game_info["target_pair"] = f"({self.target_pair[0]},{self.target_pair[1]})"
+        
+        self.query_history = []
+        
+        self.correct_answer = self._calculate_metric(
+            self.target_pair[0], 
+            self.target_pair[1], 
+            self.metric_type
+        )
 
-    def _check_element_match(self, elem_id, include_tags, exclude_tags):
-        """检查元素是否满足筛选条件"""
-        tags = self.ELEMENT_TAGS[elem_id]
-        # 必须包含所有 include_tags，且不含任何 exclude_tags
-        return include_tags.issubset(tags) and tags.isdisjoint(exclude_tags)
+    def _calculate_metric(self, label1, label2, metric_type):
+        if label1 not in self.label_to_pos or label2 not in self.label_to_pos:
+            return None
+        
+        pos1 = self.label_to_pos[label1]
+        pos2 = self.label_to_pos[label2]
+        
+        abs_diff = abs(pos1 - pos2)
+        
+        if metric_type == "a":
+            return abs_diff - 1
+        elif metric_type == "b":
+            return abs_diff
+        elif metric_type == "c":
+            return abs_diff + 1
+        elif metric_type == "d":
+            return (min(pos1, pos2) - 1) + (self._game_info["n"] - max(pos1, pos2))
+        else:
+            return None
 
     def evaluate(self, parsed_info):
-        """评估终局声明是否正确，包含配额检查"""
-        if self.answer_count >= 2:
-            return False
-
-        self.answer_count += 1
-
         raw_ans = parsed_info["answer"]
         
-        # 解析 S+=xxx;S-=yyy 格式
         try:
-            parts = raw_ans.split(";")
-            s_plus_str = ""
-            s_minus_str = ""
+            metric_match = re.search(r'metric\s*=\s*([a-d])', raw_ans, re.IGNORECASE)
+            if not metric_match:
+                return False
+            claimed_metric = metric_match.group(1).lower()
             
-            for part in parts:
-                part = part.strip()
-                if part.startswith("S+"):
-                    s_plus_str = part.split("=", 1)[1].strip()
-                elif part.startswith("S-"):
-                    s_minus_str = part.split("=", 1)[1].strip()
+            target_match = re.search(r'target\s*=\s*(-?\d+)', raw_ans, re.IGNORECASE)
+            if not target_match:
+                return False
+            claimed_target = int(target_match.group(1))
             
-            # 解析标签集合
-            if s_plus_str:
-                model_s_plus = set(tag.strip() for tag in s_plus_str.split(",") if tag.strip())
-            else:
-                model_s_plus = set()
-                
-            if s_minus_str:
-                model_s_minus = set(tag.strip() for tag in s_minus_str.split(",") if tag.strip())
-            else:
-                model_s_minus = set()
+            evidence_match = re.search(r'evidence\s*=\s*\[(.*?)\]', raw_ans, re.IGNORECASE)
+            if not evidence_match:
+                return False
+            evidence_str = evidence_match.group(1)
             
-            # 检查是否与真实答案在全集上等价
-            # 即对所有元素，判定结果完全一致
-            for elem_id, tags in self.ELEMENT_TAGS.items():
-                # 真实判定
-                real_in_target = elem_id in self.target_set
-                
-                # 模型判定
-                model_in_target = (model_s_plus.issubset(tags) and 
-                                 tags.isdisjoint(model_s_minus))
-                
-                if real_in_target != model_in_target:
+            evidence_list = []
+            evidence_pattern = r'\(([^,]+),([^)]+)\)\s*->\s*(-?\d+)'
+            for match in re.finditer(evidence_pattern, evidence_str):
+                elem1 = match.group(1).strip()
+                elem2 = match.group(2).strip()
+                value = int(match.group(3))
+                evidence_list.append((elem1, elem2, value))
+            
+            if len(evidence_list) < 2:
+                return False
+            
+            if self.query_history:
+                if len(self.query_history) < 2:
                     return False
+                for elem1, elem2, claimed_value in evidence_list:
+                    found = False
+                    for query_elem1, query_elem2, actual_value in self.query_history:
+                        if ((query_elem1 == elem1 and query_elem2 == elem2) or 
+                            (query_elem1 == elem2 and query_elem2 == elem1)):
+                            if claimed_value != actual_value:
+                                return False
+                            found = True
+                            break
+                    if not found:
+                        return False
+            
+            for elem1, elem2, claimed_value in evidence_list:
+                expected_value = self._calculate_metric(elem1, elem2, claimed_metric)
+                if expected_value is None or expected_value != claimed_value:
+                    return False
+            
+            if claimed_metric != self.metric_type:
+                return False
+            
+            if claimed_target != self.correct_answer:
+                return False
             
             return True
             
@@ -734,170 +749,84 @@ Each query is strictly limited to one evidentiary element code. Use the followin
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """处理 query_filter 和 query_member，包含配额检查"""
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            quota_exceed_filter = "错误：筛选-计数查询次数已用尽。请使用其他查询方式。"
-            quota_exceed_member = "错误：个体归属查询次数已用尽。请使用其他查询方式。"
-            invalid_format = "错误：格式无效。"
-            invalid_elem   = "错误：元素编号超出范围（应为1-12）。"
+            error_format = "错误：{}"
+            sequence_info = "序列长度：{}，标签顺序：{}"
         else:
             yes_res, no_res = "Yes", "No"
-            quota_exceed_filter = "Error: Filter-count query quota exceeded. Please use another query type."
-            quota_exceed_member = "Error: Membership query quota exceeded. Please use another query type."
-            invalid_format = "Error: Invalid format."
-            invalid_elem   = "Error: Element ID out of range (should be 1-12)."
-
-        if "query_filter" in parsed_info:
-            if self.query_filter_count >= 12:
-                return quota_exceed_filter
-
-            self.query_filter_count += 1
-
+            error_format = "Error: {}"
+            sequence_info = "Sequence length: {}, Label order: {}"
+        
+        if "query_measure" in parsed_info:
             try:
-                raw = parsed_info["query_filter"]
-                include_tags = set()
-                exclude_tags = set()
-
-                parts = raw.split(";")
-                for part in parts:
-                    part = part.strip()
-                    if part.startswith("include="):
-                        tags_str = part.split("=", 1)[1].strip()
-                        if tags_str:
-                            include_tags = set(tag.strip() for tag in tags_str.split(",") if tag.strip())
-                    elif part.startswith("exclude="):
-                        tags_str = part.split("=", 1)[1].strip()
-                        if tags_str:
-                            exclude_tags = set(tag.strip() for tag in tags_str.split(",") if tag.strip())
-
-                total_count = 0
-                target_count = 0
-
-                for elem_id in range(1, 13):
-                    if self._check_element_match(elem_id, include_tags, exclude_tags):
-                        total_count += 1
-                        if elem_id in self.target_set:
-                            target_count += 1
-
-                if self.config.language == "zh":
-                    return f"总数：{total_count}，目标数：{target_count}"
-                else:
-                    return f"Total count: {total_count}, Target count: {target_count}"
-
+                raw = parsed_info["query_measure"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    raise ValueError("Invalid format")
+                
+                elem1, elem2 = parts
+                
+                if elem1 not in self.label_to_pos or elem2 not in self.label_to_pos:
+                    msg = "元素不存在于序列中" if self.config.language == "zh" else "Element does not exist in sequence"
+                    return error_format.format(msg)
+                
+                if elem1 == elem2:
+                    msg = "两个元素必须不同" if self.config.language == "zh" else "Two elements must be different"
+                    return error_format.format(msg)
+                
+                value = self._calculate_metric(elem1, elem2, self.metric_type)
+                
+                self.query_history.append((elem1, elem2, value))
+                
+                return str(value)
+                
             except Exception:
-                return invalid_format
-
-        elif "query_member" in parsed_info:
-            if self.query_member_count >= 3:
-                return quota_exceed_member
-
-            self.query_member_count += 1
-
-            try:
-                elem_id = int(parsed_info["query_member"].strip())
-                if elem_id < 1 or elem_id > 12:
-                    return invalid_elem
-
-                return yes_res if elem_id in self.target_set else no_res
-
-            except Exception:
-                return invalid_format
-
+                msg = "查询格式无效" if self.config.language == "zh" else "Invalid query format"
+                return error_format.format(msg)
+        
+        elif "query_sequence" in parsed_info:
+            sequence_str = ",".join(self.sequence)
+            return sequence_info.format(self._game_info["n"], sequence_str)
+        
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        lang = self.config.language
-
-        # 个体归属查询返回值：是/否 或 Yes/No
-        if correct in ("是", "否"):
-            return "否" if correct == "是" else "是"
-        if correct in ("Yes", "No"):
-            return "No" if correct == "Yes" else "Yes"
-
-        # 筛选-计数查询返回值，如"总数：3，目标数：2" 或 "Total count: 3, Target count: 2"
-        # 对目标数加1，制造错误
-        if lang == "zh":
-            m = re.search(r'目标数：(\d+)', correct)
-            if m:
-                wrong_val = int(m.group(1)) + 1
-                return re.sub(r'目标数：\d+', f'目标数：{wrong_val}', correct)
-        else:
-            m = re.search(r'Target count: (\d+)', correct)
-            if m:
-                wrong_val = int(m.group(1)) + 1
-                return re.sub(r'Target count: \d+', f'Target count: {wrong_val}', correct)
-
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
+            return str(int(correct) + 1)
+        
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
+        
+        if correct.lower() == "yes":
+            return "No" if correct[0].isupper() else "no"
+        if correct.lower() == "no":
+            return "Yes" if correct[0].isupper() else "yes"
+            
         return correct + "_WRONG"
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        根据规则限制：每次提问只能包含一个标签。
-        """
-        queries = []
-        
-        # 1. 个体归属查询 (Membership Query)
-        # 遍历所有元素 1-12
-        for elem_id in range(1, 13):
-            query_str = f"<query_member>{elem_id}</query_member>"
-            
-            # 计算答案
-            is_in_target = elem_id in self.target_set
-            if self.config.language == "zh":
-                ans = "是" if is_in_target else "否"
-            else:
-                ans = "Yes" if is_in_target else "No"
-                
-            queries.append({"query": query_str, "answer": ans})
-
-        # 2. 筛选-计数查询 (Filter-Count Query)
-        # 遍历所有标签 A-H，分别构造 include 和 exclude 的单标签查询
-        all_tags = ["A", "B", "C", "D", "E", "F", "G", "H"]
-        
-        for tag in all_tags:
-            # 情况 2a: include=Tag; exclude=
-            q_inc = f"<query_filter>include={tag};exclude=</query_filter>"
-            
-            # 计算 2a 答案
-            total_count = 0
-            target_count = 0
-            tag_set = {tag}
-            
-            for elem_id in range(1, 13):
-                elem_tags = self.ELEMENT_TAGS[elem_id]
-                if tag_set.issubset(elem_tags):
-                    total_count += 1
-                    if elem_id in self.target_set:
-                        target_count += 1
-            
-            if self.config.language == "zh":
-                ans_inc = f"总数：{total_count}，目标数：{target_count}"
-            else:
-                ans_inc = f"Total count: {total_count}, Target count: {target_count}"
-                
-            queries.append({"query": q_inc, "answer": ans_inc})
-            
-            # 情况 2b: include=; exclude=Tag
-            q_exc = f"<query_filter>include=;exclude={tag}</query_filter>"
-            
-            # 计算 2b 答案
-            total_count = 0
-            target_count = 0
-            
-            for elem_id in range(1, 13):
-                elem_tags = self.ELEMENT_TAGS[elem_id]
-                if elem_tags.isdisjoint(tag_set): # exclude contains tag
-                    total_count += 1
-                    if elem_id in self.target_set:
-                        target_count += 1
-
-            if self.config.language == "zh":
-                ans_exc = f"总数：{total_count}，目标数：{target_count}"
-            else:
-                ans_exc = f"Total count: {total_count}, Target count: {target_count}"
-                
-            queries.append({"query": q_exc, "answer": ans_exc})
-            
-        return queries
+    def get_all_possible_queries(self) -> list:
+        results = []
+        for i in range(len(self.sequence)):
+            for j in range(i + 1, len(self.sequence)):
+                elem1 = self.sequence[i]
+                elem2 = self.sequence[j]
+                val   = self._calculate_metric(elem1, elem2, self.metric_type)
+                self.query_history.append((elem1, elem2, val))
+                results.append({
+                    "query":  f"<query_measure>{elem1},{elem2}</query_measure>",
+                    "answer": str(val),
+                })
+        seq_str  = ",".join(self.sequence)
+        if self.config.language == "zh":
+            seq_info = f"序列长度：{self._game_info['n']}，标签顺序：{seq_str}"
+        else:
+            seq_info = f"Sequence length: {self._game_info['n']}, Label order: {seq_str}"
+        results.append({
+            "query":  "<query_sequence></query_sequence>",
+            "answer": seq_info,
+        })
+        return results

@@ -1,925 +1,669 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   同组判断：两个给定元素是否属于同一分组
-# ============================================================
-
 from .base import Game
 import random
 
-class EquivalenceRuleGame(Game):
+class PatternRecognitionGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"隐藏等价规则"的推理游戏，规则如下：
+我们来玩一个"序列生成机制推断"游戏。规则如下：
 
-游戏设定了一个包含 16 个对象的集合，编号为 S01 到 S16。每个对象具有三个离散特征：
-- 特征1：取值为 A1, A2, A3, A4 之一
-- 特征2：取值为 B1, B2, B3, B4 之一  
-- 特征3：取值为 1, 2, 3, 4 之一
+我拥有一个长度为 36 的有序序列 S，其中每个位置的元素取自符号集 {{A, B, C, D}}。这个序列是由一个长度为 p 的基础图样 M 按照某种机制生成的，其中 p 可能是 3、4 或 5。基础图样 M 至少包含两种不同的符号。
 
-所有对象的特征如下：
-{objects_description}
+生成机制只有以下三种可能：
 
-我已经秘密设定了一个基于这些特征的判定规则，该规则将 16 个对象划分为若干个互不相交的组。同一组内的对象满足某种特征条件，不同组的对象不满足相同条件。
+1. **机制 A（直接重复）**：序列由基础图样 M 直接重复拼接而成。即第 b 个块的内容与 M 完全相同。
 
-你的目标是通过提问推断出这个隐藏规则，并能够判断任意两个对象是否属于同一组。
+2. **机制 B（反向交替）**：奇数块（第 1、3、5...块）的内容等于 M，偶数块（第 2、4、6...块）的内容等于 M 的反向序列。注意 M 本身不是回文串。
 
-## 游戏分为两个阶段
+3. **机制 C（逐步循环移位）**：第 b 个块等于将 M 右循环位移 (b−1) 位所得的结果。M 不存在更短的非平凡周期。
 
-### 学习阶段
-你可以进行以下类型的查询（总次数有限，需尽可能少地使用）：
+说明：每个块的长度均为 p，块的编号 b 从 1 开始计数。如果序列在 36 个位置处截断了某个块，那么该块的已定义位置仍按对应机制生成。
 
-1. **等价查询**：询问两个对象是否属于同一组
-   格式：<query_equiv>Sx,Sy</query_equiv>
-   示例：<query_equiv>S01,S05</query_equiv>
-   回答：是 或 否
+你的目标是通过查询推断出：
+- 采用的生成机制（A、B 或 C）
+- 基础图样的长度 p（3、4 或 5）
+- 序列的最小周期长度
+- 位置 37、38、39、40、41 上的符号
 
-2. **计数查询**：询问给定子集中有多少个对象与指定对象同组
-   格式：<query_count>Sx;Sa,Sb,Sc,...</query_count>
-   示例：<query_count>S01;S02,S03,S04,S05</query_count>
-   回答：一个非负整数
+你可以进行以下类型的查询，但需要尽可能少地使用查询次数：
 
-3. **示例查询**：请求给出一个与指定对象同组的其他对象
-   格式：<query_example>Sx</query_example>
-   示例：<query_example>S01</query_example>
-   回答：一个对象编号，或"无"（表示该对象独自成组）
+1. **查看查询**：查看位置 i 的符号（1 小于等于 i 小于等于 36）
+2. **对比查询**：询问位置 i 和位置 j 的符号是否相同（1 小于等于 i, j 小于等于 36）
+3. **测试间隔查询**：询问位置 k 和位置 k+q 的符号是否相同（要求 1 小于等于 k 小于等于 36−q）
 
-完成学习后，使用以下格式进入挑战阶段：
-<enter_challenge></enter_challenge>
+每次可以提出 1 到 4 个查询，每个查询必须使用以下 XML 格式之一：
 
-### 挑战阶段
-系统会给出 {num_challenges} 对对象，你需要判断每一对是否属于同一组。此阶段不能再进行查询。
+- 查看查询（例如查看位置 5）：
+<query_view>5</query_view>
 
-判定格式：<judge>Sx,Sy,same</judge> 或 <judge>Sx,Sy,different</judge>
-示例：<judge>S01,S09,same</judge> 表示认为 S01 和 S09 同组
-示例：<judge>S02,S10,different</judge> 表示认为 S02 和 S10 不同组
+- 对比查询（例如对比位置 3 和位置 8）：
+<query_compare>3,8</query_compare>
 
-## 替代胜利方式：规则声明
+- 测试间隔查询（例如测试间隔为 4，起始位置为 10）：
+<query_interval>4,10</query_interval>
 
-如果你认为已经完全理解了隐藏规则，可以直接提交规则描述：
+提交最终答案时，必须包含以下四项信息，格式如下：
 
-<answer>规则描述内容</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-规则描述需要用特征1、特征2、特征3的逻辑条件完整表达判定标准。
-示例：<answer>特征1的第一个字符与特征2的第一个字符相同的对象为一组</answer>
-
-## 胜利条件（满足任一即可）
-
-1. 挑战阶段判定正确数达到 {pass_threshold} 个或以上
-2. 规则声明验证通过
-
-## 失败条件
-
-1. 挑战阶段判定正确数少于 {pass_threshold} 个
-2. 规则声明验证失败
-3. 查询格式错误或违反游戏规则
+其中：
+- mechanism：生成机制，必须是 A、B 或 C
+- p：基础图样长度，必须是 3、4 或 5
+- min_period：最小周期长度，必须是正整数
+- next_symbols：位置 37 到 41 的 5 个符号，用空格分隔或直接连写
 """
 
     game_rule_en = """\
-Let's play an "Hidden Equivalence Rule" deduction game. Here are the rules:
+Let's play a "Sequence Generation Mechanism Inference" game. Here are the rules:
 
-The game has a set of 16 objects numbered S01 to S16. Each object has three discrete features:
-- Feature1: one of A1, A2, A3, A4
-- Feature2: one of B1, B2, B3, B4
-- Feature3: one of 1, 2, 3, 4
+I have an ordered sequence S of length 36, where each element is drawn from the symbol set {{A, B, C, D}}. This sequence is generated from a base pattern M of length p using a specific mechanism, where p can be 3, 4, or 5. The base pattern M contains at least two different symbols.
 
-All objects and their features are:
-{objects_description}
+There are only three possible generation mechanisms:
 
-I have secretly defined a rule based on these features that partitions the 16 objects into several disjoint groups. Objects in the same group satisfy certain feature conditions, while objects in different groups do not.
+1. **Mechanism A (Direct Repetition)**: The sequence is formed by directly repeating the base pattern M. Each block b has the same content as M.
 
-Your goal is to infer this hidden rule through queries and determine whether any two objects belong to the same group.
+2. **Mechanism B (Reverse Alternation)**: Odd-numbered blocks (1st, 3rd, 5th...) equal M, and even-numbered blocks (2nd, 4th, 6th...) equal the reverse of M. Note that M itself is not a palindrome.
 
-## The game has two phases
+3. **Mechanism C (Progressive Cyclic Shift)**: Block b equals M right-cyclically shifted by (b−1) positions. M has no shorter non-trivial period.
 
-### Learning Phase
-You can make the following types of queries (limited total number, use as few as possible):
+Note: Each block has length p, and block numbering b starts from 1. If the sequence truncates a block at position 36, the defined positions of that block still follow the corresponding mechanism.
 
-1. **Equivalence Query**: Ask if two objects belong to the same group
-   Format: <query_equiv>Sx,Sy</query_equiv>
-   Example: <query_equiv>S01,S05</query_equiv>
-   Answer: Yes or No
+Your goal is to infer through queries:
+- The generation mechanism used (A, B, or C)
+- The length p of the base pattern (3, 4, or 5)
+- The minimum period length of the sequence
+- The symbols at positions 37, 38, 39, 40, 41
 
-2. **Count Query**: Ask how many objects in a given subset belong to the same group as a specified object
-   Format: <query_count>Sx;Sa,Sb,Sc,...</query_count>
-   Example: <query_count>S01;S02,S03,S04,S05</query_count>
-   Answer: A non-negative integer
+You can perform the following types of queries, but should use as few queries as possible:
 
-3. **Example Query**: Request an object that belongs to the same group as a specified object
-   Format: <query_example>Sx</query_example>
-   Example: <query_example>S01</query_example>
-   Answer: An object ID, or "None" (if the object forms a singleton group)
+1. **View Query**: View the symbol at position i (1 less than or equal to i less than or equal to 36)
+2. **Compare Query**: Ask whether the symbols at positions i and j are the same (1 less than or equal to i, j less than or equal to 36)
+3. **Interval Test Query**: Ask whether the symbols at positions k and k+q are the same (requires 1 less than or equal to k less than or equal to 36−q)
 
-After learning, enter the challenge phase with:
-<enter_challenge></enter_challenge>
+You can ask 1 to 4 queries at a time, each using one of the following XML formats:
 
-### Challenge Phase
-The system will provide {num_challenges} pairs of objects. You must judge whether each pair belongs to the same group. No more queries are allowed in this phase.
+- View Query (e.g., view position 5):
+<query_view>5</query_view>
 
-Judgment format: <judge>Sx,Sy,same</judge> or <judge>Sx,Sy,different</judge>
-Example: <judge>S01,S09,same</judge> means S01 and S09 are in the same group
-Example: <judge>S02,S10,different</judge> means S02 and S10 are in different groups
+- Compare Query (e.g., compare positions 3 and 8):
+<query_compare>3,8</query_compare>
 
-## Alternative Victory: Rule Declaration
+- Interval Test Query (e.g., test interval of 4 starting at position 10):
+<query_interval>4,10</query_interval>
 
-If you believe you fully understand the hidden rule, you can directly submit a rule description:
+When submitting your final answer, you must include the following four items in this format:
 
-<answer>Rule description content</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-The rule description must fully express the judgment criteria using logical conditions on Feature1, Feature2, and Feature3.
-Example: <answer>Objects where the first character of Feature1 matches the first character of Feature2 form a group</answer>
-
-## Victory Conditions (satisfy either)
-
-1. At least {pass_threshold} correct judgments in the challenge phase
-2. Rule declaration verified as correct
-
-## Failure Conditions
-
-1. Fewer than {pass_threshold} correct judgments in the challenge phase
-2. Rule declaration verification failed
-3. Query format error or rule violation
+Where:
+- mechanism: The generation mechanism, must be A, B, or C
+- p: The base pattern length, must be 3, 4, or 5
+- min_period: The minimum period length, must be a positive integer
+- next_symbols: The 5 symbols at positions 37 to 41, space-separated or concatenated
 """
 
     contextualized_rule_zh_1 = """\
-欢迎进入智能交通管控系统。我们现在需要进行一项"交通节点协同分组"的配置任务，规则如下：
+欢迎进入智能交通路网调度指挥中心。我们现在需要对一段未知的"交通信号相位序列"进行分析。规则如下：
 
-系统监测到一个包含 16 个交通节点的集合，编号为 S01 到 S16。每个节点具有三个离散特征属性：
-- 道路等级（特征1）：取值为 A1, A2, A3, A4 之一
-- 信号类型（特征2）：取值为 B1, B2, B3, B4 之一  
-- 流量等级（特征3）：取值为 1, 2, 3, 4 之一
+系统记录了一个长度为 36 的时段序列 S，每个时段的相位指令取自指令集 {{A, B, C, D}}。这个序列是由一个长度为 p 的基础调度模式 M 按照某种排班机制生成的，其中 p 可能是 3、4 或 5。基础模式 M 至少包含两种不同的指令。
 
-所有交通节点的属性如下：
-{objects_description}
+排班机制只有以下三种可能：
 
-系统已经秘密生成了一个基于这些特征的协同控制规则，该规则将 16 个交通节点划分为若干个互不相交的协同组。同一组内的节点满足某种特征条件以便进行绿波带联动，不同组的节点不满足相同条件。
+1. **机制 A（固定周期循环）**：整体序列由基础模式 M 直接重复拼接而成。即第 b 个调度块的内容与 M 完全相同。
 
-你的目标是通过发送探测指令推断出这个隐藏的协同规则，并能够判断任意两个交通节点是否属于同一协同组。
+2. **机制 B（双向通勤对称）**：奇数块（第 1、3、5...块）的指令等于 M，偶数块（第 2、4、6...块）的指令等于 M 的反向序列，用于平衡对向车流。注意 M 本身不是回文序列。
 
-## 任务分为两个阶段
+3. **机制 C（潮汐车道相位偏移）**：第 b 个块等于将 M 按照时间差右循环位移 (b−1) 位所得的结果，以适应潮汐车流的演变。M 不存在更短的非平凡周期。
 
-### 勘测阶段
-你可以进行以下类型的指令查询（总次数有限，需尽可能少地使用）：
+说明：每个调度块的长度均为 p，块的编号 b 从 1 开始计数。如果序列在 36 个位置处截断了某个块，那么该块的已定义时段仍按对应机制生成。
 
-1. **等价查询**：询问两个交通节点是否属于同一协同组
-   格式：<query_equiv>Sx,Sy</query_equiv>
-   示例：<query_equiv>S01,S05</query_equiv>
-   回答：是 或 否
+你的目标是通过查询推断出：
+- 采用的排班机制（A、B 或 C）
+- 基础调度模式的长度 p（3、4 或 5）
+- 信号序列的最小排班周期长度
+- 时段 37、38、39、40、41 上的指令类型
 
-2. **计数查询**：询问给定子集中有多少个交通节点与指定节点同组
-   格式：<query_count>Sx;Sa,Sb,Sc,...</query_count>
-   示例：<query_count>S01;S02,S03,S04,S05</query_count>
-   回答：一个非负整数
+你可以进行以下类型的查询（请尽可能少地使用查询次数）：
 
-3. **示例查询**：请求给出一个与指定交通节点同组的其他节点
-   格式：<query_example>Sx</query_example>
-   示例：<query_example>S01</query_example>
-   回答：一个节点编号，或"无"（表示该节点独自成组）
+1. **调取查询**：查看时段 i 的指令（1 小于等于 i 小于等于 36）
+2. **比对查询**：询问时段 i 和时段 j 的指令是否相同（1 小于等于 i, j 小于等于 36）
+3. **周期测试查询**：询问时段 k 和时段 k+q 的指令是否相同（要求 1 小于等于 k 小于等于 36−q）
 
-完成勘测后，使用以下格式进入部署阶段：
-<enter_challenge></enter_challenge>
+每次可以提出 1 到 4 个查询，每个查询必须使用以下 XML 格式之一：
 
-### 部署阶段
-系统会给出 {num_challenges} 对交通节点，你需要判断每一对是否属于同一协同组。此阶段不能再进行查询。
+- 调取查询（例如调取时段 5）：
+<query_view>5</query_view>
 
-判定格式：<judge>Sx,Sy,same</judge> 或 <judge>Sx,Sy,different</judge>
-示例：<judge>S01,S09,same</judge> 表示认为 S01 和 S09 同组
-示例：<judge>S02,S10,different</judge> 表示认为 S02 和 S10 不同组
+- 比对查询（例如比对时段 3 和时段 8）：
+<query_compare>3,8</query_compare>
 
-## 替代胜利方式：规则声明
+- 周期测试查询（例如测试间隔为 4，起始时段为 10）：
+<query_interval>4,10</query_interval>
 
-如果你认为已经完全理解了隐藏的协同规则，可以直接提交规则描述：
+提交最终答案时，必须包含以下四项信息，格式如下：
 
-<answer>规则描述内容</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-规则描述需要用特征1、特征2、特征3的逻辑条件完整表达判定标准。
-示例：<answer>特征1的第一个字符与特征2的第一个字符相同的节点为一组</answer>
-
-## 胜利条件（满足任一即可）
-
-1. 部署阶段判定正确数达到 {pass_threshold} 个或以上
-2. 规则声明验证通过
-
-## 失败条件
-
-1. 部署阶段判定正确数少于 {pass_threshold} 个
-2. 规则声明验证失败
-3. 查询格式错误或违反系统规则
+其中：
+- mechanism：排班机制，必须是 A、B 或 C
+- p：基础调度模式长度，必须是 3、4 或 5
+- min_period：最小排班周期长度，必须是正整数
+- next_symbols：时段 37 到 41 的 5 个指令，用空格分隔或直接连写
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the Intelligent Traffic Control System. We need to perform a "Traffic Node Coordinated Grouping" configuration task. The rules are as follows:
+Welcome to the Intelligent Transportation Network Dispatch Center. We need to analyze an unknown "traffic signal phase sequence". Here are the rules:
 
-The system monitors a set of 16 traffic nodes, numbered S01 to S16. Each node has three discrete feature attributes:
-- Road Level (Feature1): one of A1, A2, A3, A4
-- Signal Type (Feature2): one of B1, B2, B3, B4
-- Traffic Volume Level (Feature3): one of 1, 2, 3, 4
+The system has recorded a sequence S of length 36 representing different time intervals, where each interval's phase command is drawn from the set {{A, B, C, D}}. This sequence is generated from a base dispatch pattern M of length p using a specific scheduling mechanism, where p can be 3, 4, or 5. The base pattern M contains at least two different commands.
 
-All traffic nodes and their attributes are:
-{objects_description}
+There are only three possible scheduling mechanisms:
 
-The system has secretly generated a coordinated control rule based on these features that partitions the 16 nodes into several disjoint coordination groups. Nodes in the same group satisfy certain feature conditions for green wave linkage, while nodes in different groups do not.
+1. **Mechanism A (Fixed Period Loop)**: The entire sequence is formed by directly repeating the base pattern M. Each dispatch block b has the same content as M.
 
-Your goal is to infer this hidden coordination rule through probe commands and determine whether any two traffic nodes belong to the same coordination group.
+2. **Mechanism B (Bidirectional Commute Symmetry)**: Odd-numbered blocks (1st, 3rd, 5th...) equal M, and even-numbered blocks (2nd, 4th, 6th...) equal the reverse of M, used to balance opposing traffic flows. Note that M itself is not a palindrome.
 
-## The task has two phases
+3. **Mechanism C (Tidal Lane Phase Shift)**: Block b equals M right-cyclically shifted by (b−1) positions, adapting to the evolution of tidal traffic flows. M has no shorter non-trivial period.
 
-### Survey Phase
-You can make the following types of queries (limited total number, use as few as possible):
+Note: Each dispatch block has length p, and block numbering b starts from 1. If the sequence truncates a block at position 36, the defined intervals of that block still follow the corresponding mechanism.
 
-1. **Equivalence Query**: Ask if two traffic nodes belong to the same group
-   Format: <query_equiv>Sx,Sy</query_equiv>
-   Example: <query_equiv>S01,S05</query_equiv>
-   Answer: Yes or No
+Your goal is to infer through queries:
+- The scheduling mechanism used (A, B, or C)
+- The length p of the base dispatch pattern (3, 4, or 5)
+- The minimum scheduling period length of the signal sequence
+- The commands at intervals 37, 38, 39, 40, 41
 
-2. **Count Query**: Ask how many nodes in a given subset belong to the same group as a specified node
-   Format: <query_count>Sx;Sa,Sb,Sc,...</query_count>
-   Example: <query_count>S01;S02,S03,S04,S05</query_count>
-   Answer: A non-negative integer
+You can perform the following types of queries (please use as few queries as possible):
 
-3. **Example Query**: Request a node that belongs to the same group as a specified node
-   Format: <query_example>Sx</query_example>
-   Example: <query_example>S01</query_example>
-   Answer: A node ID, or "None" (if the node forms a singleton group)
+1. **Retrieve Query**: View the command at interval i (1 less than or equal to i less than or equal to 36)
+2. **Compare Query**: Ask whether the commands at intervals i and j are the same (1 less than or equal to i, j less than or equal to 36)
+3. **Period Test Query**: Ask whether the commands at intervals k and k+q are the same (requires 1 less than or equal to k less than or equal to 36−q)
 
-After the survey, enter the deployment phase with:
-<enter_challenge></enter_challenge>
+You can ask 1 to 4 queries at a time, each using one of the following XML formats:
 
-### Deployment Phase
-The system will provide {num_challenges} pairs of traffic nodes. You must judge whether each pair belongs to the same group. No more queries are allowed in this phase.
+- Retrieve Query (e.g., retrieve interval 5):
+<query_view>5</query_view>
 
-Judgment format: <judge>Sx,Sy,same</judge> or <judge>Sx,Sy,different</judge>
-Example: <judge>S01,S09,same</judge> means S01 and S09 are in the same group
-Example: <judge>S02,S10,different</judge> means S02 and S10 are in different groups
+- Compare Query (e.g., compare intervals 3 and 8):
+<query_compare>3,8</query_compare>
 
-## Alternative Victory: Rule Declaration
+- Period Test Query (e.g., test interval of 4 starting at interval 10):
+<query_interval>4,10</query_interval>
 
-If you believe you fully understand the hidden coordination rule, you can directly submit a rule description:
+When submitting your final answer, you must include the following four items in this format:
 
-<answer>Rule description content</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-The rule description must fully express the judgment criteria using logical conditions on Feature1, Feature2, and Feature3.
-Example: <answer>Nodes where the first character of Feature1 matches the first character of Feature2 form a group</answer>
-
-## Victory Conditions (satisfy either)
-
-1. At least {pass_threshold} correct judgments in the deployment phase
-2. Rule declaration verified as correct
-
-## Failure Conditions
-
-1. Fewer than {pass_threshold} correct judgments in the deployment phase
-2. Rule declaration verification failed
-3. Query format error or system rule violation
+Where:
+- mechanism: The scheduling mechanism, must be A, B, or C
+- p: The base dispatch pattern length, must be 3, 4, or 5
+- min_period: The minimum scheduling period length, must be a positive integer
+- next_symbols: The 5 commands at intervals 37 to 41, space-separated or concatenated
 """
 
     contextualized_rule_zh_2 = """\
-欢迎来到精准医疗研究中心。我们正在进行一项"临床样本同构分组"的病理分析任务，规则如下：
+欢迎进入精准医疗与基因测序分析系统。我们现在需要对一段未知的"异常基因表达序列"进行分析。规则如下：
 
-研究库中包含 16 个临床样本，编号为 S01 到 S16。每个样本具有三个离散生物特征：
-- 基因表达型（特征1）：取值为 A1, A2, A3, A4 之一
-- 蛋白质亚型（特征2）：取值为 B1, B2, B3, B4 之一  
-- 临床分期（特征3）：取值为 1, 2, 3, 4 之一
+系统测得了一段长度为 36 的靶点序列 S，其中每个位点的核苷酸片段取自标记集 {{A, B, C, D}}。这个序列是由一个长度为 p 的核心基因模体（Motif）M 按照某种突变与表达机制生成的，其中 p 可能是 3、4 或 5。核心模体 M 至少包含两种不同的核苷酸。
 
-所有样本的特征如下：
-{objects_description}
+表达机制只有以下三种可能：
 
-系统已经秘密设定了一个基于这些特征的病理判定规则，该规则将 16 个样本划分为若干个互不相交的治疗靶向组。同一组内的样本满足某种特征条件以适用相同靶向药物，不同组的样本不满足相同条件。
+1. **机制 A（串联重复序列）**：完整序列由核心模体 M 直接重复拼接而成。即第 b 个转录块的内容与 M 完全相同。
 
-你的目标是通过实验查询推断出这个隐藏的病理规则，并能够判断任意两个样本是否属于同一治疗靶向组。
+2. **机制 B（回文配对交替）**：奇数块（第 1、3、5...块）的片段等于 M，偶数块（第 2、4、6...块）的片段等于 M 的反向序列，反映了 DNA 复制时的反向链表现。注意 M 本身不是回文序列。
 
-## 任务分为两个阶段
+3. **机制 C（移码突变循环）**：第 b 个块等于将 M 右循环位移 (b−1) 位所得的结果，呈现出典型的移码突变特征。M 不存在更短的非平凡周期。
 
-### 化验阶段
-你可以进行以下类型的化验查询（总次数有限，需尽可能少地使用）：
+说明：每个转录块的长度均为 p，块的编号 b 从 1 开始计数。如果序列在 36 个位点处截断了某个块，那么该块的已表达位点仍按对应机制生成。
 
-1. **等价查询**：询问两个样本是否属于同一靶向组
-   格式：<query_equiv>Sx,Sy</query_equiv>
-   示例：<query_equiv>S01,S05</query_equiv>
-   回答：是 或 否
+你的目标是通过查询推断出：
+- 采用的突变与表达机制（A、B 或 C）
+- 核心基因模体的长度 p（3、4 或 5）
+- 基因序列的最小转录周期长度
+- 位点 37、38、39、40、41 上的核苷酸片段
 
-2. **计数查询**：询问给定子集中有多少个样本与指定样本同组
-   格式：<query_count>Sx;Sa,Sb,Sc,...</query_count>
-   示例：<query_count>S01;S02,S03,S04,S05</query_count>
-   回答：一个非负整数
+你可以进行以下类型的查询，但需要尽可能少地使用检测资源：
 
-3. **示例查询**：请求给出一个与指定样本同组的其他样本
-   格式：<query_example>Sx</query_example>
-   示例：<query_example>S01</query_example>
-   回答：一个样本编号，或"无"（表示该样本独自成组）
+1. **靶向查询**：查看位点 i 的核苷酸（1 小于等于 i 小于等于 36）
+2. **同源比对查询**：询问位点 i 和位点 j 的核苷酸是否相同（1 小于等于 i, j 小于等于 36）
+3. **周期性检测查询**：询问位点 k 和位点 k+q 的核苷酸是否相同（要求 1 小于等于 k 小于等于 36−q）
 
-完成化验后，使用以下格式进入诊断阶段：
-<enter_challenge></enter_challenge>
+每次可以提出 1 到 4 个查询，每个查询必须使用以下 XML 格式之一：
 
-### 诊断阶段
-系统会给出 {num_challenges} 对样本，你需要判断每一对是否属于同一靶向组。此阶段不能再进行查询。
+- 靶向查询（例如查看位点 5）：
+<query_view>5</query_view>
 
-判定格式：<judge>Sx,Sy,same</judge> 或 <judge>Sx,Sy,different</judge>
-示例：<judge>S01,S09,same</judge> 表示认为 S01 和 S09 同组
-示例：<judge>S02,S10,different</judge> 表示认为 S02 和 S10 不同组
+- 同源比对查询（例如对比位点 3 和位点 8）：
+<query_compare>3,8</query_compare>
 
-## 替代胜利方式：规则声明
+- 周期性检测查询（例如测试间隔为 4，起始位点为 10）：
+<query_interval>4,10</query_interval>
 
-如果你认为已经完全理解了隐藏的病理规则，可以直接提交规则描述：
+提交最终答案时，必须包含以下四项信息，格式如下：
 
-<answer>规则描述内容</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-规则描述需要用特征1、特征2、特征3的逻辑条件完整表达判定标准。
-示例：<answer>特征1的第一个字符与特征2的第一个字符相同的样本为一组</answer>
-
-## 胜利条件（满足任一即可）
-
-1. 诊断阶段判定正确数达到 {pass_threshold} 个或以上
-2. 规则声明验证通过
-
-## 失败条件
-
-1. 诊断阶段判定正确数少于 {pass_threshold} 个
-2. 规则声明验证失败
-3. 查询格式错误或违反临床规则
+其中：
+- mechanism：突变与表达机制，必须是 A、B 或 C
+- p：核心模体长度，必须是 3、4 或 5
+- min_period：最小转录周期长度，必须是正整数
+- next_symbols：位点 37 到 41 的 5 个片段，用空格分隔或直接连写
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the Precision Medicine Research Center. We are conducting a "Clinical Sample Isomorphic Grouping" pathological analysis task. The rules are as follows:
+Welcome to the Precision Medicine and Gene Sequencing Analysis System. We now need to analyze an unknown "abnormal gene expression sequence". Here are the rules:
 
-The research repository contains 16 clinical samples, numbered S01 to S16. Each sample has three discrete biological features:
-- Gene Expression Type (Feature1): one of A1, A2, A3, A4
-- Protein Subtype (Feature2): one of B1, B2, B3, B4
-- Clinical Stage (Feature3): one of 1, 2, 3, 4
+The system has measured a target sequence S of length 36, where each locus's nucleotide fragment is drawn from the marker set {{A, B, C, D}}. This sequence is generated from a core gene motif M of length p using a specific mutation and expression mechanism, where p can be 3, 4, or 5. The core motif M contains at least two different nucleotides.
 
-All samples and their features are:
-{objects_description}
+There are only three possible expression mechanisms:
 
-The system has secretly established a pathological judgment rule based on these features that partitions the 16 samples into several disjoint targeted therapy groups. Samples in the same group satisfy certain feature conditions for the same targeted drug, while samples in different groups do not.
+1. **Mechanism A (Tandem Repeat Sequence)**: The entire sequence is formed by directly repeating the core motif M. Each transcription block b has the same content as M.
 
-Your goal is to infer this hidden pathological rule through experimental queries and determine whether any two samples belong to the same targeted therapy group.
+2. **Mechanism B (Palindromic Pairing Alternation)**: Odd-numbered blocks (1st, 3rd, 5th...) equal M, and even-numbered blocks (2nd, 4th, 6th...) equal the reverse of M, reflecting the reverse strand behavior during DNA replication. Note that M itself is not a palindrome.
 
-## The task has two phases
+3. **Mechanism C (Frameshift Mutation Cycle)**: Block b equals M right-cyclically shifted by (b−1) positions, showing typical frameshift mutation characteristics. M has no shorter non-trivial period.
 
-### Assay Phase
-You can make the following types of assay queries (limited total number, use as few as possible):
+Note: Each transcription block has length p, and block numbering b starts from 1. If the sequence truncates a block at position 36, the defined loci of that block still follow the corresponding mechanism.
 
-1. **Equivalence Query**: Ask if two samples belong to the same targeted group
-   Format: <query_equiv>Sx,Sy</query_equiv>
-   Example: <query_equiv>S01,S05</query_equiv>
-   Answer: Yes or No
+Your goal is to infer through queries:
+- The mutation and expression mechanism used (A, B, or C)
+- The length p of the core gene motif (3, 4, or 5)
+- The minimum transcription period length of the gene sequence
+- The nucleotide fragments at loci 37, 38, 39, 40, 41
 
-2. **Count Query**: Ask how many samples in a given subset belong to the same group as a specified sample
-   Format: <query_count>Sx;Sa,Sb,Sc,...</query_count>
-   Example: <query_count>S01;S02,S03,S04,S05</query_count>
-   Answer: A non-negative integer
+You can perform the following types of queries, but should use as few testing resources as possible:
 
-3. **Example Query**: Request a sample that belongs to the same group as a specified sample
-   Format: <query_example>Sx</query_example>
-   Example: <query_example>S01</query_example>
-   Answer: A sample ID, or "None" (if the sample forms a singleton group)
+1. **Targeted Query**: View the nucleotide at locus i (1 less than or equal to i less than or equal to 36)
+2. **Homologous Compare Query**: Ask whether the nucleotides at loci i and j are the same (1 less than or equal to i, j less than or equal to 36)
+3. **Periodicity Test Query**: Ask whether the nucleotides at loci k and k+q are the same (requires 1 less than or equal to k less than or equal to 36−q)
 
-After the assays, enter the diagnostic phase with:
-<enter_challenge></enter_challenge>
+You can ask 1 to 4 queries at a time, each using one of the following XML formats:
 
-### Diagnostic Phase
-The system will provide {num_challenges} pairs of samples. You must judge whether each pair belongs to the same group. No more queries are allowed in this phase.
+- Targeted Query (e.g., view locus 5):
+<query_view>5</query_view>
 
-Judgment format: <judge>Sx,Sy,same</judge> or <judge>Sx,Sy,different</judge>
-Example: <judge>S01,S09,same</judge> means S01 and S09 are in the same group
-Example: <judge>S02,S10,different</judge> means S02 and S10 are in different groups
+- Homologous Compare Query (e.g., compare loci 3 and 8):
+<query_compare>3,8</query_compare>
 
-## Alternative Victory: Rule Declaration
+- Periodicity Test Query (e.g., test interval of 4 starting at locus 10):
+<query_interval>4,10</query_interval>
 
-If you believe you fully understand the hidden pathological rule, you can directly submit a rule description:
+When submitting your final answer, you must include the following four items in this format:
 
-<answer>Rule description content</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-The rule description must fully express the judgment criteria using logical conditions on Feature1, Feature2, and Feature3.
-Example: <answer>Samples where the first character of Feature1 matches the first character of Feature2 form a group</answer>
-
-## Victory Conditions (satisfy either)
-
-1. At least {pass_threshold} correct judgments in the diagnostic phase
-2. Rule declaration verified as correct
-
-## Failure Conditions
-
-1. Fewer than {pass_threshold} correct judgments in the diagnostic phase
-2. Rule declaration verification failed
-3. Query format error or clinical rule violation
+Where:
+- mechanism: The mutation and expression mechanism, must be A, B, or C
+- p: The core motif length, must be 3, 4, or 5
+- min_period: The minimum transcription period length, must be a positive integer
+- next_symbols: The 5 fragments at loci 37 to 41, space-separated or concatenated
 """
 
     contextualized_rule_zh_3 = """\
-欢迎来到智慧教育管理平台。我们需要完成一项"学生学习小组分配"的教务编排任务，规则如下：
+欢迎进入自适应教育个性化抽题系统。我们来推演一段未知的"抽题序列机制"。规则如下：
 
-班级中包含 16 名学生，学号为 S01 到 S16。每位学生具有三个离散维度的学情特征：
-- 认知风格（特征1）：取值为 A1, A2, A3, A4 之一
-- 优势学科（特征2）：取值为 B1, B2, B3, B4 之一  
-- 综合评级（特征3）：取值为 1, 2, 3, 4 之一
+系统生成了一份长度为 36 的练习题序列 S，其中每道题的认知能力类型取自集合 {{A, B, C, D}}。这个题目序列是由一个长度为 p 的基础能力考核模块 M 按照某种抽题机制生成的，其中 p 可能是 3、4 或 5。基础模块 M 至少包含两种不同的题型。
 
-所有学生的学情特征如下：
-{objects_description}
+抽题机制只有以下三种可能：
 
-系统内置了一个基于这些特征的差异化教学分组规则，该规则将 16 名学生划分为若干个互不相交的互助学习组。同一组内的学生满足某种特征条件以达成互补或共振，不同组的学生不满足相同条件。
+1. **机制 A（模块化重复）**：试卷由基础模块 M 直接重复拼接而成。即第 b 个题组块的内容与 M 完全相同，用于强化训练。
 
-你的目标是通过教务查询推断出这个隐藏的分组规则，并能够判断任意两名学生是否属于同一互助学习组。
+2. **机制 B（螺旋式复习）**：奇数块（第 1、3、5...块）的内容等于 M，偶数块（第 2、4、6...块）的内容等于 M 的反向序列，通过反向顺序进行防遗忘复习。注意 M 本身不具有对称性。
 
-## 任务分为两个阶段
+3. **机制 C（进阶能力轮转）**：第 b 个块等于将 M 右循环位移 (b−1) 位所得的结果，避免学生产生做题惯性。M 不存在更短的非平凡周期。
 
-### 摸底阶段
-你可以进行以下类型的教务查询（总次数有限，需尽可能少地使用）：
+说明：每个题组块的长度均为 p，块的编号 b 从 1 开始计数。如果序列在 36 个位置处截断了某个块，那么该块的已出题位置仍按对应机制生成。
 
-1. **等价查询**：询问两名学生是否属于同一学习组
-   格式：<query_equiv>Sx,Sy</query_equiv>
-   示例：<query_equiv>S01,S05</query_equiv>
-   回答：是 或 否
+你的目标是通过查询推断出：
+- 采用的抽题机制（A、B 或 C）
+- 基础考核模块的题量 p（3、4 或 5）
+- 完整考卷的出题最小周期长度
+- 题目位置 37、38、39、40、41 上的题型
 
-2. **计数查询**：询问给定子集中有多少名学生与指定学生同组
-   格式：<query_count>Sx;Sa,Sb,Sc,...</query_count>
-   示例：<query_count>S01;S02,S03,S04,S05</query_count>
-   回答：一个非负整数
+你可以进行以下类型的查询，但需要尽可能少地使用查询次数：
 
-3. **示例查询**：请求给出一名与指定学生同组的其他学生
-   格式：<query_example>Sx</query_example>
-   示例：<query_example>S01</query_example>
-   回答：一个学生学号，或"无"（表示该学生独自成组）
+1. **抽样查询**：查看位置 i 的题型（1 小于等于 i 小于等于 36）
+2. **同构对比查询**：询问位置 i 和位置 j 的题型是否相同（1 小于等于 i, j 小于等于 36）
+3. **跨度复测查询**：询问位置 k 和位置 k+q 的题型是否相同（要求 1 小于等于 k 小于等于 36−q）
 
-完成摸底后，使用以下格式进入排课阶段：
-<enter_challenge></enter_challenge>
+每次可以提出 1 到 4 个查询，每个查询必须使用以下 XML 格式之一：
 
-### 排课阶段
-系统会给出 {num_challenges} 对学生，你需要判断每一对是否属于同一学习组。此阶段不能再进行查询。
+- 抽样查询（例如查看位置 5）：
+<query_view>5</query_view>
 
-判定格式：<judge>Sx,Sy,same</judge> 或 <judge>Sx,Sy,different</judge>
-示例：<judge>S01,S09,same</judge> 表示认为 S01 和 S09 同组
-示例：<judge>S02,S10,different</judge> 表示认为 S02 和 S10 不同组
+- 同构对比查询（例如对比位置 3 和位置 8）：
+<query_compare>3,8</query_compare>
 
-## 替代胜利方式：规则声明
+- 跨度复测查询（例如测试间隔为 4，起始位置为 10）：
+<query_interval>4,10</query_interval>
 
-如果你认为已经完全理解了隐藏的教学分组规则，可以直接提交规则描述：
+提交最终答案时，必须包含以下四项信息，格式如下：
 
-<answer>规则描述内容</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-规则描述需要用特征1、特征2、特征3的逻辑条件完整表达判定标准。
-示例：<answer>特征1的第一个字符与特征2的第一个字符相同的学生为一组</answer>
-
-## 胜利条件（满足任一即可）
-
-1. 排课阶段判定正确数达到 {pass_threshold} 个或以上
-2. 规则声明验证通过
-
-## 失败条件
-
-1. 排课阶段判定正确数少于 {pass_threshold} 个
-2. 规则声明验证失败
-3. 查询格式错误或违反教务规则
+其中：
+- mechanism：抽题机制，必须是 A、B 或 C
+- p：基础模块长度，必须是 3、4 或 5
+- min_period：最小周期长度，必须是正整数
+- next_symbols：位置 37 到 41 的 5 个题型，用空格分隔或直接连写
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Smart Education Management Platform. We need to complete a "Student Study Group Allocation" pedagogical scheduling task. The rules are as follows:
+Welcome to the Adaptive Education Personalized Question Selection System. Let's infer an unknown "question selection sequence mechanism". Here are the rules:
 
-The class contains 16 students, with student IDs S01 to S16. Each student has three discrete dimensions of learning profile features:
-- Cognitive Style (Feature1): one of A1, A2, A3, A4
-- Dominant Subject (Feature2): one of B1, B2, B3, B4
-- Comprehensive Rating (Feature3): one of 1, 2, 3, 4
+The system has generated a practice sequence S of length 36, where each question's cognitive ability type is drawn from the set {{A, B, C, D}}. This sequence is generated from a base assessment module M of length p using a specific question selection mechanism, where p can be 3, 4, or 5. The base module M contains at least two different question types.
 
-All students and their learning profile features are:
-{objects_description}
+There are only three possible selection mechanisms:
 
-The system has a built-in differentiated instructional grouping rule based on these features that partitions the 16 students into several disjoint peer-learning groups. Students in the same group satisfy certain feature conditions to achieve complementarity or resonance, while students in different groups do not.
+1. **Mechanism A (Modular Repetition)**: The test paper is formed by directly repeating the base module M. Each question block b has the same content as M, used for intensive training.
 
-Your goal is to infer this hidden grouping rule through pedagogical queries and determine whether any two students belong to the same peer-learning group.
+2. **Mechanism B (Spiral Review)**: Odd-numbered blocks (1st, 3rd, 5th...) equal M, and even-numbered blocks (2nd, 4th, 6th...) equal the reverse of M, conducting anti-forgetting reviews in reverse order. Note that M itself is not symmetric.
 
-## The task has two phases
+3. **Mechanism C (Advanced Ability Rotation)**: Block b equals M right-cyclically shifted by (b−1) positions, preventing students from forming predictable answering habits. M has no shorter non-trivial period.
 
-### Assessment Phase
-You can make the following types of pedagogical queries (limited total number, use as few as possible):
+Note: Each question block has length p, and block numbering b starts from 1. If the sequence truncates a block at position 36, the defined questions of that block still follow the corresponding mechanism.
 
-1. **Equivalence Query**: Ask if two students belong to the same study group
-   Format: <query_equiv>Sx,Sy</query_equiv>
-   Example: <query_equiv>S01,S05</query_equiv>
-   Answer: Yes or No
+Your goal is to infer through queries:
+- The question selection mechanism used (A, B, or C)
+- The length p of the base assessment module (3, 4, or 5)
+- The minimum period length of the test generation sequence
+- The question types at positions 37, 38, 39, 40, 41
 
-2. **Count Query**: Ask how many students in a given subset belong to the same group as a specified student
-   Format: <query_count>Sx;Sa,Sb,Sc,...</query_count>
-   Example: <query_count>S01;S02,S03,S04,S05</query_count>
-   Answer: A non-negative integer
+You can perform the following types of queries, but should use as few queries as possible:
 
-3. **Example Query**: Request a student that belongs to the same group as a specified student
-   Format: <query_example>Sx</query_example>
-   Example: <query_example>S01</query_example>
-   Answer: A student ID, or "None" (if the student forms a singleton group)
+1. **Sampling Query**: View the question type at position i (1 less than or equal to i less than or equal to 36)
+2. **Isomorphic Compare Query**: Ask whether the question types at positions i and j are the same (1 less than or equal to i, j less than or equal to 36)
+3. **Span Retest Query**: Ask whether the question types at positions k and k+q are the same (requires 1 less than or equal to k less than or equal to 36−q)
 
-After the assessment, enter the scheduling phase with:
-<enter_challenge></enter_challenge>
+You can ask 1 to 4 queries at a time, each using one of the following XML formats:
 
-### Scheduling Phase
-The system will provide {num_challenges} pairs of students. You must judge whether each pair belongs to the same group. No more queries are allowed in this phase.
+- Sampling Query (e.g., view position 5):
+<query_view>5</query_view>
 
-Judgment format: <judge>Sx,Sy,same</judge> or <judge>Sx,Sy,different</judge>
-Example: <judge>S01,S09,same</judge> means S01 and S09 are in the same group
-Example: <judge>S02,S10,different</judge> means S02 and S10 are in different groups
+- Isomorphic Compare Query (e.g., compare positions 3 and 8):
+<query_compare>3,8</query_compare>
 
-## Alternative Victory: Rule Declaration
+- Span Retest Query (e.g., test interval of 4 starting at position 10):
+<query_interval>4,10</query_interval>
 
-If you believe you fully understand the hidden instructional grouping rule, you can directly submit a rule description:
+When submitting your final answer, you must include the following four items in this format:
 
-<answer>Rule description content</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-The rule description must fully express the judgment criteria using logical conditions on Feature1, Feature2, and Feature3.
-Example: <answer>Students where the first character of Feature1 matches the first character of Feature2 form a group</answer>
-
-## Victory Conditions (satisfy either)
-
-1. At least {pass_threshold} correct judgments in the scheduling phase
-2. Rule declaration verified as correct
-
-## Failure Conditions
-
-1. Fewer than {pass_threshold} correct judgments in the scheduling phase
-2. Rule declaration verification failed
-3. Query format error or pedagogical rule violation
+Where:
+- mechanism: The selection mechanism, must be A, B, or C
+- p: The base module length, must be 3, 4, or 5
+- min_period: The minimum period length, must be a positive integer
+- next_symbols: The 5 question types at positions 37 to 41, space-separated or concatenated
 """
 
     contextualized_rule_zh_4 = """\
-欢迎进入柔性制造执行系统（MES）。我们需要进行一项"零部件装配线批次归类"的任务，规则如下：
+欢迎进入智能工业控制与自动化制造中心。我们现在要对一段"流水线装配工序模式"进行分析。规则如下：
 
-待处理区有一个包含 16 个零部件的批次，编号为 S01 到 S16。每个零部件具有三个离散工艺特征：
-- 材质规格（特征1）：取值为 A1, A2, A3, A4 之一
-- 表面处理工艺（特征2）：取值为 B1, B2, B3, B4 之一  
-- 强度等级（特征3）：取值为 1, 2, 3, 4 之一
+中控机记录了一个长度为 36 的操作序列 S，其中每个工位的动作指令取自指令集 {{A, B, C, D}}。这个流水线序列是由一个长度为 p 的核心工艺程序 M 按照某种排产机制生成的，其中 p 可能是 3、4 或 5。核心工艺 M 至少包含两种不同的动作。
 
-所有零部件的工艺特征如下：
-{objects_description}
+排产控制机制只有以下三种可能：
 
-系统已经预设了一个基于这些工艺特征的产线分配规则，该规则将 16 个零部件划分为若干个互不相交的生产批次组。同一组内的零部件满足某种特征条件以送往同一条自动化装配线，不同组的零部件则不满足相同条件。
+1. **机制 A（标准流水线重复）**：加工序列由核心工艺 M 直接重复执行而成。即第 b 个加工块的动作序列与 M 完全相同。
 
-你的目标是通过调用质检接口推断出这个隐藏的分配规则，并能够判断任意两个零部件是否属于同一生产批次组。
+2. **机制 B（往复式加工）**：奇数块（第 1、3、5...块）的动作序列等于 M，偶数块（第 2、4、6...块）的动作序列等于 M 的反向序列，通常用于机械臂来回往返喷涂或组装。注意 M 本身不是对称的。
 
-## 任务分为两个阶段
+3. **机制 C（分度盘旋转加工）**：第 b 个块等于将 M 右循环位移 (b−1) 位所得的结果，这是为了适配工位转盘的逐步推进。M 不存在更短的非平凡周期。
 
-### 抽检阶段
-你可以调用以下类型的质检接口查询（总调用次数有限，需尽可能少地使用）：
+说明：每个加工块的长度均为 p，块的编号 b 从 1 开始计数。如果序列在 36 个工位处截断了某个块，那么该块的已执行工位仍按对应机制生成。
 
-1. **等价查询**：询问两个零部件是否属于同装配线批次
-   格式：<query_equiv>Sx,Sy</query_equiv>
-   示例：<query_equiv>S01,S05</query_equiv>
-   回答：是 或 否
+你的目标是通过查询推断出：
+- 采用的排产机制（A、B 或 C）
+- 核心工艺程序的步骤数 p（3、4 或 5）
+- 流水线动作的最小循环周期长度
+- 工位 37、38、39、40、41 上的操作动作
 
-2. **计数查询**：询问给定子集中有多少个零部件与指定零部件同批次
-   格式：<query_count>Sx;Sa,Sb,Sc,...</query_count>
-   示例：<query_count>S01;S02,S03,S04,S05</query_count>
-   回答：一个非负整数
+你可以进行以下类型的查询，但需要尽可能少地进行干预：
 
-3. **示例查询**：请求给出一个与指定零部件同批次的其他零部件
-   格式：<query_example>Sx</query_example>
-   示例：<query_example>S01</query_example>
-   回答：一个零部件编号，或"无"（表示该零部件单独作为一个批次）
+1. **监控查询**：查看工位 i 的动作指令（1 小于等于 i 小于等于 36）
+2. **动作比对查询**：询问工位 i 和工位 j 的动作指令是否相同（1 小于等于 i, j 小于等于 36）
+3. **步长校验查询**：询问工位 k 和工位 k+q 的动作指令是否相同（要求 1 小于等于 k 小于等于 36−q）
 
-完成抽检后，使用以下格式进入投产阶段：
-<enter_challenge></enter_challenge>
+每次可以提出 1 到 4 个查询，每个查询必须使用以下 XML 格式之一：
 
-### 投产阶段
-系统会给出 {num_challenges} 对零部件，你需要判断每一对是否属于同一生产批次组。此阶段不能再调用查询接口。
+- 监控查询（例如查看工位 5）：
+<query_view>5</query_view>
 
-判定格式：<judge>Sx,Sy,same</judge> 或 <judge>Sx,Sy,different</judge>
-示例：<judge>S01,S09,same</judge> 表示认为 S01 和 S09 同组
-示例：<judge>S02,S10,different</judge> 表示认为 S02 和 S10 不同组
+- 动作比对查询（例如对比工位 3 和工位 8）：
+<query_compare>3,8</query_compare>
 
-## 替代胜利方式：规则声明
+- 步长校验查询（例如测试间隔为 4，起始工位为 10）：
+<query_interval>4,10</query_interval>
 
-如果你认为已经完全解析了隐藏的产线分配规则，可以直接提交规则描述：
+提交最终答案时，必须包含以下四项信息，格式如下：
 
-<answer>规则描述内容</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-规则描述需要用特征1、特征2、特征3的逻辑条件完整表达判定标准。
-示例：<answer>特征1的第一个字符与特征2的第一个字符相同的零部件为一组</answer>
-
-## 胜利条件（满足任一即可）
-
-1. 投产阶段判定正确数达到 {pass_threshold} 个或以上
-2. 规则声明验证通过
-
-## 失败条件
-
-1. 投产阶段判定正确数少于 {pass_threshold} 个
-2. 规则声明验证失败
-3. 接口调用格式错误或违反工艺规则
+其中：
+- mechanism：排产机制，必须是 A、B 或 C
+- p：核心工艺步骤数，必须是 3、4 或 5
+- min_period：最小循环周期长度，必须是正整数
+- next_symbols：工位 37 到 41 的 5 个动作，用空格分隔或直接连写
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the Flexible Manufacturing Execution System (MES). We need to perform a "Component Assembly Line Batch Classification" task. The rules are as follows:
+[Manufacturing/Industrial Scenario]
+Welcome to the Intelligent Industrial Control and Automated Manufacturing Center. We now need to analyze an unknown "assembly line operation pattern". Here are the rules:
 
-The pending area has a batch containing 16 components, numbered S01 to S16. Each component has three discrete process features:
-- Material Specification (Feature1): one of A1, A2, A3, A4
-- Surface Treatment Process (Feature2): one of B1, B2, B3, B4
-- Strength Grade (Feature3): one of 1, 2, 3, 4
+The central console has recorded an operation sequence S of length 36, where each station's action command is drawn from the set {{A, B, C, D}}. This pipeline sequence is generated from a core process program M of length p using a specific production scheduling mechanism, where p can be 3, 4, or 5. The core process M contains at least two different actions.
 
-All components and their process features are:
-{objects_description}
+There are only three possible scheduling mechanisms:
 
-The system has preset a production line allocation rule based on these process features that partitions the 16 components into several disjoint production batch groups. Components in the same group satisfy certain feature conditions to be routed to the same automated assembly line, while components in different groups do not.
+1. **Mechanism A (Standard Pipeline Repetition)**: The processing sequence is formed by directly repeating the core process M. Each processing block b has the exact same action sequence as M.
 
-Your goal is to infer this hidden allocation rule by invoking quality inspection interfaces and determine whether any two components belong to the same production batch group.
+2. **Mechanism B (Reciprocating Processing)**: Odd-numbered blocks (1st, 3rd, 5th...) equal M, and even-numbered blocks (2nd, 4th, 6th...) equal the reverse of M, typically used for reciprocating robotic arm spraying or assembly. Note that M itself is not symmetric.
 
-## The task has two phases
+3. **Mechanism C (Indexing Dial Rotation Processing)**: Block b equals M right-cyclically shifted by (b−1) positions, designed to adapt to the progressive advancement of station dials. M has no shorter non-trivial period.
 
-### Sampling Phase
-You can invoke the following types of quality inspection interface queries (limited total number, use as few as possible):
+Note: Each processing block has length p, and block numbering b starts from 1. If the sequence truncates a block at position 36, the executed stations of that block still follow the corresponding mechanism.
 
-1. **Equivalence Query**: Ask if two components belong to the same assembly line batch
-   Format: <query_equiv>Sx,Sy</query_equiv>
-   Example: <query_equiv>S01,S05</query_equiv>
-   Answer: Yes or No
+Your goal is to infer through queries:
+- The production scheduling mechanism used (A, B, or C)
+- The number of steps p in the core process program (3, 4, or 5)
+- The minimum cycle period length of the pipeline actions
+- The action commands at stations 37, 38, 39, 40, 41
 
-2. **Count Query**: Ask how many components in a given subset belong to the same batch as a specified component
-   Format: <query_count>Sx;Sa,Sb,Sc,...</query_count>
-   Example: <query_count>S01;S02,S03,S04,S05</query_count>
-   Answer: A non-negative integer
+You can perform the following types of queries, but should use as few interventions as possible:
 
-3. **Example Query**: Request a component that belongs to the same batch as a specified component
-   Format: <query_example>Sx</query_example>
-   Example: <query_example>S01</query_example>
-   Answer: A component ID, or "None" (if the component forms a singleton batch)
+1. **Monitor Query**: View the action command at station i (1 less than or equal to i less than or equal to 36)
+2. **Action Compare Query**: Ask whether the action commands at stations i and j are the same (1 less than or equal to i, j less than or equal to 36)
+3. **Step Check Query**: Ask whether the action commands at stations k and k+q are the same (requires 1 less than or equal to k less than or equal to 36−q)
 
-After sampling, enter the production phase with:
-<enter_challenge></enter_challenge>
+You can ask 1 to 4 queries at a time, each using one of the following XML formats:
 
-### Production Phase
-The system will provide {num_challenges} pairs of components. You must judge whether each pair belongs to the same batch. No more queries are allowed in this phase.
+- Monitor Query (e.g., view station 5):
+<query_view>5</query_view>
 
-Judgment format: <judge>Sx,Sy,same</judge> or <judge>Sx,Sy,different</judge>
-Example: <judge>S01,S09,same</judge> means S01 and S09 are in the same group
-Example: <judge>S02,S10,different</judge> means S02 and S10 are in different groups
+- Action Compare Query (e.g., compare stations 3 and 8):
+<query_compare>3,8</query_compare>
 
-## Alternative Victory: Rule Declaration
+- Step Check Query (e.g., test interval of 4 starting at station 10):
+<query_interval>4,10</query_interval>
 
-If you believe you fully resolved the hidden production line allocation rule, you can directly submit a rule description:
+When submitting your final answer, you must include the following four items in this format:
 
-<answer>Rule description content</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-The rule description must fully express the judgment criteria using logical conditions on Feature1, Feature2, and Feature3.
-Example: <answer>Components where the first character of Feature1 matches the first character of Feature2 form a group</answer>
-
-## Victory Conditions (satisfy either)
-
-1. At least {pass_threshold} correct judgments in the production phase
-2. Rule declaration verified as correct
-
-## Failure Conditions
-
-1. Fewer than {pass_threshold} correct judgments in the production phase
-2. Rule declaration verification failed
-3. Interface call format error or process rule violation
+Where:
+- mechanism: The scheduling mechanism, must be A, B, or C
+- p: The core process steps, must be 3, 4, or 5
+- min_period: The minimum cycle period length, must be a positive integer
+- next_symbols: The 5 actions at stations 37 to 41, space-separated or concatenated
 """
 
     contextualized_rule_zh_5 = """\
-欢迎登录智能司法立案分拨系统。目前需要进行一项"诉讼卷宗管辖归类"的审查任务，规则如下：
+欢迎进入反洗钱司法审计与合规审查平台。我们需要对一段隐藏的"资金流转网络模式"进行破解。规则如下：
 
-待分拨池中包含 16 份诉讼卷宗，案号为 S01 到 S16。每份卷宗包含三个离散案件特征：
-- 案由性质（特征1）：取值为 A1, A2, A3, A4 之一
-- 核心证据类型（特征2）：取值为 B1, B2, B3, B4 之一  
-- 争议标的额度（特征3）：取值为 1, 2, 3, 4 之一
+审计日志捕获了一条长度为 36 的转账交易序列 S，其中每个节点的资金流向账户类型取自类型库 {{A, B, C, D}}。这个序列是由一个长度为 p 的基础洗钱交易链 M 按照某种混淆机制生成的，其中 p 可能是 3、4 或 5。基础交易链 M 至少涉及两种不同的账户类型。
 
-所有卷宗的案件特征如下：
-{objects_description}
+资金混淆机制只有以下三种可能：
 
-系统已内置了一套基于上述特征的司法管辖判定规则，该规则将 16 份卷宗划分为若干个互不相交的审理程序组。同一组内的卷宗满足某种特征条件以分配至相同的专项审判庭或适用同一审理程序，不同组的卷宗则不满足相同条件。
+1. **机制 A（固定结构嵌套）**：整体流水由基础交易链 M 直接重复构成。即第 b 个转账批次的内容与 M 完全相同，用于固定渠道的资金输送。
 
-你的目标是通过检索司法预案推断出这套隐藏的管辖规则，并能够判断任意两份卷宗是否属于同一审理程序组。
+2. **机制 B（对冲账户反向交易）**：奇数批次（第 1、3、5...批）的交易等同于 M，偶数批次（第 2、4、6...批）的交易等同于 M 的反向序列，用于制造正反向对冲回流假象。注意 M 本身不是回文序列。
 
-## 任务分为两个阶段
+3. **机制 C（离岸滚动转移）**：第 b 个批次等于将 M 右循环位移 (b−1) 位所得的结果，通过滚动偏移躲避静态规则的追踪。M 不存在更短的非平凡周期。
 
-### 阅卷阶段
-你可以进行以下类型的预案检索（总检索次数有限，需尽可能少地使用）：
+说明：每个转账批次的长度均为 p，批次编号 b 从 1 开始计数。如果流水在 36 个节点处截断了某个批次，那么该批次的已记录节点仍按对应机制生成。
 
-1. **等价查询**：询问两份卷宗是否归属同一审理程序组
-   格式：<query_equiv>Sx,Sy</query_equiv>
-   示例：<query_equiv>S01,S05</query_equiv>
-   回答：是 或 否
+你的目标是通过查询推断出：
+- 采用的资金混淆机制（A、B 或 C）
+- 基础交易链的长度 p（3、4 或 5）
+- 资金流转的最小闭环周期长度
+- 节点 37、38、39、40、41 上的账户类型
 
-2. **计数查询**：询问给定子集中有多少份卷宗与指定卷宗同组
-   格式：<query_count>Sx;Sa,Sb,Sc,...</query_count>
-   示例：<query_count>S01;S02,S03,S04,S05</query_count>
-   回答：一个非负整数
+你可以进行以下类型的查询，但需要尽量控制调证次数以免打草惊蛇：
 
-3. **示例查询**：请求给出一份与指定卷宗同组的其他卷宗
-   格式：<query_example>Sx</query_example>
-   示例：<query_example>S01</query_example>
-   回答：一个卷宗案号，或"无"（表示该卷宗单独成组）
+1. **穿透查询**：查看节点 i 的账户类型（1 小于等于 i 小于等于 36）
+2. **账户比对查询**：询问节点 i 和节点 j 的账户类型是否相同（1 小于等于 i, j 小于等于 36）
+3. **链路间隔查询**：询问节点 k 和节点 k+q 的账户类型是否相同（要求 1 小于等于 k 小于等于 36−q）
 
-完成阅卷后，使用以下格式进入立案阶段：
-<enter_challenge></enter_challenge>
+每次可以提出 1 到 4 个查询，每个查询必须使用以下 XML 格式之一：
 
-### 立案阶段
-系统会给出 {num_challenges} 对卷宗，你需要判断每一对是否属于同一审理程序组。此阶段不能再进行检索。
+- 穿透查询（例如查看节点 5）：
+<query_view>5</query_view>
 
-判定格式：<judge>Sx,Sy,same</judge> 或 <judge>Sx,Sy,different</judge>
-示例：<judge>S01,S09,same</judge> 表示认为 S01 和 S09 同组
-示例：<judge>S02,S10,different</judge> 表示认为 S02 和 S10 不同组
+- 账户比对查询（例如对比节点 3 和节点 8）：
+<query_compare>3,8</query_compare>
 
-## 替代胜利方式：规则声明
+- 链路间隔查询（例如测试间隔为 4，起始节点为 10）：
+<query_interval>4,10</query_interval>
 
-如果你认为已经完全厘清了隐藏的管辖分配规则，可以直接提交规则描述：
+提交最终答案时，必须包含以下四项信息，格式如下：
 
-<answer>规则描述内容</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-规则描述需要用特征1、特征2、特征3的逻辑条件完整表达判定标准。
-示例：<answer>特征1的第一个字符与特征2的第一个字符相同的卷宗为一组</answer>
-
-## 胜利条件（满足任一即可）
-
-1. 立案阶段判定正确数达到 {pass_threshold} 个或以上
-2. 规则声明验证通过
-
-## 失败条件
-
-1. 立案阶段判定正确数少于 {pass_threshold} 个
-2. 规则声明验证失败
-3. 检索格式错误或违反司法程序规则
+其中：
+- mechanism：资金混淆机制，必须是 A、B 或 C
+- p：基础交易链长度，必须是 3、4 或 5
+- min_period：最小闭环周期长度，必须是正整数
+- next_symbols：节点 37 到 41 的 5 个账户类型，用空格分隔或直接连写
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the Intelligent Judicial Case Filing and Allocation System. We need to perform a "Litigation Dossier Jurisdictional Classification" review task. The rules are as follows:
+Welcome to the Anti-Money Laundering Forensic Audit and Compliance Review Platform. We need to decrypt a hidden "fund flow network pattern". Here are the rules:
 
-The pending allocation pool contains 16 litigation dossiers, with case numbers S01 to S16. Each dossier contains three discrete case features:
-- Nature of Cause of Action (Feature1): one of A1, A2, A3, A4
-- Core Evidence Type (Feature2): one of B1, B2, B3, B4
-- Amount in Controversy (Feature3): one of 1, 2, 3, 4
+The audit log has captured a transfer transaction sequence S of length 36, where each node's fund flow account type is drawn from the library {{A, B, C, D}}. This sequence is generated from a base laundering transaction chain M of length p using a specific obfuscation mechanism, where p can be 3, 4, or 5. The base transaction chain M involves at least two different account types.
 
-All dossiers and their case features are:
-{objects_description}
+There are only three possible fund obfuscation mechanisms:
 
-The system has a built-in judicial jurisdiction judgment rule based on the above features that partitions the 16 dossiers into several disjoint trial procedure groups. Dossiers in the same group satisfy certain feature conditions to be assigned to the same specialized tribunal or apply the same trial procedure, while dossiers in different groups do not.
+1. **Mechanism A (Fixed Structural Nesting)**: The overall flow is formed by directly repeating the base transaction chain M. Each transfer batch b has the exact same content as M, used for fixed-channel fund delivery.
 
-Your goal is to infer this hidden jurisdictional rule by retrieving judicial precedents and determine whether any two dossiers belong to the same trial procedure group.
+2. **Mechanism B (Hedged Account Reverse Trading)**: Odd-numbered batches (1st, 3rd, 5th...) equal M, and even-numbered batches (2nd, 4th, 6th...) equal the reverse of M, intended to create the illusion of forward-reverse hedging backflows. Note that M itself is not a palindrome.
 
-## The task has two phases
+3. **Mechanism C (Offshore Rolling Transfer)**: Batch b equals M right-cyclically shifted by (b−1) positions, evading static rule tracking through rolling offsets. M has no shorter non-trivial period.
 
-### Dossier Review Phase
-You can conduct the following types of precedent retrievals (limited total number, use as few as possible):
+Note: Each transfer batch has length p, and batch numbering b starts from 1. If the flow truncates a batch at position 36, the recorded nodes of that batch still follow the corresponding mechanism.
 
-1. **Equivalence Query**: Ask if two dossiers belong to the same trial procedure group
-   Format: <query_equiv>Sx,Sy</query_equiv>
-   Example: <query_equiv>S01,S05</query_equiv>
-   Answer: Yes or No
+Your goal is to infer through queries:
+- The fund obfuscation mechanism used (A, B, or C)
+- The length p of the base transaction chain (3, 4, or 5)
+- The minimum closed-loop period length of the fund flow
+- The account types at nodes 37, 38, 39, 40, 41
 
-2. **Count Query**: Ask how many dossiers in a given subset belong to the same group as a specified dossier
-   Format: <query_count>Sx;Sa,Sb,Sc,...</query_count>
-   Example: <query_count>S01;S02,S03,S04,S05</query_count>
-   Answer: A non-negative integer
+You can perform the following types of queries, but should minimize forensic interventions to avoid alerting the suspects:
 
-3. **Example Query**: Request a dossier that belongs to the same group as a specified dossier
-   Format: <query_example>Sx</query_example>
-   Example: <query_example>S01</query_example>
-   Answer: A dossier case number, or "None" (if the dossier forms a singleton group)
+1. **Penetration Query**: View the account type at node i (1 less than or equal to i less than or equal to 36)
+2. **Account Compare Query**: Ask whether the account types at nodes i and j are the same (1 less than or equal to i, j less than or equal to 36)
+3. **Link Interval Query**: Ask whether the account types at nodes k and k+q are the same (requires 1 less than or equal to k less than or equal to 36−q)
 
-After reviewing the dossiers, enter the filing phase with:
-<enter_challenge></enter_challenge>
+You can ask 1 to 4 queries at a time, each using one of the following XML formats:
 
-### Filing Phase
-The system will provide {num_challenges} pairs of dossiers. You must judge whether each pair belongs to the same trial procedure group. No more retrievals are allowed in this phase.
+- Penetration Query (e.g., view node 5):
+<query_view>5</query_view>
 
-Judgment format: <judge>Sx,Sy,same</judge> or <judge>Sx,Sy,different</judge>
-Example: <judge>S01,S09,same</judge> means S01 and S09 are in the same group
-Example: <judge>S02,S10,different</judge> means S02 and S10 are in different groups
+- Account Compare Query (e.g., compare nodes 3 and 8):
+<query_compare>3,8</query_compare>
 
-## Alternative Victory: Rule Declaration
+- Link Interval Query (e.g., test interval of 4 starting at node 10):
+<query_interval>4,10</query_interval>
 
-If you believe you have fully clarified the hidden jurisdictional allocation rule, you can directly submit a rule description:
+When submitting your final answer, you must include the following four items in this format:
 
-<answer>Rule description content</answer>
+<answer>mechanism=A, p=3, min_period=3, next_symbols=ABCDA</answer>
 
-The rule description must fully express the judgment criteria using logical conditions on Feature1, Feature2, and Feature3.
-Example: <answer>Dossiers where the first character of Feature1 matches the first character of Feature2 form a group</answer>
-
-## Victory Conditions (satisfy either)
-
-1. At least {pass_threshold} correct judgments in the filing phase
-2. Rule declaration verified as correct
-
-## Failure Conditions
-
-1. Fewer than {pass_threshold} correct judgments in the filing phase
-2. Rule declaration verification failed
-3. Retrieval format error or judicial procedure rule violation
+Where:
+- mechanism: The fund obfuscation mechanism, must be A, B, or C
+- p: The base transaction chain length, must be 3, 4, or 5
+- min_period: The minimum closed-loop period length, must be a positive integer
+- next_symbols: The 5 account types at nodes 37 to 41, space-separated or concatenated
 """
 
-    tags = ["answer", "query_equiv", "query_count", "query_example", "enter_challenge", "judge"]
+    tags = ["answer", "query_view", "query_compare", "query_interval"]
     
-    reasoning_type = "归纳推理"
-    data_structure = "集合"
+    reasoning_type = "溯因推理"
+    data_structure = "序列"
 
-    # 16个对象的特征定义（固定）
-    OBJECTS = {
-        "S01": ("A1", "B1", "1"), "S02": ("A1", "B1", "3"),
-        "S03": ("A1", "B2", "2"), "S04": ("A1", "B2", "4"),
-        "S05": ("A2", "B1", "2"), "S06": ("A2", "B1", "4"),
-        "S07": ("A2", "B2", "1"), "S08": ("A2", "B2", "3"),
-        "S09": ("A3", "B3", "1"), "S10": ("A3", "B3", "4"),
-        "S11": ("A3", "B4", "2"), "S12": ("A3", "B4", "3"),
-        "S13": ("A4", "B3", "2"), "S14": ("A4", "B3", "3"),
-        "S15": ("A4", "B4", "1"), "S16": ("A4", "B4", "4"),
-    }
-
-    # 五种难度配置
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {  # 简单：特征3的奇偶性
-                "description": "简单难度",
-                "rule_func": lambda f1, f2, f3: "odd" if int(f3) % 2 == 1 else "even",
-                "rule_text": "特征3为奇数的对象为一组，特征3为偶数的对象为另一组",
-                "max_queries": 15,
-                "num_challenges": 6,
-                "pass_threshold": 5,
+            1: {
+                "mechanism": "A",
+                "p": 3,
+                "pattern": "ABC",
             },
-            2: {  # 中等偏下：特征1相同
-                "description": "中等偏下难度",
-                "rule_func": lambda f1, f2, f3: f1,
-                "rule_text": "特征1相同的对象属于同一组",
-                "max_queries": 14,
-                "num_challenges": 6,
-                "pass_threshold": 5,
+            2: {
+                "mechanism": "B",
+                "p": 4,
+                "pattern": "ABCD",
             },
-            3: {  # 中等偏上：特征1和特征2的第二个字符相同
-                "description": "中等偏上难度",
-                "rule_func": lambda f1, f2, f3: f1[1] + f2[1],
-                "rule_text": "特征1的第二个字符与特征2的第二个字符构成的组合相同的对象属于同一组",
-                "max_queries": 13,
-                "num_challenges": 6,
-                "pass_threshold": 5,
+            3: {
+                "mechanism": "A",
+                "p": 5,
+                "pattern": "ABCDA",
             },
-            4: {  # 较难：特征1的字符编号与特征3的和的奇偶性
-                "description": "较难难度",
-                "rule_func": lambda f1, f2, f3: "odd" if (int(f1[1]) + int(f3)) % 2 == 1 else "even",
-                "rule_text": "特征1中的数字与特征3的和为奇数的对象为一组，和为偶数的对象为另一组",
-                "max_queries": 12,
-                "num_challenges": 6,
-                "pass_threshold": 5,
+            4: {
+                "mechanism": "B",
+                "p": 5,
+                "pattern": "ABCDB",
             },
-            5: {  # 难：复杂组合 - (特征1数字 + 特征2数字) mod 3
-                "description": "困难难度",
-                "rule_func": lambda f1, f2, f3: str((int(f1[1]) + int(f2[1])) % 3),
-                "rule_text": "特征1的数字部分与特征2的数字部分之和除以3的余数相同的对象属于同一组",
-                "max_queries": 12,
-                "num_challenges": 6,
-                "pass_threshold": 6,
+            5: {
+                "mechanism": "C",
+                "p": 4,
+                "pattern": "ABCD",
             },
         },
         "en": {
             1: {
-                "description": "Easy",
-                "rule_func": lambda f1, f2, f3: "odd" if int(f3) % 2 == 1 else "even",
-                "rule_text": "Objects with odd Feature3 form one group, objects with even Feature3 form another",
-                "max_queries": 15,
-                "num_challenges": 6,
-                "pass_threshold": 5,
+                "mechanism": "A",
+                "p": 3,
+                "pattern": "ABC",
             },
             2: {
-                "description": "Medium-Easy",
-                "rule_func": lambda f1, f2, f3: f1,
-                "rule_text": "Objects with the same Feature1 belong to the same group",
-                "max_queries": 14,
-                "num_challenges": 6,
-                "pass_threshold": 5,
+                "mechanism": "B",
+                "p": 4,
+                "pattern": "ABCD",
             },
             3: {
-                "description": "Medium-Hard",
-                "rule_func": lambda f1, f2, f3: f1[1] + f2[1],
-                "rule_text": "Objects with the same combination of the second character of Feature1 and Feature2 belong to the same group",
-                "max_queries": 13,
-                "num_challenges": 6,
-                "pass_threshold": 5,
+                "mechanism": "A",
+                "p": 5,
+                "pattern": "ABCDA",
             },
             4: {
-                "description": "Hard",
-                "rule_func": lambda f1, f2, f3: "odd" if (int(f1[1]) + int(f3)) % 2 == 1 else "even",
-                "rule_text": "Objects where the digit in Feature1 plus Feature3 is odd form one group, even sum forms another",
-                "max_queries": 12,
-                "num_challenges": 6,
-                "pass_threshold": 5,
+                "mechanism": "B",
+                "p": 5,
+                "pattern": "ABCDB",
             },
             5: {
-                "description": "Very Hard",
-                "rule_func": lambda f1, f2, f3: str((int(f1[1]) + int(f2[1])) % 3),
-                "rule_text": "Objects where the sum of digits in Feature1 and Feature2 modulo 3 is the same belong to the same group",
-                "max_queries": 12,
-                "num_challenges": 6,
-                "pass_threshold": 6,
+                "mechanism": "C",
+                "p": 4,
+                "pattern": "ABCD",
             },
         },
     }
 
     def __init__(self, config):
-        # 在调用父类之前不初始化任何依赖 _game_info 的属性
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：加载难度配置，构建等价类映射"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保是整数
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -927,350 +671,181 @@ Example: <answer>Dossiers where the first character of Feature1 matches the firs
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.mechanism = cfg["mechanism"]
+        self.p = cfg["p"]
+        self.pattern = list(cfg["pattern"])
         
-        # 构建对象描述字符串
-        if lang == "zh":
-            obj_desc = "\n".join([
-                f"- {oid}: 特征1={f[0]}, 特征2={f[1]}, 特征3={f[2]}"
-                for oid, f in self.OBJECTS.items()
-            ])
-        else:
-            obj_desc = "\n".join([
-                f"- {oid}: Feature1={f[0]}, Feature2={f[1]}, Feature3={f[2]}"
-                for oid, f in self.OBJECTS.items()
-            ])
-
-        self._game_info["objects_description"] = obj_desc
-        self._game_info["num_challenges"] = cfg["num_challenges"]
-        self._game_info["pass_threshold"] = cfg["pass_threshold"]
-
-        self.rule_func = cfg["rule_func"]
-        self.rule_text = cfg["rule_text"]
-        self.max_queries = cfg["max_queries"]
-        self.num_challenges = cfg["num_challenges"]
-        self.pass_threshold = cfg["pass_threshold"]
-
-        # 计算所有对象的组标识
-        self.group_map = {}
-        for oid, (f1, f2, f3) in self.OBJECTS.items():
-            self.group_map[oid] = self.rule_func(f1, f2, f3)
-
-        # 学习阶段计数器
-        self.query_count = 0
-        self.in_challenge = False
-        self.queried_pairs = set()  # 记录在学习阶段查询过的对象对
+        self.view_count = 0
+        self.compare_count = 0
+        self.max_view = 12
+        self.max_compare = 12
         
-        # 挑战阶段
-        self.challenge_pairs = []
-        self.challenge_answers = {}
-        self.judgments = []
+        self.sequence = self._generate_sequence(41)
+        
+        self.min_period = self._calculate_min_period()
+        
+        self._game_info["p"] = self.p
 
-    def _same_group(self, oid1, oid2):
-        """判断两个对象是否属于同一组"""
-        return self.group_map[oid1] == self.group_map[oid2]
-
-    def _validate_object_id(self, oid):
-        """验证对象ID是否合法"""
-        return oid in self.OBJECTS
-
-    def _verify_rule(self, rule_description):
-        """验证规则描述是否与真实规则一致。
-        由于精确匹配几乎不可能成功，这里采用关键词宽松匹配：
-        检查规则描述中是否包含了真实规则的核心关键词。
-        """
-        desc_lower = rule_description.lower().strip()
-        rule_lower = self.rule_text.lower().strip()
+    def _generate_sequence(self, length):
+        sequence = []
+        block_num = 1
         
-        # 如果精确匹配，直接通过
-        if desc_lower == rule_lower:
-            return True
-        
-        # 宽松匹配：尝试用规则逻辑验证
-        # 通过让LLM的规则描述对所有对象进行分组，与真实分组对比
-        # 由于无法自动解析自然语言规则，这里退化为:
-        # 检查规则描述中是否包含关键特征词
-        lang = self.config.language
-        diff = int(self.config.difficulty)
-        
-        if diff == 1:
-            keywords = ["feature3", "odd", "even", "奇", "偶", "特征3"]
-        elif diff == 2:
-            keywords = ["feature1", "same", "相同", "特征1"]
-        elif diff == 3:
-            keywords = ["feature1", "feature2", "second", "character", "第二", "字符", "特征1", "特征2"]
-        elif diff == 4:
-            keywords = ["feature1", "feature3", "sum", "odd", "even", "和", "奇", "偶"]
-        elif diff == 5:
-            keywords = ["feature1", "feature2", "mod", "remainder", "余数", "modulo"]
-        else:
-            keywords = []
-        
-        if not keywords:
-            return False
+        for i in range(length):
+            block_num = i // self.p + 1
+            offset = i % self.p
             
-        matched = sum(1 for kw in keywords if kw in desc_lower)
-        # 至少匹配一半的关键词
-        return matched >= max(1, len(keywords) // 2)
+            if self.mechanism == "A":
+                sequence.append(self.pattern[offset])
+            elif self.mechanism == "B":
+                if block_num % 2 == 1:
+                    sequence.append(self.pattern[offset])
+                else:
+                    sequence.append(self.pattern[self.p - 1 - offset])
+            elif self.mechanism == "C":
+                shift = (block_num - 1) % self.p
+                shifted_pos = (offset - shift) % self.p
+                sequence.append(self.pattern[shifted_pos])
+        
+        return sequence
+
+    def _calculate_min_period(self):
+        if self.mechanism == "A":
+            return self.p
+        elif self.mechanism == "B":
+            return 2 * self.p
+        elif self.mechanism == "C":
+            return self.p * self.p
+        return self.p
 
     def evaluate(self, parsed_info):
-        """评估最终答案（规则声明）"""
-        rule_desc = parsed_info["answer"].strip()
-        return self._verify_rule(rule_desc)
+        try:
+            raw_ans = parsed_info["answer"]
+            ans_dict = {}
+            parts = [x.strip() for x in raw_ans.split(",")]
+            
+            for part in parts:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    ans_dict[k.strip()] = v.strip()
+            
+            required_keys = ["mechanism", "p", "min_period", "next_symbols"]
+            for key in required_keys:
+                if key not in ans_dict:
+                    return False
+            
+            if ans_dict["mechanism"] != self.mechanism:
+                return False
+            
+            if int(ans_dict["p"]) != self.p:
+                return False
+            
+            if int(ans_dict["min_period"]) != self.min_period:
+                return False
+            
+            next_symbols = ans_dict["next_symbols"].replace(" ", "").replace(",", "")
+            if len(next_symbols) != 5:
+                return False
+            
+            expected_symbols = "".join(self.sequence[36:41])
+            if next_symbols != expected_symbols:
+                return False
+            
+            return True
+            
+        except Exception as e:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """根据解析的查询生成响应"""
-        lang = self.config.language
-        yes_word = "是" if lang == "zh" else "Yes"
-        no_word = "否" if lang == "zh" else "No"
-        none_word = "无" if lang == "zh" else "None"
-        error_prefix = "错误：" if lang == "zh" else "Error: "
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            invalid_index = "错误：索引超出范围。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            invalid_index = "Error: Index out of range."
         
-        # 检查是否进入挑战阶段
-        if "enter_challenge" in parsed_info:
-            if self.in_challenge:
-                return f"{error_prefix}{'已经在挑战阶段' if lang == 'zh' else 'Already in challenge phase'}"
-            
-            # 生成挑战配令人（排除已查询过的对）
-            all_ids = list(self.OBJECTS.keys())
-            available_pairs = []
-            for i in range(len(all_ids)):
-                for j in range(i + 1, len(all_ids)):
-                    pair = tuple(sorted([all_ids[i], all_ids[j]]))
-                    if pair not in self.queried_pairs:
-                        available_pairs.append(pair)
-            
-            if len(available_pairs) < self.num_challenges:
-                return f"{error_prefix}{'可用配对不足' if lang == 'zh' else 'Not enough available pairs'}"
-            
-            rng = random.Random(42)
-            rng.shuffle(available_pairs)
-            self.challenge_pairs = available_pairs[:self.num_challenges]
-            self.in_challenge = True
-            
-            if lang == "zh":
-                pairs_str = "\n".join([f"{i+1}. {p[0]} 与 {p[1]}" for i, p in enumerate(self.challenge_pairs)])
-                return f"进入挑战阶段。请对以下配对进行判定：\n{pairs_str}"
-            else:
-                pairs_str = "\n".join([f"{i+1}. {p[0]} and {p[1]}" for i, p in enumerate(self.challenge_pairs)])
-                return f"Entering challenge phase. Please judge the following pairs:\n{pairs_str}"
-
-        # 挑战阶段的判定
-        if "judge" in parsed_info:
-            if not self.in_challenge:
-                return f"{error_prefix}{'尚未进入挑战阶段' if lang == 'zh' else 'Not in challenge phase yet'}"
-            
+        responses = []
+        
+        if "query_view" in parsed_info:
             try:
-                parts = parsed_info["judge"].split(",")
-                if len(parts) != 3:
-                    raise ValueError
-                oid1, oid2, judgment = parts[0].strip(), parts[1].strip(), parts[2].strip()
-                
-                if not self._validate_object_id(oid1) or not self._validate_object_id(oid2):
-                    raise ValueError
-                
-                pair = tuple(sorted([oid1, oid2]))
-                if pair not in self.challenge_pairs:
-                    return f"{error_prefix}{'该配对不在挑战列表中' if lang == 'zh' else 'Pair not in challenge list'}"
-                
-                if pair in self.challenge_answers:
-                    return f"{error_prefix}{'该配对已判定过' if lang == 'zh' else 'Pair already judged'}"
-                
-                is_same = self._same_group(oid1, oid2)
-                if judgment == "same":
-                    correct = is_same
-                elif judgment == "different":
-                    correct = not is_same
-                else:
-                    raise ValueError
-                
-                self.challenge_answers[pair] = correct
-                self.judgments.append(correct)
-                
-                # 检查是否所有挑战完成
-                if len(self.challenge_answers) == self.num_challenges:
-                    correct_count = sum(self.judgments)
-                    if correct_count >= self.pass_threshold:
-                        self.state.set_state("success", "challenge_passed")
-                        if lang == "zh":
-                            msg = f"挑战完成！正确 {correct_count}/{self.num_challenges}，游戏胜利！"
-                        else:
-                            msg = f"Challenge completed! {correct_count}/{self.num_challenges} correct. Victory!"
-                    else:
-                        self.state.set_state("failed", "challenge_failed")
-                        if lang == "zh":
-                            msg = f"挑战完成。正确 {correct_count}/{self.num_challenges}，未达到要求，游戏失败。"
-                        else:
-                            msg = f"Challenge completed. {correct_count}/{self.num_challenges} correct. Failed to meet requirement."
-                    return msg
-                
-                # 不泄露判定结果，只告知已记录和剩余数量
-                remain = self.num_challenges - len(self.challenge_answers)
-                if lang == "zh":
-                    return f"判定已记录。剩余 {remain} 个配对待判定。"
-                else:
-                    return f"Judgment recorded. {remain} pairs remaining."
-                
+                idx = int(parsed_info["query_view"].strip())
+                if idx < 1 or idx > 36:
+                    return invalid_index
+                symbol = self.sequence[idx - 1]
+                responses.append(symbol)
             except:
-                return f"{error_prefix}{'判定格式错误' if lang == 'zh' else 'Invalid judgment format'}"
-
-        # 学习阶段的查询
-        if self.in_challenge:
-            return f"{error_prefix}{'挑战阶段不允许查询' if lang == 'zh' else 'Queries not allowed in challenge phase'}"
+                return invalid_index
         
-        if self.query_count >= self.max_queries:
-            return f"{error_prefix}{'查询次数已用尽' if lang == 'zh' else 'Query limit reached'}"
-
-        # 等价查询
-        if "query_equiv" in parsed_info:
+        if "query_compare" in parsed_info:
             try:
-                oid1, oid2 = [x.strip() for x in parsed_info["query_equiv"].split(",")]
-                if not self._validate_object_id(oid1) or not self._validate_object_id(oid2):
-                    raise ValueError
-                
-                self.query_count += 1
-                pair = tuple(sorted([oid1, oid2]))
-                self.queried_pairs.add(pair)
-                
-                result = yes_word if self._same_group(oid1, oid2) else no_word
-                remain = self.max_queries - self.query_count
-                return f"{result}（{'剩余查询次数' if lang == 'zh' else 'Remaining queries'}: {remain}）"
+                raw = parsed_info["query_compare"]
+                i, j = [int(x.strip()) for x in raw.split(",")]
+                if i < 1 or i > 36 or j < 1 or j > 36:
+                    return invalid_index
+                result = yes_res if self.sequence[i-1] == self.sequence[j-1] else no_res
+                responses.append(result)
             except:
-                return f"{error_prefix}{'等价查询格式错误' if lang == 'zh' else 'Invalid equivalence query format'}"
-
-        # 计数查询
-        if "query_count" in parsed_info:
+                return invalid_index
+        
+        if "query_interval" in parsed_info:
             try:
-                parts = parsed_info["query_count"].split(";")
-                if len(parts) != 2:
-                    raise ValueError
-                target = parts[0].strip()
-                subset = [x.strip() for x in parts[1].split(",")]
-                
-                if not self._validate_object_id(target):
-                    raise ValueError
-                for oid in subset:
-                    if not self._validate_object_id(oid):
-                        raise ValueError
-                
-                self.query_count += 1
-                count = sum(1 for oid in subset if self._same_group(target, oid))
-                remain = self.max_queries - self.query_count
-                return f"{count}（{'剩余查询次数' if lang == 'zh' else 'Remaining queries'}: {remain}）"
+                raw = parsed_info["query_interval"]
+                q, k = [int(x.strip()) for x in raw.split(",")]
+                if k < 1 or k + q > 36:
+                    return invalid_index
+                result = yes_res if self.sequence[k-1] == self.sequence[k+q-1] else no_res
+                responses.append(result)
             except:
-                return f"{error_prefix}{'计数查询格式错误' if lang == 'zh' else 'Invalid count query format'}"
-
-        # 示例查询
-        if "query_example" in parsed_info:
-            try:
-                target = parsed_info["query_example"].strip()
-                if not self._validate_object_id(target):
-                    raise ValueError
-                
-                self.query_count += 1
-                # 找到同组的其他对象
-                same_group = sorted([oid for oid in self.OBJECTS.keys() 
-                             if oid != target and self._same_group(target, oid)])
-                
-                if not same_group:
-                    result = none_word
-                else:
-                    result = same_group[0]  # 确定性选取第一个
-                
-                remain = self.max_queries - self.query_count
-                return f"{result}（{'剩余查询次数' if lang == 'zh' else 'Remaining queries'}: {remain}）"
-            except:
-                return f"{error_prefix}{'示例查询格式错误' if lang == 'zh' else 'Invalid example query format'}"
-
-        return f"{error_prefix}{'未识别的查询类型' if lang == 'zh' else 'Unrecognized query type'}"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        lang = self.config.language
+                return invalid_index
         
-        yes_word = "是" if lang == "zh" else "Yes"
-        no_word = "否" if lang == "zh" else "No"
-        none_word = "无" if lang == "zh" else "None"
-        remain_text = "剩余查询次数" if lang == "zh" else "Remaining queries"
+        if not responses:
+            raise ValueError("No valid query tag found.")
         
-        objects = sorted(list(self.OBJECTS.keys()))
-        
-        # 使用递增的查询计数来模拟真实的剩余次数
-        query_counter = 0
-        
-        # 1. 枚举所有等价查询 (query_equiv)
-        for i in range(len(objects)):
-            for j in range(i + 1, len(objects)):
-                oid1 = objects[i]
-                oid2 = objects[j]
-                
-                query_content = f"<query_equiv>{oid1},{oid2}</query_equiv>"
-                
-                is_same = self._same_group(oid1, oid2)
-                result = yes_word if is_same else no_word
-                query_counter += 1
-                remain = self.max_queries - query_counter
-                answer = f"{result}（{remain_text}: {remain}）"
-                
-                queries.append({
-                    "query": query_content,
-                    "answer": answer
-                })
-        
-        # 2. 枚举所有示例查询 (query_example)
-        for oid in objects:
-            query_content = f"<query_example>{oid}</query_example>"
-            
-            same_group = sorted([target for target in objects if target != oid and self._same_group(oid, target)])
-            
-            if not same_group:
-                result = none_word
-            else:
-                result = same_group[0]
-                
-            query_counter += 1
-            remain = self.max_queries - query_counter
-            answer = f"{result}（{remain_text}: {remain}）"
-            
-            queries.append({
-                "query": query_content,
-                "answer": answer
-            })
-            
-        # 3. 枚举特定计数查询 (query_count)
-        for oid in objects:
-            others = [o for o in objects if o != oid]
-            others_str = ",".join(others)
-            query_content = f"<query_count>{oid};{others_str}</query_count>"
-            
-            count = sum(1 for target in others if self._same_group(oid, target))
-            query_counter += 1
-            remain = self.max_queries - query_counter
-            answer = f"{count}（{remain_text}: {remain}）"
-            
-            queries.append({
-                "query": query_content,
-                "answer": answer
-            })
-            
-        return queries
+        return "\n".join(responses)
 
     def _cf_make_wrong(self, correct):
+        if correct in ["A", "B", "C", "D"]:
+            return "B" if correct == "A" else "A"
+        
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        # 中文
-        if "是" in correct:
-            return correct.replace("是", "否")
-        if "否" in correct:
-            return correct.replace("否", "是")
-            
-        # 英文
-        if "Yes" in correct:
-            return correct.replace("Yes", "No")
-        if "No" in correct:
-            return correct.replace("No", "Yes")
-            
+        if self.config.language == "zh":
+            if "是" in correct or "否" in correct:
+                return correct.replace("是", "TEMP_YES").replace("否", "是").replace("TEMP_YES", "否")
+        else:
+            if "Yes" in correct or "No" in correct:
+                return correct.replace("Yes", "TEMP_YES").replace("No", "Yes").replace("TEMP_YES", "No")
+        
         return correct + "_WRONG"
+
+    def get_all_possible_queries(self) -> list:
+        results = []
+
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+
+        for i in range(1, 37):
+            results.append({
+                "query":  f"<query_view>{i}</query_view>",
+                "answer": self.sequence[i - 1],
+            })
+
+        for i in range(1, 37):
+            for j in range(i + 1, 37):
+                ans = yes_res if self.sequence[i - 1] == self.sequence[j - 1] else no_res
+                results.append({
+                    "query":  f"<query_compare>{i},{j}</query_compare>",
+                    "answer": ans,
+                })
+
+        for q in range(1, 36):
+            for k in range(1, 36 - q + 1):
+                ans = yes_res if self.sequence[k - 1] == self.sequence[k + q - 1] else no_res
+                results.append({
+                    "query":  f"<query_interval>{q},{k}</query_interval>",
+                    "answer": ans,
+                })
+
+        return results

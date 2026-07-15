@@ -1,1176 +1,756 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 场景化改造: 交通、医疗、教育、制造业/工业、法律
-# 推理类型: 溯因推理
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   环存在性：图中是否存在环
-# ============================================================
-
 from .base import Game
-import re
+import heapq
+import itertools
+from collections import defaultdict
 
-
-class GraphReasoningGame(Game):
+class GAME668(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"图推理"游戏，规则如下：
+我们来玩一个"图模式推理"游戏，规则如下：
 
-游戏设定了一个有向图，包含节点集合：A, B, C, D, E, F。你总是从起始节点 A 开始。
+游戏设定了一个无向加权图，顶点集为 {{A, B, C, D, E}}。图中包含以下边及其原始长度：
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-图的结构是三个候选之一，但我不会告诉你具体是哪一个：
+存在六种候选加权模式（仅在原始长度基础上变换权重）：
+1. Alpha：所有边权重等于原始长度。
+2. Beta：A-C、A-E、C-E 的边权重在原始长度基础上加1，其余等于原始长度。
+3. Gamma：原始长度大于等于2的边权重翻倍，原始长度为1的边保持1。
+4. Delta：A-D 的边权重设为1，其余等于原始长度。
+5. Epsilon：B-D 的边权重设为1，其余等于原始长度。
+6. Zeta：C-E 的边权重设为1，其余等于原始长度。
 
-- 候选 Alpha：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到A, 操作1到F
-  - D: 操作0到E, 操作1到E
-  - E: 操作0到F, 操作1到F
-  - F: 操作0到D, 操作1到D
+对任一模式 M 和顶点 X，定义 S(X) 为在模式 M 下，从 X 到其余所有顶点的最短路径距离之和。
 
-- 候选 Beta：
-  - A: 操作0到B, 操作1到C
-  - B: 操作0到D, 操作1到E
-  - C: 操作0到E, 操作1无边
-  - D: 操作0到E, 操作1到F
-  - E: 操作0到F, 操作1无边
-  - F: 操作0无边, 操作1无边
+我已秘密选择了一种模式并固定不变。你的目标是通过查询推断出：
+1. 实际采用的模式（Alpha/Beta/Gamma/Delta/Epsilon/Zeta 之一）
+2. 在该模式下使 S 最小的顶点（若存在并列，可任选其一）
+3. 该最小距离和的精确数值
 
-- 候选 Gamma：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到B, 操作1到F
-  - D: 操作0到E, 操作1无边
-  - E: 操作0到D, 操作1无边
-  - F: 操作0无边, 操作1无边
+你可以使用以下三种查询方式：
 
-你可以通过以下四类交互请求来探索图的结构：
+1. 奇偶查询：询问某个顶点 X 的 S(X) 是奇数还是偶数。回答"奇数"或"偶数"。
+2. 大小比较查询：询问两个顶点 X 和 Y 的 S 值大小关系。回答"X大于Y"、"X等于Y"或"X小于Y"。
+3. 精确值查询：询问某个顶点 X 的 S(X) 精确数值。整个过程中最多使用1次，回答一个非负整数。
 
-1. 执行操作：在当前节点尝试走操作0或操作1。如果该边存在，你会移动到目标节点；如果不存在，你会留在原地。
-2. 复位：将当前位置重置为起始节点 A。
-3. 位置查询：询问当前所在的节点。
-4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
+注意：你需要通过尽可能少的查询次数来推断答案。
 
-你的目标是：
-1. 识别真实的候选图（Alpha、Beta 或 Gamma）
-2. 判断该图是否存在有向环（回答"有环"或"无环"）
-3. 提供可验证的证据：
-   - 如果判定"有环"：给出一条完整的有向环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - 如果判定"无环"：给出一个包含所有节点A到F的拓扑序列
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-## 交互格式要求
+- 奇偶查询（例如查询顶点 A）：
+<query_parity>A</query_parity>
 
-每次只能发起一个请求，使用以下XML格式：
+- 大小比较查询（例如比较顶点 A 和 B）：
+<query_compare>A,B</query_compare>
 
-- 执行操作（例如在当前节点执行操作1）：
-<action>1</action>
+- 精确值查询（例如查询顶点 C）：
+<query_exact>C</query_exact>
 
-- 复位到起始节点：
-<reset></reset>
+提交最终答案时，必须同时给出模式、最优顶点和最小距离和，格式如下：
 
-- 查询当前位置：
-<query_position></query_position>
-
-- 查询步数：
-<query_steps></query_steps>
-
-提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
-
-有环的情况（示例）：
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-无环的情况（示例）：
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
     game_rule_en = """\
-Let's play a "Graph Reasoning" game. Here are the rules:
+Let's play a "Graph Pattern Deduction" game. Here are the rules:
 
-The game has a directed graph with nodes: A, B, C, D, E, F. You always start from node A.
+The game involves an undirected weighted graph with vertices {{A, B, C, D, E}}. The graph contains the following edges with their original lengths:
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-The graph structure is one of three candidates, but I won't tell you which one:
+There are six candidate weighting patterns (transforming weights based on original lengths):
+1. Alpha: All edge weights equal their original lengths.
+2. Beta: A-C, A-E, C-E edge weights increased by 1 from original, others remain original.
+3. Gamma: Edges with original length greater than or equal to 2 have doubled weight, edges with length 1 remain 1.
+4. Delta: A-D edge weight set to 1, others remain original.
+5. Epsilon: B-D edge weight set to 1, others remain original.
+6. Zeta: C-E edge weight set to 1, others remain original.
 
-- Candidate Alpha:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to A, action 1 to F
-  - D: action 0 to E, action 1 to E
-  - E: action 0 to F, action 1 to F
-  - F: action 0 to D, action 1 to D
+For any pattern M and vertex X, define S(X) as the sum of shortest path distances from X to all other vertices under pattern M.
 
-- Candidate Beta:
-  - A: action 0 to B, action 1 to C
-  - B: action 0 to D, action 1 to E
-  - C: action 0 to E, action 1 no edge
-  - D: action 0 to E, action 1 to F
-  - E: action 0 to F, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+I have secretly selected one pattern and will remain consistent. Your goal is to deduce through queries:
+1. The actual pattern used (one of Alpha/Beta/Gamma/Delta/Epsilon/Zeta)
+2. The vertex that minimizes S under this pattern (if tied, any one is acceptable)
+3. The exact value of this minimum distance sum
 
-- Candidate Gamma:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to B, action 1 to F
-  - D: action 0 to E, action 1 no edge
-  - E: action 0 to D, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+You can use the following three types of queries:
 
-You can explore the graph structure through four types of interaction:
+1. Parity Query: Ask whether S(X) for vertex X is odd or even. Answer "Odd" or "Even".
+2. Comparison Query: Ask the relationship between S(X) and S(Y) for vertices X and Y. Answer "X greater than Y", "X equal to Y", or "X less than Y".
+3. Exact Value Query: Ask the exact value of S(X) for vertex X. Can be used at most once throughout the process. Answer is a non-negative integer.
 
-1. Execute action: Try action 0 or 1 at current node. If the edge exists, you move to the target; otherwise, you stay.
-2. Reset: Return to starting node A.
-3. Position query: Ask which node you are currently at.
-4. Step count query: Ask how many successful moves since last reset (only counts moves via valid edges).
+Note: You should deduce the answer using as few queries as possible.
 
-Your goals are:
-1. Identify the true candidate graph (Alpha, Beta, or Gamma)
-2. Determine whether the graph has a directed cycle (answer "yes" or "no")
-3. Provide verifiable evidence:
-   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - If "no": Give a topological order containing all nodes A through F
+Each query must contain only one tag. Use the following XML format:
 
-## Interaction Format Requirements
+- Parity Query (e.g., querying vertex A):
+<query_parity>A</query_parity>
 
-Each request must use one of the following XML formats:
+- Comparison Query (e.g., comparing vertices A and B):
+<query_compare>A,B</query_compare>
 
-- Execute action (e.g., execute action 1 at current node):
-<action>1</action>
+- Exact Value Query (e.g., querying vertex C):
+<query_exact>C</query_exact>
 
-- Reset to starting node:
-<reset></reset>
+When submitting the final answer, you must provide the pattern, optimal vertex, and minimum sum simultaneously, using this format:
 
-- Query current position:
-<query_position></query_position>
-
-- Query step count:
-<query_steps></query_steps>
-
-When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
-
-With cycle (example):
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-Without cycle (example):
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-我们现在来执行"交通枢纽通行网络排查"任务，规则如下：
+我们来玩一个"物流枢纽选址"规划游戏，规则如下：
 
-系统设定了一个有向通行图，包含交通枢纽集合：A, B, C, D, E, F。你总是从起始枢纽 A 开始排查。
+区域内有五个关键的物流枢纽节点，记为 {{A, B, C, D, E}}。各枢纽间的直达运输路线及其初始基准耗时如下：
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-图的结构是三个候选路线之一，但我不会告诉你具体是哪一个：
+由于交通环境变化，当前的路网处于六种候选路况模式之一：
+1. Alpha（常规状态）：所有路线耗时等于基准耗时。
+2. Beta（局部拥堵）：A-C、A-E、C-E 路段发生拥堵，运输耗时在基准上加1，其余不变。
+3. Gamma（极端天气）：受暴雨影响，长途路线（基准耗时>=2）耗时翻倍，短途路线（基准耗时1）不受影响。
+4. Delta（A-D干线贯通）：A-D 建成了直达快速通道，耗时降为1，其余不变。
+5. Epsilon（B-D干线贯通）：B-D 建成了直达快速通道，耗时降为1，其余不变。
+6. Zeta（C-E干线贯通）：C-E 建成了直达快速通道，耗时降为1，其余不变。
 
-- 候选路线 Alpha：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到A, 操作1到F
-  - D: 操作0到E, 操作1到E
-  - E: 操作0到F, 操作1到F
-  - F: 操作0到D, 操作1到D
+对任一路况模式 M 和枢纽 X，定义 S(X) 为在模式 M 下，从枢纽 X 向其余所有枢纽发送货物所需的最低总运输耗时（即到各节点最优耗时之和）。
 
-- 候选路线 Beta：
-  - A: 操作0到B, 操作1到C
-  - B: 操作0到D, 操作1到E
-  - C: 操作0到E, 操作1无边
-  - D: 操作0到E, 操作1到F
-  - E: 操作0到F, 操作1无边
-  - F: 操作0无边, 操作1无边
+我已秘密设定了当前的路况模式并保持不变。你的目标是通过系统查询推断出：
+1. 实际遭遇的路况模式（Alpha/Beta/Gamma/Delta/Epsilon/Zeta 之一）
+2. 在该模式下使总运输耗时 S 最小的物流枢纽（若并列，任选其一即可）
+3. 该最小总运输耗时的精确数值
 
-- 候选路线 Gamma：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到B, 操作1到F
-  - D: 操作0到E, 操作1无边
-  - E: 操作0到D, 操作1无边
-  - F: 操作0无边, 操作1无边
+你可以使用以下三种调度查询方式：
+1. 奇偶查询：询问某个枢纽 X 的总耗时 S(X) 是奇数还是偶数。返回"奇数"或"偶数"。
+2. 大小比较查询：询问两个枢纽 X 和 Y 的 S 值大小关系。返回"X大于Y"、"X等于Y"或"X小于Y"。
+3. 精确值查询：测算某个枢纽 X 的 S(X) 精确实测数值。因资源限制，最多使用1次，返回一个非负整数。
 
-你可以通过以下四类交互请求来探索交通图的结构：
+请用尽可能少的查询次数推断出最佳物流中心。
 
-1. 执行操作：在当前枢纽尝试走操作0或操作1。如果该边存在，你会移动到目标枢纽；如果不存在，你会留在原地。
-2. 复位：将当前位置重置为起始枢纽 A。
-3. 位置查询：询问当前所在的枢纽。
-4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
+- 奇偶查询：<query_parity>A</query_parity>
+- 大小比较查询：<query_compare>A,B</query_compare>
+- 精确值查询：<query_exact>C</query_exact>
 
-你的目标是：
-1. 识别真实的候选图（Alpha、Beta 或 Gamma）
-2. 判断该通行图是否存在有向循环路线（回答"有环"或"无环"）
-3. 提供可验证的证据：
-   - 如果判定"有环"：给出一条完整的有向循环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - 如果判定"无环"：给出一个包含所有枢纽A到F的拓扑单向通行序列
-
-## 交互格式要求
-
-每次只能发起一个请求，使用以下XML格式：
-
-- 执行操作（例如在当前枢纽执行操作1）：
-<action>1</action>
-
-- 复位到起始枢纽：
-<reset></reset>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 查询步数：
-<query_steps></query_steps>
-
-提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
-
-有环的情况（示例）：
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-无环的情况（示例）：
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+最终提交格式如下（min_sum对应最小总耗时数值）：
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's execute the "Traffic Hub Transit Network Inspection" task. Here are the rules:
+Let's play a "Logistics Hub Siting" planning game. Here are the rules:
 
-The system has a directed transit network graph with transportation hubs: A, B, C, D, E, F. You always start inspecting from the starting hub A.
+There are five key logistics hubs in the region, denoted as {{A, B, C, D, E}}. The direct transport routes between hubs and their initial baseline transit times are:
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-The graph structure is one of three candidate routes, but I won't tell you which one:
+Due to changing traffic conditions, the network is currently in one of six candidate traffic patterns:
+1. Alpha (Normal): All route transit times equal the baseline times.
+2. Beta (Local Congestion): Routes A-C, A-E, and C-E are congested, transit times increased by 1 from baseline, others remain baseline.
+3. Gamma (Extreme Weather): Heavy rain doubles the transit times for long-haul routes (baseline >= 2); short-haul routes (baseline 1) remain unchanged.
+4. Delta (A-D Express): A direct expressway is completed for A-D, setting its transit time to 1, others remain baseline.
+5. Epsilon (B-D Express): A direct expressway is completed for B-D, setting its transit time to 1, others remain baseline.
+6. Zeta (C-E Express): A direct expressway is completed for C-E, setting its transit time to 1, others remain baseline.
 
-- Candidate Route Alpha:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to A, action 1 to F
-  - D: action 0 to E, action 1 to E
-  - E: action 0 to F, action 1 to F
-  - F: action 0 to D, action 1 to D
+For any traffic pattern M and hub X, define S(X) as the lowest total transit time required to dispatch goods from hub X to all other hubs under pattern M (i.e., the sum of optimal transit times to all other nodes).
 
-- Candidate Route Beta:
-  - A: action 0 to B, action 1 to C
-  - B: action 0 to D, action 1 to E
-  - C: action 0 to E, action 1 no edge
-  - D: action 0 to E, action 1 to F
-  - E: action 0 to F, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+I have secretly set the current traffic pattern and it remains unchanged. Your goal is to deduce through system queries:
+1. The actual traffic pattern used (one of Alpha/Beta/Gamma/Delta/Epsilon/Zeta)
+2. The hub that minimizes the total transit time S under this pattern (if tied, any one is acceptable)
+3. The exact value of this minimum total transit time
 
-- Candidate Route Gamma:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to B, action 1 to F
-  - D: action 0 to E, action 1 no edge
-  - E: action 0 to D, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+You can use the following three types of dispatch queries:
+1. Parity Query: Ask whether S(X) for hub X is odd or even. Answer "Odd" or "Even".
+2. Comparison Query: Ask the relationship between S(X) and S(Y) for hubs X and Y. Answer "X greater than Y", "X equal to Y", or "X less than Y".
+3. Exact Value Query: Measure the exact value of S(X) for hub X. Due to system limits, it can be used at most once. Answer is a non-negative integer.
 
-You can explore the network structure through four types of interaction:
+Please deduce the optimal logistics center using as few queries as possible.
 
-1. Execute action: Try action 0 or 1 at the current hub. If the edge exists, you move to the target hub; otherwise, you stay.
-2. Reset: Return to the starting hub A.
-3. Position query: Ask which hub you are currently at.
-4. Step count query: Ask how many successful moves since the last reset (only counts moves via valid edges).
+Each query must contain only one tag. Use the following XML format:
+- Parity Query: <query_parity>A</query_parity>
+- Comparison Query: <query_compare>A,B</query_compare>
+- Exact Value Query: <query_exact>C</query_exact>
 
-Your goals are:
-1. Identify the true candidate graph (Alpha, Beta, or Gamma)
-2. Determine whether the transit graph has a directed cyclic route (answer "yes" or "no")
-3. Provide verifiable evidence:
-   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - If "no": Give a topological one-way transit sequence containing all hubs A through F
-
-## Interaction Format Requirements
-
-Each request must use one of the following XML formats:
-
-- Execute action (e.g., execute action 1 at current hub):
-<action>1</action>
-
-- Reset to starting hub:
-<reset></reset>
-
-- Query current position:
-<query_position></query_position>
-
-- Query step count:
-<query_steps></query_steps>
-
-When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
-
-With cycle (example):
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-Without cycle (example):
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+Submit the final answer in this format (min_sum refers to the minimum total transit time):
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-我们现在来执行"患者转诊流程审查"任务，规则如下：
+我们来玩一个"应急医疗物资调度"推演游戏，规则如下：
 
-系统设定了一个有向转诊流程图，包含科室节点集合：A, B, C, D, E, F。患者总是从起始科室 A 开始。
+防疫网络包含五个核心的医疗物资储备中心，记为 {{A, B, C, D, E}}。中心间的物资调配渠道及基准延迟指数如下：
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-图的结构是三个候选转诊路径之一，但我不会告诉你具体是哪一个：
+当前突发公共卫生状况对应以下六种候选防疫模式之一：
+1. Alpha（常规调配）：所有渠道延迟指数等于基准值。
+2. Beta（局部隔离）：A-C、A-E、C-E 渠道因隔离政策影响，延迟指数在基准上加1，其余不变。
+3. Gamma（高危阻断）：为防范高危感染，跨区远距离调配（基准延迟>=2）风险剧增，延迟指数翻倍；同区近距离（基准延迟1）不变。
+4. Delta（A-D绿色通道）：A-D 间打通了生命救援直达通道，延迟指数降为1，其余不变。
+5. Epsilon（B-D绿色通道）：B-D 间打通了生命救援直达通道，延迟指数降为1，其余不变。
+6. Zeta（C-E绿色通道）：C-E 间打通了生命救援直达通道，延迟指数降为1，其余不变。
 
-- 候选路径 Alpha：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到A, 操作1到F
-  - D: 操作0到E, 操作1到E
-  - E: 操作0到F, 操作1到F
-  - F: 操作0到D, 操作1到D
+对任一防疫模式 M 和中心 X，定义 S(X) 为在模式 M 下，中心 X 向其余所有中心紧急调配物资的最低总延迟指数之和。
 
-- 候选路径 Beta：
-  - A: 操作0到B, 操作1到C
-  - B: 操作0到D, 操作1到E
-  - C: 操作0到E, 操作1无边
-  - D: 操作0到E, 操作1到F
-  - E: 操作0到F, 操作1无边
-  - F: 操作0无边, 操作1无边
+我已秘密设定了当前的防疫模式并保持不变。你的目标是通过系统查询推断出：
+1. 实际启动的防疫模式（Alpha/Beta/Gamma/Delta/Epsilon/Zeta 之一）
+2. 在该模式下使总延迟指数 S 最小的储备中心（若并列，任选其一即可）
+3. 该最小总延迟指数的精确数值
 
-- 候选路径 Gamma：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到B, 操作1到F
-  - D: 操作0到E, 操作1无边
-  - E: 操作0到D, 操作1无边
-  - F: 操作0无边, 操作1无边
+你可以使用以下三种调度查询方式：
+1. 奇偶查询：询问某个中心 X 的总延迟指数 S(X) 是奇数还是偶数。返回"奇数"或"偶数"。
+2. 大小比较查询：询问两个中心 X 和 Y 的 S 值大小关系。返回"X大于Y"、"X等于Y"或"X小于Y"。
+3. 精确值查询：评估某个中心 X 的 S(X) 精确实测数值。因评估资源限制，最多使用1次，返回一个非负整数。
 
-你可以通过以下四类交互请求来探索转诊图的结构：
+请用尽可能少的查询次数锁定最佳的应急医疗物资储备基站。
 
-1. 执行操作：在当前科室尝试走操作0或操作1。如果该边存在，你会移动到目标科室；如果不存在，你会留在原地。
-2. 复位：将当前患者状态重置为起始科室 A。
-3. 位置查询：询问当前所在的科室。
-4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
+- 奇偶查询：<query_parity>A</query_parity>
+- 大小比较查询：<query_compare>A,B</query_compare>
+- 精确值查询：<query_exact>C</query_exact>
 
-你的目标是：
-1. 识别真实的候选图（Alpha、Beta 或 Gamma）
-2. 判断该转诊图是否存在有向死循环（回答"有环"或"无环"）
-3. 提供可验证的证据：
-   - 如果判定"有环"：给出一条完整的有向死循环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - 如果判定"无环"：给出一个包含所有科室A到F的拓扑康复单向流转序列
-
-## 交互格式要求
-
-每次只能发起一个请求，使用以下XML格式：
-
-- 执行操作（例如在当前科室执行操作1）：
-<action>1</action>
-
-- 复位到起始科室：
-<reset></reset>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 查询步数：
-<query_steps></query_steps>
-
-提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
-
-有环的情况（示例）：
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-无环的情况（示例）：
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+最终提交格式如下（min_sum对应最小总延迟指数）：
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Let's execute the "Patient Referral Process Review" task. Here are the rules:
+[Healthcare Scenario]
+Let's play an "Emergency Medical Supply Dispatch" simulation game. Here are the rules:
 
-The system has a directed referral process graph with department nodes: A, B, C, D, E, F. The patient always starts from the starting department A.
+The pandemic prevention network consists of five core medical reserve centers, denoted as {{A, B, C, D, E}}. The dispatch channels between centers and their baseline delay indices are:
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-The graph structure is one of three candidate pathways, but I won't tell you which one:
+The current public health emergency corresponds to one of six candidate prevention patterns:
+1. Alpha (Routine Dispatch): All channel delay indices equal the baseline values.
+2. Beta (Local Quarantine): Channels A-C, A-E, and C-E are affected by quarantine policies, delaying indices increased by 1 from baseline, others remain baseline.
+3. Gamma (High-Risk Blockade): To prevent severe infections, cross-regional long-distance dispatches (baseline >= 2) face doubled delay indices; local short-distance dispatches (baseline 1) remain unchanged.
+4. Delta (A-D Green Channel): A direct life-saving green channel is established for A-D, reducing its delay index to 1, others remain baseline.
+5. Epsilon (B-D Green Channel): A direct life-saving green channel is established for B-D, reducing its delay index to 1, others remain baseline.
+6. Zeta (C-E Green Channel): A direct life-saving green channel is established for C-E, reducing its delay index to 1, others remain baseline.
 
-- Candidate Pathway Alpha:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to A, action 1 to F
-  - D: action 0 to E, action 1 to E
-  - E: action 0 to F, action 1 to F
-  - F: action 0 to D, action 1 to D
+For any prevention pattern M and center X, define S(X) as the lowest total delay index sum for center X to dispatch emergency supplies to all other centers under pattern M.
 
-- Candidate Pathway Beta:
-  - A: action 0 to B, action 1 to C
-  - B: action 0 to D, action 1 to E
-  - C: action 0 to E, action 1 no edge
-  - D: action 0 to E, action 1 to F
-  - E: action 0 to F, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+I have secretly set the current prevention pattern and it remains unchanged. Your goal is to deduce through system queries:
+1. The actual prevention pattern enacted (one of Alpha/Beta/Gamma/Delta/Epsilon/Zeta)
+2. The reserve center that minimizes the total delay index S under this pattern (if tied, any one is acceptable)
+3. The exact value of this minimum total delay index
 
-- Candidate Pathway Gamma:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to B, action 1 to F
-  - D: action 0 to E, action 1 no edge
-  - E: action 0 to D, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+You can use the following three types of dispatch queries:
+1. Parity Query: Ask whether S(X) for center X is odd or even. Answer "Odd" or "Even".
+2. Comparison Query: Ask the relationship between S(X) and S(Y) for centers X and Y. Answer "X greater than Y", "X equal to Y", or "X less than Y".
+3. Exact Value Query: Assess the exact value of S(X) for center X. Due to assessment resource limits, it can be used at most once. Answer is a non-negative integer.
 
-You can explore the referral structure through four types of interaction:
+Please deduce the optimal emergency medical reserve base using as few queries as possible.
 
-1. Execute action: Try action 0 or 1 at the current department. If the edge exists, you move to the target department; otherwise, you stay.
-2. Reset: Return the patient state to the starting department A.
-3. Position query: Ask which department you are currently at.
-4. Step count query: Ask how many successful moves since the last reset (only counts moves via valid edges).
+Each query must contain only one tag. Use the following XML format:
+- Parity Query: <query_parity>A</query_parity>
+- Comparison Query: <query_compare>A,B</query_compare>
+- Exact Value Query: <query_exact>C</query_exact>
 
-Your goals are:
-1. Identify the true candidate graph (Alpha, Beta, or Gamma)
-2. Determine whether the referral graph has a directed cyclic loop (answer "yes" or "no")
-3. Provide verifiable evidence:
-   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - If "no": Give a topological one-way recovery sequence containing all departments A through F
-
-## Interaction Format Requirements
-
-Each request must use one of the following XML formats:
-
-- Execute action (e.g., execute action 1 at current department):
-<action>1</action>
-
-- Reset to starting department:
-<reset></reset>
-
-- Query current position:
-<query_position></query_position>
-
-- Query step count:
-<query_steps></query_steps>
-
-When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
-
-With cycle (example):
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-Without cycle (example):
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+Submit the final answer in this format (min_sum refers to the minimum total delay index):
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-我们现在来执行"自适应学习路径评估"任务，规则如下：
+我们来玩一个"跨校区教育资源整合"规划游戏，规则如下：
 
-系统设定了一个有向学习路径图，包含知识模块集合：A, B, C, D, E, F。学生总是从起始模块 A 开始。
+某学区拥有五个核心校区，记为 {{A, B, C, D, E}}。各校区间进行教研沟通和资源共享的初始壁垒指数如下：
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-图的结构是三个候选教学设计之一，但我不会告诉你具体是哪一个：
+由于教育政策的调整，当前的校际联动环境处于六种候选政策模式之一：
+1. Alpha（现状维持）：所有跨校区沟通的壁垒指数等于初始值。
+2. Beta（组织壁垒增高）：A-C、A-E、C-E 校区因归属不同学部，沟通壁垒指数在初始值上加1，其余不变。
+3. Gamma（资源分化加剧）：跨层级交流阻力增大，较高壁垒（初始值>=2）的路径壁垒翻倍；基础联动（初始值1）不受影响。
+4. Delta（A-D数字直连）：A-D 校区间部署了全息数字化教学平台，壁垒指数降为1，其余不变。
+5. Epsilon（B-D数字直连）：B-D 校区间部署了全息数字化教学平台，壁垒指数降为1，其余不变。
+6. Zeta（C-E数字直连）：C-E 校区间部署了全息数字化教学平台，壁垒指数降为1，其余不变。
 
-- 候选设计 Alpha：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到A, 操作1到F
-  - D: 操作0到E, 操作1到E
-  - E: 操作0到F, 操作1到F
-  - F: 操作0到D, 操作1到D
+对任一政策模式 M 和校区 X，定义 S(X) 为在模式 M 下，校区 X 作为教研辐射主校区，联通其余所有校区所需的最低总沟通壁垒指数（即到达各节点的最优壁垒之和）。
 
-- 候选设计 Beta：
-  - A: 操作0到B, 操作1到C
-  - B: 操作0到D, 操作1到E
-  - C: 操作0到E, 操作1无边
-  - D: 操作0到E, 操作1到F
-  - E: 操作0到F, 操作1无边
-  - F: 操作0无边, 操作1无边
+我已秘密设定了当前的联动政策模式并保持不变。你的目标是通过评估查询推断出：
+1. 实际采用的政策模式（Alpha/Beta/Gamma/Delta/Epsilon/Zeta 之一）
+2. 在该模式下使总沟通壁垒 S 最小的核心校区（若并列，任选其一即可）
+3. 该最小总壁垒指数的精确数值
 
-- 候选设计 Gamma：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到B, 操作1到F
-  - D: 操作0到E, 操作1无边
-  - E: 操作0到D, 操作1无边
-  - F: 操作0无边, 操作1无边
+你可以使用以下三种评估查询方式：
+1. 奇偶查询：询问某个校区 X 的总壁垒指数 S(X) 是奇数还是偶数。返回"奇数"或"偶数"。
+2. 大小比较查询：询问两个校区 X 和 Y 的 S 值大小关系。返回"X大于Y"、"X等于Y"或"X小于Y"。
+3. 精确值查询：测算某个校区 X 的 S(X) 精确数值。因调研资源限制，最多使用1次，返回一个非负整数。
 
-你可以通过以下四类交互请求来探索学习路径的结构：
+请用尽可能少的查询次数选定最佳的教研主校区。
 
-1. 执行操作：在当前模块尝试走操作0或操作1。如果该边存在，你会移动到目标模块；如果不存在，你会留在原地。
-2. 复位：将当前学习进度重置为起始模块 A。
-3. 位置查询：询问当前所在的知识模块。
-4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
+- 奇偶查询：<query_parity>A</query_parity>
+- 大小比较查询：<query_compare>A,B</query_compare>
+- 精确值查询：<query_exact>C</query_exact>
 
-你的目标是：
-1. 识别真实的候选图（Alpha、Beta 或 Gamma）
-2. 判断该学习图是否存在有向死循环（回答"有环"或"无环"）
-3. 提供可验证的证据：
-   - 如果判定"有环"：给出一条完整的有向学习死循环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - 如果判定"无环"：给出一个包含所有模块A到F的拓扑单向进阶序列
-
-## 交互格式要求
-
-每次只能发起一个请求，使用以下XML格式：
-
-- 执行操作（例如在当前模块执行操作1）：
-<action>1</action>
-
-- 复位到起始模块：
-<reset></reset>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 查询步数：
-<query_steps></query_steps>
-
-提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
-
-有环的情况（示例）：
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-无环的情况（示例）：
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+最终提交格式如下（min_sum对应最小总壁垒指数）：
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's execute the "Adaptive Learning Path Assessment" task. Here are the rules:
+Let's play a "Cross-Campus Educational Resource Integration" planning game. Here are the rules:
 
-The system has a directed learning path graph with knowledge modules: A, B, C, D, E, F. The student always starts from the initial module A.
+A school district has five core campuses, denoted as {{A, B, C, D, E}}. The initial communication barrier indices for educational research and resource sharing between campuses are:
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-The graph structure is one of three candidate instructional designs, but I won't tell you which one:
+Due to educational policy adjustments, the current inter-campus collaboration environment is in one of six candidate policy patterns:
+1. Alpha (Status Quo): All cross-campus communication barrier indices equal the initial values.
+2. Beta (Increased Organizational Barriers): Campuses A-C, A-E, and C-E belong to different faculties, increasing their communication barrier indices by 1 from the initial, others remain unchanged.
+3. Gamma (Aggravated Resource Polarization): Resistance to cross-tier communication increases, doubling the barriers for paths with higher initial barriers (>= 2); basic collaboration (initial 1) remains unaffected.
+4. Delta (A-D Digital Direct Link): A holographic digital teaching platform is deployed between A-D, reducing the barrier index to 1, others remain unchanged.
+5. Epsilon (B-D Digital Direct Link): A holographic digital teaching platform is deployed between B-D, reducing the barrier index to 1, others remain unchanged.
+6. Zeta (C-E Digital Direct Link): A holographic digital teaching platform is deployed between C-E, reducing the barrier index to 1, others remain unchanged.
 
-- Candidate Design Alpha:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to A, action 1 to F
-  - D: action 0 to E, action 1 to E
-  - E: action 0 to F, action 1 to F
-  - F: action 0 to D, action 1 to D
+For any policy pattern M and campus X, define S(X) as the lowest total communication barrier index required for campus X, as the main research hub, to connect to all other campuses under pattern M.
 
-- Candidate Design Beta:
-  - A: action 0 to B, action 1 to C
-  - B: action 0 to D, action 1 to E
-  - C: action 0 to E, action 1 no edge
-  - D: action 0 to E, action 1 to F
-  - E: action 0 to F, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+I have secretly set the current collaboration policy pattern and it remains unchanged. Your goal is to deduce through assessment queries:
+1. The actual policy pattern adopted (one of Alpha/Beta/Gamma/Delta/Epsilon/Zeta)
+2. The core campus that minimizes the total communication barrier S under this pattern (if tied, any one is acceptable)
+3. The exact value of this minimum total barrier index
 
-- Candidate Design Gamma:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to B, action 1 to F
-  - D: action 0 to E, action 1 no edge
-  - E: action 0 to D, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+You can use the following three types of assessment queries:
+1. Parity Query: Ask whether S(X) for campus X is odd or even. Answer "Odd" or "Even".
+2. Comparison Query: Ask the relationship between S(X) and S(Y) for campuses X and Y. Answer "X greater than Y", "X equal to Y", or "X less than Y".
+3. Exact Value Query: Measure the exact value of S(X) for campus X. Due to research limits, it can be used at most once. Answer is a non-negative integer.
 
-You can explore the path structure through four types of interaction:
+Please select the optimal main campus using as few queries as possible.
 
-1. Execute action: Try action 0 or 1 at the current module. If the edge exists, you move to the target module; otherwise, you stay.
-2. Reset: Return the learning progress to the starting module A.
-3. Position query: Ask which knowledge module you are currently at.
-4. Step count query: Ask how many successful moves since the last reset (only counts moves via valid edges).
+Each query must contain only one tag. Use the following XML format:
+- Parity Query: <query_parity>A</query_parity>
+- Comparison Query: <query_compare>A,B</query_compare>
+- Exact Value Query: <query_exact>C</query_exact>
 
-Your goals are:
-1. Identify the true candidate graph (Alpha, Beta, or Gamma)
-2. Determine whether the learning graph has a directed cyclic loop (answer "yes" or "no")
-3. Provide verifiable evidence:
-   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - If "no": Give a topological one-way progression sequence containing all modules A through F
-
-## Interaction Format Requirements
-
-Each request must use one of the following XML formats:
-
-- Execute action (e.g., execute action 1 at current module):
-<action>1</action>
-
-- Reset to starting module:
-<reset></reset>
-
-- Query current position:
-<query_position></query_position>
-
-- Query step count:
-<query_steps></query_steps>
-
-When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
-
-With cycle (example):
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-Without cycle (example):
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+Submit the final answer in this format (min_sum refers to the minimum total barrier index):
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-我们现在来执行"工厂物料流转检测"任务，规则如下：
+我们来玩一个"智能工厂生产线调度"分析游戏，规则如下：
 
-系统设定了一个有向物料传送图，包含工作站集合：A, B, C, D, E, F。物料总是从起始工作站 A 开始流转。
+一个大型车间包含五个核心的工序流转节点，记为 {{A, B, C, D, E}}。节点间的物料传送带及其初始流转能耗指数如下：
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-图的结构是三个候选流水线配置之一，但我不会告诉你具体是哪一个：
+受设备运行状态影响，当前的流水线处于六种候选调度模式之一：
+1. Alpha（设备良态）：所有传送带能耗等于初始能耗指数。
+2. Beta（局部磨损）：A-C、A-E、C-E 传送带出现轻微磨损，能耗指数在初始值上加1，其余保持初始值。
+3. Gamma（电网波动）：受工厂供电影响，长线传输（初始能耗>=2）能耗翻倍；短线流转（初始能耗1）不受影响。
+4. Delta（A-D智能专线）：A-D 节点间部署了AGV小车直达专线，流转能耗降为1，其余保持初始值。
+5. Epsilon（B-D智能专线）：B-D 节点间部署了AGV小车直达专线，流转能耗降为1，其余保持初始值。
+6. Zeta（C-E智能专线）：C-E 节点间部署了AGV小车直达专线，流转能耗降为1，其余保持初始值。
 
-- 候选配置 Alpha：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到A, 操作1到F
-  - D: 操作0到E, 操作1到E
-  - E: 操作0到F, 操作1到F
-  - F: 操作0到D, 操作1到D
+对任一调度模式 M 和节点 X，定义 S(X) 为在模式 M 下，以节点 X 作为总装调度中心，汇集其余所有节点物料所需的最低总流转能耗（即汇集路径的最优能耗之和）。
 
-- 候选配置 Beta：
-  - A: 操作0到B, 操作1到C
-  - B: 操作0到D, 操作1到E
-  - C: 操作0到E, 操作1无边
-  - D: 操作0到E, 操作1到F
-  - E: 操作0到F, 操作1无边
-  - F: 操作0无边, 操作1无边
+我已秘密锁定了当前的设备调度模式并保持不变。你的目标是通过诊断查询推断出：
+1. 实际所处的调度模式（Alpha/Beta/Gamma/Delta/Epsilon/Zeta 之一）
+2. 在该模式下使总流转能耗 S 最小的总装节点（若并列，任选其一即可）
+3. 该最小总流转能耗的精确数值
 
-- 候选配置 Gamma：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到B, 操作1到F
-  - D: 操作0到E, 操作1无边
-  - E: 操作0到D, 操作1无边
-  - F: 操作0无边, 操作1无边
+你可以使用以下三种诊断查询方式：
+1. 奇偶查询：询问某个节点 X 的总能耗 S(X) 是奇数还是偶数。返回"奇数"或"偶数"。
+2. 大小比较查询：询问两个节点 X 和 Y 的 S 值大小关系。返回"X大于Y"、"X等于Y"或"X小于Y"。
+3. 精确值查询：测算某个节点 X 的 S(X) 精确仪表数值。因接口读取限制，最多使用1次，返回一个非负整数。
 
-你可以通过以下四类交互请求来探索传送图的结构：
+请用尽可能少的查询次数确定最佳的总装调度中心。
 
-1. 执行操作：在当前工作站尝试走操作0或操作1。如果该边存在，物料会移动到目标工作站；如果不存在，物料会留在原地。
-2. 复位：将当前物料位置重置为起始工作站 A。
-3. 位置查询：询问当前物料所在的工作站。
-4. 计步查询：询问自上次复位以来成功移动的次数（仅计算通过有效边的移动）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
+- 奇偶查询：<query_parity>A</query_parity>
+- 大小比较查询：<query_compare>A,B</query_compare>
+- 精确值查询：<query_exact>C</query_exact>
 
-你的目标是：
-1. 识别真实的候选图（Alpha、Beta 或 Gamma）
-2. 判断该传送图是否存在有向回环传送（回答"有环"或"无环"）
-3. 提供可验证的证据：
-   - 如果判定"有环"：给出一条完整的有向回环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - 如果判定"无环"：给出一个包含所有工作站A到F的拓扑顺畅加工单向序列
-
-## 交互格式要求
-
-每次只能发起一个请求，使用以下XML格式：
-
-- 执行操作（例如在当前工作站执行操作1）：
-<action>1</action>
-
-- 复位到起始工作站：
-<reset></reset>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 查询步数：
-<query_steps></query_steps>
-
-提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
-
-有环的情况（示例）：
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-无环的情况（示例）：
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+最终提交格式如下（min_sum对应最小总流转能耗）：
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Industry Scenario]
-Let's execute the "Factory Material Flow Detection" task. Here are the rules:
+[Manufacturing Scenario]
+Let's play a "Smart Factory Production Line Scheduling" analysis game. Here are the rules:
 
-The system has a directed material transfer graph with workstations: A, B, C, D, E, F. Materials always start flowing from the starting workstation A.
+A large workshop contains five core process flow nodes, denoted as {{A, B, C, D, E}}. The material conveyor belts between nodes and their initial flow energy consumption indices are:
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-The graph structure is one of three candidate assembly line configurations, but I won't tell you which one:
+Affected by equipment operational status, the current assembly line is in one of six candidate scheduling patterns:
+1. Alpha (Good Condition): All conveyor energy consumptions equal the initial indices.
+2. Beta (Local Wear): Belts A-C, A-E, and C-E experience slight wear, energy indices increased by 1 from initial, others remain initial.
+3. Gamma (Grid Fluctuation): Due to factory power supply issues, long-distance transmission (initial >= 2) energy consumption doubles; short-distance flows (initial 1) remain unaffected.
+4. Delta (A-D Smart Line): AGV automated direct lines are deployed between A-D, reducing flow energy to 1, others remain initial.
+5. Epsilon (B-D Smart Line): AGV automated direct lines are deployed between B-D, reducing flow energy to 1, others remain initial.
+6. Zeta (C-E Smart Line): AGV automated direct lines are deployed between C-E, reducing flow energy to 1, others remain initial.
 
-- Candidate Configuration Alpha:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to A, action 1 to F
-  - D: action 0 to E, action 1 to E
-  - E: action 0 to F, action 1 to F
-  - F: action 0 to D, action 1 to D
+For any scheduling pattern M and node X, define S(X) as the lowest total flow energy consumption required to converge materials from all other nodes to node X as the final assembly center under pattern M.
 
-- Candidate Configuration Beta:
-  - A: action 0 to B, action 1 to C
-  - B: action 0 to D, action 1 to E
-  - C: action 0 to E, action 1 no edge
-  - D: action 0 to E, action 1 to F
-  - E: action 0 to F, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+I have secretly locked the current equipment scheduling pattern and it remains unchanged. Your goal is to deduce through diagnostic queries:
+1. The actual scheduling pattern (one of Alpha/Beta/Gamma/Delta/Epsilon/Zeta)
+2. The assembly node that minimizes the total flow energy consumption S under this pattern (if tied, any one is acceptable)
+3. The exact value of this minimum total energy consumption
 
-- Candidate Configuration Gamma:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to B, action 1 to F
-  - D: action 0 to E, action 1 no edge
-  - E: action 0 to D, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+You can use the following three types of diagnostic queries:
+1. Parity Query: Ask whether S(X) for node X is odd or even. Answer "Odd" or "Even".
+2. Comparison Query: Ask the relationship between S(X) and S(Y) for nodes X and Y. Answer "X greater than Y", "X equal to Y", or "X less than Y".
+3. Exact Value Query: Measure the exact meter value of S(X) for node X. Due to interface reading limits, it can be used at most once. Answer is a non-negative integer.
 
-You can explore the transfer structure through four types of interaction:
+Please determine the optimal assembly scheduling center using as few queries as possible.
 
-1. Execute action: Try action 0 or 1 at the current workstation. If the edge exists, the material moves to the target workstation; otherwise, it stays.
-2. Reset: Return the material position to the starting workstation A.
-3. Position query: Ask which workstation the material is currently at.
-4. Step count query: Ask how many successful moves since the last reset (only counts moves via valid edges).
+Each query must contain only one tag. Use the following XML format:
+- Parity Query: <query_parity>A</query_parity>
+- Comparison Query: <query_compare>A,B</query_compare>
+- Exact Value Query: <query_exact>C</query_exact>
 
-Your goals are:
-1. Identify the true candidate graph (Alpha, Beta, or Gamma)
-2. Determine whether the transfer graph has a directed cyclic loop (answer "yes" or "no")
-3. Provide verifiable evidence:
-   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - If "no": Give a topological one-way processing sequence containing all workstations A through F
-
-## Interaction Format Requirements
-
-Each request must use one of the following XML formats:
-
-- Execute action (e.g., execute action 1 at current workstation):
-<action>1</action>
-
-- Reset to starting workstation:
-<reset></reset>
-
-- Query current position:
-<query_position></query_position>
-
-- Query step count:
-<query_steps></query_steps>
-
-When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
-
-With cycle (example):
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-Without cycle (example):
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+Submit the final answer in this format (min_sum refers to the minimum total energy consumption):
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-我们现在来执行"司法案件流转核查"任务，规则如下：
+我们来玩一个"跨辖区集中管辖法院评估"游戏，规则如下：
 
-系统设定了一个有向案件移交图，包含司法审查部门集合：A, B, C, D, E, F。案件总是从起始部门 A 开始流转。
+一宗大型联合诉讼案涉及五个司法管辖区法院，记为 {{A, B, C, D, E}}。辖区之间进行案件移交和证据共享的初始程序复杂度指数如下：
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-图的结构是三个候选法定流转程序之一，但我不会告诉你具体是哪一个：
+由于各辖区司法解释及协作协议的差异，当前的跨域协作处于六种候选司法协作模式之一：
+1. Alpha（常规司法程序）：所有移交协作的复杂度等于初始指数。
+2. Beta（隐私法规升级）：A-C、A-E、C-E 辖区因地方数据隐私保护法规升级，证据共享复杂度在初始值上加1，其余不变。
+3. Gamma（司法审查趋严）：为防范程序瑕疵，原本高复杂度（初始值>=2）的跨域协作审查趋严，复杂度翻倍；基础协作（初始值1）不受影响。
+4. Delta（A-D互认协议）：A-D 辖区间签署了司法互认与快速移交通道协议，复杂度降为1，其余不变。
+5. Epsilon（B-D互认协议）：B-D 辖区间签署了司法互认与快速移交通道协议，复杂度降为1，其余不变。
+6. Zeta（C-E互认协议）：C-E 辖区间签署了司法互认与快速移交通道协议，复杂度降为1，其余不变。
 
-- 候选程序 Alpha：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到A, 操作1到F
-  - D: 操作0到E, 操作1到E
-  - E: 操作0到F, 操作1到F
-  - F: 操作0到D, 操作1到D
+对任一司法协作模式 M 和管辖区 X，定义 S(X) 为在模式 M 下，选定 X 作为主审法院调取其余所有辖区案件材料所需的最低总程序复杂度（即最优调取路径复杂度之和）。
 
-- 候选程序 Beta：
-  - A: 操作0到B, 操作1到C
-  - B: 操作0到D, 操作1到E
-  - C: 操作0到E, 操作1无边
-  - D: 操作0到E, 操作1到F
-  - E: 操作0到F, 操作1无边
-  - F: 操作0无边, 操作1无边
+我已秘密选定了一种司法协作模式并保持不变。你的目标是通过法务查询推断出：
+1. 实际生效的司法协作模式（Alpha/Beta/Gamma/Delta/Epsilon/Zeta 之一）
+2. 在该模式下使总程序复杂度 S 最小的主审法院管辖区（若并列，任选其一即可）
+3. 该最小总程序复杂度的精确数值
 
-- 候选程序 Gamma：
-  - A: 操作0到B, 操作1到D
-  - B: 操作0到C, 操作1到E
-  - C: 操作0到B, 操作1到F
-  - D: 操作0到E, 操作1无边
-  - E: 操作0到D, 操作1无边
-  - F: 操作0无边, 操作1无边
+你可以使用以下三种法务查询方式：
+1. 奇偶查询：询问某个辖区 X 的总复杂度 S(X) 是奇数还是偶数。返回"奇数"或"偶数"。
+2. 大小比较查询：询问两个辖区 X 和 Y 的 S 值大小关系。返回"X大于Y"、"X等于Y"或"X小于Y"。
+3. 精确值查询：测算某个辖区 X 的 S(X) 精确数值。因司法接口调用限制，最多使用1次，返回一个非负整数。
 
-你可以通过以下四类交互请求来探索案件移交图的结构：
+请用尽可能少的查询次数确定最有效率的集中管辖法院。
 
-1. 执行操作：在当前部门尝试走操作0或操作1。如果该边存在，案件会移交到目标部门；如果不存在，案件会留在原部门。
-2. 复位：将当前案件状态重置为起始部门 A。
-3. 位置查询：询问当前案件所在的部门。
-4. 计步查询：询问自上次复位以来成功移交的次数（仅计算通过有效边的流转）。
+每次询问只能包含一个标签。请使用以下 XML 格式：
+- 奇偶查询：<query_parity>A</query_parity>
+- 大小比较查询：<query_compare>A,B</query_compare>
+- 精确值查询：<query_exact>C</query_exact>
 
-你的目标是：
-1. 识别真实的候选图（Alpha、Beta 或 Gamma）
-2. 判断该移交图是否存在有向程序死循环（回答"有环"或"无环"）
-3. 提供可验证的证据：
-   - 如果判定"有环"：给出一条完整的有向案件循环路径，格式为"X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - 如果判定"无环"：给出一个包含所有部门A到F的拓扑合法结案单向序列
-
-## 交互格式要求
-
-每次只能发起一个请求，使用以下XML格式：
-
-- 执行操作（例如在当前部门执行操作1）：
-<action>1</action>
-
-- 复位到起始部门：
-<reset></reset>
-
-- 查询当前位置：
-<query_position></query_position>
-
-- 查询步数：
-<query_steps></query_steps>
-
-提交最终答案时，必须包含：候选图名称、环的判定、以及证据，格式如下：
-
-有环的情况（示例）：
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-无环的情况（示例）：
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+最终提交格式如下（min_sum对应最小总程序复杂度）：
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's execute the "Judicial Case Flow Verification" task. Here are the rules:
+Let's play a "Cross-Jurisdiction Centralized Court Assessment" game. Here are the rules:
 
-The system has a directed case transfer graph with judicial departments: A, B, C, D, E, F. The case always starts flowing from the initial department A.
+A major joint litigation case involves courts in five judicial jurisdictions, denoted as {{A, B, C, D, E}}. The initial procedural complexity indices for case transfer and evidence sharing between jurisdictions are:
+- A-B(1), B-C(1), C-D(1), D-E(1)
+- A-C(2), B-D(2), A-E(2), C-E(3), A-D(3)
 
-The graph structure is one of three candidate legal procedures, but I won't tell you which one:
+Due to differences in judicial interpretations and collaboration agreements, current cross-domain collaboration is in one of six candidate judicial collaboration patterns:
+1. Alpha (Routine Judicial Procedures): All transfer collaboration complexities equal the initial indices.
+2. Beta (Privacy Regulation Upgrade): Jurisdictions A-C, A-E, and C-E upgraded their local data privacy regulations, increasing evidence sharing complexity by 1 from the initial, others remain initial.
+3. Gamma (Stricter Judicial Review): To prevent procedural flaws, cross-domain collaborations with already high complexity (initial >= 2) face stricter reviews, doubling their complexity; basic collaboration (initial 1) remains unaffected.
+4. Delta (A-D Mutual Recognition): A judicial mutual recognition and fast-track transfer agreement is signed between A-D, reducing complexity to 1, others remain initial.
+5. Epsilon (B-D Mutual Recognition): A judicial mutual recognition and fast-track transfer agreement is signed between B-D, reducing complexity to 1, others remain initial.
+6. Zeta (C-E Mutual Recognition): A judicial mutual recognition and fast-track transfer agreement is signed between C-E, reducing complexity to 1, others remain initial.
 
-- Candidate Procedure Alpha:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to A, action 1 to F
-  - D: action 0 to E, action 1 to E
-  - E: action 0 to F, action 1 to F
-  - F: action 0 to D, action 1 to D
+For any judicial collaboration pattern M and jurisdiction X, define S(X) as the lowest total procedural complexity required if X is selected as the presiding court to retrieve case materials from all other jurisdictions under pattern M.
 
-- Candidate Procedure Beta:
-  - A: action 0 to B, action 1 to C
-  - B: action 0 to D, action 1 to E
-  - C: action 0 to E, action 1 no edge
-  - D: action 0 to E, action 1 to F
-  - E: action 0 to F, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+I have secretly selected one judicial collaboration pattern and it remains unchanged. Your goal is to deduce through legal queries:
+1. The actual effective judicial collaboration pattern (one of Alpha/Beta/Gamma/Delta/Epsilon/Zeta)
+2. The presiding court jurisdiction that minimizes the total procedural complexity S under this pattern (if tied, any one is acceptable)
+3. The exact value of this minimum total procedural complexity
 
-- Candidate Procedure Gamma:
-  - A: action 0 to B, action 1 to D
-  - B: action 0 to C, action 1 to E
-  - C: action 0 to B, action 1 to F
-  - D: action 0 to E, action 1 no edge
-  - E: action 0 to D, action 1 no edge
-  - F: action 0 no edge, action 1 no edge
+You can use the following three types of legal queries:
+1. Parity Query: Ask whether S(X) for jurisdiction X is odd or even. Answer "Odd" or "Even".
+2. Comparison Query: Ask the relationship between S(X) and S(Y) for jurisdictions X and Y. Answer "X greater than Y", "X equal to Y", or "X less than Y".
+3. Exact Value Query: Measure the exact value of S(X) for jurisdiction X. Due to judicial API call limits, it can be used at most once. Answer is a non-negative integer.
 
-You can explore the case transfer structure through four types of interaction:
+Please determine the most efficient centralized jurisdiction court using as few queries as possible.
 
-1. Execute action: Try action 0 or 1 at the current department. If the edge exists, the case is transferred to the target department; otherwise, it stays.
-2. Reset: Return the case state to the starting department A.
-3. Position query: Ask which department the case is currently at.
-4. Step count query: Ask how many successful transfers since the last reset (only counts moves via valid edges).
+Each query must contain only one tag. Use the following XML format:
+- Parity Query: <query_parity>A</query_parity>
+- Comparison Query: <query_compare>A,B</query_compare>
+- Exact Value Query: <query_exact>C</query_exact>
 
-Your goals are:
-1. Identify the true candidate graph (Alpha, Beta, or Gamma)
-2. Determine whether the transfer graph has a directed procedural cyclic loop (answer "yes" or "no")
-3. Provide verifiable evidence:
-   - If "yes": Give a complete directed cycle path in format "X -(d1)-> Y -(d2)-> ... -(dk)-> X"
-   - If "no": Give a topological lawful one-way resolution sequence containing all departments A through F
-
-## Interaction Format Requirements
-
-Each request must use one of the following XML formats:
-
-- Execute action (e.g., execute action 1 at current department):
-<action>1</action>
-
-- Reset to starting department:
-<reset></reset>
-
-- Query current position:
-<query_position></query_position>
-
-- Query step count:
-<query_steps></query_steps>
-
-When submitting final answer, must include: graph name, cycle determination, and evidence, in this format:
-
-With cycle (example):
-<answer>graph=Alpha, cycle=yes, evidence=C -(0)-> A -(0)-> B -(0)-> C</answer>
-
-Without cycle (example):
-<answer>graph=Beta, cycle=no, evidence=A,B,C,D,E,F</answer>
+Submit the final answer in this format (min_sum refers to the minimum total procedural complexity):
+<answer>pattern=Alpha, vertex=A, min_sum=10</answer>
 """
 
-    tags = ["answer", "action", "reset", "query_position", "query_steps"]
+    tags = ["answer", "query_parity", "query_compare", "query_exact"]
     
     reasoning_type = "溯因推理"
     data_structure = "图"
 
     DIFFICULTY_CONFIG = {
-        1: {"graph": "Beta"},
-        2: {"graph": "Gamma"},
-        3: {"graph": "Alpha"},
-        4: {"graph": "Alpha"},
-        5: {"graph": "Gamma"},
-    }
-
-    GRAPHS = {
-        "Alpha": {
-            "A": {0: "B", 1: "D"},
-            "B": {0: "C", 1: "E"},
-            "C": {0: "A", 1: "F"},
-            "D": {0: "E", 1: "E"},
-            "E": {0: "F", 1: "F"},
-            "F": {0: "D", 1: "D"},
+        "zh": {
+            1: {"pattern": "Alpha"},
+            2: {"pattern": "Delta"},
+            3: {"pattern": "Epsilon"},
+            4: {"pattern": "Zeta"},
+            5: {"pattern": "Beta"},
+            6: {"pattern": "Gamma"},
         },
-        "Beta": {
-            "A": {0: "B", 1: "C"},
-            "B": {0: "D", 1: "E"},
-            "C": {0: "E"},
-            "D": {0: "E", 1: "F"},
-            "E": {0: "F"},
-            "F": {},
-        },
-        "Gamma": {
-            "A": {0: "B", 1: "D"},
-            "B": {0: "C", 1: "E"},
-            "C": {0: "B", 1: "F"},
-            "D": {0: "E"},
-            "E": {0: "D"},
-            "F": {},
-        },
-    }
-
-    CORRECT_ANSWERS = {
-        "Alpha": {
-            "has_cycle": True,
-            "example_cycle": ["C", "A", "B", "C"],
-            "cycle_actions": [0, 0, 0]
-        },
-        "Beta": {
-            "has_cycle": False,
-            "topo_order": ["A", "B", "C", "D", "E", "F"]
-        },
-        "Gamma": {
-            "has_cycle": True,
-            "example_cycle": ["D", "E", "D"],
-            "cycle_actions": [0, 0]
+        "en": {
+            1: {"pattern": "Alpha"},
+            2: {"pattern": "Delta"},
+            3: {"pattern": "Epsilon"},
+            4: {"pattern": "Zeta"},
+            5: {"pattern": "Beta"},
+            6: {"pattern": "Gamma"},
         },
     }
 
     def __init__(self, config):
+        self.original_edges = {
+            ("A", "B"): 1, ("B", "C"): 1, ("C", "D"): 1, ("D", "E"): 1,
+            ("A", "C"): 2, ("B", "D"): 2, ("A", "E"): 2, ("C", "E"): 3, ("A", "D"): 3
+        }
+        self.vertices = ["A", "B", "C", "D", "E"]
+        
+        self.parity_compare_count = 0
+        self.exact_count = 0
+        
         super().__init__(config)
 
     def _initialize_game(self):
-        diff = int(self.config.difficulty)
-        if diff not in self.DIFFICULTY_CONFIG:
+        lang = self.config.language
+        diff = self.config.difficulty
+
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        self.true_graph_name = self.DIFFICULTY_CONFIG[diff]["graph"]
-        self.graph = self.GRAPHS[self.true_graph_name]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.pattern = cfg["pattern"]
+        self._game_info["pattern"] = self.pattern
+
+        self.edges = self._apply_pattern(self.pattern)
         
-        self.current_node = "A"
-        self.step_count = 0
+        self.graph = self._build_graph(self.edges)
         
-        self._game_info = {}
+        self.s_values = {}
+        for vertex in self.vertices:
+            self.s_values[vertex] = self._calculate_s(vertex)
+        
+        self.min_s_value = min(self.s_values.values())
+        self.optimal_vertices = [v for v, s in self.s_values.items() if s == self.min_s_value]
+
+    def _apply_pattern(self, pattern):
+        edges = {}
+        for (u, v), length in self.original_edges.items():
+            edge = tuple(sorted([u, v]))
+            
+            if pattern == "Alpha":
+                edges[edge] = length
+            elif pattern == "Beta":
+                if edge in [("A", "C"), ("A", "E"), ("C", "E")]:
+                    edges[edge] = length + 1
+                else:
+                    edges[edge] = length
+            elif pattern == "Gamma":
+                if length >= 2:
+                    edges[edge] = length * 2
+                else:
+                    edges[edge] = length
+            elif pattern == "Delta":
+                if edge == ("A", "D"):
+                    edges[edge] = 1
+                else:
+                    edges[edge] = length
+            elif pattern == "Epsilon":
+                if edge == ("B", "D"):
+                    edges[edge] = 1
+                else:
+                    edges[edge] = length
+            elif pattern == "Zeta":
+                if edge == ("C", "E"):
+                    edges[edge] = 1
+                else:
+                    edges[edge] = length
+            else:
+                raise ValueError(f"Unknown pattern: {pattern}")
+        
+        return edges
+
+    def _build_graph(self, edges):
+        graph = defaultdict(list)
+        for (u, v), weight in edges.items():
+            graph[u].append((v, weight))
+            graph[v].append((u, weight))
+        return graph
+
+    def _dijkstra(self, start):
+        distances = {v: float('inf') for v in self.vertices}
+        distances[start] = 0
+        pq = [(0, start)]
+        
+        while pq:
+            current_dist, current = heapq.heappop(pq)
+            
+            if current_dist > distances[current]:
+                continue
+            
+            for neighbor, weight in self.graph[current]:
+                distance = current_dist + weight
+                if distance < distances[neighbor]:
+                    distances[neighbor] = distance
+                    heapq.heappush(pq, (distance, neighbor))
+        
+        return distances
+
+    def _calculate_s(self, vertex):
+        distances = self._dijkstra(vertex)
+        return sum(dist for v, dist in distances.items() if v != vertex)
+    
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+
+        if self.config.language == "zh":
+            odd_res, even_res = "奇数", "偶数"
+            greater_res, equal_res, less_res = "X大于Y", "X等于Y", "X小于Y"
+        else:
+            odd_res, even_res = "Odd", "Even"
+            greater_res, equal_res, less_res = "X greater than Y", "X equal to Y", "X less than Y"
+
+        for vertex in self.vertices:
+            s_value = self.s_values[vertex]
+            ans = odd_res if s_value % 2 == 1 else even_res
+            results.append({
+                "query": f"<query_parity>{vertex}</query_parity>",
+                "answer": ans
+            })
+
+        for v1, v2 in itertools.permutations(self.vertices, 2):
+            s1 = self.s_values[v1]
+            s2 = self.s_values[v2]
+            if s1 > s2:
+                ans = greater_res
+            elif s1 == s2:
+                ans = equal_res
+            else:
+                ans = less_res
+            
+            results.append({
+                "query": f"<query_compare>{v1},{v2}</query_compare>",
+                "answer": ans
+            })
+
+        for vertex in self.vertices:
+            ans = str(self.s_values[vertex])
+            results.append({
+                "query": f"<query_exact>{vertex}</query_exact>",
+                "answer": ans
+            })
+
+        return results
 
     def evaluate(self, parsed_info):
-        raw_ans = parsed_info.get("answer", "")
+        raw_ans = parsed_info["answer"]
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
+        
+        if "pattern" not in ans_dict or "vertex" not in ans_dict or "min_sum" not in ans_dict:
+            return False
+        
+        if ans_dict["pattern"] != self.pattern:
+            return False
+        
+        if ans_dict["vertex"] not in self.optimal_vertices:
+            return False
         
         try:
-            ans_dict = {}
-            
-            # 提取 graph
-            graph_match = re.search(r'graph\s*=\s*(\w+)', raw_ans)
-            cycle_match = re.search(r'cycle\s*=\s*(\w+)', raw_ans)
-            evidence_match = re.search(r'evidence\s*=\s*(.+)', raw_ans)
-            
-            if not graph_match or not cycle_match or not evidence_match:
+            min_sum = int(ans_dict["min_sum"])
+            if min_sum != self.min_s_value:
                 return False
-            
-            graph_ans = graph_match.group(1).strip()
-            cycle_ans = cycle_match.group(1).strip()
-            evidence = evidence_match.group(1).strip()
-            
-            if graph_ans != self.true_graph_name:
-                return False
-            
-            correct = self.CORRECT_ANSWERS[self.true_graph_name]
-            
-            if correct["has_cycle"]:
-                if cycle_ans not in ["yes", "有环"]:
-                    return False
-                return self._verify_cycle(evidence)
-            else:
-                if cycle_ans not in ["no", "无环"]:
-                    return False
-                return self._verify_topo(evidence)
-                
-        except Exception as e:
+        except Exception:
             return False
-
-    def _verify_cycle(self, evidence):
-        pattern = r'([A-F])\s*-\((\d)\)->\s*'
-        matches = re.findall(pattern, evidence)
-        
-        if not matches:
-            return False
-        
-        nodes = [m[0] for m in matches]
-        actions = [int(m[1]) for m in matches]
-        
-        last_node_match = re.search(r'->\s*([A-F])\s*$', evidence)
-        if not last_node_match:
-            return False
-        last_node = last_node_match.group(1)
-        nodes.append(last_node)
-        
-        if nodes[0] != nodes[-1]:
-            return False
-        
-        for i in range(len(actions)):
-            current = nodes[i]
-            action = actions[i]
-            expected_next = nodes[i + 1]
-            
-            if current not in self.graph:
-                return False
-            if action not in self.graph[current]:
-                return False
-            if self.graph[current][action] != expected_next:
-                return False
         
         return True
 
-    def _verify_topo(self, evidence):
-        try:
-            topo = [x.strip() for x in evidence.split(",")]
-            
-            if set(topo) != {"A", "B", "C", "D", "E", "F"}:
-                return False
-            
-            pos = {node: i for i, node in enumerate(topo)}
-            
-            for node in self.graph:
-                for action, target in self.graph[node].items():
-                    if pos[node] >= pos[target]:
-                        return False
-            
-            return True
-            
-        except:
-            return False
-
     def _cf_core_produce(self, parsed_info):
-        """根据玩家的操作产生游戏反馈（核心逻辑，供基类 produce_response 调用）"""
-        lang = self.config.language
-        
-        if "action" in parsed_info:
-            action_str = parsed_info["action"].strip()
+        if self.config.language == "zh":
+            odd_res, even_res = "奇数", "偶数"
+            greater_res, equal_res, less_res = "X大于Y", "X等于Y", "X小于Y"
+            error_vertex = "错误：顶点不存在。"
+            error_format = "错误：格式无效。"
+            error_exact_limit = "错误：精确值查询已达到使用上限。"
+        else:
+            odd_res, even_res = "Odd", "Even"
+            greater_res, equal_res, less_res = "X greater than Y", "X equal to Y", "X less than Y"
+            error_vertex = "Error: Vertex does not exist."
+            error_format = "Error: Invalid format."
+            error_exact_limit = "Error: Exact value query limit reached."
+
+        if "query_parity" in parsed_info:
+            self.parity_compare_count += 1
+            vertex = parsed_info["query_parity"].strip()
+            if vertex not in self.vertices:
+                return error_vertex
+            s_value = self.s_values[vertex]
+            return odd_res if s_value % 2 == 1 else even_res
+
+        elif "query_compare" in parsed_info:
+            self.parity_compare_count += 1
             try:
-                action = int(action_str)
-                if action not in [0, 1]:
-                    raise ValueError
+                raw = parsed_info["query_compare"]
+                v1, v2 = [x.strip() for x in raw.split(",")]
+                if v1 not in self.vertices or v2 not in self.vertices:
+                    return error_vertex
+                s1, s2 = self.s_values[v1], self.s_values[v2]
+                if s1 > s2:
+                    return greater_res
+                elif s1 == s2:
+                    return equal_res
+                else:
+                    return less_res
             except:
-                return "错误：操作必须是0或1。" if lang == "zh" else "Error: Action must be 0 or 1."
-            
-            if self.current_node in self.graph and action in self.graph[self.current_node]:
-                target = self.graph[self.current_node][action]
-                self.current_node = target
-                self.step_count += 1
-                if lang == "zh":
-                    return f"成功，抵达 {target}"
-                else:
-                    return f"Success, arrived at {target}"
-            else:
-                if lang == "zh":
-                    return f"无效，仍在 {self.current_node}"
-                else:
-                    return f"Invalid, still at {self.current_node}"
-        
-        elif "reset" in parsed_info:
-            self.current_node = "A"
-            self.step_count = 0
-            return "已复位到 A" if lang == "zh" else "Reset to A"
-        
-        elif "query_position" in parsed_info:
-            return f"在 {self.current_node}" if lang == "zh" else f"At {self.current_node}"
-        
-        elif "query_steps" in parsed_info:
-            return str(self.step_count)
-        
+                return error_format
+
+        elif "query_exact" in parsed_info:
+            if self.exact_count >= 1:
+                return error_exact_limit
+            self.exact_count += 1
+            vertex = parsed_info["query_exact"].strip()
+            if vertex not in self.vertices:
+                return error_vertex
+            return str(self.s_values[vertex])
+
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """将正确的游戏回复篡改为错误回复，用于反事实干预"""
-        lang = self.config.language
-        nodes = ["A", "B", "C", "D", "E", "F"]
-
-        if lang == "zh":
-            # 处理"成功抵达"
-            for node in nodes:
-                if f"抵达 {node}" in correct:
-                    wrong_nodes = [n for n in nodes if n != node]
-                    return correct.replace(f"抵达 {node}", f"抵达 {wrong_nodes[0]}")
-            # 处理"无效"
-            if "无效" in correct:
-                return f"成功，抵达 {nodes[0]}"
-            # 处理"复位"
-            if "复位" in correct:
-                return f"已复位到 B"
-            # 处理位置查询
-            for node in nodes:
-                if f"在 {node}" in correct:
-                    wrong_nodes = [n for n in nodes if n != node]
-                    return f"在 {wrong_nodes[0]}"
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if self.config.language == "zh":
+            swap_zh = {
+                "奇数": "偶数",
+                "偶数": "奇数",
+                "X大于Y": "X小于Y",
+                "X小于Y": "X大于Y",
+                "X等于Y": "X大于Y",
+            }
+            if correct in swap_zh:
+                return swap_zh[correct]
         else:
-            for node in nodes:
-                if f"arrived at {node}" in correct:
-                    wrong_nodes = [n for n in nodes if n != node]
-                    return correct.replace(f"arrived at {node}", f"arrived at {wrong_nodes[0]}")
-            if "Invalid" in correct:
-                return f"Success, arrived at {nodes[0]}"
-            # 处理 reset 回复
-            if "Reset to" in correct:
-                return "Reset to B"
-            for node in nodes:
-                if f"At {node}" in correct:
-                    wrong_nodes = [n for n in nodes if n != node]
-                    return f"At {wrong_nodes[0]}"
-
-        # 步数查询
-        try:
-            val = int(correct)
-            return str(val + 1)
-        except ValueError:
-            pass
-
-        return correct + " [error]"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """返回一组足够区分三个候选图并得出正确答案的查询序列。
-        模拟一次完整的探索过程，不修改游戏自身状态。"""
-        results = []
-        lang = self.config.language
-        
-        # 保存当前状态
-        saved_node = self.current_node
-        saved_steps = self.step_count
-        
-        # 设计一个探索序列，可以区分所有三个候选图
-        # 策略：从 A 开始，尝试各种操作序列
-        exploration = [
-            ("action", "0"),   # A -> ? (Alpha/Gamma: B, Beta: B)
-            ("action", "1"),   # B -> ? (Alpha: E, Beta: E, Gamma: E)  -- 所有都到E
-            ("reset", ""),
-            ("action", "1"),   # A -> ? (Alpha: D, Beta: C, Gamma: D) -- 可区分Beta
-            ("reset", ""),
-            ("action", "0"),   # A -> B
-            ("action", "0"),   # B -> C
-            ("action", "0"),   # C -> ? (Alpha: A, Beta: E, Gamma: B) -- 可区分所有
-            ("query_position", ""),
-            ("reset", ""),
-            ("action", "1"),   # A -> D or C
-            ("action", "0"),   # D->E or C->E
-            ("action", "0"),   # E->F or E->F(Alpha) or E->D(Gamma)
-            ("query_position", ""),
-            ("query_steps", ""),
-        ]
-        
-        # 重置到初始状态进行模拟
-        self.current_node = "A"
-        self.step_count = 0
-        
-        for op_type, op_value in exploration:
-            if op_type == "action":
-                query_str = f"<action>{op_value}</action>"
-                action = int(op_value)
-                if self.current_node in self.graph and action in self.graph[self.current_node]:
-                    target = self.graph[self.current_node][action]
-                    self.current_node = target
-                    self.step_count += 1
-                    ans = f"成功，抵达 {target}" if lang == "zh" else f"Success, arrived at {target}"
-                else:
-                    ans = f"无效，仍在 {self.current_node}" if lang == "zh" else f"Invalid, still at {self.current_node}"
-            elif op_type == "reset":
-                query_str = "<reset></reset>"
-                self.current_node = "A"
-                self.step_count = 0
-                ans = "已复位到 A" if lang == "zh" else "Reset to A"
-            elif op_type == "query_position":
-                query_str = "<query_position></query_position>"
-                ans = f"在 {self.current_node}" if lang == "zh" else f"At {self.current_node}"
-            elif op_type == "query_steps":
-                query_str = "<query_steps></query_steps>"
-                ans = str(self.step_count)
-            else:
-                continue
-            
-            results.append({"query": query_str, "answer": ans})
-        
-        # 恢复原始状态
-        self.current_node = saved_node
-        self.step_count = saved_steps
-        
-        return results
+            swap_en = {
+                "Odd": "Even",
+                "Even": "Odd",
+                "X greater than Y": "X less than Y",
+                "X less than Y": "X greater than Y",
+                "X equal to Y": "X greater than Y",
+            }
+            if correct in swap_en:
+                return swap_en[correct]
+                
+        return correct + "_WRONG"

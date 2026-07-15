@@ -1,641 +1,572 @@
-# -*- coding: utf-8 -*-
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   桥判断：某条给定边是否为桥（删除后图不再连通）
-# ============================================================
-
 from .base import Game
 import random
-import copy
 
-class BridgeDetectionGame(Game):
+class HiddenTreeHeightGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"隐藏图上的删边连通性"推理游戏，规则如下：
+我们来玩一个"隐藏树高度"的推理游戏，规则如下：
 
-游戏设定了一个隐藏的简单无向连通图 G，包含 {n} 个节点（编号 1 到 {n}）。图中有一条目标边 e* = ({u}, {v})，你需要判定这条边是否为"桥"：
+游戏设定了一棵含 {n} 个编号节点（1 到 {n}）的有根树，根节点已固定但未知。其中存在唯一的隐藏节点 T（T 不是根节点）。
 
-- 若删除边 e* 后，节点 {u} 与节点 {v} 仍然连通（存在不经过 e* 的路径），则 e* 不是桥。
-- 若删除边 e* 后，节点 {u} 与节点 {v} 不连通，则 e* 是桥。
+节点高度 H(u) 定义为以 u 为根的子树高度：
+- 若 u 为叶节点，则 H(u) = 0
+- 否则 H(u) = 1 + max(H(v) for all v 是 u 的子节点)
 
-注意：在所有查询和判断中，边 e* 已被移除，不可使用。
+对于任意节点 u，其完整子节点高度集合应为 {{0, 1, ..., H(u)-1}}（当 H(u)=0 时为空集）。
 
-你可以通过以下三种查询来收集信息：
+由于节点 T 被隐藏，系统对每个节点 u 的可见子节点集为：从 u 的真实子节点中移除 T（若 T 是 u 的子节点）。
 
-1. **扩张查询**：从节点 {u} 或节点 {v} 出发，执行一层的广度优先搜索扩张（仅扩张一层，且不进入已被任一侧发现的节点）。
-   - 回答包含：新增节点数、当前从 {u} 侧累计发现的节点数、当前从 {v} 侧累计发现的节点数、是否相遇（两侧是否连通）、该侧是否已枯竭（无法继续扩张）。
-   - 重要：一旦某次扩张返回"是否相遇 = 是"，表示已证实 {u} 与 {v} 在删除 e* 后仍连通，此后不允许继续执行扩张查询。
+关键规律：
+- 除了 T 的父节点外，所有节点的可见子节点高度集合都完整（即恰为 {{0, 1, ..., H(u)-1}}）
+- 在 T 的父节点处，可见子节点高度集合会缺失恰好一个值，该缺失值等于 H(T)
 
-2. **边界规模查询**：查询从节点 {u} 或节点 {v} 的当前边界还能扩张到多少个新节点（尚未被任一侧发现的邻居数量）。
+你的目标是通过查询推断出 H(T) 的值。
 
-3. **最终判定**：当收集足够信息后，提交你的判定结果（桥 或 非桥）。
-   - 判定"非桥"的条件：至少一次扩张查询返回"是否相遇 = 是"。
-   - 判定"桥"的条件：从未相遇，且两侧的边界规模查询均返回 0（两侧都已枯竭）。
+你可以进行以下两种查询：
 
-你的目标是使用尽可能少的查询次数，正确判定目标边是否为桥。
+1. 查询高度：询问某个节点 u 的高度 H(u)
+   - 约束：u 不能是隐藏节点 T
+   - 反馈：返回整数 H(u)，或在 u=T 时返回"拒绝查询"
 
-## 查询与判定格式（必须严格遵守）
+2. 查询子高度：询问某个节点 u 的所有可见子节点的高度列表
+   - 反馈：返回一个升序整数列表，包含 u 的所有可见子节点的高度值（不包含节点编号）
+   - 列表可能为空（u 为叶节点或唯一子节点是 T）
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+每次只能进行一个操作。请使用以下 XML 格式：
 
-- 扩张查询（从节点 {u} 或 {v} 扩张）：
-<query_expand>{u}</query_expand>
-或
-<query_expand>{v}</query_expand>
+- 查询节点 5 的高度：
+<query_height>5</query_height>
 
-- 边界规模查询（查询节点 {u} 或 {v} 的边界）：
-<query_boundary>{u}</query_boundary>
-或
-<query_boundary>{v}</query_boundary>
+- 查询节点 3 的子节点高度列表：
+<query_children>3</query_children>
 
-- 最终判定（判定为桥或非桥）：
-<answer>桥</answer>
-或
-<answer>非桥</answer>
+- 提交最终答案（例如猜测 H(T)=2）：
+<answer>2</answer>
+
+请尽可能少地使用查询次数，当你确定答案后即可提交。若答案错误或格式不符，游戏失败。
 """
 
     game_rule_en = """\
-Let's play a "Bridge Detection in Hidden Graph" deduction game. Here are the rules:
+Let's play a "Hidden Tree Height" deduction game. Here are the rules:
 
-The game features a hidden simple undirected connected graph G with {n} nodes (numbered 1 to {n}). There is a target edge e* = ({u}, {v}), and you need to determine whether this edge is a "bridge":
+The game involves a rooted tree with {n} numbered nodes (1 to {n}). The root is fixed but unknown. There exists a unique hidden node T (T is not the root).
 
-- If after removing edge e*, nodes {u} and {v} are still connected (there exists a path not using e*), then e* is not a bridge.
-- If after removing edge e*, nodes {u} and {v} are disconnected, then e* is a bridge.
+The height H(u) of a node u is defined as the height of the subtree rooted at u:
+- If u is a leaf, then H(u) = 0
+- Otherwise H(u) = 1 + max(H(v) for all v that are children of u)
 
-Note: In all queries and judgments, edge e* is considered removed and cannot be used.
+For any node u, its complete set of child heights should be exactly {{0, 1, ..., H(u)-1}} (empty set when H(u)=0).
 
-You can collect information through three types of queries:
+Since node T is hidden, the system's visible children set for each node u is: the true children of u with T removed (if T is a child of u).
 
-1. **Expand Query**: Starting from node {u} or node {v}, perform one layer of breadth-first search expansion (only one layer, and do not enter nodes already discovered by either side).
-   - Response includes: number of new nodes, cumulative nodes discovered from {u} side, cumulative nodes discovered from {v} side, whether the two sides have met (connected), whether this side is exhausted (cannot expand further).
-   - Important: Once an expand query returns "met = yes", it proves {u} and {v} are still connected after removing e*, and no further expand queries are allowed.
+Key pattern:
+- Except for T's parent, all nodes have complete visible child height sets (exactly {{0, 1, ..., H(u)-1}})
+- At T's parent, the visible child height set will be missing exactly one value, and that missing value equals H(T)
 
-2. **Boundary Size Query**: Query how many new nodes (neighbors not yet discovered by either side) can be reached from the current boundary of node {u} or node {v}.
+Your goal is to infer the value of H(T) through queries.
 
-3. **Final Judgment**: When you have collected enough information, submit your judgment (bridge or non-bridge).
-   - Condition for "non-bridge": at least one expand query returned "met = yes".
-   - Condition for "bridge": never met, and boundary size queries for both sides return 0 (both sides exhausted).
+You can perform the following two types of queries:
 
-Your goal is to correctly determine whether the target edge is a bridge using as few queries as possible.
+1. Query Height: Ask for the height H(u) of a node u
+   - Constraint: u cannot be the hidden node T
+   - Response: Returns integer H(u), or "Query Rejected" when u=T
 
-## Query and Judgment Format (strictly required)
+2. Query Children Heights: Ask for the list of heights of all visible children of node u
+   - Response: Returns a sorted integer list containing the heights of all visible children of u (without node IDs)
+   - The list may be empty (u is a leaf or its only child is T)
 
-Each query must contain only one tag. Use the following XML format:
+Only one operation per turn. Use the following XML format:
 
-- Expand Query (expand from node {u} or {v}):
-<query_expand>{u}</query_expand>
-or
-<query_expand>{v}</query_expand>
+- Query height of node 5:
+<query_height>5</query_height>
 
-- Boundary Size Query (query boundary of node {u} or {v}):
-<query_boundary>{u}</query_boundary>
-or
-<query_boundary>{v}</query_boundary>
+- Query children heights of node 3:
+<query_children>3</query_children>
 
-- Final Judgment (judge as bridge or non-bridge):
-<answer>bridge</answer>
-or
-<answer>non-bridge</answer>
+- Submit final answer (e.g., guessing H(T)=2):
+<answer>2</answer>
+
+Please use as few queries as possible. Submit when you are confident. If the answer is wrong or the format is invalid, the game fails.
 """
 
-    # ================= 场景1：交通 =================
     contextualized_rule_zh_1 = """\
-【交通演练场景】
-我们现在来进行一场"城市交通路网应急阻断"推理游戏，规则如下：
+这是针对物流系统路由规划的深度探测任务。
+当前物流网络被抽象为一棵含 {n} 个站点的有根树（站点编号 1 到 {n}），总调度中心已固定为根节点但具体编号未知。网络中存在唯一的保密中转站 T（T 不是根节点）。
 
-系统设定了一个隐藏的简单无向连通交通路网 G，包含 {n} 个关键路口（节点编号 1 到 {n}）。图中有一条计划封闭施工的主干道 e* = ({u}, {v})，你需要判定这条路段是否为交通路网中的"桥"（即唯一通路）：
+站点路由深度 H(u) 定义为以 u 为起点的最大下游中转层数：
+- 若 u 为末端站点，则 H(u) = 0
+- 否则 H(u) = 1 + max(H(v) for all v 是 u 的直接下游站点)
 
-- 若封闭路段 e* 后，路口 {u} 与路口 {v} 仍然连通（存在不经过 e* 的绕行路线），则 e* 不是桥。
-- 若封闭路段 e* 后，路口 {u} 与路口 {v} 交通彻底中断（不连通），则 e* 是桥。
+对于任意站点 u，其完整的直接下游站点的路由深度集合应为 {{0, 1, ..., H(u)-1}}（当 H(u)=0 时为空集）。
 
-注意：在所有查询和判断中，路段 e* 视为已封闭，不可使用。
+由于保密中转站 T 被从常规系统中隐藏，系统对每个站点 u 的可见下游站点集为：从 u 的真实下游站点中移除 T（若 T 是 u 的直接下游）。
 
-你可以通过以下三种操作来收集路网信息：
+关键规律：
+- 除了 T 的上级站点外，所有站点的可见下游路由深度集合都完整（即恰为 {{0, 1, ..., H(u)-1}}）
+- 在 T 的上级站点处，可见下游路由深度集合会缺失恰好一个值，该缺失值等于 H(T)
 
-1. **扩张查询**：从路口 {u} 或路口 {v} 出发，执行一层路网探测（仅探测相邻的一个街区，且不进入已被任一侧发现的路口）。
-   - 回答包含：新增路口数、当前从 {u} 侧累计发现的路口数、当前从 {v} 侧累计发现的路口数、是否相遇（两侧是否连通）、该侧是否已枯竭（无法继续探测）。
-   - 重要：一旦某次探测返回"是否相遇 = 是"，表示已证实 {u} 与 {v} 在封闭 e* 后仍可通过绕行连通，此后不允许继续执行探测查询。
+你的目标是通过查询推断出保密中转站的路由深度 H(T) 的值。
 
-2. **边界规模查询**：查询从路口 {u} 或路口 {v} 的当前探索边界，还能向外探测到多少个新路口（尚未被任一侧发现的相邻路口数量）。
+你可以进行以下两种查询：
 
-3. **最终判定**：当收集足够信息后，提交你的判定结果（桥 或 非桥）。
-   - 判定"非桥"的条件：至少一次扩张查询返回"是否相遇 = 是"。
-   - 判定"桥"的条件：从未相遇，且两侧的边界规模查询均返回 0（两侧探测均已枯竭）。
+1. 查询路由深度：询问某个站点 u 的深度 H(u)
+   - 约束：u 不能是保密中转站 T
+   - 反馈：返回整数 H(u)，或在 u=T 时系统提示"拒绝查询"
 
-你的目标是使用尽可能少的查询次数，正确判定目标路段是否为桥。
+2. 查询下游深度列表：询问某个站点 u 的所有可见下游站点的路由深度列表
+   - 反馈：返回一个升序整数列表，包含 u 的所有可见下游站点的深度值（不包含站点编号）
+   - 列表可能为空（u 为末端站点或唯一直接下游是 T）
 
-## 查询与判定格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 查询站点 5 的路由深度：
+<query_height>5</query_height>
 
-- 扩张查询（从节点 {u} 或 {v} 扩张）：
-<query_expand>{u}</query_expand>
-或
-<query_expand>{v}</query_expand>
+- 查询站点 3 的下游深度列表：
+<query_children>3</query_children>
 
-- 边界规模查询（查询节点 {u} 或 {v} 的边界）：
-<query_boundary>{u}</query_boundary>
-或
-<query_boundary>{v}</query_boundary>
+- 提交最终答案（例如猜测 H(T)=2）：
+<answer>2</answer>
 
-- 最终判定（判定为桥或非桥）：
-<answer>桥</answer>
-或
-<answer>非桥</answer>
+请尽可能少地使用查询次数，当你确定答案后即可提交。若答案错误或格式不符，任务失败。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Let's play an "Emergency Urban Traffic Network Blockage" deduction game. Here are the rules:
+[Transportation Scenario]
+This is a routing depth probe task for a logistics distribution network.
+The network is modeled as a rooted tree with {n} stations (numbered 1 to {n}). The main dispatch center is the fixed but unknown root. There exists a unique classified transit hub T (T is not the root).
 
-The system features a hidden simple undirected connected traffic network G with {n} key intersections (node numbers 1 to {n}). There is a main road e* = ({u}, {v}) scheduled for closure due to construction, and you need to determine whether this road segment is a "bridge" (i.e., the only transit route):
+The routing depth H(u) of a station u is defined as the maximum transit levels of the sub-network originating at u:
+- If u is a terminal station, then H(u) = 0
+- Otherwise H(u) = 1 + max(H(v) for all v that are direct downstream stations of u)
 
-- If after closing road e*, intersections {u} and {v} are still connected (there exists a detour not using e*), then e* is not a bridge.
-- If after closing road e*, traffic between intersections {u} and {v} is completely cut off (disconnected), then e* is a bridge.
+For any station u, its complete set of downstream station depths should be exactly {{0, 1, ..., H(u)-1}} (empty set when H(u)=0).
 
-Note: In all queries and judgments, road e* is considered closed and cannot be used.
+Since the classified hub T is hidden from the regular system, the visible downstream set for each station u is: the true downstream stations of u with T removed (if T is directly downstream of u).
 
-You can collect traffic network information through three types of queries:
+Key pattern:
+- Except for T's immediate upstream station, all stations have complete visible downstream depth sets (exactly {{0, 1, ..., H(u)-1}})
+- At T's upstream station, the visible downstream depth set will be missing exactly one value, and that missing value equals H(T)
 
-1. **Expand Query**: Starting from intersection {u} or {v}, perform one layer of network detection (detecting only one adjacent block, and do not enter intersections already discovered by either side).
-   - Response includes: number of new intersections, cumulative intersections discovered from {u} side, cumulative intersections discovered from {v} side, whether the two sides have met (connected), whether this side is exhausted (cannot detect further).
-   - Important: Once an expand query returns "met = yes", it proves {u} and {v} are still connected via detours after closing e*, and no further expand queries are allowed.
+Your goal is to infer the value of H(T) through system queries.
 
-2. **Boundary Size Query**: Query how many new intersections (adjacent intersections not yet discovered by either side) can be detected from the current exploration boundary of intersection {u} or {v}.
+You can perform the following two types of queries:
 
-3. **Final Judgment**: When you have collected enough information, submit your judgment (bridge or non-bridge).
-   - Condition for "non-bridge": at least one expand query returned "met = yes".
-   - Condition for "bridge": never met, and boundary size queries for both sides return 0 (both sides exhausted).
+1. Query Routing Depth: Ask for the depth H(u) of a station u
+   - Constraint: u cannot be the classified hub T
+   - Response: Returns integer H(u), or "Query Rejected" when u=T
 
-Your goal is to correctly determine whether the target road is a bridge using as few queries as possible.
+2. Query Downstream Depths: Ask for the list of depths of all visible downstream stations of u
+   - Response: Returns a sorted integer list containing the depths of all visible downstream stations of u (without station IDs)
+   - The list may be empty (u is a terminal or its only downstream is T)
 
-## Query and Judgment Format (strictly required)
+Only one operation per turn. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query routing depth of station 5:
+<query_height>5</query_height>
 
-- Expand Query (expand from node {u} or {v}):
-<query_expand>{u}</query_expand>
-or
-<query_expand>{v}</query_expand>
+- Query downstream depths of station 3:
+<query_children>3</query_children>
 
-- Boundary Size Query (query boundary of node {u} or {v}):
-<query_boundary>{u}</query_boundary>
-or
-<query_boundary>{v}</query_boundary>
+- Submit final answer (e.g., guessing H(T)=2):
+<answer>2</answer>
 
-- Final Judgment (judge as bridge or non-bridge):
-<answer>bridge</answer>
-or
-<answer>non-bridge</answer>
+Please use as few queries as possible. Submit when you are confident. If the answer is wrong or the format is invalid, the task fails.
 """
 
-    # ================= 场景2：医疗 =================
     contextualized_rule_zh_2 = """\
-【医疗诊断场景】
-我们现在来进行一场"神经突触网络代偿性诊断"推理游戏，规则如下：
+这是针对传染病变异溯源的流行病学调查任务。
+目前掌握的病毒突变传播链被构建为一棵含 {n} 个毒株样本的有根树（样本编号 1 到 {n}），初始起源毒株已固定为根节点但具体编号未知。其中存在一个唯一的未测序零号感染源 T（T 不是初始起源毒株）。
 
-系统设定了一个隐藏的简单无向连通神经突触网络 G，包含 {n} 个关键神经元（节点编号 1 到 {n}）。图中有一条受损的神经通路 e* = ({u}, {v})，你需要判定这条通路是否为网络中的"桥"（即唯一功能传导路径）：
+样本突变深度 H(u) 定义为以 u 为起点的最大后续突变代数：
+- 若 u 为末端样本，则 H(u) = 0
+- 否则 H(u) = 1 + max(H(v) for all v 是 u 的直接后续突变样本)
 
-- 若阻断通路 e* 后，神经元 {u} 与神经元 {v} 仍然连通（存在不经过 e* 的代偿性传导回路），则 e* 不是桥。
-- 若阻断通路 e* 后，神经元 {u} 与神经元 {v} 的信号彻底中断（不连通），则 e* 是桥。
+对于任意样本 u，其完整的直接后续样本的突变深度集合应为 {{0, 1, ..., H(u)-1}}（当 H(u)=0 时为空集）。
 
-注意：在所有查询和判断中，神经通路 e* 视为已阻断，不可使用。
+由于零号感染源 T 未被正式测序收录，系统对每个样本 u 的可见后续样本集为：从 u 的真实后续样本中移除 T（若 T 是 u 的直接后续）。
 
-你可以通过以下三种操作来收集网络信息：
+关键规律：
+- 除了 T 的直接前导变异样本外，所有样本的可见后续突变深度集合都完整（即恰为 {{0, 1, ..., H(u)-1}}）
+- 在 T 的前导变异样本处，可见后续突变深度集合会缺失恰好一个值，该缺失值等于 H(T)
 
-1. **扩张查询**：从神经元 {u} 或神经元 {v} 出发，执行一层的神经电信号传导示踪（仅向外传导一级突触，且不进入已被任一侧发现的神经元）。
-   - 回答包含：新增神经元数、当前从 {u} 侧累计发现的神经元数、当前从 {v} 侧累计发现的神经元数、是否相遇（两侧信号是否连通）、该侧是否已枯竭（无法继续传导）。
-   - 重要：一旦某次示踪返回"是否相遇 = 是"，表示已证实 {u} 与 {v} 在阻断 e* 后仍存在代偿回路连通，此后不允许继续执行扩张查询。
+你的目标是通过查询推断出零号感染源的突变深度 H(T) 的值。
 
-2. **边界规模查询**：查询从神经元 {u} 或神经元 {v} 的当前信号传导边界，还能向外激活多少个新神经元（尚未被任一侧发现的相邻神经元数量）。
+你可以进行以下两种查询：
 
-3. **最终判定**：当收集足够信息后，提交你的诊断结果（桥 或 非桥）。
-   - 判定"非桥"的条件：至少一次扩张查询返回"是否相遇 = 是"。
-   - 判定"桥"的条件：从未相遇，且两侧的边界规模查询均返回 0（两侧传导均已枯竭）。
+1. 查询突变深度：询问某个样本 u 的深度 H(u)
+   - 约束：u 不能是未测序样本 T
+   - 反馈：返回整数 H(u)，或在 u=T 时系统提示"拒绝查询"
 
-你的目标是使用尽可能少的查询次数，正确判定目标通路是否为桥。
+2. 查询后续突变深度列表：询问某个样本 u 的所有可见后续样本的突变深度列表
+   - 反馈：返回一个升序整数列表，包含 u 的所有可见后续样本的深度值（不包含样本编号）
+   - 列表可能为空（u 为末端样本或唯一直接后续是 T）
 
-## 查询与判定格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 查询样本 5 的突变深度：
+<query_height>5</query_height>
 
-- 扩张查询（从节点 {u} 或 {v} 扩张）：
-<query_expand>{u}</query_expand>
-或
-<query_expand>{v}</query_expand>
+- 查询样本 3 的后续突变深度列表：
+<query_children>3</query_children>
 
-- 边界规模查询（查询节点 {u} 或 {v} 的边界）：
-<query_boundary>{u}</query_boundary>
-或
-<query_boundary>{v}</query_boundary>
+- 提交最终答案（例如猜测 H(T)=2）：
+<answer>2</answer>
 
-- 最终判定（判定为桥或非桥）：
-<answer>桥</answer>
-或
-<answer>非桥</answer>
+请尽可能少地使用查询次数，当你确定答案后即可提交。若答案错误或格式不符，任务失败。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Let's play a "Neural Synaptic Network Compensatory Diagnosis" deduction game. Here are the rules:
+[Healthcare Scenario]
+This is an epidemiological investigation for tracing infectious disease mutations.
+The known viral mutation transmission chain is structured as a rooted tree with {n} strain samples (numbered 1 to {n}). The initial origin strain is the fixed but unknown root. There exists a unique unsequenced zero-patient variant T (T is not the origin strain).
 
-The system features a hidden simple undirected connected neural network G with {n} key neurons (node numbers 1 to {n}). There is a damaged neural pathway e* = ({u}, {v}), and you need to determine whether this pathway is a "bridge" (i.e., the only functional transmission route):
+The mutation depth H(u) of a sample u is defined as the maximum subsequent mutation generations originating from u:
+- If u is a terminal sample, then H(u) = 0
+- Otherwise H(u) = 1 + max(H(v) for all v that are direct subsequent mutations of u)
 
-- If after blocking pathway e*, neurons {u} and {v} are still connected (there exists a compensatory circuit not using e*), then e* is not a bridge.
-- If after blocking pathway e*, signal transmission between neurons {u} and {v} is completely cut off (disconnected), then e* is a bridge.
+For any sample u, its complete set of subsequent mutation depths should be exactly {{0, 1, ..., H(u)-1}} (empty set when H(u)=0).
 
-Note: In all queries and judgments, neural pathway e* is considered blocked and cannot be used.
+Since variant T is unsequenced and hidden, the visible subsequent sample set for each sample u is: the true subsequent samples of u with T removed (if T is a direct mutation of u).
 
-You can collect network information through three types of queries:
+Key pattern:
+- Except for T's immediate predecessor strain, all samples have complete visible subsequent depth sets (exactly {{0, 1, ..., H(u)-1}})
+- At T's predecessor strain, the visible subsequent depth set will be missing exactly one value, and that missing value equals H(T)
 
-1. **Expand Query**: Starting from neuron {u} or {v}, perform one layer of neural signal tracing (transmitting only to the first-order synapse, and do not enter neurons already discovered by either side).
-   - Response includes: number of new neurons, cumulative neurons discovered from {u} side, cumulative neurons discovered from {v} side, whether the two sides have met (connected), whether this side is exhausted (cannot transmit further).
-   - Important: Once an expand query returns "met = yes", it proves {u} and {v} are still connected via compensatory circuits after blocking e*, and no further expand queries are allowed.
+Your goal is to infer the value of H(T) through system queries.
 
-2. **Boundary Size Query**: Query how many new neurons (adjacent neurons not yet discovered by either side) can be activated from the current signal transmission boundary of neuron {u} or {v}.
+You can perform the following two types of queries:
 
-3. **Final Judgment**: When you have collected enough information, submit your diagnostic result (bridge or non-bridge).
-   - Condition for "non-bridge": at least one expand query returned "met = yes".
-   - Condition for "bridge": never met, and boundary size queries for both sides return 0 (both sides exhausted).
+1. Query Mutation Depth: Ask for the depth H(u) of a sample u
+   - Constraint: u cannot be the unsequenced variant T
+   - Response: Returns integer H(u), or "Query Rejected" when u=T
 
-Your goal is to correctly determine whether the target pathway is a bridge using as few queries as possible.
+2. Query Subsequent Depths: Ask for the list of depths of all visible subsequent samples of u
+   - Response: Returns a sorted integer list containing the depths of all visible subsequent samples of u (without sample IDs)
+   - The list may be empty (u is a terminal or its only subsequent mutation is T)
 
-## Query and Judgment Format (strictly required)
+Only one operation per turn. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query mutation depth of sample 5:
+<query_height>5</query_height>
 
-- Expand Query (expand from node {u} or {v}):
-<query_expand>{u}</query_expand>
-or
-<query_expand>{v}</query_expand>
+- Query subsequent depths of sample 3:
+<query_children>3</query_children>
 
-- Boundary Size Query (query boundary of node {u} or {v}):
-<query_boundary>{u}</query_boundary>
-or
-<query_boundary>{v}</query_boundary>
+- Submit final answer (e.g., guessing H(T)=2):
+<answer>2</answer>
 
-- Final Judgment (judge as bridge or non-bridge):
-<answer>bridge</answer>
-or
-<answer>non-bridge</answer>
+Please use as few queries as possible. Submit when you are confident. If the answer is wrong or the format is invalid, the task fails.
 """
 
-    # ================= 场景3：教育 =================
     contextualized_rule_zh_3 = """\
-【教育分析场景】
-我们现在来进行一场"知识概念网络认知鸿沟"推理游戏，规则如下：
+这是针对核心教学体系的课程前置依赖分析任务。
+该课程网络被设计为一棵含 {n} 个课程模块的有根树（模块编号 1 到 {n}），基础导论课已固定为根节点但具体编号未知。其中存在唯一的保密级核心课程 T（T 不是基础导论课）。
 
-系统设定了一个隐藏的简单无向连通知识网络 G，包含 {n} 个关键知识点（节点编号 1 到 {n}）。图中有一条存在教学困难的过渡关联 e* = ({u}, {v})，你需要判定这条关联是否为认知体系中的"桥"（即认知鸿沟，唯一理解路径）：
+课程后续深度 H(u) 定义为以 u 为前置条件的最大后续课程层级数：
+- 若 u 为顶点课程（无后续），则 H(u) = 0
+- 否则 H(u) = 1 + max(H(v) for all v 是以 u 为直接前置的课程)
 
-- 若抹除关联 e* 后，概念 {u} 与概念 {v} 仍然连通（学生可通过其他相关知识点进行联想推导），则 e* 不是桥。
-- 若抹除关联 e* 后，概念 {u} 与概念 {v} 在认知上彻底断裂（不连通），则 e* 是桥。
+对于任意课程 u，其完整的直接后续课程的深度集合应为 {{0, 1, ..., H(u)-1}}（当 H(u)=0 时为空集）。
 
-注意：在所有查询和判断中，知识关联 e* 视为已抹除，不可使用。
+由于保密级核心课程 T 被从公开大纲中隐藏，系统对每个课程 u 的可见后续课程集为：从 u 的真实后续课程中移除 T（若 T 的直接前置是 u）。
 
-你可以通过以下三种操作来收集网络信息：
+关键规律：
+- 除了 T 的直接前置课程外，所有课程的可见后续深度集合都完整（即恰为 {{0, 1, ..., H(u)-1}}）
+- 在 T 的前置课程处，可见后续深度集合会缺失恰好一个值，该缺失值等于 H(T)
 
-1. **扩张查询**：从概念 {u} 或概念 {v} 出发，执行一次启发式认知延展（仅向外推导一层直接相关的知识点，且不进入已被任一侧发现的概念）。
-   - 回答包含：新增知识点数、当前从 {u} 侧累计发现的知识点数、当前从 {v} 侧累计发现的知识点数、是否相遇（两侧是否能在认知上连通）、该侧是否已枯竭（无法继续启发推导）。
-   - 重要：一旦某次延展返回"是否相遇 = 是"，表示已证实 {u} 与 {v} 在抹除 e* 后仍可通过其他知识概念连通，此后不允许继续执行扩张查询。
+你的目标是通过查询推断出保密核心课程的后续深度 H(T) 的值。
 
-2. **边界规模查询**：查询从概念 {u} 或概念 {v} 的当前认知边界，还能向外启发到多少个新知识点（尚未被任一侧发现的直接关联概念数量）。
+你可以进行以下两种查询：
 
-3. **最终判定**：当收集足够信息后，提交你的评估判定（桥 或 非桥）。
-   - 判定"非桥"的条件：至少一次扩张查询返回"是否相遇 = 是"。
-   - 判定"桥"的条件：从未相遇，且两侧的边界规模查询均返回 0（两侧认知延展均已枯竭）。
+1. 查询课程后续深度：询问某个课程 u 的深度 H(u)
+   - 约束：u 不能是保密核心课程 T
+   - 反馈：返回整数 H(u)，或在 u=T 时系统提示"拒绝查询"
 
-你的目标是使用尽可能少的查询次数，正确判定目标关联是否为桥。
+2. 查询直接后续深度列表：询问某个课程 u 的所有可见后续课程的深度列表
+   - 反馈：返回一个升序整数列表，包含 u 的所有可见后续课程的深度值（不包含课程编号）
+   - 列表可能为空（u 为顶点课程或唯一直接后续是 T）
 
-## 查询与判定格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 查询课程 5 的后续深度：
+<query_height>5</query_height>
 
-- 扩张查询（从节点 {u} 或 {v} 扩张）：
-<query_expand>{u}</query_expand>
-或
-<query_expand>{v}</query_expand>
+- 查询课程 3 的直接后续深度列表：
+<query_children>3</query_children>
 
-- 边界规模查询（查询节点 {u} 或 {v} 的边界）：
-<query_boundary>{u}</query_boundary>
-或
-<query_boundary>{v}</query_boundary>
+- 提交最终答案（例如猜测 H(T)=2）：
+<answer>2</answer>
 
-- 最终判定（判定为桥或非桥）：
-<answer>桥</answer>
-或
-<answer>非桥</answer>
+请尽可能少地使用查询次数，当你确定答案后即可提交。若答案错误或格式不符，任务失败。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Knowledge Concept Network Cognitive Gap" deduction game. Here are the rules:
+This is a core course prerequisite dependency analysis task.
+The curriculum network is designed as a rooted tree with {n} course modules (numbered 1 to {n}). The foundational introductory course is the fixed but unknown root. There exists a unique restricted core course T (T is not the foundational course).
 
-The system features a hidden simple undirected connected knowledge network G with {n} key knowledge concepts (node numbers 1 to {n}). There is a transitional pedagogical link e* = ({u}, {v}) presenting teaching difficulties, and you need to determine whether this link is a "bridge" in the cognitive framework (i.e., a cognitive gap, the only understanding path):
+The follow-up depth H(u) of a course u is defined as the maximum levels of subsequent courses requiring u as a prerequisite:
+- If u is a capstone course (no follow-ups), then H(u) = 0
+- Otherwise H(u) = 1 + max(H(v) for all v that are direct subsequent courses of u)
 
-- If after erasing link e*, concept {u} and concept {v} are still connected (students can deduce via other related knowledge points), then e* is not a bridge.
-- If after erasing link e*, the cognitive connection between concept {u} and concept {v} is completely broken (disconnected), then e* is a bridge.
+For any course u, its complete set of subsequent course depths should be exactly {{0, 1, ..., H(u)-1}} (empty set when H(u)=0).
 
-Note: In all queries and judgments, knowledge link e* is considered erased and cannot be used.
+Since the restricted course T is hidden from the public syllabus, the visible subsequent course set for each course u is: the true subsequent courses of u with T removed (if u is a direct prerequisite of T).
 
-You can collect network information through three types of queries:
+Key pattern:
+- Except for T's immediate prerequisite course, all courses have complete visible subsequent depth sets (exactly {{0, 1, ..., H(u)-1}})
+- At T's prerequisite course, the visible subsequent depth set will be missing exactly one value, and that missing value equals H(T)
 
-1. **Expand Query**: Starting from concept {u} or {v}, perform a heuristic cognitive expansion (deducing only to the first-order related knowledge points, and do not enter concepts already discovered by either side).
-   - Response includes: number of new knowledge points, cumulative knowledge points discovered from {u} side, cumulative knowledge points discovered from {v} side, whether the two sides have met (cognitively connected), whether this side is exhausted (cannot deduce further).
-   - Important: Once an expand query returns "met = yes", it proves {u} and {v} are still connected via other knowledge concepts after erasing e*, and no further expand queries are allowed.
+Your goal is to infer the value of H(T) through system queries.
 
-2. **Boundary Size Query**: Query how many new knowledge points (directly related concepts not yet discovered by either side) can be heuristically reached from the current cognitive boundary of concept {u} or {v}.
+You can perform the following two types of queries:
 
-3. **Final Judgment**: When you have collected enough information, submit your assessment judgment (bridge or non-bridge).
-   - Condition for "non-bridge": at least one expand query returned "met = yes".
-   - Condition for "bridge": never met, and boundary size queries for both sides return 0 (both sides exhausted).
+1. Query Follow-up Depth: Ask for the depth H(u) of a course u
+   - Constraint: u cannot be the restricted course T
+   - Response: Returns integer H(u), or "Query Rejected" when u=T
 
-Your goal is to correctly determine whether the target link is a bridge using as few queries as possible.
+2. Query Subsequent Depths: Ask for the list of depths of all visible subsequent courses of u
+   - Response: Returns a sorted integer list containing the depths of all visible subsequent courses of u (without course IDs)
+   - The list may be empty (u is a capstone or its only subsequent is T)
 
-## Query and Judgment Format (strictly required)
+Only one operation per turn. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query follow-up depth of course 5:
+<query_height>5</query_height>
 
-- Expand Query (expand from node {u} or {v}):
-<query_expand>{u}</query_expand>
-or
-<query_expand>{v}</query_expand>
+- Query subsequent depths of course 3:
+<query_children>3</query_children>
 
-- Boundary Size Query (query boundary of node {u} or {v}):
-<query_boundary>{u}</query_boundary>
-or
-<query_boundary>{v}</query_boundary>
+- Submit final answer (e.g., guessing H(T)=2):
+<answer>2</answer>
 
-- Final Judgment (judge as bridge or non-bridge):
-<answer>bridge</answer>
-or
-<answer>non-bridge</answer>
+Please use as few queries as possible. Submit when you are confident. If the answer is wrong or the format is invalid, the task fails.
 """
 
-    # ================= 场景4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-【工业制造场景】
-我们现在来进行一场"工厂物流输送网络瓶颈"推理游戏，规则如下：
+这是针对复杂工业装备的 BOM（物料清单）层级解析任务。
+装备组件结构被拆解为一棵含 {n} 个组件的有根树（组件编号 1 到 {n}），总装成品已固定为根节点但具体编号未知。其中存在唯一的受商业机密保护的核心自研组件 T（T 不是总装成品）。
 
-系统设定了一个隐藏的简单无向连通物流输送网络 G，包含 {n} 个关键车间（节点编号 1 到 {n}）。图中有一条正在进行大修的主传送带 e* = ({u}, {v})，你需要判定这条传送带是否为物流网络中的"桥"（即关键截断瓶颈）：
+组件子装配深度 H(u) 定义为以 u 为顶层组件的最大向下嵌套装配层数：
+- 若 u 为底层基础零件，则 H(u) = 0
+- 否则 H(u) = 1 + max(H(v) for all v 是 u 的直接子组件)
 
-- 若停运传送带 e* 后，车间 {u} 与车间 {v} 仍然连通（存在不经过 e* 的备用中转输送路线），则 e* 不是桥。
-- 若停运传送带 e* 后，车间 {u} 与车间 {v} 的物流彻底中断（不连通），则 e* 是桥。
+对于任意组件 u，其完整的直接子组件装配深度集合应为 {{0, 1, ..., H(u)-1}}（当 H(u)=0 时为空集）。
 
-注意：在所有查询和判断中，传送带 e* 视为已停运，不可使用。
+由于机密组件 T 被从常规图纸中隐藏，系统对每个组件 u 的可见子组件集为：从 u 的真实子组件中移除 T（若 T 是 u 的直接子组件）。
 
-你可以通过以下三种操作来收集物流网络信息：
+关键规律：
+- 除了 T 的父级装配体外，所有组件的可见子组件深度集合都完整（即恰为 {{0, 1, ..., H(u)-1}}）
+- 在 T 的父级装配体处，可见子组件深度集合会缺失恰好一个值，该缺失值等于 H(T)
 
-1. **扩张查询**：从车间 {u} 或车间 {v} 出发，执行一层路线调度试探（仅向外辐射查询一层相连车间，且不进入已被任一侧发现的车间）。
-   - 回答包含：新增车间数、当前从 {u} 侧累计发现的车间数、当前从 {v} 侧累计发现的车间数、是否相遇（两侧是否连通）、该侧是否已枯竭（无法继续试探连线）。
-   - 重要：一旦某次试探返回"是否相遇 = 是"，表示已证实 {u} 与 {v} 在停运 e* 后仍可通过备用中转路线连通，此后不允许继续执行扩张查询。
+你的目标是通过查询推断出机密组件的子装配深度 H(T) 的值。
 
-2. **边界规模查询**：查询从车间 {u} 或车间 {v} 的当前试探边界，还能向外对接多少个新车间（尚未被任一侧发现的相邻车间数量）。
+你可以进行以下两种查询：
 
-3. **最终判定**：当收集足够信息后，提交你的调度判定（桥 或 非桥）。
-   - 判定"非桥"的条件：至少一次扩张查询返回"是否相遇 = 是"。
-   - 判定"桥"的条件：从未相遇，且两侧的边界规模查询均返回 0（两侧试探均已枯竭）。
+1. 查询子装配深度：询问某个组件 u 的深度 H(u)
+   - 约束：u 不能是机密组件 T
+   - 反馈：返回整数 H(u)，或在 u=T 时系统提示"拒绝查询"
 
-你的目标是使用尽可能少的查询次数，正确判定目标传送带是否为桥。
+2. 查询子组件深度列表：询问某个组件 u 的所有可见子组件的深度列表
+   - 反馈：返回一个升序整数列表，包含 u 的所有可见子组件的深度值（不包含组件编号）
+   - 列表可能为空（u 为基础零件或唯一直接子组件是 T）
 
-## 查询与判定格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 查询组件 5 的子装配深度：
+<query_height>5</query_height>
 
-- 扩张查询（从节点 {u} 或 {v} 扩张）：
-<query_expand>{u}</query_expand>
-或
-<query_expand>{v}</query_expand>
+- 查询组件 3 的子组件深度列表：
+<query_children>3</query_children>
 
-- 边界规模查询（查询节点 {u} 或 {v} 的边界）：
-<query_boundary>{u}</query_boundary>
-或
-<query_boundary>{v}</query_boundary>
+- 提交最终答案（例如猜测 H(T)=2）：
+<answer>2</answer>
 
-- 最终判定（判定为桥或非桥）：
-<answer>桥</answer>
-或
-<answer>非桥</answer>
+请尽可能少地使用查询次数，当你确定答案后即可提交。若答案错误或格式不符，任务失败。
 """
 
     contextualized_rule_en_4 = """\
-[Industry Scenario]
-Let's play a "Factory Logistics Conveyor Network Bottleneck" deduction game. Here are the rules:
+[Manufacturing Scenario]
+This is a BOM (Bill of Materials) level analysis task for complex industrial equipment.
+The equipment component structure is disassembled into a rooted tree with {n} components (numbered 1 to {n}). The final assembled product is the fixed but unknown root. There exists a unique proprietary confidential component T (T is not the final product).
 
-The system features a hidden simple undirected connected logistics network G with {n} key workshops (node numbers 1 to {n}). There is a main conveyor belt e* = ({u}, {v}) undergoing major maintenance, and you need to determine whether this conveyor is a "bridge" in the logistics network (i.e., a critical cut-off bottleneck):
+The sub-assembly depth H(u) of a component u is defined as the maximum nested assembly levels downward from u:
+- If u is a base part (no sub-components), then H(u) = 0
+- Otherwise H(u) = 1 + max(H(v) for all v that are direct sub-components of u)
 
-- If after halting conveyor e*, workshop {u} and workshop {v} are still connected (there exists a backup transit route not using e*), then e* is not a bridge.
-- If after halting conveyor e*, the logistics between workshop {u} and workshop {v} are completely cut off (disconnected), then e* is a bridge.
+For any component u, its complete set of sub-component depths should be exactly {{0, 1, ..., H(u)-1}} (empty set when H(u)=0).
 
-Note: In all queries and judgments, conveyor e* is considered halted and cannot be used.
+Since the proprietary component T is hidden from standard blueprints, the visible sub-component set for each component u is: the true sub-components of u with T removed (if T is a direct sub-component of u).
 
-You can collect logistics network information through three types of queries:
+Key pattern:
+- Except for T's parent assembly, all components have complete visible sub-component depth sets (exactly {{0, 1, ..., H(u)-1}})
+- At T's parent assembly, the visible sub-component depth set will be missing exactly one value, and that missing value equals H(T)
 
-1. **Expand Query**: Starting from workshop {u} or {v}, perform one layer of route scheduling probe (radiating only to the first-order adjacent workshops, and do not enter workshops already discovered by either side).
-   - Response includes: number of new workshops, cumulative workshops discovered from {u} side, cumulative workshops discovered from {v} side, whether the two sides have met (connected), whether this side is exhausted (cannot probe further).
-   - Important: Once an expand query returns "met = yes", it proves {u} and {v} are still connected via backup transit routes after halting e*, and no further expand queries are allowed.
+Your goal is to infer the value of H(T) through system queries.
 
-2. **Boundary Size Query**: Query how many new workshops (adjacent workshops not yet discovered by either side) can be connected from the current probing boundary of workshop {u} or {v}.
+You can perform the following two types of queries:
 
-3. **Final Judgment**: When you have collected enough information, submit your scheduling judgment (bridge or non-bridge).
-   - Condition for "non-bridge": at least one expand query returned "met = yes".
-   - Condition for "bridge": never met, and boundary size queries for both sides return 0 (both sides exhausted).
+1. Query Sub-assembly Depth: Ask for the depth H(u) of a component u
+   - Constraint: u cannot be the proprietary component T
+   - Response: Returns integer H(u), or "Query Rejected" when u=T
 
-Your goal is to correctly determine whether the target conveyor is a bridge using as few queries as possible.
+2. Query Sub-component Depths: Ask for the list of depths of all visible sub-components of u
+   - Response: Returns a sorted integer list containing the depths of all visible sub-components of u (without component IDs)
+   - The list may be empty (u is a base part or its only sub-component is T)
 
-## Query and Judgment Format (strictly required)
+Only one operation per turn. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query sub-assembly depth of component 5:
+<query_height>5</query_height>
 
-- Expand Query (expand from node {u} or {v}):
-<query_expand>{u}</query_expand>
-or
-<query_expand>{v}</query_expand>
+- Query sub-component depths of component 3:
+<query_children>3</query_children>
 
-- Boundary Size Query (query boundary of node {u} or {v}):
-<query_boundary>{u}</query_boundary>
-or
-<query_boundary>{v}</query_boundary>
+- Submit final answer (e.g., guessing H(T)=2):
+<answer>2</answer>
 
-- Final Judgment (judge as bridge or non-bridge):
-<answer>bridge</answer>
-or
-<answer>non-bridge</answer>
+Please use as few queries as possible. Submit when you are confident. If the answer is wrong or the format is invalid, the task fails.
 """
 
-    # ================= 场景5：法律 =================
     contextualized_rule_zh_5 = """\
-【法律调查场景】
-我们现在来进行一场"洗钱资金链穿透核查"推理游戏，规则如下：
+这是针对跨境洗钱网络的股权穿透调查任务。
+涉案的商业帝国被重构为一棵含 {n} 个企业实体的有根树（实体编号 1 到 {n}），最终控股集团已固定为根节点但具体编号未知。其中隐藏着唯一的离岸空壳公司 T（T 不是最终控股集团）。
 
-系统设定了一个隐藏的简单无向连通资金流向网络 G，包含 {n} 个涉案实体账户（节点编号 1 到 {n}）。图中有一条被依法冻结的关键交易通道 e* = ({u}, {v})，你需要判定这条通道是否为资金网络中的"桥"（即唯一的洗钱转移通道）：
+实体控股深度 H(u) 定义为以 u 为母公司的最大向下嵌套控股层数：
+- 若 u 为底层业务实体（无子公司），则 H(u) = 0
+- 否则 H(u) = 1 + max(H(v) for all v 是 u 的直接控股子公司)
 
-- 若冻结通道 e* 后，账户 {u} 与账户 {v} 仍然连通（存在不经过 e* 的错综复杂的空壳公司嵌套转移路线），则 e* 不是桥。
-- 若冻结通道 e* 后，账户 {u} 与账户 {v} 的资金往来彻底断绝（不连通），则 e* 是桥。
+对于任意实体 u，其完整的直接子公司的控股深度集合应为 {{0, 1, ..., H(u)-1}}（当 H(u)=0 时为空集）。
 
-注意：在所有查询和判断中，交易通道 e* 视为已冻结，不可使用。
+由于离岸空壳公司 T 被跨国协议掩盖，系统对每个实体 u 的可见子公司集为：从 u 的真实子公司中移除 T（若 T 是 u 的直接子公司）。
 
-你可以通过以下三种操作来收集资金流向信息：
+关键规律：
+- 除了 T 的直接母公司外，所有实体的可见子公司深度集合都完整（即恰为 {{0, 1, ..., H(u)-1}}）
+- 在 T 的母公司处，可见子公司深度集合会缺失恰好一个值，该缺失值等于 H(T)
 
-1. **扩张查询**：从账户 {u} 或账户 {v} 出发，执行一次资金流向穿透核查（仅向外追溯一层直接交易的关联账户，且不进入已被任一侧核查出的账户）。
-   - 回答包含：新增核查账户数、当前从 {u} 侧累计核查的账户数、当前从 {v} 侧累计核查的账户数、是否相遇（两侧是否发现资金连通）、该侧是否已枯竭（无法继续追溯流水）。
-   - 重要：一旦某次核查返回"是否相遇 = 是"，表示已证实 {u} 与 {v} 在冻结 e* 后仍可通过其他账户网络连通，此后不允许继续执行扩张查询。
+你的目标是通过查询推断出离岸空壳公司的控股深度 H(T) 的值。
 
-2. **边界规模查询**：查询从账户 {u} 或账户 {v} 的当前核查边界，还存在多少个未深挖的交易对象（尚未被任一侧核查的直接关联账户数量）。
+你可以进行以下两种查询：
 
-3. **最终判定**：当收集足够证据后，提交你的定性判定（桥 或 非桥）。
-   - 判定"非桥"的条件：至少一次扩张查询返回"是否相遇 = 是"。
-   - 判定"桥"的条件：从未相遇，且两侧的边界规模查询均返回 0（两侧资金追溯均已枯竭）。
+1. 查询控股深度：询问某个实体 u 的深度 H(u)
+   - 约束：u 不能是离岸空壳公司 T
+   - 反馈：返回整数 H(u)，或在 u=T 时系统提示"拒绝查询"
 
-你的目标是使用尽可能少的查询次数，正确判定目标通道是否为桥。
+2. 查询子公司深度列表：询问某个实体 u 的所有可见子公司的控股深度列表
+   - 反馈：返回一个升序整数列表，包含 u 的所有可见子公司的深度值（不包含实体编号）
+   - 列表可能为空（u 为底层实体或唯一直接子公司是 T）
 
-## 查询与判定格式（必须严格遵守）
+每次只能进行一个操作。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 查询实体 5 的控股深度：
+<query_height>5</query_height>
 
-- 扩张查询（从节点 {u} 或 {v} 扩张）：
-<query_expand>{u}</query_expand>
-或
-<query_expand>{v}</query_expand>
+- 查询实体 3 的子公司深度列表：
+<query_children>3</query_children>
 
-- 边界规模查询（查询节点 {u} 或 {v} 的边界）：
-<query_boundary>{u}</query_boundary>
-或
-<query_boundary>{v}</query_boundary>
+- 提交最终答案（例如猜测 H(T)=2）：
+<answer>2</answer>
 
-- 最终判定（判定为桥或非桥）：
-<answer>桥</answer>
-或
-<answer>非桥</answer>
+请尽可能少地使用查询次数，当你确定答案后即可提交。若答案错误或格式不符，调查失败。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Let's play a "Money Laundering Fund Chain Penetration Check" deduction game. Here are the rules:
+[Law Scenario]
+This is an equity penetration investigation into a cross-border money laundering network.
+The involved business empire is reconstructed as a rooted tree with {n} corporate entities (numbered 1 to {n}). The ultimate holding group is the fixed but unknown root. There exists a unique offshore hidden shell company T (T is not the ultimate holding group).
 
-The system features a hidden simple undirected connected fund flow network G with {n} involved entity accounts (node numbers 1 to {n}). There is a key transaction channel e* = ({u}, {v}) legally frozen, and you need to determine whether this channel is a "bridge" in the fund network (i.e., the only money laundering transfer channel):
+The subsidiary depth H(u) of an entity u is defined as the maximum nested holding levels downward from u:
+- If u is a bottom-level operational entity (no subsidiaries), then H(u) = 0
+- Otherwise H(u) = 1 + max(H(v) for all v that are direct subsidiaries of u)
 
-- If after freezing channel e*, account {u} and account {v} are still connected (there exists a complex nested transfer route via shell companies not using e*), then e* is not a bridge.
-- If after freezing channel e*, the fund flow between account {u} and account {v} is completely cut off (disconnected), then e* is a bridge.
+For any entity u, its complete set of subsidiary depths should be exactly {{0, 1, ..., H(u)-1}} (empty set when H(u)=0).
 
-Note: In all queries and judgments, transaction channel e* is considered frozen and cannot be used.
+Since the offshore shell company T is obscured by transnational agreements, the visible subsidiary set for each entity u is: the true subsidiaries of u with T removed (if T is a direct subsidiary of u).
 
-You can collect fund flow information through three types of queries:
+Key pattern:
+- Except for T's immediate parent company, all entities have complete visible subsidiary depth sets (exactly {{0, 1, ..., H(u)-1}})
+- At T's parent company, the visible subsidiary depth set will be missing exactly one value, and that missing value equals H(T)
 
-1. **Expand Query**: Starting from account {u} or {v}, perform one layer of fund flow penetration check (tracing only to the first-order directly transacting accounts, and do not enter accounts already checked by either side).
-   - Response includes: number of new accounts checked, cumulative accounts checked from {u} side, cumulative accounts checked from {v} side, whether the two sides have met (found fund connection), whether this side is exhausted (cannot trace further).
-   - Important: Once an expand query returns "met = yes", it proves {u} and {v} are still connected via other account networks after freezing e*, and no further expand queries are allowed.
+Your goal is to infer the value of H(T) through system queries.
 
-2. **Boundary Size Query**: Query how many unexamined transacting subjects (directly related accounts not yet checked by either side) can still be traced from the current check boundary of account {u} or {v}.
+You can perform the following two types of queries:
 
-3. **Final Judgment**: When you have collected enough evidence, submit your qualitative judgment (bridge or non-bridge).
-   - Condition for "non-bridge": at least one expand query returned "met = yes".
-   - Condition for "bridge": never met, and boundary size queries for both sides return 0 (both sides exhausted).
+1. Query Subsidiary Depth: Ask for the depth H(u) of an entity u
+   - Constraint: u cannot be the offshore shell company T
+   - Response: Returns integer H(u), or "Query Rejected" when u=T
 
-Your goal is to correctly determine whether the target channel is a bridge using as few queries as possible.
+2. Query Subsidiary Depths List: Ask for the list of depths of all visible subsidiaries of entity u
+   - Response: Returns a sorted integer list containing the depths of all visible subsidiaries of u (without entity IDs)
+   - The list may be empty (u is a bottom-level entity or its only subsidiary is T)
 
-## Query and Judgment Format (strictly required)
+Only one operation per turn. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Query subsidiary depth of entity 5:
+<query_height>5</query_height>
 
-- Expand Query (expand from node {u} or {v}):
-<query_expand>{u}</query_expand>
-or
-<query_expand>{v}</query_expand>
+- Query subsidiary depths of entity 3:
+<query_children>3</query_children>
 
-- Boundary Size Query (query boundary of node {u} or {v}):
-<query_boundary>{u}</query_boundary>
-or
-<query_boundary>{v}</query_boundary>
+- Submit final answer (e.g., guessing H(T)=2):
+<answer>2</answer>
 
-- Final Judgment (judge as bridge or non-bridge):
-<answer>bridge</answer>
-or
-<answer>non-bridge</answer>
+Please use as few queries as possible. Submit when you are confident. If the answer is wrong or the format is invalid, the investigation fails.
 """
 
-    tags = ["answer", "query_expand", "query_boundary"]
+    tags = ["answer", "query_height", "query_children"]
     
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 5,
-                "u": 1,
-                "v": 3,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
-                "is_bridge": True,
-            },
-            2: {
-                "n": 7,
-                "u": 1,
-                "v": 4,
-                "edges": [(1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (6, 4), (4, 7)],
-                "is_bridge": False,
-            },
-            3: {
-                "n": 10,
-                "u": 3,
-                "v": 7,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (7, 8), (8, 9), (9, 10)],
-                "is_bridge": True,
-            },
-            4: {
-                "n": 12,
-                "u": 2,
-                "v": 9,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9),
-                         (2, 10), (10, 11), (11, 12), (12, 9)],
-                "is_bridge": False,
-            },
-            5: {
-                "n": 15,
-                "u": 5,
-                "v": 12,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8),
-                         (12, 13), (13, 14), (14, 15), (1, 9), (9, 10), (10, 11), (11, 5)],
-                "is_bridge": True,
-            },
+        1: {
+            "n": 4,
+            "edges": [(1, 2), (1, 3), (3, 4)],
+            "root": 1,
+            "hidden": 2,
         },
-        "en": {
-            1: {
-                "n": 5,
-                "u": 1,
-                "v": 3,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
-                "is_bridge": True,
-            },
-            2: {
-                "n": 7,
-                "u": 1,
-                "v": 4,
-                "edges": [(1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (6, 4), (4, 7)],
-                "is_bridge": False,
-            },
-            3: {
-                "n": 10,
-                "u": 3,
-                "v": 7,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (7, 8), (8, 9), (9, 10)],
-                "is_bridge": True,
-            },
-            4: {
-                "n": 12,
-                "u": 2,
-                "v": 9,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9),
-                         (2, 10), (10, 11), (11, 12), (12, 9)],
-                "is_bridge": False,
-            },
-            5: {
-                "n": 15,
-                "u": 5,
-                "v": 12,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8),
-                         (12, 13), (13, 14), (14, 15), (1, 9), (9, 10), (10, 11), (11, 5)],
-                "is_bridge": True,
-            },
+        2: {
+            "n": 8,
+            "edges": [(1, 2), (1, 3), (1, 4), (3, 5), (4, 6), (4, 7), (7, 8)],
+            "root": 1,
+            "hidden": 4,
+        },
+        3: {
+            "n": 8,
+            "edges": [(1, 2), (1, 3), (1, 4), (3, 5), (4, 6), (4, 7), (7, 8)],
+            "root": 1,
+            "hidden": 3,
+        },
+        4: {
+            "n": 16,
+            "edges": [
+                (1, 2), (1, 3), (1, 4), (1, 5),
+                (3, 6),
+                (4, 7), (4, 8),
+                (8, 9),
+                (5, 10), (5, 11), (5, 12),
+                (11, 13),
+                (12, 14), (12, 15),
+                (15, 16)
+            ],
+            "root": 1,
+            "hidden": 12,
+        },
+        5: {
+            "n": 16,
+            "edges": [
+                (1, 2), (1, 3), (1, 4), (1, 5),
+                (3, 6),
+                (4, 7), (4, 8),
+                (8, 9),
+                (5, 10), (5, 11), (5, 12),
+                (11, 13),
+                (12, 14), (12, 15),
+                (15, 16)
+            ],
+            "root": 1,
+            "hidden": 5,
         },
     }
 
@@ -643,276 +574,173 @@ or
         super().__init__(config)
 
     def _initialize_game(self):
-        lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        cfg = self.DIFFICULTY_CONFIG[diff]
         self._game_info["n"] = cfg["n"]
-        self._game_info["u"] = cfg["u"]
-        self._game_info["v"] = cfg["v"]
         
-        # 构建邻接表（不包含目标边）
         self.n = cfg["n"]
-        self.u = cfg["u"]
-        self.v = cfg["v"]
-        self.is_bridge = cfg["is_bridge"]
         
-        # 构建邻接表
-        self.adj = {i: set() for i in range(1, self.n + 1)}
-        for a, b in cfg["edges"]:
-            self.adj[a].add(b)
-            self.adj[b].add(a)
+        nodes = list(range(1, self.n + 1))
+        random.shuffle(nodes)
+        mapping = {i: nodes[i-1] for i in range(1, self.n + 1)}
         
-        # 初始化搜索状态
-        self.su = {self.u}  # U侧已发现集合
-        self.sv = {self.v}  # V侧已发现集合
-        self.fu = {self.u}  # U侧前沿集合
-        self.fv = {self.v}  # V侧前沿集合
-        self.met = False    # 是否已相遇
-        self.expand_forbidden = False  # 相遇后禁止继续扩张
+        self.root = mapping[cfg["root"]]
+        self.hidden = mapping[cfg["hidden"]]
+        
+        self.children = {i: [] for i in range(1, self.n + 1)}
+        for parent, child in cfg["edges"]:
+            self.children[mapping[parent]].append(mapping[child])
+            
+        self.hidden_parent = None
+        for parent, child in cfg["edges"]:
+            if child == cfg["hidden"]:
+                self.hidden_parent = mapping[parent]
+                break
+        
+        self.heights = {}
+        self._compute_heights(self.root)
+        
+        self.answer = self.heights[self.hidden]
 
-    def _get_adj(self, nodes):
-        """获取节点集合的所有邻居（基于删除目标边后的图）"""
-        result = set()
-        for node in nodes:
-            result.update(self.adj[node])
-        return result
+        for u in range(1, self.n + 1):
+            child_heights = set()
+            for v in self.children[u]:
+                child_heights.add(self.heights[v])
+            
+            expected = set(range(self.heights[u]))
+            assert child_heights == expected, f"Node {u} true child heights {child_heights} != expected {expected}"
+            
+            visible = set(self._get_visible_children_heights(u))
+            if u == self.hidden_parent:
+                expected_missing = self.heights[self.hidden]
+                assert expected_missing not in visible
+                expected_visible = expected - {expected_missing}
+                assert visible == expected_visible
+            else:
+                assert visible == expected
 
-    def _expand_side(self, side):
-        """执行一侧的扩张操作
+    def _compute_heights(self, node):
+        if not self.children[node]:
+            self.heights[node] = 0
+            return 0
         
-        Args:
-            side: 'u' 或 'v'
+        max_child_height = -1
+        for child in self.children[node]:
+            child_height = self._compute_heights(child)
+            max_child_height = max(max_child_height, child_height)
         
-        Returns:
-            dict: 包含扩张结果的字典
-        """
-        if side == 'u':
-            s_side = self.su
-            f_side = self.fu
-            s_opp = self.sv
-        else:
-            s_side = self.sv
-            f_side = self.fv
-            s_opp = self.su
-        
-        # 保存扩张前的前沿用于相遇检测
-        f_before = f_side.copy()
-        
-        # 计算候选节点：前沿的邻居 - 已被任一侧发现的节点
-        candidates = self._get_adj(f_side) - self.su - self.sv
-        
-        # 更新已发现集合和前沿集合
-        s_side.update(candidates)
-        f_side.clear()
-        f_side.update(candidates)
-        
-        # 检测是否相遇：扩张前前沿的邻居 与 对侧已发现集合 有交集
-        adj_before = self._get_adj(f_before)
-        meet = len(adj_before & s_opp) > 0
-        
-        if meet:
-            self.met = True
-            self.expand_forbidden = True
-        
-        # 检测是否枯竭
-        exhausted = len(f_side) == 0
-        
-        return {
-            "new_count": len(candidates),
-            "su_count": len(self.su),
-            "sv_count": len(self.sv),
-            "meet": meet,
-            "exhausted": exhausted
-        }
+        self.heights[node] = max_child_height + 1
+        return self.heights[node]
 
-    def _get_boundary_size(self, side):
-        """获取某一侧的边界规模
-        
-        Args:
-            side: 'u' 或 'v'
-        
-        Returns:
-            int: 边界可扩张的新节点数
-        """
-        if side == 'u':
-            f_side = self.fu
-        else:
-            f_side = self.fv
-        
-        candidates = self._get_adj(f_side) - self.su - self.sv
-        return len(candidates)
+    def _get_visible_children_heights(self, node):
+        visible_heights = []
+        for child in self.children[node]:
+            if child != self.hidden:
+                visible_heights.append(self.heights[child])
+        return sorted(visible_heights)
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        ans = parsed_info["answer"].strip()
-        
-        if self.config.language == "zh":
-            answer_bridge = "桥"
-            answer_non_bridge = "非桥"
-        else:
-            answer_bridge = "bridge"
-            answer_non_bridge = "non-bridge"
-        
-        # 判定非桥：需要至少一次相遇
-        if ans == answer_non_bridge:
-            return self.met and not self.is_bridge
-        
-        # 判定桥：需要从未相遇且两侧边界都为0
-        elif ans == answer_bridge:
-            if self.met:
-                return False
-            boundary_u = self._get_boundary_size('u')
-            boundary_v = self._get_boundary_size('v')
-            return boundary_u == 0 and boundary_v == 0 and self.is_bridge
-        
-        return False
+        try:
+            guessed_height = int(parsed_info["answer"].strip())
+            return guessed_height == self.answer
+        except:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑处理"""
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_expand_forbidden = "错误：已检测到相遇，不允许继续扩张。"
-            error_invalid_node = "错误：节点编号无效。"
+            reject_msg = "拒绝查询"
+            error_msg = "错误：节点编号超出范围。"
         else:
-            yes_res, no_res = "Yes", "No"
-            error_expand_forbidden = "Error: Meeting detected, further expansion not allowed."
-            error_invalid_node = "Error: Invalid node number."
-        
-        # 扩张查询
-        if "query_expand" in parsed_info:
-            if self.expand_forbidden:
-                return error_expand_forbidden
-            
+            reject_msg = "Query Rejected"
+            error_msg = "Error: Node ID out of range."
+
+        if "query_height" in parsed_info:
             try:
-                node = int(parsed_info["query_expand"].strip())
-                if node != self.u and node != self.v:
-                    return error_invalid_node
-                
-                side = 'u' if node == self.u else 'v'
-                result = self._expand_side(side)
-                
-                if self.config.language == "zh":
-                    response = (
-                        f"新增节点数：{result['new_count']}\n"
-                        f"从节点 {self.u} 侧累计发现：{result['su_count']}\n"
-                        f"从节点 {self.v} 侧累计发现：{result['sv_count']}\n"
-                        f"是否相遇：{yes_res if result['meet'] else no_res}\n"
-                        f"该侧是否枯竭：{yes_res if result['exhausted'] else no_res}"
-                    )
-                else:
-                    response = (
-                        f"New nodes: {result['new_count']}\n"
-                        f"Cumulative from node {self.u} side: {result['su_count']}\n"
-                        f"Cumulative from node {self.v} side: {result['sv_count']}\n"
-                        f"Met: {yes_res if result['meet'] else no_res}\n"
-                        f"This side exhausted: {yes_res if result['exhausted'] else no_res}"
-                    )
-                return response
+                node = int(parsed_info["query_height"].strip())
+                if node < 1 or node > self.n:
+                    return error_msg
+                if node == self.hidden:
+                    return reject_msg
+                return str(self.heights[node])
             except:
-                return error_invalid_node
-        
-        # 边界规模查询
-        elif "query_boundary" in parsed_info:
+                return error_msg
+
+        elif "query_children" in parsed_info:
             try:
-                node = int(parsed_info["query_boundary"].strip())
-                if node != self.u and node != self.v:
-                    return error_invalid_node
-                
-                side = 'u' if node == self.u else 'v'
-                size = self._get_boundary_size(side)
-                return str(size)
+                node = int(parsed_info["query_children"].strip())
+                if node < 1 or node > self.n:
+                    return error_msg
+                heights_list = self._get_visible_children_heights(node)
+                return str(heights_list)
             except:
-                return error_invalid_node
-        
+                return error_msg
+
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct):
-        """根据正确答案生成错误答案"""
-        if correct.isdigit():
-            return str(int(correct) + 1)
+        stripped = correct.strip()
+        
+        try:
+            val = int(stripped)
+            return str(val + 1)
+        except ValueError:
+            pass
+        
+        if stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                import ast
+                lst = ast.literal_eval(stripped)
+                if isinstance(lst, list):
+                    wrong_lst = lst + [max(lst) + 1] if lst else [0]
+                    return str(sorted(wrong_lst))
+            except:
+                pass
         
         if self.config.language == "zh":
-            if "是" in correct or "否" in correct:
-                return correct.replace("是", "TEMP_TOKEN").replace("否", "是").replace("TEMP_TOKEN", "否")
-        elif self.config.language == "en":
-            # 简单的大小写不敏感检测，但这里保持原始大小写风格替换
-            if "Yes" in correct or "No" in correct:
-                return correct.replace("Yes", "TEMP_TOKEN").replace("No", "Yes").replace("TEMP_TOKEN", "No")
+            if "拒绝" in stripped:
+                return "0"
+            if "是" in stripped:
+                return stripped.replace("是", "否")
+            if "否" in stripped:
+                return stripped.replace("否", "是")
+        else:
+            if "rejected" in stripped.lower():
+                return "0"
+            correct_lower = stripped.lower()
+            if "yes" in correct_lower:
+                return stripped.replace("Yes", "No").replace("yes", "no")
+            if "no" in correct_lower:
+                return stripped.replace("No", "Yes").replace("no", "yes")
         
-        return correct + "_WRONG"
+        return stripped + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
         results = []
-        targets = [self.u, self.v]
-
-        # 辅助函数：安全执行查询（保存并恢复状态）
-        def run_query_safely(parsed_data):
-            # 保存状态
-            state_backup = {
-                "su": self.su.copy(),
-                "sv": self.sv.copy(),
-                "fu": self.fu.copy(),
-                "fv": self.fv.copy(),
-                "met": self.met,
-                "expand_forbidden": self.expand_forbidden
-            }
-            
-            try:
-                # 调用核心逻辑生成回复
-                resp = self._cf_core_produce(parsed_data)
-            finally:
-                # 恢复状态
-                self.su = state_backup["su"]
-                self.sv = state_backup["sv"]
-                self.fu = state_backup["fu"]
-                self.fv = state_backup["fv"]
-                self.met = state_backup["met"]
-                self.expand_forbidden = state_backup["expand_forbidden"]
-            
-            return resp
-
-        # 1. 扩张查询 (仅在允许扩张时生成)
-        if not self.expand_forbidden:
-            for node in targets:
-                tag = "query_expand"
-                val = str(node)
-                query_xml = f"<{tag}>{val}</{tag}>"
-                parsed = {tag: val}
-                
-                ans = run_query_safely(parsed)
-                results.append({
-                    "query": query_xml,
-                    "answer": ans
-                })
-
-        # 2. 边界规模查询 (总是允许)
-        for node in targets:
-            tag = "query_boundary"
-            val = str(node)
-            query_xml = f"<{tag}>{val}</{tag}>"
-            parsed = {tag: val}
-            
-            ans = run_query_safely(parsed)
+        for i in range(1, self.n + 1):
+            query_str = f"<query_height>{i}</query_height>"
+            if i == self.hidden:
+                if self.config.language == "zh":
+                    answer_str = "拒绝查询"
+                else:
+                    answer_str = "Query Rejected"
+            else:
+                answer_str = str(self.heights[i])
             results.append({
-                "query": query_xml,
-                "answer": ans
+                "query": query_str,
+                "answer": answer_str
             })
-
+            
+            query_str = f"<query_children>{i}</query_children>"
+            children_heights = self._get_visible_children_heights(i)
+            answer_str = str(children_heights)
+            results.append({
+                "query": query_str,
+                "answer": answer_str
+            })
+            
         return results

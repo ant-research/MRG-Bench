@@ -1,747 +1,565 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   父节点：某给定节点的父节点是哪个
-# ============================================================
-
 from .base import Game
-import random
+import re
 
-
-class TreeParentFindingGame(Game):
+class TreeRootingGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"树中父节点推理"的游戏，规则如下：
+我们来玩一个"树根推断"游戏，规则如下：
 
-游戏设定了一棵有根树，共有 {n} 个节点，每个节点有唯一的名字。树的根节点是 {root}，其深度为 0。你的目标节点是 {target}（保证不是根节点）。
+游戏设定了一个无根树，包含 {n} 个节点，编号为 1 到 {n}。树的边集为：
+{edges}
 
-你的任务是：仅通过指定的查询接口，唯一确定目标节点 {target} 的父节点是谁。
+这棵树是连通的且无环。我为这棵树设计了一个隐藏的响应函数规则：当你指定某个节点作为根时，每个节点都会有一个对应的正整数值。这个响应函数在整局游戏中是固定且一致的。
 
-## 术语说明
+你的目标是通过交互推断出这个隐藏规则，并能准确预测任意"根-节点"组合对应的值。
 
-- 深度：从根节点到某节点的边数（根节点深度为 0）
-- 严格祖先：节点 a 是节点 b 的严格祖先，意味着 a 位于从根到 b 的唯一路径上且 a 不等于 b
-- 最近公共祖先：节点 a 和 b 的最近公共祖先；当 a 等于 b 时，返回 a 本身
+你可以进行以下操作：
 
-## 可用查询
+1. **设定根节点**：指定某个节点作为当前根。我会确认设定。
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+2. **数值查询**（有预算限制，上限 {query_budget} 次）：在当前根下，询问某个节点的值。我会返回一个正整数。
 
-1. 深度查询：询问某个节点的深度。我会返回一个非负整数。
-2. 祖先判断：询问节点 a 是否是节点 b 的严格祖先。我会回答"是"或"否"（当 a 等于 b 时必为"否"）。
-3. 最近公共祖先查询：询问节点 a 和 b 的最近公共祖先。我会返回一个节点名字（当 a 等于 b 时返回 a）。
+3. **比较查询**（不计入预算，可无限次）：在当前根下，询问两个节点值的大小关系。我会告诉你哪个更大、相等还是更小。
 
-## 查询格式（必须严格遵守）
+4. **预测自测**（不计入预算，可选）：你可以声明一个预测"在根 R 时节点 U 的值为 X"，我会告诉你对或错。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你认为已经掌握规律后，需要回答 {challenge_count} 个我提出的问题。这些问题都是你在探索阶段未做过数值查询的"根-节点"组合。你需要一次性提交所有答案，全部正确才算通过。
 
-- 深度查询（例如查询节点 A 的深度）：
-<query_depth>A</query_depth>
+每次只能包含一个操作标签：
 
-- 祖先判断（例如询问 A 是否是 B 的严格祖先）：
-<query_ancestor>A,B</query_ancestor>
+- 设定根节点（例如设为节点 3）：
+<set_root>3</set_root>
 
-- 最近公共祖先查询（例如查询 A 和 B 的最近公共祖先）：
-<query_lca>A,B</query_lca>
+- 数值查询（例如查询节点 5 的值）：
+<query_value>5</query_value>
 
-## 提交答案格式
+- 比较查询（例如比较节点 2 和节点 4）：
+<query_compare>2,4</query_compare>
 
-当你确定了目标节点的父节点后，请使用以下格式提交答案：
+- 预测自测（例如预测根为 1 时节点 3 的值为 5）：
+<predict_test>root=1,node=3,value=5</predict_test>
 
-<answer>X</answer>
+- 提交最终答案（回答所有挑战问题）：
+<answer>1:10,2:5,3:8</answer>
 
-其中 X 是你推断出的 {target} 的父节点名字。
+其中最终答案格式为"问题编号:预测值"，用逗号分隔。挑战问题会在你请求时给出。
 
-## 注意事项
+当你准备好接受最终挑战时，请发送：
+<request_challenge></request_challenge>
 
-- 树的所有节点名字为：{nodes}
-- 请尽可能少地使用查询次数来确定答案
-- 答案错误游戏失败
+注意：数值查询次数有限，请尽可能高效地探索规律。
 """
 
     game_rule_en = """\
-Let's play a "Tree Parent Finding" game. Here are the rules:
+Let's play a "Tree Rooting" game. Here are the rules:
 
-There is a rooted tree with {n} nodes, each having a unique name. The root node is {root} with depth 0. Your target node is {target} (guaranteed not to be the root).
+The game involves an unrooted tree with {n} nodes, numbered from 1 to {n}. The edge set is:
+{edges}
 
-Your task is: using only the specified query interface, uniquely determine the parent node of the target node {target}.
+This tree is connected and acyclic. I have designed a hidden response function for this tree: when you specify a node as the root, each node will have a corresponding positive integer value. This response function is fixed and consistent throughout the game.
 
-## Terminology
+Your goal is to infer the hidden rule through interaction and accurately predict the value for any "root-node" combination.
 
-- Depth: The number of edges from the root to a node (root has depth 0)
-- Strict Ancestor: Node a is a strict ancestor of node b if a is on the unique path from root to b and a is not equal to b
-- Lowest Common Ancestor (LCA): The deepest common ancestor of nodes a and b; when a equals b, returns a itself
+You can perform the following operations:
 
-## Available Queries
+1. **Set Root**: Specify a node as the current root. I will confirm the setting.
 
-You can repeatedly make the following three types of queries (one query per turn):
+2. **Value Query** (budget limited, max {query_budget} times): Under the current root, ask for a node's value. I will return a positive integer.
 
-1. Depth Query: Ask for the depth of a node. I will return a non-negative integer.
-2. Ancestor Query: Ask whether node a is a strict ancestor of node b. I will answer "Yes" or "No" (always "No" when a equals b).
-3. LCA Query: Ask for the lowest common ancestor of nodes a and b. I will return a node name (returns a when a equals b).
+3. **Comparison Query** (not counted in budget, unlimited): Under the current root, ask about the relationship between two nodes' values. I will tell you which is larger, equal, or smaller.
 
-## Query Format (strictly required)
+4. **Prediction Test** (not counted in budget, optional): You can declare a prediction "under root R, node U has value X", and I will tell you if it's correct or wrong.
 
-Each query must contain only one tag. Use the following XML format:
+When you believe you have mastered the pattern, you need to answer {challenge_count} questions I provide. These questions are all "root-node" combinations you have not queried for values during exploration. You must submit all answers at once, and all must be correct to pass.
 
-- Depth Query (e.g., querying depth of node A):
-<query_depth>A</query_depth>
+Each turn must contain only one operation tag:
 
-- Ancestor Query (e.g., asking if A is a strict ancestor of B):
-<query_ancestor>A,B</query_ancestor>
+- Set root (e.g., set to node 3):
+<set_root>3</set_root>
 
-- LCA Query (e.g., querying LCA of A and B):
-<query_lca>A,B</query_lca>
+- Value query (e.g., query node 5):
+<query_value>5</query_value>
 
-## Answer Submission Format
+- Comparison query (e.g., compare node 2 and node 4):
+<query_compare>2,4</query_compare>
 
-When you have determined the parent node of the target, submit your answer using:
+- Prediction test (e.g., predict under root 1, node 3 has value 5):
+<predict_test>root=1,node=3,value=5</predict_test>
 
-<answer>X</answer>
+- Submit final answer (answer all challenge questions):
+<answer>1:10,2:5,3:8</answer>
 
-where X is the parent node name you inferred for {target}.
+The final answer format is "question_id:predicted_value", separated by commas. Challenge questions will be provided upon request.
 
-## Notes
+When you are ready for the final challenge, send:
+<request_challenge></request_challenge>
 
-- All node names in the tree: {nodes}
-- Try to use as few queries as possible to determine the answer
-- Incorrect answer results in game failure
+Note: Value queries are limited, please explore the pattern efficiently.
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用“物流枢纽溯源系统”。本系统记录了一个呈树状辐射分布的物流网络。
+欢迎进入“智能交通路网调度”系统。
 
-网络共有 {n} 个节点，每个节点有唯一的名字。总枢纽是 {root}，其中转级数为 0。你的目标节点是 {target}（保证不是总枢纽）。
+本系统控制着一个包含 {n} 个交通枢纽（编号 1 到 {n}）的无环连通道路网。路网的物理连接如下：
+{edges}
 
-你的任务是：仅通过指定的查询接口，唯一确定目标站点 {target} 的直接上级分拨中心是谁。
+当我们将某个交通枢纽设定为“总调度中心”（即根节点）时，路网中的车流依赖关系会随之重构。每个枢纽在此状态下都会产生一个特定的“交通负载值”（正整数），该数值由系统底层的响应函数规则决定。这个规则在单次调度任务中是固定且一致的。
 
-## 术语说明
+你的目标是通过调度交互推断出这个隐藏规则，并能准确预测任意“总中心-枢纽”组合对应的交通负载值。
 
-- 中转级数：从总枢纽到某站点的路径长度（总枢纽级数为 0）
-- 上游路由：站点 a 是站点 b 的上游路由，意味着 a 位于从总枢纽到 b 的唯一路径上且 a 不等于 b
-- 最近公共枢纽：站点 a 和 b 的最近共同上游中转枢纽；当 a 等于 b 时，返回 a 本身
+你可以进行以下操作：
 
-## 可用查询
+1. **设定调度中心**：指定某个枢纽作为当前总调度中心。我会确认设定。
+<set_root>3</set_root>
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+2. **负载查询**（有预算限制，上限 {query_budget} 次）：在当前调度中心下，询问某个枢纽的负载值。我会返回一个正整数。
+<query_value>5</query_value>
 
-1. 中转级数查询：询问某个站点的中转级数。我会返回一个非负整数。
-2. 上游路由判断：询问站点 a 是否是站点 b 的上游路由。我会回答"是"或"否"（当 a 等于 b 时必为"否"）。
-3. 最近公共枢纽查询：询问站点 a 和 b 的最近公共枢纽。我会返回一个节点名字（当 a 等于 b 时返回 a）。
+3. **比较查询**（不计入预算，可无限次）：在当前调度中心下，询问两个枢纽负载值的大小关系。我会告诉你哪个更大、相等还是更小。
+<query_compare>2,4</query_compare>
 
-## 查询格式（必须严格遵守）
+4. **预测自测**（不计入预算，可选）：你可以声明一个预测“在总调度中心为 R 时枢纽 U 的负载值为 X”，我会告诉你对或错。
+<predict_test>root=1,node=3,value=5</predict_test>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你认为已经掌握路网负载规律后，需要回答 {challenge_count} 个我提出的系统预演问题。这些问题都是你在探索阶段未做过负载查询的组合。你需要一次性提交所有答案，全部正确才算通过考核。
 
-- 中转级数查询（例如查询站点 A 的级数）：
-<query_depth>A</query_depth>
+每次只能包含一个操作标签：
+- 提交最终答案（回答所有挑战问题）：
+<answer>1:10,2:5,3:8</answer>
+其中最终答案格式为“问题编号:预测值”，用逗号分隔。挑战问题会在你请求时给出。
 
-- 上游路由判断（例如询问 A 是否是 B 的上游路由）：
-<query_ancestor>A,B</query_ancestor>
+当你准备好接受最终挑战时，请发送：
+<request_challenge></request_challenge>
 
-- 最近公共枢纽查询（例如查询 A 和 B 的最近公共枢纽）：
-<query_lca>A,B</query_lca>
-
-## 提交答案格式
-
-当你确定了目标站点的直接上级分拨中心后，请使用以下格式提交答案：
-
-<answer>X</answer>
-
-其中 X 是你推断出的 {target} 的上级分拨中心名字。
-
-## 注意事项
-
-- 网络的所有节点名字为：{nodes}
-- 请尽可能少地使用查询次数来确定答案
-- 答案错误将导致溯源失败
+注意：负载查询次数有限，请尽可能高效地探索规律。
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Welcome to the "Logistics Hub Tracing System". The system records a tree-like logistics network.
+[Traffic Scenario]
+Welcome to the "Intelligent Traffic Network Dispatch" system.
 
-The network consists of {n} nodes, each with a unique name. The main hub is {root}, with a transfer level of 0. Your target node is {target} (guaranteed not to be the main hub).
+This system controls an acyclic connected road network with {n} traffic hubs (numbered 1 to {n}). The physical connections are as follows:
+{edges}
 
-Your task is: uniquely determine the direct upstream distribution center of the target station {target} using only the specified query interfaces.
+When we set a specific hub as the "Central Dispatch Hub" (i.e., root node), the traffic flow dependencies in the network are reconfigured. Each hub will generate a specific "traffic load value" (a positive integer) under this state, determined by a hidden response function rule in the system. This rule is fixed and consistent throughout a single dispatch mission.
 
-## Terminology
+Your goal is to infer this hidden rule through interactive dispatching and accurately predict the traffic load value for any "Central Hub - Hub" combination.
 
-- Transfer Level: The number of connections from the main hub to a station (main hub level is 0)
-- Upstream Route: Station a is an upstream route of station b if a is on the unique path from the main hub to b, and a is not equal to b
-- Lowest Common Hub: The closest common upstream hub of stations a and b; when a equals b, returns a itself
+You can perform the following operations:
 
-## Available Queries
+1. **Set Dispatch Hub**: Specify a hub as the current Central Dispatch Hub. I will confirm the setting.
+<set_root>3</set_root>
 
-You can repeatedly make the following three types of queries (one query per turn):
+2. **Load Query** (budget limited, max {query_budget} times): Under the current Dispatch Hub, ask for a hub's load value. I will return a positive integer.
+<query_value>5</query_value>
 
-1. Transfer Level Query: Ask for the transfer level of a station. I will return a non-negative integer.
-2. Upstream Route Query: Ask whether station a is an upstream route of station b. I will answer "Yes" or "No" (always "No" when a equals b).
-3. Lowest Common Hub Query: Ask for the lowest common hub of stations a and b. I will return a node name (returns a when a equals b).
+3. **Comparison Query** (not counted in budget, unlimited): Under the current Dispatch Hub, ask about the relationship between two hubs' load values. I will tell you which is larger, equal, or smaller.
+<query_compare>2,4</query_compare>
 
-## Query Format (strictly required)
+4. **Prediction Test** (not counted in budget, optional): You can declare a prediction "under Central Hub R, hub U has a load value of X", and I will tell you if it's correct or wrong.
+<predict_test>root=1,node=3,value=5</predict_test>
 
-Each query must contain only one tag. Use the following XML format:
+When you believe you have mastered the network load pattern, you need to answer {challenge_count} system simulation questions I provide. These are combinations you haven't queried during the exploration phase. You must submit all answers at once, and all must be correct to pass the assessment.
 
-- Transfer Level Query (e.g., querying level of station A):
-<query_depth>A</query_depth>
+Each turn must contain only one operation tag:
+- Submit final answer (answer all challenge questions):
+<answer>1:10,2:5,3:8</answer>
+The final answer format is "question_id:predicted_value", separated by commas. Challenge questions will be provided upon request.
 
-- Upstream Route Query (e.g., asking if A is an upstream route of B):
-<query_ancestor>A,B</query_ancestor>
+When you are ready for the final challenge, send:
+<request_challenge></request_challenge>
 
-- Lowest Common Hub Query (e.g., querying lowest common hub of A and B):
-<query_lca>A,B</query_lca>
-
-## Answer Submission Format
-
-When you have determined the direct upstream distribution center of the target, submit your answer using:
-
-<answer>X</answer>
-
-where X is the upstream distribution center name you inferred for {target}.
-
-## Notes
-
-- All node names in the network: {nodes}
-- Try to use as few queries as possible to determine the answer
-- Incorrect answer results in tracing failure
+Note: Load queries are limited, please explore the pattern efficiently.
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“病毒变异溯源系统”。系统中有一棵包含 {n} 个毒株节点的变异进化树。
+欢迎来到“流行病接触者追踪”系统。
 
-每个毒株具有唯一代号。原始毒株是 {root}（变异代数为 0）。你的目标毒株是 {target}（保证非原始毒株）。
+本系统记录了一个包含 {n} 个追踪个体（编号 1 到 {n}）的无环连通接触网络。个体间的密切接触记录如下：
+{edges}
 
-你的任务是：仅通过系统接口，唯一确定目标毒株 {target} 的直接变异母体（父节点）。
+当系统假设某一个体为“零号感染源”（即根节点）时，病毒的传播链条会随之确立。每个个体在此传播链中都会有一个“传播影响值”（正整数），该数值由隐藏的流行病学响应函数决定。这个规则在整个追踪任务中是固定且一致的。
 
-## 术语说明
+你的目标是通过交互推断出这个隐藏的传播规则，并能准确预测任意“零号感染源-个体”组合对应的传播影响值。
 
-- 变异代数：从原始毒株到某毒株的变异次数（原始毒株代数为 0）
-- 进化路径：毒株 a 位于毒株 b 的进化路径上，意味着 a 位于从原始毒株到 b 的唯一进化链上且 a 不等于 b
-- 最近公共变异源：毒株 a 和 b 的最近共同变异源头毒株；当 a 等于 b 时，返回 a 本身
+你可以进行以下操作：
 
-## 可用查询
+1. **设定感染源**：指定某个个体作为当前零号感染源。我会确认设定。
+<set_root>3</set_root>
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+2. **影响值查询**（有预算限制，上限 {query_budget} 次）：在当前感染源下，询问某个个体的影响值。我会返回一个正整数。
+<query_value>5</query_value>
 
-1. 变异代数查询：询问某毒株的变异代数。我会返回一个非负整数。
-2. 进化路径判断：询问毒株 a 是否在毒株 b 的直接变异前置路径上。我会回答"是"或"否"（当 a 等于 b 时必为"否"）。
-3. 最近公共变异源查询：询问毒株 a 和 b 的最近公共变异源头。我会返回一个毒株代号（当 a 等于 b 时返回 a）。
+3. **比较查询**（不计入预算，可无限次）：在当前感染源下，询问两个个体影响值的大小关系。我会告诉你哪个更大、相等还是更小。
+<query_compare>2,4</query_compare>
 
-## 查询格式（必须严格遵守）
+4. **预测自测**（不计入预算，可选）：你可以声明一个预测“在感染源为 R 时个体 U 的影响值为 X”，我会告诉你对或错。
+<predict_test>root=1,node=3,value=5</predict_test>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你认为已经掌握传播规律后，需要回答 {challenge_count} 个我提出的追踪问题。这些问题都是你在探索阶段未做过影响值查询的组合。你需要一次性提交所有答案，全部正确才算通过考验。
 
-- 变异代数查询（例如查询毒株 A 的代数）：
-<query_depth>A</query_depth>
+每次只能包含一个操作标签：
+- 提交最终答案（回答所有挑战问题）：
+<answer>1:10,2:5,3:8</answer>
+其中最终答案格式为“问题编号:预测值”，用逗号分隔。挑战问题会在你请求时给出。
 
-- 进化路径判断（例如询问毒株 A 是否在毒株 B 的前置路径上）：
-<query_ancestor>A,B</query_ancestor>
+当你准备好接受最终挑战时，请发送：
+<request_challenge></request_challenge>
 
-- 最近公共变异源查询（例如查询毒株 A 和 B 的共同源头）：
-<query_lca>A,B</query_lca>
-
-## 提交答案格式
-
-当你确定了目标毒株的直接变异母体后，请使用以下格式提交答案：
-
-<answer>X</answer>
-
-其中 X 是你推断出的 {target} 的变异母体代号。
-
-## 注意事项
-
-- 系统收录的毒株代号为：{nodes}
-- 请尽可能少地使用查询次数来确定答案
-- 答案错误将导致溯源失败
+注意：影响值查询次数有限，请尽可能高效地探索规律。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Virus Mutation Tracing System". The system contains an evolutionary tree with {n} strain nodes.
+Welcome to the "Epidemiological Contact Tracing" system.
 
-Each strain has a unique name. The original strain is {root} (mutation generation 0). Your target strain is {target} (guaranteed not to be the original strain).
+This system records an acyclic connected contact network of {n} tracked individuals (numbered 1 to {n}). The close contact records among individuals are as follows:
+{edges}
 
-Your task is: uniquely determine the direct parent strain from which {target} mutated, using only the specified query interfaces.
+When the system assumes a specific individual as "Patient Zero" (i.e., root node), the virus transmission chain is established. Each individual will have a "transmission impact value" (a positive integer) in this chain, determined by a hidden epidemiological response function. This rule is fixed and consistent throughout the tracing task.
 
-## Terminology
+Your goal is to infer this hidden transmission rule through interaction and accurately predict the impact value for any "Patient Zero - Individual" combination.
 
-- Mutation Generation: The number of mutations from the original strain to a strain (original has generation 0)
-- Evolutionary Path: Strain a is on the evolutionary path of strain b if a is on the unique lineage from the original strain to b, and a is not equal to b
-- Lowest Common Ancestor Strain: The closest common parent strain of a and b; when a equals b, returns a itself
+You can perform the following operations:
 
-## Available Queries
+1. **Set Patient Zero**: Specify an individual as the current Patient Zero. I will confirm the setting.
+<set_root>3</set_root>
 
-You can repeatedly make the following three types of queries (one query per turn):
+2. **Impact Value Query** (budget limited, max {query_budget} times): Under the current Patient Zero, ask for an individual's impact value. I will return a positive integer.
+<query_value>5</query_value>
 
-1. Mutation Generation Query: Ask for the mutation generation of a strain. I will return a non-negative integer.
-2. Evolutionary Path Query: Ask whether strain a is on the strict evolutionary path of strain b. I will answer "Yes" or "No" (always "No" when a equals b).
-3. LCA Strain Query: Ask for the lowest common ancestor strain of a and b. I will return a strain name (returns a when a equals b).
+3. **Comparison Query** (not counted in budget, unlimited): Under the current Patient Zero, ask about the relationship between two individuals' impact values. I will tell you which is larger, equal, or smaller.
+<query_compare>2,4</query_compare>
 
-## Query Format (strictly required)
+4. **Prediction Test** (not counted in budget, optional): You can declare a prediction "under Patient Zero R, individual U has an impact value of X", and I will tell you if it's correct or wrong.
+<predict_test>root=1,node=3,value=5</predict_test>
 
-Each query must contain only one tag. Use the following XML format:
+When you believe you have mastered the transmission pattern, you need to answer {challenge_count} tracing questions I provide. These are combinations you haven't queried for impact values during exploration. You must submit all answers at once, and all must be correct to pass the test.
 
-- Mutation Generation Query (e.g., querying generation of strain A):
-<query_depth>A</query_depth>
+Each turn must contain only one operation tag:
+- Submit final answer (answer all challenge questions):
+<answer>1:10,2:5,3:8</answer>
+The final answer format is "question_id:predicted_value", separated by commas. Challenge questions will be provided upon request.
 
-- Evolutionary Path Query (e.g., asking if A is on the path of B):
-<query_ancestor>A,B</query_ancestor>
+When you are ready for the final challenge, send:
+<request_challenge></request_challenge>
 
-- LCA Strain Query (e.g., querying LCA strain of A and B):
-<query_lca>A,B</query_lca>
-
-## Answer Submission Format
-
-When you have determined the direct parent strain of the target, submit your answer using:
-
-<answer>X</answer>
-
-where X is the parent strain name you inferred for {target}.
-
-## Notes
-
-- All strain names in the tree: {nodes}
-- Try to use as few queries as possible to determine the answer
-- Incorrect answer results in tracing failure
+Note: Impact value queries are limited, please explore the pattern efficiently.
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用“学科知识点层级系统”。这里有一棵包含 {n} 个知识点的先修关系树。
+欢迎来到“知识图谱先决条件分析”系统。
 
-每个知识点有唯一的名称。根知识领域为 {root}（层级深度为 0）。你需要追踪的知识点是 {target}（保证非根领域）。
+本系统包含一个具有 {n} 个知识模块（编号 1 到 {n}）的无环连通教学大纲。模块间的逻辑关联如下：
+{edges}
 
-你的任务是：仅通过指定查询，唯一确定知识点 {target} 的直接前置父级知识点。
+当我们将某个知识模块设定为“核心教学起点”（即根节点）时，整个图谱的依赖路径将重新计算。每个知识模块在这个特定的学习路径中都会产生一个“基础权重值”（正整数），该数值由隐藏的认知学规则决定。这个规则在本次教研分析中是固定且一致的。
 
-## 术语说明
+你的目标是通过分析推断出这个隐藏规则，并能准确预测任意“起点-模块”组合对应的基础权重值。
 
-- 知识层级：从根领域到某知识点的细分层级数（根领域为 0）
-- 宏观前置领域：知识点 a 是知识点 b 的宏观前置领域，意味着 a 位于从根领域到 b 的唯一学习路径上且 a 不等于 b
-- 最近公共领域：知识点 a 和 b 共同从属的最底层的宏观知识领域；当 a 等于 b 时，返回 a 本身
+你可以进行以下操作：
 
-## 可用查询
+1. **设定教学起点**：指定某个模块作为当前核心教学起点。我会确认设定。
+<set_root>3</set_root>
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+2. **权重查询**（有预算限制，上限 {query_budget} 次）：在当前起点下，询问某个模块的权重值。我会返回一个正整数。
+<query_value>5</query_value>
 
-1. 知识层级查询：询问某知识点的细分层级。我会返回一个非负整数。
-2. 宏观领域判断：询问知识点 a 是否是涵盖 b 的宏观前置领域。我会回答"是"或"否"（当 a 等于 b 时必为"否"）。
-3. 最近公共领域查询：询问知识点 a 和 b 共同从属的最近公共领域。我会返回一个领域名称（当 a 等于 b 时返回 a）。
+3. **比较查询**（不计入预算，可无限次）：在当前起点下，询问两个模块权重值的大小关系。我会告诉你哪个更大、相等还是更小。
+<query_compare>2,4</query_compare>
 
-## 查询格式（必须严格遵守）
+4. **预测自测**（不计入预算，可选）：你可以声明一个预测“在起点为 R 时模块 U 的权重值为 X”，我会告诉你对或错。
+<predict_test>root=1,node=3,value=5</predict_test>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你认为已经掌握依赖规律后，需要回答 {challenge_count} 个我提出的课程设计问题。这些问题都是你在探索阶段未做过权重查询的组合。你需要一次性提交所有答案，全部正确才算通过审核。
 
-- 知识层级查询（例如查询知识点 A 的层级）：
-<query_depth>A</query_depth>
+每次只能包含一个操作标签：
+- 提交最终答案（回答所有挑战问题）：
+<answer>1:10,2:5,3:8</answer>
+其中最终答案格式为“问题编号:预测值”，用逗号分隔。挑战问题会在你请求时给出。
 
-- 宏观领域判断（例如询问 A 是否是 B 的前置领域）：
-<query_ancestor>A,B</query_ancestor>
+当你准备好接受最终挑战时，请发送：
+<request_challenge></request_challenge>
 
-- 最近公共领域查询（例如查询 A 和 B 的最近公共领域）：
-<query_lca>A,B</query_lca>
-
-## 提交答案格式
-
-当你确定了目标知识点的直接父级知识点后，请使用以下格式提交答案：
-
-<answer>X</answer>
-
-其中 X 是你推断出的 {target} 的直接前置知识点名称。
-
-## 注意事项
-
-- 图谱中的所有知识点名称为：{nodes}
-- 请尽可能少地使用查询次数来确定答案
-- 答案错误将导致分析失败
+注意：权重查询次数有限，请尽可能高效地探索规律。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Disciplinary Knowledge Hierarchy System". There is a prerequisite tree with {n} knowledge nodes.
+Welcome to the "Knowledge Graph Prerequisite Analysis" system.
 
-Each node has a unique name. The root domain is {root} (hierarchy depth 0). Your target knowledge node is {target} (guaranteed not to be the root).
+This system contains an acyclic connected syllabus with {n} knowledge modules (numbered 1 to {n}). The logical correlations among modules are as follows:
+{edges}
 
-Your task is: uniquely determine the direct prerequisite parent node of {target} using only the specified queries.
+When we set a specific knowledge module as the "Core Learning Starting Point" (i.e., root node), the dependency paths of the entire graph are recalculated. Each knowledge module will generate a "foundational weight value" (a positive integer) in this specific learning path, determined by a hidden cognitive rule. This rule is fixed and consistent throughout this analytical session.
 
-## Terminology
+Your goal is to infer this hidden rule through analysis and accurately predict the foundational weight value for any "Starting Point - Module" combination.
 
-- Knowledge Hierarchy Depth: The number of subdivision levels from the root domain to a node (root has depth 0)
-- Macro Prerequisite Domain: Node a is a macro prerequisite domain of node b if a is on the unique learning path from the root to b, and a is not equal to b
-- Lowest Common Domain: The deepest common macro domain of nodes a and b; when a equals b, returns a itself
+You can perform the following operations:
 
-## Available Queries
+1. **Set Starting Point**: Specify a module as the current Core Learning Starting Point. I will confirm the setting.
+<set_root>3</set_root>
 
-You can repeatedly make the following three types of queries (one query per turn):
+2. **Weight Query** (budget limited, max {query_budget} times): Under the current starting point, ask for a module's weight value. I will return a positive integer.
+<query_value>5</query_value>
 
-1. Hierarchy Depth Query: Ask for the subdivision depth of a node. I will return a non-negative integer.
-2. Macro Domain Query: Ask whether node a is a strict macro prerequisite domain of node b. I will answer "Yes" or "No" (always "No" when a equals b).
-3. Lowest Common Domain Query: Ask for the deepest common macro domain of nodes a and b. I will return a node name (returns a when a equals b).
+3. **Comparison Query** (not counted in budget, unlimited): Under the current starting point, ask about the relationship between two modules' weight values. I will tell you which is larger, equal, or smaller.
+<query_compare>2,4</query_compare>
 
-## Query Format (strictly required)
+4. **Prediction Test** (not counted in budget, optional): You can declare a prediction "under starting point R, module U has a weight value of X", and I will tell you if it's correct or wrong.
+<predict_test>root=1,node=3,value=5</predict_test>
 
-Each query must contain only one tag. Use the following XML format:
+When you believe you have mastered the dependency pattern, you need to answer {challenge_count} curriculum design questions I provide. These are combinations you haven't queried for weights during exploration. You must submit all answers at once, and all must be correct to pass the review.
 
-- Hierarchy Depth Query (e.g., querying depth of node A):
-<query_depth>A</query_depth>
+Each turn must contain only one operation tag:
+- Submit final answer (answer all challenge questions):
+<answer>1:10,2:5,3:8</answer>
+The final answer format is "question_id:predicted_value", separated by commas. Challenge questions will be provided upon request.
 
-- Macro Domain Query (e.g., asking if A is a macro domain of B):
-<query_ancestor>A,B</query_ancestor>
+When you are ready for the final challenge, send:
+<request_challenge></request_challenge>
 
-- Lowest Common Domain Query (e.g., querying common domain of A and B):
-<query_lca>A,B</query_lca>
-
-## Answer Submission Format
-
-When you have determined the direct prerequisite parent node of the target, submit your answer using:
-
-<answer>X</answer>
-
-where X is the parent node name you inferred for {target}.
-
-## Notes
-
-- All knowledge node names: {nodes}
-- Try to use as few queries as possible to determine the answer
-- Incorrect answer results in system failure
+Note: Weight queries are limited, please explore the pattern efficiently.
 """
 
     contextualized_rule_zh_4 = """\
-欢迎使用“设备装配BOM分析系统”。此设备是一棵包含 {n} 个组件节点的装配树。
+欢迎进入“工业电网负载调配”系统。
 
-每个组件有唯一的编号。整机总成是 {root}（装配层级为 0）。你的目标组件是 {target}（保证不是整机）。
+本系统监控着一个包含 {n} 个变电节点（编号 1 到 {n}）的无环连通输电网。电网的线路连接如下：
+{edges}
 
-你的任务是：仅通过调用系统接口，唯一确定零部件 {target} 直接隶属的上一级组件是谁。
+当系统指定某个变电节点为“主发电机组”（即根节点）时，电能的潮流方向会相应改变。每个变电节点在这个输电结构中都会承担一个“供电负载值”（正整数），该数值由隐藏的电网拓扑函数决定。这个规则在整个调配班次中是固定且一致的。
 
-## 术语说明
+你的目标是通过调配交互推断出这个隐藏规则，并能准确预测任意“主发电机组-变电节点”组合对应的负载值。
 
-- 装配层级：从整机总成到某组件的拆解级数（整机总成为 0）
-- 上层总成：组件 a 是组件 b 的上层总成，意味着 a 位于从整机到 b 的唯一装配链条上且 a 不等于 b
-- 最近公共总成：组件 a 和 b 共同隶属的最小上层装配总成；当 a 等于 b 时，返回 a 本身
+你可以进行以下操作：
 
-## 可用查询
+1. **设定发电机组**：指定某个变电节点作为当前主发电机组。我会确认设定。
+<set_root>3</set_root>
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+2. **负载查询**（有预算限制，上限 {query_budget} 次）：在当前发电机组下，询问某个节点的负载值。我会返回一个正整数。
+<query_value>5</query_value>
 
-1. 装配层级查询：询问某组件的装配层级深度。我会返回一个非负整数。
-2. 包含关系判断：询问组件 a 是否是包含子件 b 的严格上层总成。我会回答"是"或"否"（当 a 等于 b 时必为"否"）。
-3. 最近公共总成查询：询问组件 a 和 b 共同隶属的最近公共总成。我会返回一个组件编号（当 a 等于 b 时返回 a）。
+3. **比较查询**（不计入预算，可无限次）：在当前发电机组下，询问两个节点负载值的大小关系。我会告诉你哪个更大、相等还是更小。
+<query_compare>2,4</query_compare>
 
-## 查询格式（必须严格遵守）
+4. **预测自测**（不计入预算，可选）：你可以声明一个预测“在发电机组为 R 时节点 U 的负载值为 X”，我会告诉你对或错。
+<predict_test>root=1,node=3,value=5</predict_test>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你认为已经掌握电网负载规律后，需要回答 {challenge_count} 个我提出的调配安全问题。这些问题都是你在探索阶段未做过负载查询的组合。你需要一次性提交所有答案，全部正确才算通过验证。
 
-- 装配层级查询（例如查询组件 A 的层级）：
-<query_depth>A</query_depth>
+每次只能包含一个操作标签：
+- 提交最终答案（回答所有挑战问题）：
+<answer>1:10,2:5,3:8</answer>
+其中最终答案格式为“问题编号:预测值”，用逗号分隔。挑战问题会在你请求时给出。
 
-- 包含关系判断（例如询问组件 A 是否是组件 B 的上层总成）：
-<query_ancestor>A,B</query_ancestor>
+当你准备好接受最终挑战时，请发送：
+<request_challenge></request_challenge>
 
-- 最近公共总成查询（例如查询组件 A 和 B 的最小公共总成）：
-<query_lca>A,B</query_lca>
-
-## 提交答案格式
-
-当你确定了目标组件的上一级组件后，请使用以下格式提交答案：
-
-<answer>X</answer>
-
-其中 X 是你推断出的 {target} 的上一级组件编号。
-
-## 注意事项
-
-- BOM 表中的所有组件编号为：{nodes}
-- 请尽可能少地使用查询次数来确定答案
-- 答案错误将导致溯源失败
+注意：负载查询次数有限，请尽可能高效地探索规律。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Equipment BOM Analysis System". The equipment represents an assembly tree with {n} component nodes.
+[Manufacturing/Industrial Scenario]
+Welcome to the "Industrial Grid Load Allocation" system.
 
-Each component has a unique ID. The main assembly is {root} (assembly level 0). Your target component is {target} (guaranteed not to be the main assembly).
+This system monitors an acyclic connected transmission grid with {n} substation nodes (numbered 1 to {n}). The grid's line connections are as follows:
+{edges}
 
-Your task is: uniquely determine the direct parent assembly to which component {target} belongs, using only the specified queries.
+When the system designates a specific substation node as the "Main Power Generator" (i.e., root node), the power flow direction changes accordingly. Each substation node will bear a "power load value" (a positive integer) in this transmission structure, determined by a hidden grid topology function. This rule is fixed and consistent throughout the allocation shift.
 
-## Terminology
+Your goal is to infer this hidden rule through allocation interactions and accurately predict the load value for any "Main Generator - Substation Node" combination.
 
-- Assembly Level: The number of disassembly steps from the main assembly to a component (main assembly is 0)
-- Parent Assembly: Component a is a parent assembly of component b if a is on the unique assembly chain from the main assembly to b, and a is not equal to b
-- Lowest Common Assembly: The smallest common parent assembly of a and b; when a equals b, returns a itself
+You can perform the following operations:
 
-## Available Queries
+1. **Set Generator**: Specify a substation node as the current Main Power Generator. I will confirm the setting.
+<set_root>3</set_root>
 
-You can repeatedly make the following three types of queries (one query per turn):
+2. **Load Query** (budget limited, max {query_budget} times): Under the current generator, ask for a node's load value. I will return a positive integer.
+<query_value>5</query_value>
 
-1. Assembly Level Query: Ask for the assembly depth level of a component. I will return a non-negative integer.
-2. Parent Assembly Query: Ask whether component a is a strict parent assembly of component b. I will answer "Yes" or "No" (always "No" when a equals b).
-3. Lowest Common Assembly Query: Ask for the smallest common assembly of components a and b. I will return a component ID (returns a when a equals b).
+3. **Comparison Query** (not counted in budget, unlimited): Under the current generator, ask about the relationship between two nodes' load values. I will tell you which is larger, equal, or smaller.
+<query_compare>2,4</query_compare>
 
-## Query Format (strictly required)
+4. **Prediction Test** (not counted in budget, optional): You can declare a prediction "under generator R, node U has a load value of X", and I will tell you if it's correct or wrong.
+<predict_test>root=1,node=3,value=5</predict_test>
 
-Each query must contain only one tag. Use the following XML format:
+When you believe you have mastered the grid load pattern, you need to answer {challenge_count} safety allocation questions I provide. These are combinations you haven't queried for load values during exploration. You must submit all answers at once, and all must be correct to pass the validation.
 
-- Assembly Level Query (e.g., querying level of component A):
-<query_depth>A</query_depth>
+Each turn must contain only one operation tag:
+- Submit final answer (answer all challenge questions):
+<answer>1:10,2:5,3:8</answer>
+The final answer format is "question_id:predicted_value", separated by commas. Challenge questions will be provided upon request.
 
-- Parent Assembly Query (e.g., asking if A is a parent assembly of B):
-<query_ancestor>A,B</query_ancestor>
+When you are ready for the final challenge, send:
+<request_challenge></request_challenge>
 
-- Lowest Common Assembly Query (e.g., querying common assembly of A and B):
-<query_lca>A,B</query_lca>
-
-## Answer Submission Format
-
-When you have determined the direct parent assembly of the target, submit your answer using:
-
-<answer>X</answer>
-
-where X is the parent assembly ID you inferred for {target}.
-
-## Notes
-
-- All component IDs in the BOM: {nodes}
-- Try to use as few queries as possible to determine the answer
-- Incorrect answer results in analysis failure
+Note: Load queries are limited, please explore the pattern efficiently.
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用“法条层级溯源系统”。现有一套包含 {n} 个条款节点的树状法律体系。
+欢迎使用“诉讼证据链条分析”系统。
 
-每个条款有唯一的名称。根本大法是 {root}（效力层级为 0）。你需要分析的目标具体条款是 {target}（保证非根本大法）。
+本系统梳理了一个包含 {n} 个证据项（编号 1 到 {n}）的无环连通证据网络。证据间的逻辑印证关系如下：
+{edges}
 
-你的任务是：仅通过合法查询接口，唯一确定条款 {target} 的直接上位法理依据（直接父级条款）是谁。
+当法庭审理将某个证据项确立为“核心争议焦点”（即根节点）时，整个证据链的支撑结构将发生转化。每个证据项在这个特定的论证结构中都会具有一个“证明效力值”（正整数），该数值由隐藏的法理逻辑函数决定。这个规则在整个案件分析中是固定且一致的。
 
-## 术语说明
+你的目标是通过逻辑推断掌握这个隐藏规则，并能准确预测任意“争议焦点-证据项”组合对应的证明效力值。
 
-- 效力层级：从根本大法到某细分条款的衍生级数（根本大法为 0）
-- 上位法理渊源：条款 a 是条款 b 的上位法理渊源，意味着 a 位于从根本大法到 b 的唯一释法路径上且 a 不等于 b
-- 最近公共法理：条款 a 和 b 共同援引的最低级别共同上位法；当 a 等于 b 时，返回 a 本身
+你可以进行以下操作：
 
-## 可用查询
+1. **设定争议焦点**：指定某个证据项作为当前核心争议焦点。我会确认设定。
+<set_root>3</set_root>
 
-你可以反复提出以下三类查询（每次仅限一个查询）：
+2. **效力查询**（有预算限制，上限 {query_budget} 次）：在当前争议焦点下，询问某个证据项的效力值。我会返回一个正整数。
+<query_value>5</query_value>
 
-1. 效力层级查询：询问某条款的效力深度层级。我会返回一个非负整数。
-2. 上位法判断：询问条款 a 是否是条款 b 的严格上位法。我会回答"是"或"否"（当 a 等于 b 时必为"否"）。
-3. 最近公共法理查询：询问条款 a 和 b 共同援引的最低级别上位法。我会返回一个条款名称（当 a 等于 b 时返回 a）。
+3. **比较查询**（不计入预算，可无限次）：在当前争议焦点下，询问两个证据项效力值的大小关系。我会告诉你哪个更大、相等还是更小。
+<query_compare>2,4</query_compare>
 
-## 查询格式（必须严格遵守）
+4. **预测自测**（不计入预算，可选）：你可以声明一个预测“在争议焦点为 R 时证据 U 的效力值为 X”，我会告诉你对或错。
+<predict_test>root=1,node=3,value=5</predict_test>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+当你认为已经掌握法理推演规律后，需要回答 {challenge_count} 个我提出的交叉质证问题。这些问题都是你在探索阶段未做过效力查询的组合。你需要一次性提交所有答案，全部正确才算通过案情推演。
 
-- 效力层级查询（例如查询条款 A 的效力级别）：
-<query_depth>A</query_depth>
+每次只能包含一个操作标签：
+- 提交最终答案（回答所有挑战问题）：
+<answer>1:10,2:5,3:8</answer>
+其中最终答案格式为“问题编号:预测值”，用逗号分隔。挑战问题会在你请求时给出。
 
-- 上位法判断（例如询问条款 A 是否是 B 的上位法）：
-<query_ancestor>A,B</query_ancestor>
+当你准备好接受最终挑战时，请发送：
+<request_challenge></request_challenge>
 
-- 最近公共法理查询（例如查询条款 A 和 B 的共同法理源头）：
-<query_lca>A,B</query_lca>
-
-## 提交答案格式
-
-当你确定了目标条款的直接上位法依据后，请使用以下格式提交答案：
-
-<answer>X</answer>
-
-其中 X 是你推断出的 {target} 的直接上位法条款名称。
-
-## 注意事项
-
-- 体系中的所有条款名称为：{nodes}
-- 请尽可能少地使用查询次数来确定答案
-- 答案错误将导致审查失败
+注意：效力查询次数有限，请尽可能高效地探索规律。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Statutory Hierarchy Tracing System". There is a tree-like legal framework comprising {n} clause nodes.
+Welcome to the "Litigation Evidence Chain Analysis" system.
 
-Each clause has a unique name. The fundamental law is {root} (authority level 0). Your target specific clause is {target} (guaranteed not to be the fundamental law).
+This system organizes an acyclic connected evidence network with {n} evidence items (numbered 1 to {n}). The logical corroboration relationships among the evidence are as follows:
+{edges}
 
-Your task is: uniquely determine the direct superseding statutory basis (direct parent clause) for clause {target}, using only the legal query interfaces.
+When the court establishes a specific evidence item as the "Core Point of Contention" (i.e., root node), the supporting structure of the entire evidence chain transforms. Each evidence item will have a "probative value" (a positive integer) in this specific argumentative structure, determined by a hidden jurisprudential logic function. This rule is fixed and consistent throughout the case analysis.
 
-## Terminology
+Your goal is to infer this hidden rule through logical deduction and accurately predict the probative value for any "Point of Contention - Evidence Item" combination.
 
-- Authority Level: The number of derivation steps from the fundamental law to a clause (fundamental law is 0)
-- Superseding Statutory Source: Clause a is a superseding statutory source of clause b if a is on the unique derivation path from the fundamental law to b, and a is not equal to b
-- Lowest Common Statutory Basis: The lowest-level common superseding law invoked by a and b; when a equals b, returns a itself
+You can perform the following operations:
 
-## Available Queries
+1. **Set Point of Contention**: Specify an evidence item as the current Core Point of Contention. I will confirm the setting.
+<set_root>3</set_root>
 
-You can repeatedly make the following three types of queries (one query per turn):
+2. **Value Query** (budget limited, max {query_budget} times): Under the current point of contention, ask for an evidence item's probative value. I will return a positive integer.
+<query_value>5</query_value>
 
-1. Authority Level Query: Ask for the authority depth of a clause. I will return a non-negative integer.
-2. Superseding Law Query: Ask whether clause a is a strict superseding statutory source of clause b. I will answer "Yes" or "No" (always "No" when a equals b).
-3. Lowest Common Statutory Basis Query: Ask for the lowest-level common superseding law of clauses a and b. I will return a clause name (returns a when a equals b).
+3. **Comparison Query** (not counted in budget, unlimited): Under the current point of contention, ask about the relationship between two evidence items' probative values. I will tell you which is larger, equal, or smaller.
+<query_compare>2,4</query_compare>
 
-## Query Format (strictly required)
+4. **Prediction Test** (not counted in budget, optional): You can declare a prediction "under point of contention R, evidence U has a probative value of X", and I will tell you if it's correct or wrong.
+<predict_test>root=1,node=3,value=5</predict_test>
 
-Each query must contain only one tag. Use the following XML format:
+When you believe you have mastered the jurisprudential deduction pattern, you need to answer {challenge_count} cross-examination questions I provide. These are combinations you haven't queried for probative values during exploration. You must submit all answers at once, and all must be correct to pass the case deduction.
 
-- Authority Level Query (e.g., querying level of clause A):
-<query_depth>A</query_depth>
+Each turn must contain only one operation tag:
+- Submit final answer (answer all challenge questions):
+<answer>1:10,2:5,3:8</answer>
+The final answer format is "question_id:predicted_value", separated by commas. Challenge questions will be provided upon request.
 
-- Superseding Law Query (e.g., asking if A is a superseding source for B):
-<query_ancestor>A,B</query_ancestor>
+When you are ready for the final challenge, send:
+<request_challenge></request_challenge>
 
-- Lowest Common Statutory Basis Query (e.g., querying common basis for A and B):
-<query_lca>A,B</query_lca>
-
-## Answer Submission Format
-
-When you have determined the direct superseding statutory basis of the target, submit your answer using:
-
-<answer>X</answer>
-
-where X is the superseding clause name you inferred for {target}.
-
-## Notes
-
-- All clause names in the framework: {nodes}
-- Try to use as few queries as possible to determine the answer
-- Incorrect answer results in verification failure
+Note: Value queries are limited, please explore the pattern efficiently.
 """
 
-    tags = ["answer", "query_depth", "query_ancestor", "query_lca"]
+    tags = ["answer", "set_root", "query_value", "query_compare", "predict_test", "request_challenge"]
     
-    reasoning_type = "演绎推理"
+    reasoning_type = "归纳推理"
     data_structure = "树"
-
-    # 难度说明：
-    # 1 (简单)        - N=5, 深度2, 线性结构
-    # 2 (中等偏下)    - N=7, 深度3, 简单分支
-    # 3 (中等偏上)    - N=10, 深度4, 中等分支
-    # 4 (较难)        - N=12, 深度4, 复杂分支
-    # 5 (难)          - N=15, 深度5, 复杂树结构
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
                 "n": 5,
-                "root": "A",
-                "target": "E",
-                "nodes": ["A", "B", "C", "D", "E"],
-                # 树结构: A -> B -> C -> D -> E (链式)
-                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E")],
+                "edges": "1-2, 2-3, 3-4, 4-5",
+                "query_budget": 8,
+                "challenge_count": 3,
+                "challenges": [(1, 3), (5, 2), (3, 5)],
             },
             2: {
                 "n": 7,
-                "root": "A",
-                "target": "F",
-                "nodes": ["A", "B", "C", "D", "E", "F", "G"],
-                # 树结构: A -> B -> D, A -> B -> E, A -> C -> F, A -> C -> G
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("C", "G")],
+                "edges": "1-2, 1-3, 1-4, 1-5, 1-6, 1-7",
+                "query_budget": 10,
+                "challenge_count": 4,
+                "challenges": [(2, 4), (3, 7), (4, 1), (7, 5)],
             },
             3: {
-                "n": 10,
-                "root": "A",
-                "target": "H",
-                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
-                # 树结构: 
-                # A -> B -> D -> H, A -> B -> E, A -> C -> F -> I, A -> C -> G -> J
-                "edges": [
-                    ("A", "B"), ("A", "C"),
-                    ("B", "D"), ("B", "E"),
-                    ("C", "F"), ("C", "G"),
-                    ("D", "H"), ("F", "I"), ("G", "J")
-                ],
+                "n": 8,
+                "edges": "1-2, 1-3, 2-4, 2-5, 3-6, 3-7, 7-8",
+                "query_budget": 12,
+                "challenge_count": 5,
+                "challenges": [(1, 5), (2, 7), (4, 3), (6, 8), (8, 4)],
             },
             4: {
-                "n": 12,
-                "root": "R",
-                "target": "K",
-                "nodes": ["R", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"],
-                # 树结构: R作为根，三个主分支，目标在深层
-                # R -> A -> D -> G -> K, R -> A -> E, R -> B -> F -> H, R -> B -> I, R -> C -> J
-                "edges": [
-                    ("R", "A"), ("R", "B"), ("R", "C"),
-                    ("A", "D"), ("A", "E"),
-                    ("B", "F"), ("B", "I"),
-                    ("C", "J"),
-                    ("D", "G"), ("F", "H"),
-                    ("G", "K")
-                ],
+                "n": 10,
+                "edges": "1-2, 2-3, 3-4, 2-5, 5-6, 1-7, 7-8, 8-9, 8-10",
+                "query_budget": 15,
+                "challenge_count": 6,
+                "challenges": [(1, 6), (3, 9), (5, 4), (7, 3), (9, 2), (10, 5)],
             },
             5: {
-                "n": 15,
-                "root": "R",
-                "target": "N",
-                "nodes": ["R", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"],
-                # 树结构: 复杂的五层结构
-                # R -> A -> D -> H -> L, R -> A -> E -> I -> M -> N, R -> B -> F -> J, R -> B -> G -> K, R -> C
-                "edges": [
-                    ("R", "A"), ("R", "B"), ("R", "C"),
-                    ("A", "D"), ("A", "E"),
-                    ("B", "F"), ("B", "G"),
-                    ("D", "H"), ("E", "I"),
-                    ("F", "J"), ("G", "K"),
-                    ("H", "L"), ("I", "M"),
-                    ("M", "N")
-                ],
+                "n": 12,
+                "edges": "1-2, 2-3, 3-4, 4-5, 2-6, 6-7, 1-8, 8-9, 9-10, 10-11, 10-12",
+                "query_budget": 18,
+                "challenge_count": 7,
+                "challenges": [(1, 7), (3, 11), (5, 9), (6, 4), (8, 5), (11, 2), (12, 6)],
             },
         },
         "en": {
             1: {
                 "n": 5,
-                "root": "A",
-                "target": "E",
-                "nodes": ["A", "B", "C", "D", "E"],
-                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E")],
+                "edges": "1-2, 2-3, 3-4, 4-5",
+                "query_budget": 8,
+                "challenge_count": 3,
+                "challenges": [(1, 3), (5, 2), (3, 5)],
             },
             2: {
                 "n": 7,
-                "root": "A",
-                "target": "F",
-                "nodes": ["A", "B", "C", "D", "E", "F", "G"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("C", "G")],
+                "edges": "1-2, 1-3, 1-4, 1-5, 1-6, 1-7",
+                "query_budget": 10,
+                "challenge_count": 4,
+                "challenges": [(2, 4), (3, 7), (4, 1), (7, 5)],
             },
             3: {
-                "n": 10,
-                "root": "A",
-                "target": "H",
-                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
-                "edges": [
-                    ("A", "B"), ("A", "C"),
-                    ("B", "D"), ("B", "E"),
-                    ("C", "F"), ("C", "G"),
-                    ("D", "H"), ("F", "I"), ("G", "J")
-                ],
+                "n": 8,
+                "edges": "1-2, 1-3, 2-4, 2-5, 3-6, 3-7, 7-8",
+                "query_budget": 12,
+                "challenge_count": 5,
+                "challenges": [(1, 5), (2, 7), (4, 3), (6, 8), (8, 4)],
             },
             4: {
-                "n": 12,
-                "root": "R",
-                "target": "K",
-                "nodes": ["R", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"],
-                "edges": [
-                    ("R", "A"), ("R", "B"), ("R", "C"),
-                    ("A", "D"), ("A", "E"),
-                    ("B", "F"), ("B", "I"),
-                    ("C", "J"),
-                    ("D", "G"), ("F", "H"),
-                    ("G", "K")
-                ],
+                "n": 10,
+                "edges": "1-2, 2-3, 3-4, 2-5, 5-6, 1-7, 7-8, 8-9, 8-10",
+                "query_budget": 15,
+                "challenge_count": 6,
+                "challenges": [(1, 6), (3, 9), (5, 4), (7, 3), (9, 2), (10, 5)],
             },
             5: {
-                "n": 15,
-                "root": "R",
-                "target": "N",
-                "nodes": ["R", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"],
-                "edges": [
-                    ("R", "A"), ("R", "B"), ("R", "C"),
-                    ("A", "D"), ("A", "E"),
-                    ("B", "F"), ("B", "G"),
-                    ("D", "H"), ("E", "I"),
-                    ("F", "J"), ("G", "K"),
-                    ("H", "L"), ("I", "M"),
-                    ("M", "N")
-                ],
+                "n": 12,
+                "edges": "1-2, 2-3, 3-4, 4-5, 2-6, 6-7, 1-8, 8-9, 9-10, 10-11, 10-12",
+                "query_budget": 18,
+                "challenge_count": 7,
+                "challenges": [(1, 7), (3, 11), (5, 9), (6, 4), (8, 5), (11, 2), (12, 6)],
             },
         },
     }
 
     def __init__(self, config):
+        self.current_root = None  
+        self.query_count = 0  
+        self.queried_pairs = set()  
+        self.challenge_requested = False  
+        self.tree = {}  
         super().__init__(config)
 
     def _initialize_game(self):
@@ -754,213 +572,233 @@ where X is the superseding clause name you inferred for {target}.
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 使用固定种子进行随机化，保证可复现性
-        rng = random.Random(42)
-        original_nodes = cfg["nodes"]
-        shuffled_nodes = list(original_nodes)
-        rng.shuffle(shuffled_nodes)
-        name_map = {old: new for old, new in zip(original_nodes, shuffled_nodes)}
-        
-        mapped_nodes = [name_map[n] for n in original_nodes]
-        mapped_root = name_map[cfg["root"]]
-        mapped_target = name_map[cfg["target"]]
-        mapped_edges = [(name_map[p], name_map[c]) for p, c in cfg["edges"]]
-        
         self._game_info["n"] = cfg["n"]
-        self._game_info["root"] = mapped_root
-        self._game_info["target"] = mapped_target
-        self._game_info["nodes"] = ", ".join(mapped_nodes)
+        self._game_info["edges"] = cfg["edges"]
+        self._game_info["query_budget"] = cfg["query_budget"]
+        self._game_info["challenge_count"] = cfg["challenge_count"]
         
-        # 构建树结构
-        self.nodes = set(mapped_nodes)
-        self.root = mapped_root
-        self.target = mapped_target
-        self.edges = mapped_edges
+        self.query_budget = cfg["query_budget"]
+        self.challenge_count = cfg["challenge_count"]
+        self.challenges = cfg["challenges"]
         
-        # 构建父节点映射和子节点映射
-        self.parent = {}  # node -> parent
-        self.children = {node: [] for node in self.nodes}  # node -> [children]
-        
-        for parent, child in self.edges:
-            self.parent[child] = parent
-            self.children[parent].append(child)
-        
-        # 计算每个节点的深度
-        self.depth_map = {}
-        self._compute_depths(self.root, 0)
-        
-        # 预计算从根到每个节点的路径（用于祖先判断）
-        self.path_to_node = {}
-        self._compute_paths(self.root, [])
+        self.tree = {i: [] for i in range(1, cfg["n"] + 1)}
+        for edge in cfg["edges"].split(","):
+            edge = edge.strip()
+            u, v = map(int, edge.split("-"))
+            self.tree[u].append(v)
+            self.tree[v].append(u)
 
-    def _compute_depths(self, node, depth):
-        """递归计算每个节点的深度"""
-        self.depth_map[node] = depth
-        for child in self.children[node]:
-            self._compute_depths(child, depth + 1)
-
-    def _compute_paths(self, node, path):
-        """递归计算从根到每个节点的路径"""
-        current_path = path + [node]
-        self.path_to_node[node] = current_path
-        for child in self.children[node]:
-            self._compute_paths(child, current_path)
-
-    def _is_ancestor(self, a, b):
-        """判断a是否是b的严格祖先"""
-        if a == b:
-            return False
-        path_to_b = self.path_to_node[b]
-        return a in path_to_b
-
-    def _find_lca(self, a, b):
-        """找到a和b的最近公共祖先"""
-        if a == b:
-            return a
+    def _compute_subtree_size(self, root, node):
+        visited = set()
         
-        path_a = self.path_to_node[a]
-        path_b = self.path_to_node[b]
+        def dfs(u, parent):
+            visited.add(u)
+            size = 1
+            for v in self.tree[u]:
+                if v != parent and v not in visited:
+                    size += dfs(v, u)
+            return size
         
-        # 找到最后一个公共节点
-        lca = self.root
-        for i in range(min(len(path_a), len(path_b))):
-            if path_a[i] == path_b[i]:
-                lca = path_a[i]
-            else:
-                break
-        return lca
+        def find_parent(target, current, parent):
+            if current == target:
+                return parent
+            for neighbor in self.tree[current]:
+                if neighbor != parent:
+                    result = find_parent(target, neighbor, current)
+                    if result is not None:
+                        return result
+            return None
+        
+        if root == node:
+            return len(self.tree)
+        
+        parent = find_parent(node, root, -1)
+        return dfs(node, parent)
 
     def evaluate(self, parsed_info):
-        """评估答案是否正确"""
-        answer = parsed_info["answer"].strip()
-        
-        # 检查答案是否为有效节点
-        if answer not in self.nodes:
+        try:
+            raw_ans = parsed_info["answer"]
+            answers = {}
+            for item in raw_ans.split(","):
+                item = item.strip()
+                idx, val = item.split(":")
+                answers[int(idx.strip())] = int(val.strip())
+            
+            if len(answers) != self.challenge_count:
+                return False
+            
+            for i in range(1, self.challenge_count + 1):
+                if i not in answers:
+                    return False
+                root, node = self.challenges[i - 1]
+                expected = self._compute_subtree_size(root, node)
+                if answers[i] != expected:
+                    return False
+            
+            return True
+        except:
             return False
-        
-        # 检查答案是否是目标节点的真实父节点
-        true_parent = self.parent.get(self.target)
-        return answer == true_parent
 
     def _cf_core_produce(self, parsed_info):
-        """原始的查询处理逻辑"""
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_invalid_node = "错误：节点名字不存在。"
-            error_invalid_format = "错误：查询格式无效。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            error_invalid_node = "Error: Node name does not exist."
-            error_invalid_format = "Error: Invalid query format."
-
-        # 优先级：depth > ancestor > lca
-        if "query_depth" in parsed_info:
-            node = parsed_info["query_depth"].strip()
-            if node not in self.nodes:
-                return error_invalid_node
-            return str(self.depth_map[node])
-
-        elif "query_ancestor" in parsed_info:
-            try:
-                raw = parsed_info["query_ancestor"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_invalid_format
-                a, b = parts
-                if a not in self.nodes or b not in self.nodes:
-                    return error_invalid_node
-                return yes_res if self._is_ancestor(a, b) else no_res
-            except:
-                return error_invalid_format
-
-        elif "query_lca" in parsed_info:
-            try:
-                raw = parsed_info["query_lca"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_invalid_format
-                a, b = parts
-                if a not in self.nodes or b not in self.nodes:
-                    return error_invalid_node
-                return self._find_lca(a, b)
-            except:
-                return error_invalid_format
-
-        else:
-            raise ValueError("No valid query tag found.")
-
-    def _cf_make_wrong(self, correct):
-        """生成一个与正确答案不同的错误答案"""
-        # 如果正确答案本身是错误信息，直接返回（不需要伪造）
-        if correct.startswith("Error:") or correct.startswith("错误："):
-            return correct  # 错误消息无需伪造
+        lang = self.config.language
         
-        # 如果是数字（深度查询结果），返回一个不同的数字
-        if correct.isdigit():
-            wrong_val = int(correct) + 1
+        if "request_challenge" in parsed_info:
+            if self.challenge_requested:
+                return "已经发起过挑战。" if lang == "zh" else "Challenge already requested."
+            
+            self.challenge_requested = True
+            if lang == "zh":
+                questions = "\n".join([
+                    f"{i+1}. 当根为 {self.challenges[i][0]} 时，节点 {self.challenges[i][1]} 的值是多少？"
+                    for i in range(self.challenge_count)
+                ])
+                return f"挑战开始！请回答以下问题：\n{questions}\n\n请使用 <answer>1:值1,2:值2,...</answer> 格式提交答案。"
+            else:
+                questions = "\n".join([
+                    f"{i+1}. When root is {self.challenges[i][0]}, what is the value of node {self.challenges[i][1]}?"
+                    for i in range(self.challenge_count)
+                ])
+                return f"Challenge started! Please answer the following questions:\n{questions}\n\nSubmit using <answer>1:value1,2:value2,...</answer> format."
+        
+        if "set_root" in parsed_info:
+            try:
+                root = int(parsed_info["set_root"].strip())
+                if root < 1 or root > self._game_info["n"]:
+                    return "错误：节点编号超出范围。" if lang == "zh" else "Error: Node ID out of range."
+                self.current_root = root
+                return f"已将根设为 {root}。" if lang == "zh" else f"Root set to {root}."
+            except:
+                return "错误：无效的节点编号。" if lang == "zh" else "Error: Invalid node ID."
+        
+        if "query_value" in parsed_info:
+            if self.current_root is None:
+                return "错误：请先设定根节点。" if lang == "zh" else "Error: Please set root first."
+            
+            if self.query_count >= self.query_budget:
+                return f"错误：已用完所有 {self.query_budget} 次数值查询。" if lang == "zh" else f"Error: All {self.query_budget} value queries used."
+            
+            try:
+                node = int(parsed_info["query_value"].strip())
+                if node < 1 or node > self._game_info["n"]:
+                    return "错误：节点编号超出范围。" if lang == "zh" else "Error: Node ID out of range."
+                
+                self.query_count += 1
+                self.queried_pairs.add((self.current_root, node))
+                value = self._compute_subtree_size(self.current_root, node)
+                return str(value)
+            except:
+                return "错误：无效的节点编号。" if lang == "zh" else "Error: Invalid node ID."
+        
+        if "query_compare" in parsed_info:
+            if self.current_root is None:
+                return "错误：请先设定根节点。" if lang == "zh" else "Error: Please set root first."
+            
+            try:
+                raw = parsed_info["query_compare"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    raise ValueError
+                u, v = int(parts[0]), int(parts[1])
+                
+                if u < 1 or u > self._game_info["n"] or v < 1 or v > self._game_info["n"]:
+                    return "错误：节点编号超出范围。" if lang == "zh" else "Error: Node ID out of range."
+                
+                val_u = self._compute_subtree_size(self.current_root, u)
+                val_v = self._compute_subtree_size(self.current_root, v)
+                
+                if val_u > val_v:
+                    return f"{u} > {v}"
+                elif val_u < val_v:
+                    return f"{u} < {v}"
+                else:
+                    return f"{u} = {v}"
+            except:
+                return "错误：无效的格式。" if lang == "zh" else "Error: Invalid format."
+        
+        if "predict_test" in parsed_info:
+            try:
+                raw = parsed_info["predict_test"]
+                params = {}
+                for item in raw.split(","):
+                    k, v = item.split("=")
+                    params[k.strip()] = int(v.strip())
+                
+                if "root" not in params or "node" not in params or "value" not in params:
+                    raise ValueError
+                
+                root, node, pred_value = params["root"], params["node"], params["value"]
+                
+                if root < 1 or root > self._game_info["n"] or node < 1 or node > self._game_info["n"]:
+                    return "错误：节点编号超出范围。" if lang == "zh" else "Error: Node ID out of range."
+                
+                actual_value = self._compute_subtree_size(root, node)
+                if actual_value == pred_value:
+                    return "正确" if lang == "zh" else "Correct"
+                else:
+                    return "错误" if lang == "zh" else "Wrong"
+            except:
+                return "错误：无效的格式。" if lang == "zh" else "Error: Invalid format."
+        
+        raise ValueError("No valid operation tag found.")
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        try:
+            val = int(correct.strip())
+            wrong_val = val + 1 if val > 1 else val + 2
             return str(wrong_val)
+        except ValueError:
+            pass
         
-        # 如果是"是/否"或"Yes/No"（祖先判断结果），取反
-        if self.config.language == "zh":
-            if correct == "是": return "否"
-            if correct == "否": return "是"
-        else:
-            if correct == "Yes": return "No"
-            if correct == "No": return "Yes"
+        if " > " in correct:
+            return correct.replace(" > ", " < ")
+        elif " < " in correct:
+            return correct.replace(" < ", " > ")
+        elif " = " in correct:
+            parts = correct.split(" = ")
+            if len(parts) == 2:
+                return f"{parts[0]} > {parts[1]}"
         
-        # 如果是节点名（LCA查询结果），返回一个不同的合法节点名
-        sorted_nodes = sorted(list(self.nodes))
-        for node in sorted_nodes:
-            if node != correct:
-                return node
-        # 如果只有一个节点（不太可能），加后缀
-        return correct + "_WRONG"
+        if correct in ("正确", "Correct"):
+            return "错误" if self.config.language == "zh" else "Wrong"
+        if correct in ("错误", "Wrong"):
+            return "正确" if self.config.language == "zh" else "Correct"
+        
+        return correct + " [modified]"
 
-    def get_all_possible_queries(self):
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        为控制数量，排除 a==b 的冗余情况（自查询意义不大）。
-        """
-        queries = []
-        
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        n = self._game_info["n"]
+        lang = self.config.language
 
-        sorted_nodes = sorted(list(self.nodes))
-        
-        # 1. 深度查询
-        for node in sorted_nodes:
-            query_str = f"<query_depth>{node}</query_depth>"
-            answer = str(self.depth_map[node])
-            queries.append({
-                "query": query_str,
-                "answer": answer
-            })
-
-        # 2. 祖先判断（排除 a==b，因为结果恒为 No，信息量低）
-        for a in sorted_nodes:
-            for b in sorted_nodes:
-                if a == b:
-                    continue
-                query_ancestor = f"<query_ancestor>{a},{b}</query_ancestor>"
-                is_anc = self._is_ancestor(a, b)
-                ans_ancestor = yes_res if is_anc else no_res
-                queries.append({
-                    "query": query_ancestor,
-                    "answer": ans_ancestor
+        for root in range(1, n + 1):
+            for node in range(1, n + 1):
+                value = self._compute_subtree_size(root, node)
+                query_str = f"<set_root>{root}</set_root>\n<query_value>{node}</query_value>"
+                if lang == "zh":
+                    answer_str = f"已将根设为 {root}。\n{value}"
+                else:
+                    answer_str = f"Root set to {root}.\n{value}"
+                results.append({
+                    "query": query_str,
+                    "answer": answer_str,
                 })
 
-        # 3. LCA 查询（利用对称性，只枚举 a <= b）
-        for i, a in enumerate(sorted_nodes):
-            for b in sorted_nodes[i:]:
-                query_lca = f"<query_lca>{a},{b}</query_lca>"
-                ans_lca = self._find_lca(a, b)
-                queries.append({
-                    "query": query_lca,
-                    "answer": ans_lca
-                })
+        if lang == "zh":
+            questions = "\n".join([
+                f"{i+1}. 当根为 {self.challenges[i][0]} 时，节点 {self.challenges[i][1]} 的值是多少？"
+                for i in range(self.challenge_count)
+            ])
+            challenge_answer = f"挑战开始！请回答以下问题：\n{questions}\n\n请使用 <answer>1:值1,2:值2,...</answer> 格式提交答案。"
+        else:
+            questions = "\n".join([
+                f"{i+1}. When root is {self.challenges[i][0]}, what is the value of node {self.challenges[i][1]}?"
+                for i in range(self.challenge_count)
+            ])
+            challenge_answer = f"Challenge started! Please answer the following questions:\n{questions}\n\nSubmit using <answer>1:value1,2:value2,...</answer> format."
 
-        return queries
+        results.append({
+            "query": "<request_challenge></request_challenge>",
+            "answer": challenge_answer,
+        })
+
+        return results

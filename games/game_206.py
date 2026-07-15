@@ -1,753 +1,432 @@
 from .base import Game
-import re
+import random
 
+class PeriodicSequenceGame(Game):
 
-class TriangleRuleInferenceGame(Game):
+    reasoning_type = "归纳推理"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们现在来玩一个"三角形规则推断"游戏，规则如下：
+我们来玩一个"周期识别问题"的推理游戏，规则如下：
 
-游戏设定了一个公开且固定的无向简单图 G，包含 8 个顶点：A, B, C, D, E, F, G, H。
+游戏设定了一个固定但隐藏的序列 S，序列长度为 {n}，序列中的每个元素都是从符号集合 {{A, B, C, D}} 中选取的。
 
-边集如下：
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+你的目标是判定这个序列是否存在非平凡周期。具体来说：
+- 如果存在某个正整数 P（1 小于等于 P 小于 {n}），使得对于所有满足条件的位置 i（1 小于等于 i 小于等于 {n_minus_p}），都有 S[i] = S[i+P]，则称序列存在周期 P。
+- 若存在这样的周期，你需要找出最小的那个周期值。
+- 若不存在任何这样的周期，则称序列无非平凡周期。
 
-三角形定义：三个顶点两两相连构成的闭环（例如 ABC 因为存在边 AB、AC、BC 而构成三角形）。
+你可以通过以下三种查询方式来获取信息（尽可能少地使用查询次数）：
 
-游戏中存在以下未知信息：
-1. 一个隐藏顶点 K，它是 A 到 H 中的某一个顶点。
-2. 一个固定的规则函数 f，它将每个顶点映射到一个非负整数。该规则仅由图中与三角形相关的结构决定，并且与隐藏顶点 K 有关联。
+1. **观察查询**：询问序列中第 i 个位置的符号是什么（1 小于等于 i 小于等于 {n}）。我会直接告诉你该位置的符号（A、B、C 或 D）。
 
-你的目标是通过有限次数的查询，推断出：
-1. 规则 f 的精确定义（必须用自然语言清晰描述 f 如何由三角形结构导出）
-2. 隐藏顶点 K 的身份
+2. **比较查询**：询问序列中第 i 个位置和第 j 个位置的符号是否相同（1 小于等于 i, j 小于等于 {n}，且 i 不等于 j）。我会回答"相同"或"不同"。
 
-你可以进行以下操作：
+3. **验证周期查询**：询问某个正整数 p 是否为序列的周期（1 小于等于 p 小于 {n}）。我会回答"是"或"否"。注意：此类查询在整个游戏中最多只能使用 2 次。
 
-1. 观测查询：查询某个顶点 X 的读数值。我会返回该顶点对应的数值。
-2. 预测校验：提交你对某个顶点 X 的读数预测值 n。我会告诉你是否正确，如果错误会给出正确值。此操作不消耗观测次数。
-3. 最终提交：当你确定规则和隐藏顶点时，提交最终答案。
+当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-重要说明：
-- 规则函数 f 是确定的、不变的，对同一顶点的多次查询结果一致。
-- 你需要在尽可能少的观测查询次数内完成推断。
-- 最终提交时，规则描述必须精确表述 f 如何计算。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 操作格式（必须严格遵守）
+- 观察查询（例如询问第 3 个位置）：
+<query_observe>3</query_observe>
 
-每次只能包含一个操作标签：
+- 比较查询（例如比较第 2 和第 5 个位置）：
+<query_compare>2,5</query_compare>
 
-- 观测查询（例如查询顶点 A）：
-<query_observe>A</query_observe>
+- 验证周期查询（例如验证周期是否为 4）：
+<query_verify>4</query_verify>
 
-- 预测校验（例如预测顶点 B 的值为 5）：
-<query_verify>B,5</query_verify>
+提交最终答案时，必须明确说明是否存在非平凡周期。格式如下：
 
-- 最终提交（需同时提供规则描述和隐藏顶点）：
-<answer>rule=包含隐藏顶点的三角形数量, hidden=D</answer>
+- 若不存在非平凡周期：
+<answer>no_period</answer>
 
-注意：
-- 观测查询会消耗查询次数
-- 预测校验不消耗查询次数，但只会告知对错和正确值，不提供其他信息
-- 最终提交的规则描述必须准确描述计算方法
+- 若存在非平凡周期（例如最小周期为 3）：
+<answer>period=3</answer>
 """
 
     game_rule_en = """\
-Let's play a "Triangle Rule Inference" game. Here are the rules:
+Let's play a "Periodic Sequence Recognition" deduction game. Here are the rules:
 
-The game features a public and fixed undirected simple graph G with 8 vertices: A, B, C, D, E, F, G, H.
+There is a fixed but hidden sequence S of length {n}, where each element is chosen from the symbol set {{A, B, C, D}}.
 
-Edge set:
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+Your goal is to determine whether this sequence has a non-trivial period. Specifically:
+- If there exists a positive integer P (1 less than or equal to P less than {n}) such that for all valid positions i (1 less than or equal to i less than or equal to {n_minus_p}), S[i] = S[i+P], then the sequence has period P.
+- If such a period exists, you need to find the minimum period value.
+- If no such period exists, the sequence has no non-trivial period.
 
-Triangle definition: A closed loop of three vertices that are pairwise connected (e.g., ABC forms a triangle because edges AB, AC, BC exist).
+You can gather information through three types of queries (try to use as few queries as possible):
 
-The game has the following unknown information:
-1. A hidden vertex K, which is one of the vertices from A to H.
-2. A fixed rule function f that maps each vertex to a non-negative integer. This rule is determined solely by triangle-related structures in the graph and is associated with the hidden vertex K.
+1. **Observe Query**: Ask for the symbol at position i in the sequence (1 less than or equal to i less than or equal to {n}). I will tell you the symbol at that position (A, B, C, or D).
 
-Your goal is to infer through a limited number of queries:
-1. The exact definition of rule f (must clearly describe in natural language how f is derived from triangle structures)
-2. The identity of the hidden vertex K
+2. **Compare Query**: Ask whether the symbols at position i and position j are the same (1 less than or equal to i, j less than or equal to {n}, and i not equal to j). I will answer "Same" or "Different".
 
-You can perform the following operations:
+3. **Verify Period Query**: Ask whether a positive integer p is a period of the sequence (1 less than or equal to p less than {n}). I will answer "Yes" or "No". Note: This type of query can be used at most 2 times throughout the game.
 
-1. Observation Query: Query the reading value of a vertex X. I will return the corresponding value.
-2. Verification Query: Submit your predicted value n for a vertex X. I will tell you if it's correct, and provide the correct value if wrong. This operation does not consume observation counts.
-3. Final Submission: When you've determined the rule and hidden vertex, submit your final answer.
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-Important notes:
-- The rule function f is deterministic and invariant; querying the same vertex multiple times yields consistent results.
-- You need to complete the inference with as few observation queries as possible.
-- In the final submission, the rule description must precisely state how f is calculated.
+Each query must contain only one tag. Use the following XML format:
 
-## Operation Format (must strictly follow)
+- Observe Query (e.g., asking about position 3):
+<query_observe>3</query_observe>
 
-Each operation must contain only one tag:
+- Compare Query (e.g., comparing positions 2 and 5):
+<query_compare>2,5</query_compare>
 
-- Observation Query (e.g., querying vertex A):
-<query_observe>A</query_observe>
+- Verify Period Query (e.g., verifying if period is 4):
+<query_verify>4</query_verify>
 
-- Verification Query (e.g., predicting vertex B has value 5):
-<query_verify>B,5</query_verify>
+When submitting the final answer, you must clearly state whether a non-trivial period exists. Use this format:
 
-- Final Submission (must provide both rule description and hidden vertex):
-<answer>rule=number of triangles containing the hidden vertex, hidden=D</answer>
+- If no non-trivial period exists:
+<answer>no_period</answer>
 
-Note:
-- Observation queries consume query counts
-- Verification queries do not consume query counts, but only indicate correctness and provide the correct value
-- The rule description in final submission must accurately describe the calculation method
+- If a non-trivial period exists (e.g., minimum period is 3):
+<answer>period=3</answer>
 """
 
-    # --- 场景 1：交通 ---
     contextualized_rule_zh_1 = """\
-【交通场景】
-我们现在来进行一场“交通网络枢纽排查”任务，规则如下：
+智能交通控制系统记录了一段连续的时间序列 S，记录了某关键路口的交通调度策略，序列长度为 {n}，每个时间窗口的策略为 {{A, B, C, D}} 之一。
 
-系统设定了一个公开且固定的区域交通物流网络，包含 8 个物流枢纽（即网络中的顶点）：A, B, C, D, E, F, G, H。
+你的目标是判定该调度序列是否存在规律性的循环周期。具体来说：
+- 如果存在某个正整数 P（1 小于等于 P 小于 {n}），使得对于所有满足条件的时间窗口 i（1 小于等于 i 小于等于 {n_minus_p}），都有 S[i] = S[i+P]，则称系统存在调度周期 P。
+- 若存在，你需要找出最小的那个周期值。
+- 若不存在，则称调度序列无非平凡周期。
 
-直达航线（即边集）如下：
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+你可以通过以下三种查询方式来获取信息（尽可能少地使用查询次数）：
 
-三枢纽互通圈（即网络拓扑中的“三角形”）：三个枢纽两两互通构成的闭环（例如 ABC 因为存在航线 AB、AC、BC 而构成一个三角形）。
+1. **观察查询**：询问序列中第 i 个时间窗口的调度策略（1 小于等于 i 小于等于 {n}）。我会直接告诉你该位置的策略（A、B、C 或 D）。
+2. **比较查询**：询问第 i 个和第 j 个时间窗口的策略是否相同（1 小于等于 i, j 小于等于 {n}，且 i 不等于 j）。我会回答"相同"或"不同"。
+3. **验证周期查询**：询问某个正整数 p 是否为系统的调度周期（1 小于等于 p 小于 {n}）。我会回答"是"或"否"。注意：此类查询最多只能使用 2 次。
 
-系统中存在以下未知情况：
-1. 一个核心故障枢纽（即隐藏顶点 K），它是 A 到 H 中的某一个枢纽。
-2. 一个固定的物流负荷计算模型（即规则函数 f），它将每个枢纽映射到一个非负整数。该模型的负荷指数仅由网络中与三角形相关的结构决定，并且与隐藏顶点 K 有关联。
+当你收集到足够信息后，请提交最终答案。若答案错误或格式不符，排查失败。
 
-你的目标是通过有限次数的系统查询，推断出：
-1. 负荷计算模型 f 的精确定义（必须用自然语言清晰描述 f 如何由三角形结构导出）
-2. 核心故障枢纽（即隐藏顶点 K）的身份
+每次查询只能包含一个标签。请使用以下 XML 格式：
+- 观察查询：<query_observe>3</query_observe>
+- 比较查询：<query_compare>2,5</query_compare>
+- 验证周期查询：<query_verify>4</query_verify>
 
-你可以进行以下操作：
-1. 观测查询：查询某个枢纽 X 的负荷读数值。我会返回该枢纽对应的数值。
-2. 预测校验：提交你对某个枢纽 X 的读数预测值 n。我会告诉你是否正确，如果错误会给出正确值。此操作不消耗观测次数。
-3. 最终提交：当你确定规则和隐藏顶点时，提交最终答案。
-
-重要说明：
-- 负荷计算模型 f 是确定的、不变的，对同一枢纽的多次查询结果一致。
-- 你需要在尽可能少的观测查询次数内完成推断。
-- 最终提交时，规则描述必须精确表述 f 如何计算。为了保证系统正确识别判定，请在最终描述中继续使用“隐藏顶点”和“三角形”这两个标准术语。
-
-## 操作格式（必须严格遵守）
-
-每次只能包含一个操作标签：
-
-- 观测查询（例如查询枢纽 A）：
-<query_observe>A</query_observe>
-
-- 预测校验（例如预测枢纽 B 的值为 5）：
-<query_verify>B,5</query_verify>
-
-- 最终提交（需同时提供规则描述和隐藏顶点）：
-<answer>rule=包含隐藏顶点的三角形数量, hidden=D</answer>
-
-注意：
-- 观测查询会消耗查询次数
-- 预测校验不消耗查询次数，但只会告知对错和正确值，不提供其他信息
-- 最终提交的规则描述必须准确描述计算方法
+提交最终答案时，必须明确说明是否存在非平凡周期。格式如下：
+- 若不存在非平凡周期：<answer>no_period</answer>
+- 若存在非平凡周期（例如最小周期为 3）：<answer>period=3</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Let's conduct a "Transportation Network Hub Investigation" task. Here are the rules:
+[Traffic Scenario]
+The intelligent traffic control system has recorded a continuous time sequence S of traffic dispatch strategies at a key intersection. The sequence length is {n}, and the strategy for each time window is chosen from {{A, B, C, D}}.
 
-The system features a public and fixed regional transportation logistics network with 8 logistics hubs (vertices): A, B, C, D, E, F, G, H.
+Your goal is to determine whether this dispatch sequence has a regular, non-trivial period. Specifically:
+- If there exists a positive integer P (1 less than or equal to P less than {n}) such that for all valid time windows i (1 less than or equal to i less than or equal to {n_minus_p}), S[i] = S[i+P], then the system has a dispatch period P.
+- If such a period exists, you need to find the minimum period value.
+- If no such period exists, the sequence has no non-trivial period.
 
-Direct routes (edge set):
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+You can gather information through three types of queries (try to use as few queries as possible):
 
-Three-hub interconnected loop (i.e., Triangle definition in network topology): A closed loop of three hubs that are pairwise connected (e.g., ABC forms a triangle because routes AB, AC, BC exist).
+1. **Observe Query**: Ask for the strategy at time window i (1 less than or equal to i less than or equal to {n}). I will output A, B, C, or D.
+2. **Compare Query**: Ask whether the strategies at time window i and j are the same (1 less than or equal to i, j less than or equal to {n}, and i not equal to j). I will output "Same" or "Different".
+3. **Verify Period Query**: Ask whether a positive integer p is a dispatch period (1 less than or equal to p less than {n}). I will output "Yes" or "No". Note: This query can be used at most 2 times.
 
-The system has the following unknown information:
-1. A core faulty hub (i.e., hidden vertex K), which is one of the hubs from A to H.
-2. A fixed logistics load calculation model (rule function f) that maps each hub to a non-negative integer. This model is determined solely by triangle-related structures in the network and is associated with the hidden vertex K.
+When you have enough information, submit your final answer. If wrong or invalid format, the diagnosis fails.
 
-Your goal is to infer through a limited number of system queries:
-1. The exact definition of the load calculation model f (must clearly describe in natural language how f is derived from triangle structures)
-2. The identity of the core faulty hub (hidden vertex K)
+Each query must contain only one tag. Use the following XML format:
+- Observe Query: <query_observe>3</query_observe>
+- Compare Query: <query_compare>2,5</query_compare>
+- Verify Period Query: <query_verify>4</query_verify>
 
-You can perform the following operations:
-
-1. Observation Query: Query the load reading value of a hub X. I will return the corresponding value.
-2. Verification Query: Submit your predicted value n for a hub X. I will tell you if it's correct, and provide the correct value if wrong. This operation does not consume observation counts.
-3. Final Submission: When you've determined the rule and hidden vertex, submit your final answer.
-
-Important notes:
-- The calculation model f is deterministic and invariant; querying the same hub multiple times yields consistent results.
-- You need to complete the inference with as few observation queries as possible.
-- In the final submission, the rule description must precisely state how f is calculated. To ensure correct system recognition, please continue to use the standard terms "hidden vertex" and "triangle" in your description.
-
-## Operation Format (must strictly follow)
-
-Each operation must contain only one tag:
-
-- Observation Query (e.g., querying hub A):
-<query_observe>A</query_observe>
-
-- Verification Query (e.g., predicting hub B has value 5):
-<query_verify>B,5</query_verify>
-
-- Final Submission (must provide both rule description and hidden vertex):
-<answer>rule=number of triangles containing the hidden vertex, hidden=D</answer>
-
-Note:
-- Observation queries consume query counts
-- Verification queries do not consume query counts, but only indicate correctness and provide the correct value
-- The rule description in final submission must accurately describe the calculation method
+Final answer format:
+- If no non-trivial period exists: <answer>no_period</answer>
+- If a non-trivial period exists (e.g., minimum period is 3): <answer>period=3</answer>
 """
 
-    # --- 场景 2：医疗 ---
     contextualized_rule_zh_2 = """\
-【医疗场景】
-我们现在来进行一项“蛋白质相互作用网络分析”任务，规则如下：
+作为临床医学研究员，你正在分析一名患者连续记录的神经生理电信号特征序列 S。序列总长度为 {n}，每次记录的波形特征被归类为 {{A, B, C, D}} 四种状态之一。
 
-系统设定了一个公开且固定的蛋白质协同作用图谱，包含 8 个关键蛋白质分子（即网络中的顶点）：A, B, C, D, E, F, G, H。
+你的目标是判定该患者的神经电信号是否存在非平凡的发作周期。具体来说：
+- 如果存在某个正整数 P（1 小于等于 P 小于 {n}），使得对于所有满足条件的记录位置 i（1 小于等于 i 小于等于 {n_minus_p}），都有 S[i] = S[i+P]，则称信号特征存在周期 P。
+- 若存在这样的发作周期，你需要找出最小的那个周期值。
+- 若不存在任何这样的周期，则称该特征序列无非平凡周期。
 
-协同反应关系（即边集）如下：
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+你可以通过以下三种查询方式来获取信息（尽可能少地使用查询次数）：
 
-三元协同作用簇（即网络拓扑中的“三角形”）：三个蛋白质分子两两互相作用构成的闭环复合体（例如 ABC 因为存在作用关系 AB、AC、BC 而构成一个三角形）。
+1. **观察查询**：询问序列中第 i 次记录的特征状态是什么（1 小于等于 i 小于等于 {n}）。我会直接告诉你（A、B、C 或 D）。
+2. **比较查询**：询问第 i 次和第 j 次记录的特征是否相同（1 小于等于 i, j 小于等于 {n}，且 i 不等于 j）。我会回答"相同"或"不同"。
+3. **验证周期查询**：询问某个正整数 p 是否为发作周期（1 小于等于 p 小于 {n}）。我会回答"是"或"否"。注意：此类查询在整个游戏中最多只能使用 2 次。
 
-图谱中存在以下未知情况：
-1. 一个核心致病靶蛋白（即隐藏顶点 K），它是 A 到 H 中的某一个蛋白质。
-2. 一套固定的生物活性指数评估机制（即规则函数 f），它将每个蛋白质映射到一个非负整数活性值。该活性值仅由网络中与三角形相关的复合体结构决定，并且与隐藏顶点 K 有关联。
+当你收集到足够信息后，请提交最终诊断结论。若答案错误或格式不符，分析失败。
 
-你的目标是通过有限次数的生化检验，推断出：
-1. 活性评估机制 f 的精确定义（必须用自然语言清晰描述 f 如何由三角形结构导出）
-2. 核心致病靶蛋白（即隐藏顶点 K）的身份
+每次查询只能包含一个标签。请使用以下 XML 格式：
+- 观察查询：<query_observe>3</query_observe>
+- 比较查询：<query_compare>2,5</query_compare>
+- 验证周期查询：<query_verify>4</query_verify>
 
-你可以进行以下操作：
-1. 观测查询：检验某个蛋白质 X 的活性读数值。我会返回对应的数值。
-2. 预测校验：提交你对某个蛋白质 X 的活性预测值 n。我会告诉你是否正确，如果错误会给出正确值。此操作不消耗观测次数。
-3. 最终提交：当你确定规则和隐藏顶点时，提交最终诊断答案。
-
-重要说明：
-- 评估机制 f 是确定的、不变的，对同一蛋白质的多次检验结果一致。
-- 你需要在尽可能少的检验次数内完成推断。
-- 最终提交时，规则描述必须精确表述 f 如何计算。为了保证系统正确识别判定，请在最终描述中继续使用“隐藏顶点”和“三角形”这两个标准术语。
-
-## 操作格式（必须严格遵守）
-
-每次只能包含一个操作标签：
-
-- 观测查询（例如检验蛋白质 A）：
-<query_observe>A</query_observe>
-
-- 预测校验（例如预测蛋白质 B 的值为 5）：
-<query_verify>B,5</query_verify>
-
-- 最终提交（需同时提供规则描述和隐藏顶点）：
-<answer>rule=包含隐藏顶点的三角形数量, hidden=D</answer>
-
-注意：
-- 观测查询会消耗查询次数
-- 预测校验不消耗查询次数，但只会告知对错和正确值，不提供其他信息
-- 最终提交的规则描述必须准确描述计算方法
+提交最终答案时，必须明确说明是否存在非平凡周期。格式如下：
+- 若不存在非平凡周期：<answer>no_period</answer>
+- 若存在非平凡周期（例如最小周期为 3）：<answer>period=3</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Let's conduct a "Protein Interaction Network Analysis" task. Here are the rules:
+[Medical Scenario]
+As a clinical medical researcher, you are analyzing a continuously recorded sequence S of a patient's neurophysiological electrical signal characteristics. The sequence length is {n}, and the waveform feature of each record is classified into one of four states: {{A, B, C, D}}.
 
-The system features a public and fixed protein synergistic interaction map with 8 key protein molecules (vertices): A, B, C, D, E, F, G, H.
+Your goal is to determine whether these signal characteristics have a non-trivial attack period. Specifically:
+- If there exists a positive integer P (1 less than or equal to P less than {n}) such that for all valid record positions i (1 less than or equal to i less than or equal to {n_minus_p}), S[i] = S[i+P], then the signal characteristics have a period P.
+- If such an attack period exists, you need to find the minimum period value.
+- If no such period exists, the sequence has no non-trivial period.
 
-Synergistic interactions (edge set):
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+You can gather information through three types of queries (try to use as few queries as possible):
 
-Ternary synergistic cluster (i.e., Triangle definition in network topology): A closed-loop complex of three protein molecules that are pairwise interactive (e.g., ABC forms a triangle because interactions AB, AC, BC exist).
+1. **Observe Query**: Ask for the characteristic state of the i-th record (1 less than or equal to i less than or equal to {n}). I will output A, B, C, or D.
+2. **Compare Query**: Ask whether the characteristics of the i-th and j-th records are the same (1 less than or equal to i, j less than or equal to {n}, and i not equal to j). I will output "Same" or "Different".
+3. **Verify Period Query**: Ask whether a positive integer p is an attack period (1 less than or equal to p less than {n}). I will output "Yes" or "No". Note: This query can be used at most 2 times.
 
-The map has the following unknown information:
-1. A core pathogenic target protein (i.e., hidden vertex K), which is one of the proteins from A to H.
-2. A fixed biological activity index mechanism (rule function f) that maps each protein to a non-negative integer activity value. This value is determined solely by triangle-related structures in the network and is associated with the hidden vertex K.
+When you have enough information, submit your final diagnosis. If wrong or invalid format, the analysis fails.
 
-Your goal is to infer through a limited number of biochemical queries:
-1. The exact definition of the activity mechanism f (must clearly describe in natural language how f is derived from triangle structures)
-2. The identity of the pathogenic target protein (hidden vertex K)
+Each query must contain only one tag. Use the following XML format:
+- Observe Query: <query_observe>3</query_observe>
+- Compare Query: <query_compare>2,5</query_compare>
+- Verify Period Query: <query_verify>4</query_verify>
 
-You can perform the following operations:
-
-1. Observation Query: Query the activity reading value of a protein X. I will return the corresponding value.
-2. Verification Query: Submit your predicted value n for a protein X. I will tell you if it's correct, and provide the correct value if wrong. This operation does not consume observation counts.
-3. Final Submission: When you've determined the rule and hidden vertex, submit your final diagnostic answer.
-
-Important notes:
-- The mechanism f is deterministic and invariant; querying the same protein multiple times yields consistent results.
-- You need to complete the inference with as few queries as possible.
-- In the final submission, the rule description must precisely state how f is calculated. To ensure correct system recognition, please continue to use the standard terms "hidden vertex" and "triangle" in your description.
-
-## Operation Format (must strictly follow)
-
-Each operation must contain only one tag:
-
-- Observation Query (e.g., querying protein A):
-<query_observe>A</query_observe>
-
-- Verification Query (e.g., predicting protein B has value 5):
-<query_verify>B,5</query_verify>
-
-- Final Submission (must provide both rule description and hidden vertex):
-<answer>rule=number of triangles containing the hidden vertex, hidden=D</answer>
-
-Note:
-- Observation queries consume query counts
-- Verification queries do not consume query counts, but only indicate correctness and provide the correct value
-- The rule description in final submission must accurately describe the calculation method
+Final answer format:
+- If no non-trivial period exists: <answer>no_period</answer>
+- If a non-trivial period exists (e.g., minimum period is 3): <answer>period=3</answer>
 """
 
-    # --- 场景 3：教育 ---
     contextualized_rule_zh_3 = """\
-【教育场景】
-我们现在来进行一项“课程体系知识图谱解析”任务，规则如下：
+智能辅导系统记录了一名学生在连续的学习模块中的认知专注度序列 S。序列总长度为 {n}，每个模块的专注度状态分为 {{A, B, C, D}} 四个不同等级。
 
-教务系统设定了一个公开且固定的学科知识图谱，包含 8 个核心知识模块（即图谱中的顶点）：A, B, C, D, E, F, G, H。
+你的目标是判定该学生的学习状态是否存在固定的循环周期。具体来说：
+- 如果存在某个正整数 P（1 小于等于 P 小于 {n}），使得对于所有满足条件的学习模块 i（1 小于等于 i 小于等于 {n_minus_p}），都有 S[i] = S[i+P]，则称认知状态存在循环周期 P。
+- 若存在这样的学习周期，你需要找出最小的那个周期值。
+- 若不存在任何这样的周期，则称该专注度序列无非平凡周期。
 
-前置依赖关联（即边集）如下：
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+你可以通过以下三种查询方式来获取信息（尽可能少地使用查询次数）：
 
-跨学科知识闭环（即图谱结构中的“三角形”）：三个知识模块两两相互依赖构成的知识闭环（例如 ABC 因为存在关联 AB、AC、BC 而构成一个三角形）。
+1. **观察查询**：询问序列中第 i 个模块的专注度等级是什么（1 小于等于 i 小于等于 {n}）。我会直接告诉你该等级（A、B、C 或 D）。
+2. **比较查询**：询问第 i 个和第 j 个模块的专注度等级是否相同（1 小于等于 i, j 小于等于 {n}，且 i 不等于 j）。我会回答"相同"或"不同"。
+3. **验证周期查询**：询问某个正整数 p 是否为认知循环周期（1 小于等于 p 小于 {n}）。我会回答"是"或"否"。注意：此类查询在整个学习评估中最多只能使用 2 次。
 
-系统中存在以下未知情况：
-1. 一个核心考察基石模块（即隐藏考点 K），它是 A 到 H 中的某一个知识模块。
-2. 一个固定的复习权重计算公式（即规则函数 f），它将每个模块映射到一个非负整数权重分。该分数仅由图谱中与三角形相关的结构决定，并且与隐藏考点 K 有关联。
+当你收集到足够信息后，请提交最终结论。若答案错误或格式不符，评估失败。
 
-你的目标是通过有限次数的教务系统查询，推断出：
-1. 复习权重公式 f 的精确定义（必须用自然语言清晰描述 f 如何由三角形结构导出）
-2. 核心考察基石模块（即隐藏顶点 K）的身份
+每次查询只能包含一个标签。请使用以下 XML 格式：
+- 观察查询：<query_observe>3</query_observe>
+- 比较查询：<query_compare>2,5</query_compare>
+- 验证周期查询：<query_verify>4</query_verify>
 
-你可以进行以下操作：
-1. 观测查询：查询某个知识模块 X 的权重分数。我会返回该模块对应的数值。
-2. 预测校验：提交你对某个模块 X 的分数预测值 n。我会告诉你是否正确，如果错误会给出正确值。此操作不消耗观测次数。
-3. 最终提交：当你确定规则和隐藏考点时，提交最终的解析答案。
-
-重要说明：
-- 权重公式 f 是确定的、不变的，对同一模块的多次查询结果一致。
-- 你需要在尽可能少的查询次数内完成推断。
-- 最终提交时，规则描述必须精确表述 f 如何计算。为了保证教务系统正确识别，请在最终描述中继续使用“隐藏顶点”和“三角形”这两个标准术语。
-
-## 操作格式（必须严格遵守）
-
-每次只能包含一个操作标签：
-
-- 观测查询（例如查询模块 A）：
-<query_observe>A</query_observe>
-
-- 预测校验（例如预测模块 B 的分数为 5）：
-<query_verify>B,5</query_verify>
-
-- 最终提交（需同时提供规则描述和隐藏顶点）：
-<answer>rule=包含隐藏顶点的三角形数量, hidden=D</answer>
-
-注意：
-- 观测查询会消耗查询次数
-- 预测校验不消耗查询次数，但只会告知对错和正确值，不提供其他信息
-- 最终提交的规则描述必须准确描述计算方法
+提交最终答案时，必须明确说明是否存在非平凡周期。格式如下：
+- 若不存在非平凡周期：<answer>no_period</answer>
+- 若存在非平凡周期（例如最小周期为 3）：<answer>period=3</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's conduct a "Course Knowledge Graph Analysis" task. Here are the rules:
+The intelligent tutoring system has recorded a sequence S of a student's cognitive engagement across continuous learning modules. The total sequence length is {n}, and the engagement state for each module is categorized into four levels: {{A, B, C, D}}.
 
-The academic system features a public and fixed knowledge graph with 8 core knowledge modules (vertices): A, B, C, D, E, F, G, H.
+Your goal is to determine whether the student's learning state exhibits a fixed cyclic period. Specifically:
+- If there exists a positive integer P (1 less than or equal to P less than {n}) such that for all valid modules i (1 less than or equal to i less than or equal to {n_minus_p}), S[i] = S[i+P], then the cognitive state has a cyclic period P.
+- If such a learning period exists, you need to find the minimum period value.
+- If no such period exists, the sequence has no non-trivial period.
 
-Prerequisite relationships (edge set):
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+You can gather information through three types of queries (try to use as few queries as possible):
 
-Interdisciplinary knowledge loop (i.e., Triangle definition in graph structure): A closed loop of three knowledge modules that are pairwise related (e.g., ABC forms a triangle because relations AB, AC, BC exist).
+1. **Observe Query**: Ask for the engagement level of the i-th module (1 less than or equal to i less than or equal to {n}). I will output A, B, C, or D.
+2. **Compare Query**: Ask whether the engagement levels of the i-th and j-th modules are the same (1 less than or equal to i, j less than or equal to {n}, and i not equal to j). I will output "Same" or "Different".
+3. **Verify Period Query**: Ask whether a positive integer p is a cyclic period (1 less than or equal to p less than {n}). I will output "Yes" or "No". Note: This query can be used at most 2 times.
 
-The system has the following unknown information:
-1. A core testing module (i.e., hidden vertex K), which is one of the modules from A to H.
-2. A fixed review weight calculation formula (rule function f) that maps each module to a non-negative integer weight score. This score is determined solely by triangle-related structures in the graph and is associated with the hidden vertex K.
+When you have enough information, submit your final conclusion. If wrong or invalid format, the evaluation fails.
 
-Your goal is to infer through a limited number of system queries:
-1. The exact definition of the formula f (must clearly describe in natural language how f is derived from triangle structures)
-2. The identity of the core testing module (hidden vertex K)
+Each query must contain only one tag. Use the following XML format:
+- Observe Query: <query_observe>3</query_observe>
+- Compare Query: <query_compare>2,5</query_compare>
+- Verify Period Query: <query_verify>4</query_verify>
 
-You can perform the following operations:
-
-1. Observation Query: Query the weight score of a module X. I will return the corresponding value.
-2. Verification Query: Submit your predicted score n for a module X. I will tell you if it's correct, and provide the correct value if wrong. This operation does not consume observation counts.
-3. Final Submission: When you've determined the rule and hidden testing module, submit your final analysis.
-
-Important notes:
-- The formula f is deterministic and invariant; querying the same module multiple times yields consistent results.
-- You need to complete the inference with as few queries as possible.
-- In the final submission, the rule description must precisely state how f is calculated. To ensure correct system recognition, please continue to use the standard terms "hidden vertex" and "triangle" in your description.
-
-## Operation Format (must strictly follow)
-
-Each operation must contain only one tag:
-
-- Observation Query (e.g., querying module A):
-<query_observe>A</query_observe>
-
-- Verification Query (e.g., predicting module B has score 5):
-<query_verify>B,5</query_verify>
-
-- Final Submission (must provide both rule description and hidden vertex):
-<answer>rule=number of triangles containing the hidden vertex, hidden=D</answer>
-
-Note:
-- Observation queries consume query counts
-- Verification queries do not consume query counts, but only indicate correctness and provide the correct value
-- The rule description in final submission must accurately describe the calculation method
+Final answer format:
+- If no non-trivial period exists: <answer>no_period</answer>
+- If a non-trivial period exists (e.g., minimum period is 3): <answer>period=3</answer>
 """
 
-    # --- 场景 4：制造业/工业 ---
     contextualized_rule_zh_4 = """\
-【工业制造场景】
-我们现在来进行一项“供应链协同网络诊断”任务，规则如下：
+工业物联网系统捕捉到了一台核心数控机床在连续作业时的振动模式序列 S。该序列长度为 {n}，每次作业的振动模式属于 {{A, B, C, D}} 四种诊断类型之一。
 
-排产系统设定了一个公开且固定的供应链协同网络，包含 8 个生产节点（即网络中的顶点）：A, B, C, D, E, F, G, H。
+你的目标是分析该设备的运行是否存在异常的机械周期。具体来说：
+- 如果存在某个正整数 P（1 小于等于 P 小于 {n}），使得对于所有满足条件的加工作业 i（1 小于等于 i 小于等于 {n_minus_p}），都有 S[i] = S[i+P]，则称机床存在机械运行周期 P。
+- 若存在这样的运行周期，你需要找出最小的那个周期值。
+- 若不存在任何这样的周期，则称设备的振动模式无非平凡周期。
 
-物料流转路径（即边集）如下：
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+你可以通过以下三种查询方式来获取机床数据（尽可能少地使用查询次数）：
 
-闭环生产协同圈（即网络拓扑中的“三角形”）：三个生产节点两两流转互通构成的闭环（例如 ABC 因为存在流转路径 AB、AC、BC 而构成一个三角形）。
+1. **观察查询**：询问序列中第 i 次加工作业的振动模式（1 小于等于 i 小于等于 {n}）。我会直接告诉你（A、B、C 或 D）。
+2. **比较查询**：询问第 i 次和第 j 次加工作业的振动模式是否相同（1 小于等于 i, j 小于等于 {n}，且 i 不等于 j）。我会回答"相同"或"不同"。
+3. **验证周期查询**：询问某个正整数 p 是否为该机床的运行周期（1 小于等于 p 小于 {n}）。我会回答"是"或"否"。注意：此类查询在整个诊断中最多只能使用 2 次。
 
-网络中存在以下未知情况：
-1. 一个核心生产瓶颈（即隐藏顶点 K），它是 A 到 H 中的某一个生产节点。
-2. 一个固定的产能负荷指数模型（即规则函数 f），它将每个生产节点映射到一个非负整数负荷值。该指数仅由网络中与三角形相关的协同结构决定，并且与核心瓶颈（隐藏顶点 K）有关联。
+当你收集到足够信息后，请提交最终结论。若答案错误或格式不符，故障诊断失败。
 
-你的目标是通过有限次数的诊断查询，推断出：
-1. 产能负荷模型 f 的精确定义（必须用自然语言清晰描述 f 如何由三角形结构导出）
-2. 核心生产瓶颈（即隐藏顶点 K）的身份
+每次查询只能包含一个标签。请使用以下 XML 格式：
+- 观察查询：<query_observe>3</query_observe>
+- 比较查询：<query_compare>2,5</query_compare>
+- 验证周期查询：<query_verify>4</query_verify>
 
-你可以进行以下操作：
-1. 观测查询：查询某个生产节点 X 的负荷指数值。我会返回对应的数值。
-2. 预测校验：提交你对某个节点 X 的指数预测值 n。我会告诉你是否正确，如果错误会给出正确值。此操作不消耗观测次数。
-3. 最终提交：当你确定规则和瓶颈节点时，提交最终的诊断结果。
-
-重要说明：
-- 负荷指数模型 f 是确定的、不变的，对同一节点的多次查询结果一致。
-- 你需要在尽可能少的诊断查询次数内完成推断。
-- 最终提交时，规则描述必须精确表述 f 如何计算。为了保证排产系统正确解析判定，请在最终描述中继续使用“隐藏顶点”和“三角形”这两个标准术语。
-
-## 操作格式（必须严格遵守）
-
-每次只能包含一个操作标签：
-
-- 观测查询（例如查询生产节点 A）：
-<query_observe>A</query_observe>
-
-- 预测校验（例如预测生产节点 B 的值为 5）：
-<query_verify>B,5</query_verify>
-
-- 最终提交（需同时提供规则描述和隐藏顶点）：
-<answer>rule=包含隐藏顶点的三角形数量, hidden=D</answer>
-
-注意：
-- 观测查询会消耗查询次数
-- 预测校验不消耗查询次数，但只会告知对错和正确值，不提供其他信息
-- 最终提交的规则描述必须准确描述计算方法
+提交最终答案时，必须明确说明是否存在非平凡周期。格式如下：
+- 若不存在非平凡周期：<answer>no_period</answer>
+- 若存在非平凡周期（例如最小周期为 3）：<answer>period=3</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industry Scenario]
-Let's conduct a "Supply Chain Coordination Network Diagnosis" task. Here are the rules:
+The Industrial IoT system has captured a vibration pattern sequence S of a core CNC machine during continuous operation. The sequence length is {n}, and the vibration pattern of each operation belongs to one of four diagnostic types: {{A, B, C, D}}.
 
-The production scheduling system features a public and fixed supply chain network with 8 production nodes (vertices): A, B, C, D, E, F, G, H.
+Your goal is to determine whether the equipment's operation exhibits an abnormal mechanical period. Specifically:
+- If there exists a positive integer P (1 less than or equal to P less than {n}) such that for all valid operations i (1 less than or equal to i less than or equal to {n_minus_p}), S[i] = S[i+P], then the machine has a mechanical operation period P.
+- If such an operation period exists, you need to find the minimum period value.
+- If no such period exists, the sequence has no non-trivial period.
 
-Material flows (edge set):
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+You can gather information through three types of queries (try to use as few queries as possible):
 
-Closed-loop supply circle (i.e., Triangle definition in network topology): A closed loop of three production nodes that are pairwise interconnected (e.g., ABC forms a triangle because flows AB, AC, BC exist).
+1. **Observe Query**: Ask for the vibration pattern of the i-th operation (1 less than or equal to i less than or equal to {n}). I will output A, B, C, or D.
+2. **Compare Query**: Ask whether the patterns of the i-th and j-th operations are the same (1 less than or equal to i, j less than or equal to {n}, and i not equal to j). I will output "Same" or "Different".
+3. **Verify Period Query**: Ask whether a positive integer p is a mechanical operation period (1 less than or equal to p less than {n}). I will output "Yes" or "No". Note: This query can be used at most 2 times.
 
-The network has the following unknown information:
-1. A core bottleneck node (i.e., hidden vertex K), which is one of the nodes from A to H.
-2. A fixed capacity load index model (rule function f) that maps each node to a non-negative integer load value. This index is determined solely by triangle-related collaborative structures in the network and is associated with the hidden bottleneck (hidden vertex K).
+When you have enough information, submit your final conclusion. If wrong or invalid format, the diagnosis fails.
 
-Your goal is to infer through a limited number of diagnostic queries:
-1. The exact definition of the capacity load model f (must clearly describe in natural language how f is derived from triangle structures)
-2. The identity of the core bottleneck node (hidden vertex K)
+Each query must contain only one tag. Use the following XML format:
+- Observe Query: <query_observe>3</query_observe>
+- Compare Query: <query_compare>2,5</query_compare>
+- Verify Period Query: <query_verify>4</query_verify>
 
-You can perform the following operations:
-
-1. Observation Query: Query the load index value of a node X. I will return the corresponding value.
-2. Verification Query: Submit your predicted index n for a node X. I will tell you if it's correct, and provide the correct value if wrong. This operation does not consume observation counts.
-3. Final Submission: When you've determined the rule and hidden bottleneck, submit your final diagnostic result.
-
-Important notes:
-- The model f is deterministic and invariant; querying the same node multiple times yields consistent results.
-- You need to complete the inference with as few diagnostic queries as possible.
-- In the final submission, the rule description must precisely state how f is calculated. To ensure correct system parsing, please continue to use the standard terms "hidden vertex" and "triangle" in your description.
-
-## Operation Format (must strictly follow)
-
-Each operation must contain only one tag:
-
-- Observation Query (e.g., querying node A):
-<query_observe>A</query_observe>
-
-- Verification Query (e.g., predicting node B has index 5):
-<query_verify>B,5</query_verify>
-
-- Final Submission (must provide both rule description and hidden vertex):
-<answer>rule=number of triangles containing the hidden vertex, hidden=D</answer>
-
-Note:
-- Observation queries consume query counts
-- Verification queries do not consume query counts, but only indicate correctness and provide the correct value
-- The rule description in final submission must accurately describe the calculation method
+Final answer format:
+- If no non-trivial period exists: <answer>no_period</answer>
+- If a non-trivial period exists (e.g., minimum period is 3): <answer>period=3</answer>
 """
 
-    # --- 场景 5：法律 ---
     contextualized_rule_zh_5 = """\
-【法律经侦场景】
-我们现在来进行一项“经侦资金流转网络盘查”任务，规则如下：
+你作为合规调查员，正在审查某高风险企业提交的连续业务交易状态序列 S。该序列包含 {n} 个交易记录，每个记录的合规审查结果被标记为 {{A, B, C, D}} 四类风险级别之一。
 
-经侦系统调取了一个公开且固定的涉案资金网络，包含 8 个涉案主体或空壳公司（即网络中的顶点）：A, B, C, D, E, F, G, H。
+你的目标是判定该企业的交易行为是否存在掩人耳目的规律性周期。具体来说：
+- 如果存在某个正整数 P（1 小于等于 P 小于 {n}），使得对于所有满足条件的交易记录 i（1 小于等于 i 小于等于 {n_minus_p}），都有 S[i] = S[i+P]，则称该交易序列存在风险周期 P。
+- 若存在这样的风险行为周期，你需要找出最小的那个周期值。
+- 若不存在任何这样的周期，则称交易序列无非平凡周期。
 
-已被查实的资金往来（即边集）如下：
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+你可以通过以下三种查询方式来获取取证信息（尽可能少地使用查询次数）：
 
-三角利益输送圈（即网络拓扑中的“三角形”）：三个涉案主体两两产生资金往来构成的闭环洗钱结构（例如 ABC 因为存在往来 AB、AC、BC 而构成一个三角形）。
+1. **观察查询**：询问序列中第 i 笔交易的风险级别（1 小于等于 i 小于等于 {n}）。我会直接告诉你（A、B、C 或 D）。
+2. **比较查询**：询问第 i 笔和第 j 笔交易的风险级别是否相同（1 小于等于 i, j 小于等于 {n}，且 i 不等于 j）。我会回答"相同"或"不同"。
+3. **验证周期查询**：询问某个正整数 p 是否为该企业的风险周期（1 小于等于 p 小于 {n}）。我会回答"是"或"否"。注意：此类查询在整个调查中最多只能使用 2 次。
 
-网络中存在以下未知情况：
-1. 一个幕后实控主体（即隐藏顶点 K），它是 A 到 H 中的某一个涉案主体。
-2. 一套内部的洗钱风险评估指数公式（即规则函数 f），它将每个涉案主体映射到一个非负整数风险值。该指数仅由网络中与三角形相关的闭环结构决定，并且与幕后实控主体（隐藏顶点 K）有关联。
+当你收集到足够信息后，请提交最终调查结论。若答案错误或格式不符，合规审查失败。
 
-你的目标是通过有限次数的审查调证，推断出：
-1. 风险指数公式 f 的精确定义（必须用自然语言清晰描述 f 如何由三角形结构导出）
-2. 幕后实控主体（即隐藏顶点 K）的身份
+每次查询只能包含一个标签。请使用以下 XML 格式：
+- 观察查询：<query_observe>3</query_observe>
+- 比较查询：<query_compare>2,5</query_compare>
+- 验证周期查询：<query_verify>4</query_verify>
 
-你可以进行以下操作：
-1. 观测查询：查询某个涉案主体 X 的风险读数值。我会返回对应的数值。
-2. 预测校验：提交你对某个主体 X 的风险预测值 n。我会告诉你是否正确，如果错误会给出正确值。此操作不消耗观测次数。
-3. 最终提交：当你确定规则和幕后实控主体时，提交最终的盘查结论。
-
-重要说明：
-- 风险公式 f 是确定的、不变的，对同一主体的多次查询结果一致。
-- 你需要在尽可能少的审查调证次数内完成推断。
-- 最终提交时，规则描述必须精确表述 f 如何计算。为了保证经侦判定系统顺利录入卷宗，请在最终描述中继续使用“隐藏顶点”和“三角形”这两个标准术语。
-
-## 操作格式（必须严格遵守）
-
-每次只能包含一个操作标签：
-
-- 观测查询（例如查询涉案主体 A）：
-<query_observe>A</query_observe>
-
-- 预测校验（例如预测涉案主体 B 的值为 5）：
-<query_verify>B,5</query_verify>
-
-- 最终提交（需同时提供规则描述和隐藏顶点）：
-<answer>rule=包含隐藏顶点的三角形数量, hidden=D</answer>
-
-注意：
-- 观测查询会消耗查询次数
-- 预测校验不消耗查询次数，但只会告知对错和正确值，不提供其他信息
-- 最终提交的规则描述必须准确描述计算方法
+提交最终答案时，必须明确说明是否存在非平凡周期。格式如下：
+- 若不存在非平凡周期：<answer>no_period</answer>
+- 若存在非平凡周期（例如最小周期为 3）：<answer>period=3</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's conduct an "Economic Crime Funds Network Investigation" task. Here are the rules:
+As a compliance investigator, you are reviewing a continuous business transaction status sequence S submitted by a high-risk enterprise. The sequence contains {n} transaction records, and the compliance review result of each record is marked as one of four risk levels: {{A, B, C, D}}.
 
-The system has retrieved a public and fixed suspect funds network with 8 involved entities (vertices): A, B, C, D, E, F, G, H.
+Your goal is to determine whether the enterprise's transaction behavior exhibits a deceptive regular period. Specifically:
+- If there exists a positive integer P (1 less than or equal to P less than {n}) such that for all valid transaction records i (1 less than or equal to i less than or equal to {n_minus_p}), S[i] = S[i+P], then the transaction sequence has a risk period P.
+- If such a behavior period exists, you need to find the minimum period value.
+- If no such period exists, the sequence has no non-trivial period.
 
-Verified financial transactions (edge set):
-- AB, AC, AD, BC, BD, CD
-- BE, CE, DE
-- CF, DF, EF
-- DG, EG, FG
-- EH, FH, GH
+You can gather information through three types of queries (try to use as few queries as possible):
 
-Triangle interest transfer circle (i.e., Triangle definition in network topology): A closed-loop money laundering structure of three entities that are pairwise transacting (e.g., ABC forms a triangle because transactions AB, AC, BC exist).
+1. **Observe Query**: Ask for the risk level of the i-th transaction (1 less than or equal to i less than or equal to {n}). I will output A, B, C, or D.
+2. **Compare Query**: Ask whether the risk levels of the i-th and j-th transactions are the same (1 less than or equal to i, j less than or equal to {n}, and i not equal to j). I will output "Same" or "Different".
+3. **Verify Period Query**: Ask whether a positive integer p is a risk period (1 less than or equal to p less than {n}). I will output "Yes" or "No". Note: This query can be used at most 2 times.
 
-The network has the following unknown information:
-1. A hidden mastermind entity (i.e., hidden vertex K), which is one of the entities from A to H.
-2. An internal money laundering risk index formula (rule function f) that maps each entity to a non-negative integer risk value. This index is determined solely by triangle-related closed-loop structures in the network and is associated with the mastermind (hidden vertex K).
+When you have enough information, submit your final investigation conclusion. If wrong or invalid format, the compliance review fails.
 
-Your goal is to infer through a limited number of investigative queries:
-1. The exact definition of the risk formula f (must clearly describe in natural language how f is derived from triangle structures)
-2. The identity of the hidden mastermind entity (hidden vertex K)
+Each query must contain only one tag. Use the following XML format:
+- Observe Query: <query_observe>3</query_observe>
+- Compare Query: <query_compare>2,5</query_compare>
+- Verify Period Query: <query_verify>4</query_verify>
 
-You can perform the following operations:
-
-1. Observation Query: Query the risk reading value of an entity X. I will return the corresponding value.
-2. Verification Query: Submit your predicted risk value n for an entity X. I will tell you if it's correct, and provide the correct value if wrong. This operation does not consume observation counts.
-3. Final Submission: When you've determined the rule and mastermind, submit your final investigative conclusion.
-
-Important notes:
-- The formula f is deterministic and invariant; querying the same entity multiple times yields consistent results.
-- You need to complete the inference with as few investigative queries as possible.
-- In the final submission, the rule description must precisely state how f is calculated. To ensure smooth entry into the legal case system, please continue to use the standard terms "hidden vertex" and "triangle" in your description.
-
-## Operation Format (must strictly follow)
-
-Each operation must contain only one tag:
-
-- Observation Query (e.g., querying entity A):
-<query_observe>A</query_observe>
-
-- Verification Query (e.g., predicting entity B has value 5):
-<query_verify>B,5</query_verify>
-
-- Final Submission (must provide both rule description and hidden vertex):
-<answer>rule=number of triangles containing the hidden vertex, hidden=D</answer>
-
-Note:
-- Observation queries consume query counts
-- Verification queries do not consume query counts, but only indicate correctness and provide the correct value
-- The rule description in final submission must accurately describe the calculation method
+Final answer format:
+- If no non-trivial period exists: <answer>no_period</answer>
+- If a non-trivial period exists (e.g., minimum period is 3): <answer>period=3</answer>
 """
 
-    tags = ["answer", "query_observe", "query_verify"]
-    
-    reasoning_type = "归纳推理"
-    data_structure = "图"
+    tags = ["answer", "query_observe", "query_compare", "query_verify"]
 
-    # 图结构定义（固定）
-    GRAPH_EDGES = [
-        ('A', 'B'), ('A', 'C'), ('A', 'D'),
-        ('B', 'C'), ('B', 'D'), ('C', 'D'),
-        ('B', 'E'), ('C', 'E'), ('D', 'E'),
-        ('C', 'F'), ('D', 'F'), ('E', 'F'),
-        ('D', 'G'), ('E', 'G'), ('F', 'G'),
-        ('E', 'H'), ('F', 'H'), ('G', 'H')
-    ]
-    
-    VERTICES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
-
-    # 难度配置：
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "hidden_vertex": "D",
-                "rule_type": "triangles_containing_vertex",
-                "rule_desc": "包含该顶点的三角形数量"
+                "n": 8,
+                "sequence": "A,B,A,B,A,B,A,B",
+                "has_period": True,
+                "min_period": 2,
             },
             2: {
-                "hidden_vertex": "E",
-                "rule_type": "vertices_sharing_triangle_with_hidden",
-                "rule_desc": "与隐藏顶点共享至少一个三角形的顶点数量"
+                "n": 10,
+                "sequence": "A,B,C,D,A,A,B,C,D,A",
+                "has_period": True,
+                "min_period": 5,
             },
             3: {
-                "hidden_vertex": "C",
-                "rule_type": "triangles_containing_vertex_not_hidden",
-                "rule_desc": "包含该顶点但不包含隐藏顶点的三角形数量"
+                "n": 12,
+                "sequence": "A,B,C,A,B,C,A,B,C,A,B,C",
+                "has_period": True,
+                "min_period": 3,
             },
             4: {
-                "hidden_vertex": "F",
-                "rule_type": "common_neighbors_with_hidden",
-                "rule_desc": "该顶点与隐藏顶点的共同邻居数量"
+                "n": 15,
+                "sequence": "A,B,C,D,A,B,C,A,D,B,C,A,B,D,C",
+                "has_period": False,
+                "min_period": None,
             },
             5: {
-                "hidden_vertex": "E",
-                "rule_type": "triangles_containing_both",
-                "rule_desc": "同时包含该顶点和隐藏顶点的三角形数量"
-            }
+                "n": 16,
+                "sequence": "A,B,C,D,A,B,A,B,C,D,A,B,A,B,C,D",
+                "has_period": True,
+                "min_period": 6,
+            },
         },
         "en": {
             1: {
-                "hidden_vertex": "D",
-                "rule_type": "triangles_containing_vertex",
-                "rule_desc": "number of triangles containing this vertex"
+                "n": 8,
+                "sequence": "A,B,A,B,A,B,A,B",
+                "has_period": True,
+                "min_period": 2,
             },
             2: {
-                "hidden_vertex": "E",
-                "rule_type": "vertices_sharing_triangle_with_hidden",
-                "rule_desc": "number of vertices sharing at least one triangle with the hidden vertex"
+                "n": 10,
+                "sequence": "A,B,C,D,A,A,B,C,D,A",
+                "has_period": True,
+                "min_period": 5,
             },
             3: {
-                "hidden_vertex": "C",
-                "rule_type": "triangles_containing_vertex_not_hidden",
-                "rule_desc": "number of triangles containing this vertex but not the hidden vertex"
+                "n": 12,
+                "sequence": "A,B,C,A,B,C,A,B,C,A,B,C",
+                "has_period": True,
+                "min_period": 3,
             },
             4: {
-                "hidden_vertex": "F",
-                "rule_type": "common_neighbors_with_hidden",
-                "rule_desc": "number of common neighbors between this vertex and the hidden vertex"
+                "n": 15,
+                "sequence": "A,B,C,D,A,B,C,A,D,B,C,A,B,D,C",
+                "has_period": False,
+                "min_period": None,
             },
             5: {
-                "hidden_vertex": "E",
-                "rule_type": "triangles_containing_both",
-                "rule_desc": "number of triangles containing both this vertex and the hidden vertex"
-            }
-        }
+                "n": 16,
+                "sequence": "A,B,C,D,A,B,A,B,C,D,A,B,A,B,C,D",
+                "has_period": True,
+                "min_period": 6,
+            },
+        },
     }
 
     def __init__(self, config):
-        # 先初始化图结构
-        self._build_graph()
+        self.verify_count = 0
         super().__init__(config)
 
-    def _build_graph(self):
-        """构建图的邻接表和三角形列表"""
-        # 邻接表
-        self.adjacency = {v: set() for v in self.VERTICES}
-        for u, v in self.GRAPH_EDGES:
-            self.adjacency[u].add(v)
-            self.adjacency[v].add(u)
-        
-        # 找出所有三角形
-        self.triangles = []
-        vertices = self.VERTICES
-        for i in range(len(vertices)):
-            for j in range(i + 1, len(vertices)):
-                for k in range(j + 1, len(vertices)):
-                    v1, v2, v3 = vertices[i], vertices[j], vertices[k]
-                    if (v2 in self.adjacency[v1] and 
-                        v3 in self.adjacency[v1] and 
-                        v3 in self.adjacency[v2]):
-                        self.triangles.append((v1, v2, v3))
-        
-        # 预计算每个顶点所在的三角形
-        self.vertex_triangles = {v: [] for v in self.VERTICES}
-        for tri in self.triangles:
-            for v in tri:
-                self.vertex_triangles[v].append(tri)
-
     def _initialize_game(self):
-        """初始化游戏配置"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -755,237 +434,162 @@ Note:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self.hidden_vertex = cfg["hidden_vertex"]
-        self.rule_type = cfg["rule_type"]
-        self.expected_rule_desc = cfg["rule_desc"]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["n_minus_p"] = "N-P"
         
-        # 设置 _game_info 供基类 _init_rule 中 format 使用
-        self._game_info = {}
+        self.sequence = [s.strip() for s in cfg["sequence"].split(",")]
+        self.has_period = cfg["has_period"]
+        self.min_period = cfg["min_period"]
         
-        # 预计算所有顶点的读数
-        self.vertex_values = {}
-        for v in self.VERTICES:
-            self.vertex_values[v] = self._compute_value(v)
-        
-        # 查询计数器
-        self.query_count = 0
+        if len(self.sequence) != cfg["n"]:
+            raise ValueError(f"Sequence length mismatch: expected {cfg['n']}, got {len(self.sequence)}")
 
-    def _compute_value(self, vertex):
-        """根据规则类型计算顶点的值"""
-        if self.rule_type == "triangles_containing_vertex":
-            # 规则1：包含该顶点的三角形数量
-            return len(self.vertex_triangles[vertex])
+    def _is_valid_period(self, p):
+        n = len(self.sequence)
+        if p <= 0 or p >= n:
+            return False
         
-        elif self.rule_type == "vertices_sharing_triangle_with_hidden":
-            # 修正后的规则2：该顶点与隐藏顶点共同参与的三角形数量
-            if vertex == self.hidden_vertex:
-                return len(self.vertex_triangles[vertex])
-            count = 0
-            for tri in self.vertex_triangles[vertex]:
-                if self.hidden_vertex in tri:
-                    count += 1
-            return count
-        
-        elif self.rule_type == "triangles_containing_vertex_not_hidden":
-            # 规则3：包含该顶点但不包含隐藏顶点的三角形数量
-            count = 0
-            for tri in self.vertex_triangles[vertex]:
-                if self.hidden_vertex not in tri:
-                    count += 1
-            return count
-        
-        elif self.rule_type == "common_neighbors_with_hidden":
-            # 规则4：该顶点与隐藏顶点的共同邻居数
-            if vertex == self.hidden_vertex:
-                return len(self.adjacency[vertex])
-            neighbors_v = self.adjacency[vertex]
-            neighbors_h = self.adjacency[self.hidden_vertex]
-            return len(neighbors_v & neighbors_h)
-        
-        elif self.rule_type == "triangles_containing_both":
-            # 规则5：同时包含该顶点和隐藏顶点的三角形数量
-            if vertex == self.hidden_vertex:
-                return len(self.vertex_triangles[vertex])
-            count = 0
-            for tri in self.vertex_triangles[vertex]:
-                if self.hidden_vertex in tri:
-                    count += 1
-            return count
-        
-        return 0
+        for i in range(n - p):
+            if self.sequence[i] != self.sequence[i + p]:
+                return False
+        return True
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
-        raw_ans = parsed_info["answer"]
+        raw_ans = parsed_info["answer"].strip()
         
-        try:
-            # 使用更健壮的解析：先找 hidden=X，再把前面的部分作为 rule
-            hidden_match = re.search(r'hidden\s*=\s*([A-H])', raw_ans, re.IGNORECASE)
-            if not hidden_match:
+        if raw_ans.lower() == "no_period":
+            return not self.has_period
+        
+        if raw_ans.lower().startswith("period="):
+            try:
+                period_str = raw_ans.split("=", 1)[1].strip()
+                claimed_period = int(period_str)
+                
+                if not self.has_period:
+                    return False
+                
+                return claimed_period == self.min_period
+            except:
                 return False
-            
-            hidden_vertex = hidden_match.group(1).strip().upper()
-            
-            # rule 部分为 hidden= 之前的内容
-            rule_part = raw_ans[:hidden_match.start()]
-            rule_match = re.search(r'rule\s*=\s*(.+)', rule_part, re.IGNORECASE | re.DOTALL)
-            
-            if not rule_match:
-                return False
-            
-            rule_desc = rule_match.group(1).strip().rstrip(',').strip()
-            
-            # 检查隐藏顶点是否正确
-            if hidden_vertex != self.hidden_vertex:
-                return False
-            
-            # 检查规则描述是否匹配（允许一定的语言灵活性）
-            rule_desc_lower = rule_desc.lower()
-            
-            if self.config.language == "zh":
-                keywords_map = {
-                    "triangles_containing_vertex": ["三角形", "包含", "顶点", "数量"],
-                    "vertices_sharing_triangle_with_hidden": ["隐藏", "共享", "三角形", "顶点", "数"],
-                    "triangles_containing_vertex_not_hidden": ["包含", "不包含", "隐藏", "三角形"],
-                    "common_neighbors_with_hidden": ["共同", "邻居", "数量"],
-                    "triangles_containing_both": ["同时", "包含", "顶点", "隐藏", "三角形"]
-                }
-            else:
-                keywords_map = {
-                    "triangles_containing_vertex": ["triangle", "containing", "vertex"],
-                    "vertices_sharing_triangle_with_hidden": ["vertices", "sharing", "triangle", "hidden"],
-                    "triangles_containing_vertex_not_hidden": ["triangle", "containing", "not", "hidden"],
-                    "common_neighbors_with_hidden": ["common", "neighbor"],
-                    "triangles_containing_both": ["triangle", "containing", "both", "hidden"]
-                }
-            
-            keywords = keywords_map.get(self.rule_type, [])
-            matched_keywords = sum(1 for kw in keywords if kw in rule_desc_lower)
-            
-            return matched_keywords >= len(keywords) - 1
-            
-        except Exception:
-            return False
+        
+        return False
 
     def _cf_core_produce(self, parsed_info):
-        """生成对查询的响应（原始逻辑）"""
-        lang = self.config.language
-        
-        # 优先处理观测查询
+        if self.config.language == "zh":
+            same_res, diff_res = "相同", "不同"
+            yes_res, no_res = "是", "否"
+            err_range = "错误：位置超出范围。"
+            err_format = "错误：格式无效。"
+            err_verify_limit = "错误：验证周期查询次数已达上限（最多2次）。"
+        else:
+            same_res, diff_res = "Same", "Different"
+            yes_res, no_res = "Yes", "No"
+            err_range = "Error: Position out of range."
+            err_format = "Error: Invalid format."
+            err_verify_limit = "Error: Verify period query limit reached (maximum 2 times)."
+
+        n = len(self.sequence)
+
         if "query_observe" in parsed_info:
-            vertex = parsed_info["query_observe"].strip().upper()
-            
-            if vertex not in self.VERTICES:
-                return "错误：无效的顶点。" if lang == "zh" else "Error: Invalid vertex."
-            
-            self.query_count += 1
-            value = self.vertex_values[vertex]
-            
-            if lang == "zh":
-                return f"顶点 {vertex} 的读数为：{value}"
-            else:
-                return f"Reading for vertex {vertex}: {value}"
-        
-        # 处理预测校验
-        elif "query_verify" in parsed_info:
             try:
-                raw = parsed_info["query_verify"].strip()
-                parts = raw.split(",")
+                pos_str = parsed_info["query_observe"].strip()
+                pos = int(pos_str)
+                if pos < 1 or pos > n:
+                    return err_range
+                return self.sequence[pos - 1]
+            except:
+                return err_format
+
+        elif "query_compare" in parsed_info:
+            try:
+                raw = parsed_info["query_compare"].strip()
+                parts = [x.strip() for x in raw.split(",")]
                 if len(parts) != 2:
-                    raise ValueError
+                    return err_format
+                i, j = int(parts[0]), int(parts[1])
+                if i < 1 or i > n or j < 1 or j > n or i == j:
+                    return err_range
+                return same_res if self.sequence[i - 1] == self.sequence[j - 1] else diff_res
+            except:
+                return err_format
+
+        elif "query_verify" in parsed_info:
+            if self.verify_count >= 2:
+                return err_verify_limit
+            
+            try:
+                p_str = parsed_info["query_verify"].strip()
+                p = int(p_str)
+                if p < 1 or p >= n:
+                    return err_range
                 
-                vertex = parts[0].strip().upper()
-                predicted_value = int(parts[1].strip())
+                self.verify_count += 1
                 
-                if vertex not in self.VERTICES:
-                    return "错误：无效的顶点。" if lang == "zh" else "Error: Invalid vertex."
-                
-                actual_value = self.vertex_values[vertex]
-                
-                if predicted_value == actual_value:
-                    return f"检验 {vertex}: 正确" if lang == "zh" else f"Verification {vertex}: Correct"
-                else:
-                    if lang == "zh":
-                        return f"检验 {vertex}: 错误，正确值为 {actual_value}"
-                    else:
-                        return f"Verification {vertex}: Incorrect, correct value is {actual_value}"
-                        
-            except Exception:
-                return "错误：格式无效。" if lang == "zh" else "Error: Invalid format."
-        
+                is_period = self._is_valid_period(p)
+                return yes_res if is_period else no_res
+            except:
+                return err_format
+
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct):
-        if correct.isdigit():
-            return str(int(correct) + 1)
-            
-        import re
-        if re.search(r'\d+', correct):
-            return re.sub(r'\d+', lambda m: str(int(m.group(0)) + 1), correct)
-        
-        lang = self.config.language
-        ret = correct
-        
-        if lang == "zh":
-            if "正确" in ret:
-                return ret.replace("正确", "错误")
-            elif "错误" in ret:
-                return ret.replace("错误", "正确")
-            elif "是" in ret:
-                return ret.replace("是", "否")
-            elif "否" in ret:
-                return ret.replace("否", "是")
+        if self.config.language == "zh":
+            same_res, diff_res = "相同", "不同"
+            yes_res, no_res = "是", "否"
+            symbol_set = ["A", "B", "C", "D"]
         else:
-            # 简单的英文 Yes/No 替换，保持原始大小写风格
-            def replace_case_insensitive(text, old, new):
-                pattern = re.compile(re.escape(old), re.IGNORECASE)
-                return pattern.sub(lambda m: new.upper() if m.group(0).isupper() 
-                                   else new.lower() if m.group(0).islower() 
-                                   else new.capitalize() if m.group(0)[0].isupper() 
-                                   else new, text)
+            same_res, diff_res = "Same", "Different"
+            yes_res, no_res = "Yes", "No"
+            symbol_set = ["A", "B", "C", "D"]
 
-            if re.search(r'\bcorrect\b', ret, re.IGNORECASE):
-                return replace_case_insensitive(ret, "Correct", "Incorrect")
-            elif re.search(r'\bincorrect\b', ret, re.IGNORECASE):
-                return replace_case_insensitive(ret, "Incorrect", "Correct")
-            elif re.search(r'\byes\b', ret, re.IGNORECASE):
-                return replace_case_insensitive(ret, "Yes", "No")
-            elif re.search(r'\bno\b', ret, re.IGNORECASE):
-                return replace_case_insensitive(ret, "No", "Yes")
+        if correct in symbol_set:
+            wrong_choices = [s for s in symbol_set if s != correct]
+            return random.choice(wrong_choices)
 
-        return correct + "_WRONG"
+        if correct == same_res:
+            return diff_res
+        if correct == diff_res:
+            return same_res
+
+        if correct == yes_res:
+            return no_res
+        if correct == no_res:
+            return yes_res
+
+        return correct + " [WRONG]"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 合法的 XML 标签字符串
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
         results = []
-        lang = self.config.language
+        n = len(self.sequence)
         
-        # 本游戏主要通过观测查询(query_observe)获取信息
-        # 预测校验(query_verify)空间过大且仅作为验证，故不在此枚举
-        for vertex in self.VERTICES:
-            query_xml = f"<query_observe>{vertex}</query_observe>"
-            
-            # 直接计算正确答案，不经过 produce_response 以避免影响游戏状态（如反事实计数器）
-            value = self.vertex_values[vertex]
-            
-            if lang == "zh":
-                answer = f"顶点 {vertex} 的读数为：{value}"
-            else:
-                answer = f"Reading for vertex {vertex}: {value}"
-            
+        if self.config.language == "zh":
+            same_res, diff_res = "相同", "不同"
+            yes_res, no_res = "是", "否"
+        else:
+            same_res, diff_res = "Same", "Different"
+            yes_res, no_res = "Yes", "No"
+
+        for i in range(1, n + 1):
             results.append({
-                "query": query_xml,
-                "answer": answer
+                "query": f"<query_observe>{i}</query_observe>",
+                "answer": self.sequence[i - 1]
             })
-            
+
+        for i in range(1, n + 1):
+            for j in range(i + 1, n + 1):
+                ans = same_res if self.sequence[i - 1] == self.sequence[j - 1] else diff_res
+                results.append({
+                    "query": f"<query_compare>{i},{j}</query_compare>",
+                    "answer": ans
+                })
+
+        for p in range(1, n):
+            is_period = self._is_valid_period(p)
+            ans = yes_res if is_period else no_res
+            results.append({
+                "query": f"<query_verify>{p}</query_verify>",
+                "answer": ans
+            })
+
         return results

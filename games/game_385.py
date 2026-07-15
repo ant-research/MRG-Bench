@@ -1,619 +1,666 @@
-# -*- coding: utf-8 -*-
 from .base import Game
 import random
-import itertools
+import re
 
-class SequencePatternDiscoveryGame(Game):
+class TreePropagationGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"序列模式发现"游戏，规则如下：
+我们来玩一个"树传播推理"游戏，规则如下：
 
-游戏设定了一个隐藏的有序序列 S，长度为 {n}，由字母表 {alphabet} 中的字符组成。同时给定两个参数：
-- K = {k}：目标模式的长度
-- P = {p}：目标模式的出现次数
+游戏设定了一棵有根树，包含 {n} 个节点，每个节点有唯一的ID编号。树的边从父节点指向子节点，每条边带有一个标签（0到9之间的数字）。每个节点有一个属性值（0到9之间的数字）。
 
-你的目标是找出唯一满足条件的长度为 K 的子串 M*，该子串在序列 S 中恰好出现 P 次（采用可重叠计数方式，例如 "AA" 在 "AAA" 中出现 2 次）。游戏保证：存在且仅存在一个长度为 K 的子串其出现次数恰好等于 P，其他长度为 K 的子串出现次数都不等于 P。
+关键规则：
+1. 存在一个统一且稳定的传播函数 f，使得任一子节点的属性值仅由其父节点的属性值与连接该子节点的边标签决定。
+2. 根节点的属性值是固定但未知的。
+3. 传播函数在整棵树中保持一致，但具体形式未知。
+4. 目标节点ID为 {target_id}，你需要推断出该节点的属性值。
 
-你需要找出这个子串 M* 以及它在序列中首次出现的位置（位置编号从 1 开始）。
+树的结构信息：
+{tree_structure}
 
-你可以反复提出以下四类查询（每次仅限一个查询），我会根据隐藏序列如实回答：
+你的目标是通过尽可能少的操作次数，推断出目标节点 {target_id} 的属性值。
 
-1. 存在性查询：询问长度为 K 的子串 X 是否在序列中出现过（出现次数大于 0）。回答"是"或"否"。
+你可以使用以下三种操作：
 
-2. 次数查询：询问长度为 K 的子串 X 在序列中出现的次数。回答一个非负整数。
+1. **倾听操作**：查询某个节点（目标节点除外）的属性值
+   格式：<listen>节点ID</listen>
+   返回：该节点的属性值（0到9之间的数字）
 
-3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀 U 开头的所有长度为 K 的子串中，单个子串出现次数的最大值。回答一个非负整数。
+2. **嫁接操作**：在某个节点下新增一个叶子节点，并指定连接边的标签
+   格式：<graft>父节点ID,边标签</graft>
+   返回：新节点的ID和属性值
 
-4. 最左位置查询：询问长度为 K 的子串 X 首次出现的位置。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回"不存在"。
+3. **提交答案**：当你准备好后，提交目标节点的属性值
+   格式：<answer>数字</answer>
+   返回：正确或错误
 
-请尽可能少地使用查询次数来找到答案。当你确定答案后，请提交最终结果。
+- 不能对目标节点 {target_id} 使用倾听操作
+- 边标签必须是0到9之间的整数
+- 嫁接操作会永久添加新节点到树中
+- 答案必须是0到9之间的整数
+- 答案提交后游戏结束
 
-## 查询与提交答案的格式
-
-每次查询只能包含一个标签。请使用以下 XML 格式：
-
-- 存在性查询（例如查询子串 "ABC"）：
-<query_exists>ABC</query_exists>
-
-- 次数查询（例如查询子串 "ABC" 的出现次数）：
-<query_count>ABC</query_count>
-
-- 前缀最大次数查询（例如查询前缀 "AB" 的最大次数）：
-<query_prefix_max>AB</query_prefix_max>
-
-- 最左位置查询（例如查询子串 "ABC" 的最左位置）：
-<query_position>ABC</query_position>
-
-提交最终答案时，需要说明子串内容和最左起始位置，格式如下：
-
-<answer>pattern=ABC, position=5</answer>
+请开始你的推理！
 """
 
     game_rule_en = """\
-Let's play a "Sequence Pattern Discovery" game. Here are the rules:
+Let's play a "Tree Propagation Deduction" game. Here are the rules:
 
-There is a hidden ordered sequence S of length {n}, composed of characters from the alphabet {alphabet}. Two parameters are given:
-- K = {k}: the length of the target pattern
-- P = {p}: the occurrence count of the target pattern
+The game defines a rooted tree with {n} nodes, each with a unique ID. Tree edges point from parent to child, and each edge has a label (a digit from 0 to 9). Each node has an attribute value (a digit from 0 to 9).
 
-Your goal is to find the unique substring M* of length K that appears exactly P times in sequence S (using overlapping count, e.g., "AA" appears 2 times in "AAA"). The game guarantees: there exists exactly one substring of length K whose occurrence count equals P, and all other substrings of length K have different occurrence counts.
+Key Rules:
+1. There exists a unified and stable propagation function f, such that any child node's attribute is determined solely by its parent's attribute and the edge label connecting to the child.
+2. The root node's attribute is fixed but unknown.
+3. The propagation function remains consistent throughout the tree, but its specific form is unknown.
+4. The target node ID is {target_id}, and you need to deduce its attribute value.
 
-You need to find this substring M* and its first occurrence position in the sequence (positions are numbered starting from 1).
+Tree Structure Information:
+{tree_structure}
 
-You can repeatedly ask the following four types of queries (one query per turn), and I will answer truthfully based on the hidden sequence:
+Your goal is to deduce the attribute value of target node {target_id} using as few operations as possible.
 
-1. Existence Query: Ask whether a substring X of length K appears in the sequence (occurrence count greater than 0). Answer "Yes" or "No".
+You can use the following three operations:
 
-2. Count Query: Ask for the number of times a substring X of length K appears in the sequence. Answer a non-negative integer.
+1. **Listen Operation**: Query the attribute value of a node (except the target node)
+   Format: <listen>nodeID</listen>
+   Returns: The node's attribute value (a digit from 0 to 9)
 
-3. Prefix Maximum Count Query: Ask for the maximum occurrence count among all substrings of length K that start with a prefix U of length t (where 1 to K-1). Answer a non-negative integer.
+2. **Graft Operation**: Add a new leaf node under a specified node with a given edge label
+   Format: <graft>parentID,edgeLabel</graft>
+   Returns: The new node's ID and attribute value
 
-4. Leftmost Position Query: Ask for the first occurrence position of a substring X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
+3. **Submit Answer**: When ready, submit the target node's attribute value
+   Format: <answer>digit</answer>
+   Returns: Correct or incorrect
 
-Please use as few queries as possible to find the answer. When you are certain of the answer, submit your final result.
+- You cannot use Listen operation on target node {target_id}
+- Edge labels must be integers from 0 to 9
+- Graft operations permanently add new nodes to the tree
+- Answer must be an integer from 0 to 9
+- Game ends after answer submission
 
-## Query and Answer Format
-
-Each query must contain only one tag. Use the following XML format:
-
-- Existence Query (e.g., querying substring "ABC"):
-<query_exists>ABC</query_exists>
-
-- Count Query (e.g., querying occurrence count of substring "ABC"):
-<query_count>ABC</query_count>
-
-- Prefix Maximum Count Query (e.g., querying maximum count for prefix "AB"):
-<query_prefix_max>AB</query_prefix_max>
-
-- Leftmost Position Query (e.g., querying leftmost position of substring "ABC"):
-<query_position>ABC</query_position>
-
-When submitting the final answer, specify the pattern content and leftmost starting position in this format:
-
-<answer>pattern=ABC, position=5</answer>
+Start your deduction!
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用“智能交通流特征监控系统”。
+我们来协助进行"路网拥堵态势预测"，规则如下：
 
-系统记录了一条长度为 {n} 的路段车辆卡口通行序列 S，由卡口编号 {alphabet} 组成。我们设定的监测参数为：
-- K = {k}：目标车辆连续经过的卡口数量（路径长度）
-- P = {p}：该通行路径模式在记录中出现的总次数
+系统设定了一个包含 {n} 个关键路口（节点）的有向树状快速路网，每个路口有唯一的ID编号。车流从上游路口流向下游路口（父节点到子节点），每条连接路段带有一个道路特征码（0到9之间的数字）。每个路口具有一个实时的拥堵指数（0到9之间的数字）。
 
-你的任务是找出唯一满足条件的长度为 K 的连续卡口路径 M*，该路径在记录序列 S 中恰好出现了 P 次（采用可重叠计算方式）。系统保证：存在且仅存在一个长度为 K 的路径其出现次数等于 P，其他长度为 K 的路径出现次数均不等于 P。
+关键规则：
+1. 存在一个统一且稳定的拥堵传导函数 f，使得任一下游路口的拥堵指数仅由其直接上游路口的拥堵指数与连接两者的道路特征码决定。
+2. 源头路口（根节点）的拥堵指数固定但未知。
+3. 拥堵传导函数在整个路网中保持一致，但具体公式未知。
+4. 目标路口ID为 {target_id}，你需要推断出该路口的拥堵指数。
 
-你需要分析出这个特定路径 M* 以及它在监测时序中首次出现的位置（位置编号从 1 开始）。
+路网结构信息：
+{tree_structure}
 
-你可以反复调用以下四类数据查询接口（每次仅限一个查询），系统将基于隐藏的通行序列如实返回数据：
+你的目标是通过尽可能少的调度操作，推断出目标路口 {target_id} 的拥堵指数。
 
-1. 存在性查询：询问长度为 K 的路径 X 是否在记录中出现过。回答“是”或“否”。
-2. 次数查询：询问长度为 K 的路径 X 在记录中出现的总次数。回答一个非负整数。
-3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀序列 U 开头的所有长度为 K 的路径中，单条路径出现次数的最大值。回答一个非负整数。
-4. 最左位置查询：询问长度为 K 的路径 X 首次出现的时间节点（位置）。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
+你可以使用以下三种操作：
 
-请尽可能高效地使用查询接口。确定答案后，请提交最终结果。
+1. **监测操作**：调用摄像头查询某个路口（目标路口除外）的拥堵指数
+   格式：<listen>路口ID</listen>
+   返回：该路口的拥堵指数（注：系统返回文本中统称为"节点"和"属性值"）
 
-## 查询与提交答案的格式
+2. **仿真操作**：在某个路口下游通过沙盘虚拟增加一个测试路口，并指定相连路段的道路特征码
+   格式：<graft>父路口ID,道路特征码</graft>
+   返回：新路口的ID和拥堵指数（注：系统返回文本中统称为"节点"和"属性值"）
 
-每次查询只能包含一个接口调用标签。请使用以下 XML 格式：
+3. **提交报告**：当你准备好后，提交目标路口的拥堵指数预测值
+   格式：<answer>数字</answer>
+   返回：正确或错误
 
-- 存在性查询（例如查询路径 "ABC"）：
-<query_exists>ABC</query_exists>
+- 不能对目标路口 {target_id} 使用监测操作
+- 道路特征码必须是0到9之间的整数
+- 仿真操作会永久将新路口加入虚拟路网中
+- 答案必须是0到9之间的整数
+- 答案提交后评估结束
 
-- 次数查询（例如查询路径 "ABC" 的出现次数）：
-<query_count>ABC</query_count>
-
-- 前缀最大次数查询（例如查询前缀 "AB" 的最大次数）：
-<query_prefix_max>AB</query_prefix_max>
-
-- 最左位置查询（例如查询路径 "ABC" 的最左位置）：
-<query_position>ABC</query_position>
-
-提交最终报告时，需要说明路径内容和最左起始位置，格式如下：
-
-<answer>pattern=ABC, position=5</answer>
+请开始你的分析！
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Intelligent Traffic Flow Pattern Monitoring System".
+Let's assist in "Traffic Congestion Trend Prediction". Here are the rules:
 
-The system has recorded a sequence S of length {n} representing vehicle pass-throughs at traffic checkpoints, composed of checkpoint IDs from the alphabet {alphabet}. The monitoring parameters are:
-- K = {k}: the number of consecutive checkpoints in the target path (pattern length)
-- P = {p}: the total number of times this path pattern occurs in the record
+The system defines a directed tree-like expressway network containing {n} key intersections (nodes), each with a unique ID. Traffic flows from upstream to downstream (parent to child), and each connecting road segment has a road characteristic code (a digit from 0 to 9). Each intersection has a real-time congestion index (a digit from 0 to 9).
 
-Your task is to find the unique continuous checkpoint path M* of length K that appears exactly P times in the recorded sequence S (using overlapping count). The system guarantees: there exists exactly one path of length K whose occurrence count equals P.
+Key Rules:
+1. There exists a unified and stable congestion propagation function f, such that any downstream intersection's congestion index is determined solely by its direct upstream intersection's index and the connecting road's characteristic code.
+2. The source intersection (root node) has a fixed but unknown congestion index.
+3. The propagation function remains consistent throughout the network, but its specific formula is unknown.
+4. The target intersection ID is {target_id}, and you need to deduce its congestion index.
 
-You need to identify this specific path M* and its first occurrence position in the monitoring timeline (positions are numbered starting from 1).
+Network Structure Information:
+{tree_structure}
 
-You can repeatedly call the following four data query interfaces (one query per turn):
+Your goal is to deduce the congestion index of target intersection {target_id} using as few dispatch operations as possible.
 
-1. Existence Query: Ask whether a path X of length K appears in the record. Answer "Yes" or "No".
-2. Count Query: Ask for the total number of times a path X of length K appears in the record. Answer a non-negative integer.
-3. Prefix Maximum Count Query: Ask for the maximum occurrence count among all paths of length K that start with a prefix sequence U of length t (where 1 to K-1). Answer a non-negative integer.
-4. Leftmost Position Query: Ask for the first occurrence position of a path X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
+You can use the following three operations:
 
-Please use the queries as efficiently as possible. When you are certain, submit your final report.
+1. **Monitor Operation**: Use traffic cameras to query the congestion index of an intersection (except the target)
+   Format: <listen>intersectionID</listen>
+   Returns: The intersection's congestion index (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-## Query and Answer Format
+2. **Simulate Operation**: Virtually add a test intersection downstream of an existing one in the simulator, specifying the connecting road's characteristic code
+   Format: <graft>parentIntersectionID,roadCharacteristicCode</graft>
+   Returns: The new intersection's ID and congestion index (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-Each query must contain only one tag. Use the following XML format:
+3. **Submit Report**: When ready, submit the predicted congestion index for the target intersection
+   Format: <answer>digit</answer>
+   Returns: Correct or incorrect
 
-- Existence Query (e.g., querying path "ABC"):
-<query_exists>ABC</query_exists>
+- You cannot use Monitor operation on target intersection {target_id}
+- Road characteristic codes must be integers from 0 to 9
+- Simulate operations permanently add new intersections to the virtual network
+- Answer must be an integer from 0 to 9
+- Evaluation ends after answer submission
 
-- Count Query (e.g., querying path "ABC" occurrence count):
-<query_count>ABC</query_count>
-
-- Prefix Maximum Count Query (e.g., querying maximum count for prefix "AB"):
-<query_prefix_max>AB</query_prefix_max>
-
-- Leftmost Position Query (e.g., querying leftmost position of path "ABC"):
-<query_position>ABC</query_position>
-
-When submitting the final report, specify the path content and leftmost starting position in this format:
-
-<answer>pattern=ABC, position=5</answer>
+Start your analysis!
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“临床基因组序列异常筛查系统”。
+我们来协助进行"病毒变异溯源分析"，规则如下：
 
-系统已测得一段长度为 {n} 的患者特异性基因片段序列 S，由碱基/标志物 {alphabet} 组成。当前的筛查标定参数为：
-- K = {k}：目标异常靶向序列的长度
-- P = {p}：该靶向序列在片段中表达的频次
+系统记录了一棵包含 {n} 名感染者（节点）的传播链树，每个感染者有唯一的病例编号。传播方向由传染源指向被感染者（父节点到子节点），每次传播事件带有一个接触途径代码（0到9之间的数字）。每个病例体内提取的病毒株具有一个变异强度等级（0到9之间的数字）。
 
-你的目标是鉴定出唯一满足条件的长度为 K 的靶向序列 M*，该序列在片段 S 中恰好表达了 P 次（采用可重叠计数方式）。系统保证：存在且仅存在一个长度为 K 的序列其表达频次等于 P。
+关键规则：
+1. 存在一个统一且稳定的突变演化函数 f，使得任一被感染者的变异强度等级仅由其传染源的变异等级与两者间的接触途径代码决定。
+2. 零号病人（根节点）的变异强度等级固定但未知。
+3. 突变演化函数在整个传播链中保持一致，但具体机制未知。
+4. 目标病例编号为 {target_id}，你需要推断出该病例的变异强度等级。
 
-你需要精准定位这个靶向序列 M* 以及它在基因片段中首发突变的位置（位置编号从 1 开始）。
+传播链结构信息：
+{tree_structure}
 
-你可以反复调用以下四类生信分析工具（每次仅限一个调用），系统将根据隐藏的基因序列如实反馈：
+你的目标是通过尽可能少的临床操作，推断出目标病例 {target_id} 的变异强度等级。
 
-1. 存在性查询：询问长度为 K 的序列 X 是否在片段中表达过。回答“是”或“否”。
-2. 次数查询：询问长度为 K 的序列 X 在片段中表达的准确频次。回答一个非负整数。
-3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀 U 开头的所有长度为 K 的序列中，单一序列表达频次的极值。回答一个非负整数。
-4. 最左位置查询：询问长度为 K 的序列 X 首次表达的碱基座次。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
+你可以使用以下三种操作：
 
-请以最小的计算资源消耗找到答案。确诊后，请提交最终报告。
+1. **测序操作**：对某个病例（目标病例除外）提取样本查询其变异强度等级
+   格式：<listen>病例编号</listen>
+   返回：该病例的变异强度等级（注：系统返回文本中统称为"节点"和"属性值"）
 
-## 查询与提交答案的格式
+2. **培养操作**：在实验室中利用某病例的毒株感染一个新的细胞系模型，并设定特定的接触途径代码
+   格式：<graft>父病例编号,接触途径代码</graft>
+   返回：新模型编号和变异强度等级（注：系统返回文本中统称为"节点"和"属性值"）
 
-每次调用只能包含一个工具标签。请使用以下 XML 格式：
+3. **提交结论**：当你准备好后，提交目标病例的变异强度等级
+   格式：<answer>数字</answer>
+   返回：正确或错误
 
-- 存在性查询（例如查询序列 "ABC"）：
-<query_exists>ABC</query_exists>
+- 不能对目标病例 {target_id} 使用测序操作
+- 接触途径代码必须是0到9之间的整数
+- 培养操作会永久将新模型加入演化树中
+- 答案必须是0到9之间的整数
+- 答案提交后分析结束
 
-- 次数查询（例如查询序列 "ABC" 的表达频次）：
-<query_count>ABC</query_count>
-
-- 前缀最大次数查询（例如查询前缀 "AB" 的最大频次）：
-<query_prefix_max>AB</query_prefix_max>
-
-- 最左位置查询（例如查询序列 "ABC" 的首发座次）：
-<query_position>ABC</query_position>
-
-提交最终报告时，需要说明序列内容和最左起始座次，格式如下：
-
-<answer>pattern=ABC, position=5</answer>
+请开始你的溯源！
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Clinical Genomic Sequence Anomaly Screening System".
+Let's assist in "Viral Mutation Traceback Analysis". Here are the rules:
 
-The system has sequenced a patient-specific genomic fragment sequence S of length {n}, composed of bases/markers from {alphabet}. The screening parameters are:
-- K = {k}: the length of the target anomalous sequence
-- P = {p}: the expression frequency of the target sequence in the fragment
+The system has recorded a transmission chain tree containing {n} infected individuals (nodes), each with a unique case ID. Transmission flows from infector to infectee (parent to child), and each transmission event has a contact pathway code (a digit from 0 to 9). The viral strain extracted from each case has a mutation severity level (a digit from 0 to 9).
 
-Your goal is to identify the unique target sequence M* of length K that is expressed exactly P times in fragment S (using overlapping count). The system guarantees: there exists exactly one sequence of length K whose expression frequency equals P.
+Key Rules:
+1. There exists a unified and stable mutation evolution function f, such that any infectee's mutation severity level is determined solely by their infector's severity level and the contact pathway code between them.
+2. Patient Zero's (root node) mutation severity level is fixed but unknown.
+3. The mutation evolution function remains consistent throughout the chain, but its specific mechanism is unknown.
+4. The target case ID is {target_id}, and you need to deduce its mutation severity level.
 
-You need to precisely locate this target sequence M* and its first mutation position in the genomic fragment (positions are numbered starting from 1).
+Transmission Chain Structure Information:
+{tree_structure}
 
-You can repeatedly invoke the following four bioinformatics analysis tools (one query per turn):
+Your goal is to deduce the mutation severity level of target case {target_id} using as few clinical operations as possible.
 
-1. Existence Query: Ask whether a sequence X of length K is expressed in the fragment. Answer "Yes" or "No".
-2. Count Query: Ask for the exact expression frequency of a sequence X of length K in the fragment. Answer a non-negative integer.
-3. Prefix Maximum Count Query: Ask for the maximum expression frequency among all sequences of length K starting with a prefix U of length t (1 to K-1). Answer a non-negative integer.
-4. Leftmost Position Query: Ask for the first expression locus of a sequence X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
+You can use the following three operations:
 
-Please find the answer with minimal computational resources. When diagnosed, submit your final report.
+1. **Sequence Operation**: Extract a sample from a case (except the target) to query its mutation severity level
+   Format: <listen>caseID</listen>
+   Returns: The case's mutation severity level (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-## Query and Answer Format
+2. **Culture Operation**: Infect a new cell line model in the lab using a specific case's strain, setting a specific contact pathway code
+   Format: <graft>parentCaseID,contactPathwayCode</graft>
+   Returns: The new model's ID and mutation severity level (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-Each invocation must contain only one tool tag. Use the following XML format:
+3. **Submit Conclusion**: When ready, submit the predicted mutation severity level for the target case
+   Format: <answer>digit</answer>
+   Returns: Correct or incorrect
 
-- Existence Query (e.g., querying sequence "ABC"):
-<query_exists>ABC</query_exists>
+- You cannot use Sequence operation on target case {target_id}
+- Contact pathway codes must be integers from 0 to 9
+- Culture operations permanently add new models to the evolution tree
+- Answer must be an integer from 0 to 9
+- Analysis ends after answer submission
 
-- Count Query (e.g., querying sequence "ABC" frequency):
-<query_count>ABC</query_count>
-
-- Prefix Maximum Count Query (e.g., querying maximum frequency for prefix "AB"):
-<query_prefix_max>AB</query_prefix_max>
-
-- Leftmost Position Query (e.g., querying leftmost locus of sequence "ABC"):
-<query_position>ABC</query_position>
-
-When submitting the final report, specify the sequence content and leftmost starting locus in this format:
-
-<answer>pattern=ABC, position=5</answer>
+Start your traceback!
 """
 
     contextualized_rule_zh_3 = """\
-欢迎进入“学生学习行为图谱分析平台”。
+我们来进行"认知难点传导分析"，规则如下：
 
-平台提取了一名学生长度为 {n} 的在线学习行为序列 S，由行为代码 {alphabet} 组成（如A代表看视频，B代表做题等）。当前分析的焦点参数为：
-- K = {k}：目标行为模式包含的连续动作数
-- P = {p}：该行为模式在整个学习周期中发生的次数
+教研系统生成了一棵包含 {n} 个知识点（节点）的先决条件依赖树，每个知识点有唯一的ID编号。学习路径从前置知识点指向后置知识点（父节点到子节点），每条学习路径带有一个教学策略码（0到9之间的数字）。每个知识点具有一个评估出的学习障碍指数（0到9之间的数字）。
 
-你的任务是挖掘出唯一满足条件的长度为 K 的学习行为模式 M*，该模式在总序列 S 中恰好发生 P 次（采用可重叠计数方式）。平台保证：存在且仅存在一个长度为 K 的模式其发生次数等于 P。
+关键规则：
+1. 存在一个统一且稳定的认知负荷传导函数 f，使得任一后置知识点的学习障碍指数仅由其直接前置知识点的障碍指数与连接两者的教学策略码决定。
+2. 基础知识点（根节点）的学习障碍指数固定但未知。
+3. 传导函数在整个依赖树中保持一致，但具体形式未知。
+4. 目标知识点ID为 {target_id}，你需要推断出该知识点的学习障碍指数。
 
-你需要识别出这个核心模式 M* 以及它在学习序列中首次被触发的位置（位置编号从 1 开始）。
+知识依赖树结构信息：
+{tree_structure}
 
-你可以反复调用以下四类数据查询模块（每次仅限一个调用），平台将基于隐匿的行为序列表如实作答：
+你的目标是通过尽可能少的测评操作，推断出目标知识点 {target_id} 的学习障碍指数。
 
-1. 存在性查询：询问长度为 K 的行为模式 X 是否在周期内发生过。回答“是”或“否”。
-2. 次数查询：询问长度为 K 的行为模式 X 在周期内发生的总次数。回答一个非负整数。
-3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀行为 U 开头的所有长度为 K 的模式中，单一模式发生次数的最大值。回答一个非负整数。
-4. 最左位置查询：询问长度为 K 的行为模式 X 首次触发的学习节点。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
+你可以使用以下三种操作：
 
-请用尽量少的查询步骤完成图谱分析。得出结论后，请提交最终报告。
+1. **测评操作**：对某个知识点（目标知识点除外）进行学情摸底，查询其学习障碍指数
+   格式：<listen>知识点ID</listen>
+   返回：该知识点的学习障碍指数（注：系统返回文本中统称为"节点"和"属性值"）
 
-## 查询与提交答案的格式
+2. **教研操作**：在某个知识点后置虚拟新增一个衍生教学模块，并指定应用的教学策略码
+   格式：<graft>父知识点ID,教学策略码</graft>
+   返回：新模块ID和学习障碍指数（注：系统返回文本中统称为"节点"和"属性值"）
 
-每次调用只能包含一个模块标签。请使用以下 XML 格式：
+3. **提交评估**：当你准备好后，提交目标知识点的学习障碍指数预测值
+   格式：<answer>数字</answer>
+   返回：正确或错误
 
-- 存在性查询（例如查询模式 "ABC"）：
-<query_exists>ABC</query_exists>
+- 不能对目标知识点 {target_id} 使用测评操作
+- 教学策略码必须是0到9之间的整数
+- 教研操作会永久将新模块加入依赖树中
+- 答案必须是0到9之间的整数
+- 答案提交后分析结束
 
-- 次数查询（例如查询模式 "ABC" 的发生次数）：
-<query_count>ABC</query_count>
-
-- 前缀最大次数查询（例如查询前缀 "AB" 的最大次数）：
-<query_prefix_max>AB</query_prefix_max>
-
-- 最左位置查询（例如查询模式 "ABC" 的最左位置）：
-<query_position>ABC</query_position>
-
-提交最终报告时，需要说明模式内容和最左起始节点，格式如下：
-
-<answer>pattern=ABC, position=5</answer>
+请开始你的教研分析！
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Student Learning Behavior Graph Analysis Platform".
+Let's conduct "Cognitive Difficulty Propagation Analysis". Here are the rules:
 
-The platform has extracted an online learning behavior sequence S of length {n} for a student, composed of behavior codes {alphabet} (e.g., A for watching video, B for quiz). The focus parameters are:
-- K = {k}: the number of consecutive actions in the target behavior pattern
-- P = {p}: the occurrence count of this behavior pattern throughout the learning cycle
+The educational system generated a prerequisite dependency tree containing {n} knowledge concepts (nodes), each with a unique ID. Learning paths point from prerequisite concepts to advanced concepts (parent to child), and each path has an instructional strategy code (a digit from 0 to 9). Each concept has an assessed learning obstacle index (a digit from 0 to 9).
 
-Your task is to mine the unique learning behavior pattern M* of length K that occurs exactly P times in sequence S (using overlapping count). The platform guarantees: there exists exactly one pattern of length K whose occurrence count equals P.
+Key Rules:
+1. There exists a unified and stable cognitive load propagation function f, such that any advanced concept's learning obstacle index is determined solely by its direct prerequisite's index and the instructional strategy code connecting them.
+2. The foundational concept's (root node) learning obstacle index is fixed but unknown.
+3. The propagation function remains consistent throughout the tree, but its specific form is unknown.
+4. The target concept ID is {target_id}, and you need to deduce its learning obstacle index.
 
-You need to identify this core pattern M* and its first triggered position in the learning sequence (positions are numbered starting from 1).
+Dependency Tree Structure Information:
+{tree_structure}
 
-You can repeatedly invoke the following four data query modules (one query per turn):
+Your goal is to deduce the learning obstacle index of target concept {target_id} using as few assessment operations as possible.
 
-1. Existence Query: Ask whether a behavior pattern X of length K occurred. Answer "Yes" or "No".
-2. Count Query: Ask for the total number of times a behavior pattern X of length K occurred. Answer a non-negative integer.
-3. Prefix Maximum Count Query: Ask for the maximum occurrence count among all patterns of length K that start with a prefix behavior U of length t (1 to K-1). Answer a non-negative integer.
-4. Leftmost Position Query: Ask for the first triggered node of a behavior pattern X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
+You can use the following three operations:
 
-Please complete the analysis with as few query steps as possible. When concluded, submit your final report.
+1. **Assess Operation**: Conduct a diagnostic assessment on a concept (except the target) to query its learning obstacle index
+   Format: <listen>conceptID</listen>
+   Returns: The concept's learning obstacle index (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-## Query and Answer Format
+2. **Design Operation**: Virtually add a derived learning module after a concept, specifying the applied instructional strategy code
+   Format: <graft>parentConceptID,strategyCode</graft>
+   Returns: The new module's ID and learning obstacle index (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-Each invocation must contain only one module tag. Use the following XML format:
+3. **Submit Evaluation**: When ready, submit the predicted learning obstacle index for the target concept
+   Format: <answer>digit</answer>
+   Returns: Correct or incorrect
 
-- Existence Query (e.g., querying pattern "ABC"):
-<query_exists>ABC</query_exists>
+- You cannot use Assess operation on target concept {target_id}
+- Instructional strategy codes must be integers from 0 to 9
+- Design operations permanently add new modules to the dependency tree
+- Answer must be an integer from 0 to 9
+- Analysis ends after answer submission
 
-- Count Query (e.g., querying pattern "ABC" count):
-<query_count>ABC</query_count>
-
-- Prefix Maximum Count Query (e.g., querying maximum count for prefix "AB"):
-<query_prefix_max>AB</query_prefix_max>
-
-- Leftmost Position Query (e.g., querying leftmost node of pattern "ABC"):
-<query_position>ABC</query_position>
-
-When submitting the final report, specify the pattern content and leftmost starting node in this format:
-
-<answer>pattern=ABC, position=5</answer>
+Start your instructional analysis!
 """
 
     contextualized_rule_zh_4 = """\
-欢迎使用“工业传感日志故障排查系统”。
+我们来进行"装配线缺陷率传导诊断"，规则如下：
 
-流水线设备生成了一份长度为 {n} 的传感器状态日志 S，由离散状态码 {alphabet} 组成。工程师给定的排查参数为：
-- K = {k}：目标异常工序组合的长度
-- P = {p}：该工序组合在日志中出现的频数
+工厂质检系统监控着一棵包含 {n} 个工序（节点）的装配依赖树，每个工序有唯一的ID编号。物料从上游工序流向下游工序（父节点到子节点），每次流转加工带有一个工艺参数码（0到9之间的数字）。每个加工阶段的半成品具有一个品控缺陷等级（0到9之间的数字）。
 
-你的任务是排查出唯一满足条件的长度为 K 的异常状态组合 M*，该组合在日志 S 中恰好出现 P 次（采用可重叠计数方式）。系统保证：存在且仅存在一个长度为 K 的组合其出现频数等于 P。
+关键规则：
+1. 存在一个统一且稳定的缺陷传导函数 f，使得任一下游工序的缺陷等级仅由其直接上游工序的缺陷等级与加工流转时的工艺参数码决定。
+2. 原材料供给（根节点）的缺陷等级固定但未知。
+3. 缺陷传导函数在整个装配线中保持一致，但具体数学模型未知。
+4. 目标工序ID为 {target_id}，你需要推断出该工序的缺陷等级。
 
-你需要定位这个异常组合 M* 以及它在状态日志中首次触发的批次号（位置编号从 1 开始）。
+装配线结构信息：
+{tree_structure}
 
-你可以反复输入以下四类排查指令（每次仅限一条指令），系统将根据底层的传感器数据如实响应：
+你的目标是通过尽可能少的检验操作，推断出目标工序 {target_id} 的缺陷等级。
 
-1. 存在性查询：询问长度为 K 的组合 X 是否在日志中出现过。回答“是”或“否”。
-2. 次数查询：询问长度为 K 的组合 X 在日志中出现的准确频数。回答一个非负整数。
-3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀工序 U 开头的所有长度为 K 的组合中，单一组合出现频数的峰值。回答一个非负整数。
-4. 最左位置查询：询问长度为 K 的组合 X 首次触发的批次号。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
+你可以使用以下三种操作：
 
-请尽可能快速地排查出故障原因。确认结果后，请提交最终报告。
+1. **抽检操作**：在某个工序（目标工序除外）拦截半成品并查询其缺陷等级
+   格式：<listen>工序ID</listen>
+   返回：该工序的缺陷等级（注：系统返回文本中统称为"节点"和"属性值"）
 
-## 查询与提交答案的格式
+2. **试产操作**：在某个工序后接入一条原型测试支线，并指定应用的工艺参数码
+   格式：<graft>父工序ID,工艺参数码</graft>
+   返回：新支线末端的工序ID和缺陷等级（注：系统返回文本中统称为"节点"和"属性值"）
 
-每次指令只能包含一个查询标签。请使用以下 XML 格式：
+3. **提交排查**：当你准备好后，提交目标工序的缺陷等级预测值
+   格式：<answer>数字</answer>
+   返回：正确或错误
 
-- 存在性查询（例如查询组合 "ABC"）：
-<query_exists>ABC</query_exists>
+- 不能对目标工序 {target_id} 使用抽检操作
+- 工艺参数码必须是0到9之间的整数
+- 试产操作会永久将新工序加入装配树中
+- 答案必须是0到9之间的整数
+- 答案提交后诊断结束
 
-- 次数查询（例如查询组合 "ABC" 的出现频数）：
-<query_count>ABC</query_count>
-
-- 前缀最大次数查询（例如查询前缀 "AB" 的最大频数）：
-<query_prefix_max>AB</query_prefix_max>
-
-- 最左位置查询（例如查询组合 "ABC" 的最左位置）：
-<query_position>ABC</query_position>
-
-提交最终报告时，需要说明组合内容和最左起始批次号，格式如下：
-
-<answer>pattern=ABC, position=5</answer>
+请开始你的质检诊断！
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Welcome to the "Industrial Sensor Log Troubleshooting System".
+[Manufacturing Scenario]
+Let's conduct "Assembly Line Defect Rate Propagation Diagnostics". Here are the rules:
 
-The assembly line equipment has generated a sensor state log S of length {n}, composed of discrete state codes {alphabet}. The troubleshooting parameters are:
-- K = {k}: the length of the target abnormal process combination
-- P = {p}: the frequency of this combination in the log
+The factory QA system monitors an assembly dependency tree containing {n} workstations (nodes), each with a unique ID. Materials flow from upstream to downstream workstations (parent to child), and each processing transition has a process parameter code (a digit from 0 to 9). The work-in-progress at each stage has a quality control defect level (a digit from 0 to 9).
 
-Your task is to troubleshoot and find the unique abnormal state combination M* of length K that appears exactly P times in log S (using overlapping count). The system guarantees: there exists exactly one combination of length K whose frequency equals P.
+Key Rules:
+1. There exists a unified and stable defect propagation function f, such that any downstream workstation's defect level is determined solely by its direct upstream workstation's defect level and the transition's process parameter code.
+2. The raw material supply's (root node) defect level is fixed but unknown.
+3. The defect propagation function remains consistent throughout the assembly line, but its specific mathematical model is unknown.
+4. The target workstation ID is {target_id}, and you need to deduce its defect level.
 
-You need to locate this abnormal combination M* and its first triggered batch number in the state log (positions are numbered starting from 1).
+Assembly Line Structure Information:
+{tree_structure}
 
-You can repeatedly input the following four types of diagnostic commands (one command per turn):
+Your goal is to deduce the defect level of target workstation {target_id} using as few inspection operations as possible.
 
-1. Existence Query: Ask whether a combination X of length K appeared in the log. Answer "Yes" or "No".
-2. Count Query: Ask for the exact frequency of a combination X of length K in the log. Answer a non-negative integer.
-3. Prefix Maximum Count Query: Ask for the peak frequency among all combinations of length K that start with a prefix process U of length t (1 to K-1). Answer a non-negative integer.
-4. Leftmost Position Query: Ask for the first triggered batch number of a combination X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
+You can use the following three operations:
 
-Please troubleshoot the fault cause as quickly as possible. Once confirmed, submit your final report.
+1. **Inspect Operation**: Intercept work-in-progress at a workstation (except the target) to query its defect level
+   Format: <listen>workstationID</listen>
+   Returns: The workstation's defect level (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-## Query and Answer Format
+2. **Prototype Operation**: Connect a prototype testing branch after a workstation, specifying the applied process parameter code
+   Format: <graft>parentWorkstationID,parameterCode</graft>
+   Returns: The new branch's workstation ID and defect level (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-Each command must contain only one query tag. Use the following XML format:
+3. **Submit Audit**: When ready, submit the predicted defect level for the target workstation
+   Format: <answer>digit</answer>
+   Returns: Correct or incorrect
 
-- Existence Query (e.g., querying combination "ABC"):
-<query_exists>ABC</query_exists>
+- You cannot use Inspect operation on target workstation {target_id}
+- Process parameter codes must be integers from 0 to 9
+- Prototype operations permanently add new workstations to the assembly tree
+- Answer must be an integer from 0 to 9
+- Diagnostics ends after answer submission
 
-- Count Query (e.g., querying combination "ABC" frequency):
-<query_count>ABC</query_count>
-
-- Prefix Maximum Count Query (e.g., querying maximum frequency for prefix "AB"):
-<query_prefix_max>AB</query_prefix_max>
-
-- Leftmost Position Query (e.g., querying leftmost batch number of combination "ABC"):
-<query_position>ABC</query_position>
-
-When submitting the final report, specify the combination content and leftmost starting batch number in this format:
-
-<answer>pattern=ABC, position=5</answer>
+Start your quality audit!
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用“金融证据链连环交易审计系统”。
+我们来进行"证据链采信度推演"，规则如下：
 
-审计系统封存了一份长度为 {n} 的嫌疑账户资金流转序列 S，由交易类型代码 {alphabet} 构成。当前的取证调查参数为：
-- K = {k}：目标连环交易行为的步骤数
-- P = {p}：该连环交易行为在账本中出现的次数
+法务系统梳理出了一棵包含 {n} 个关键证据节点（节点）的证据派生树，每个证据有唯一的卷宗编号。证据衍生方向由基础证据指向派生证据（父节点到子节点），每次派生推导带有一个法理逻辑码（0到9之间的数字）。每个证据节点具有一个法庭采信权重（0到9之间的数字）。
 
-你的职责是审查出唯一满足条件的长度为 K 的连环交易模式 M*，该模式在流转序列 S 中恰好发生 P 次（采用可重叠计算方式）。系统保证：存在且仅存在一个长度为 K 的交易模式其发生次数等于 P。
+关键规则：
+1. 存在一个统一且稳定的证明力传导函数 f，使得任一派生证据的采信权重仅由其直接基础证据的采信权重与派生时的法理逻辑码决定。
+2. 初始物证（根节点）的采信权重固定但未知。
+3. 证明力传导函数在整条证据链中保持一致，但具体裁判倾向未知。
+4. 目标证据编号为 {target_id}，你需要推断出该证据的采信权重。
 
-你需要锁定这个违法交易模式 M* 以及它在证据链中首次作案的位置（位置编号从 1 开始）。
+证据链结构信息：
+{tree_structure}
 
-你可以反复下达以下四类审计指令（每次仅限一条指令），系统将根据加密账本如实返回审计结果：
+你的目标是通过尽可能少的质证操作，推断出目标证据 {target_id} 的采信权重。
 
-1. 存在性查询：询问长度为 K 的交易模式 X 是否在账本中发生过。回答“是”或“否”。
-2. 次数查询：询问长度为 K 的交易模式 X 在账本中发生的精确次数。回答一个非负整数。
-3. 前缀最大次数查询：询问以长度为 t（1 到 K-1 之间）的前缀交易 U 开头的所有长度为 K 的模式中，单一模式发生次数的最高记录。回答一个非负整数。
-4. 最左位置查询：询问长度为 K 的交易模式 X 首次作案的流水节点。若存在则返回位置索引（1 到 {max_pos} 之间），否则返回“不存在”。
+你可以使用以下三种操作：
 
-请用最严谨且高效的指令完成取证。固化证据后，请提交最终卷宗。
+1. **查阅操作**：向法庭申请调取某个证据（目标证据除外）以查询其采信权重
+   格式：<listen>卷宗编号</listen>
+   返回：该证据的采信权重（注：系统返回文本中统称为"节点"和"属性值"）
 
-## 查询与提交答案的格式
+2. **推演操作**：在模拟法庭中基于某证据提出一个假设性派生证据，并指定对应的法理逻辑码
+   格式：<graft>父卷宗编号,法理逻辑码</graft>
+   返回：新证据编号和采信权重（注：系统返回文本中统称为"节点"和"属性值"）
 
-每次指令只能包含一个查询标签。请使用以下 XML 格式：
+3. **提交诉状**：当你准备好后，提交目标证据的预测采信权重
+   格式：<answer>数字</answer>
+   返回：正确或错误
 
-- 存在性查询（例如查询模式 "ABC"）：
-<query_exists>ABC</query_exists>
+- 不能对目标证据 {target_id} 使用查阅操作
+- 法理逻辑码必须是0到9之间的整数
+- 推演操作会永久将新假设证据加入派生树中
+- 答案必须是0到9之间的整数
+- 答案提交后推演结束
 
-- 次数查询（例如查询模式 "ABC" 的发生次数）：
-<query_count>ABC</query_count>
-
-- 前缀最大次数查询（例如查询前缀 "AB" 的最大次数）：
-<query_prefix_max>AB</query_prefix_max>
-
-- 最左位置查询（例如查询模式 "ABC" 的最左位置）：
-<query_position>ABC</query_position>
-
-提交最终卷宗时，需要说明模式内容和最左起始节点，格式如下：
-
-<answer>pattern=ABC, position=5</answer>
+请开始你的法理质证！
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Financial Evidence Chain Sequential Transaction Audit System".
+Let's conduct a "Chain of Evidence Credibility Deduction". Here are the rules:
 
-The audit system has sealed a suspicious account fund transfer sequence S of length {n}, composed of transaction type codes {alphabet}. The current forensic parameters are:
-- K = {k}: the number of steps in the target sequential transaction behavior
-- P = {p}: the occurrence count of this sequential transaction behavior in the ledger
+The legal system has structured an evidence derivation tree containing {n} key evidence items (nodes), each with a unique dossier ID. Derivation flows from foundational evidence to derived evidence (parent to child), and each logical deduction has a jurisprudential logic code (a digit from 0 to 9). Each evidence node carries a court credibility weight (a digit from 0 to 9).
 
-Your duty is to audit and identify the unique sequential transaction pattern M* of length K that occurs exactly P times in the transfer sequence S (using overlapping count). The system guarantees: there exists exactly one transaction pattern of length K whose occurrence count equals P.
+Key Rules:
+1. There exists a unified and stable probative value propagation function f, such that any derived evidence's credibility weight is determined solely by its direct foundational evidence's weight and the applied jurisprudential logic code.
+2. The initial physical evidence's (root node) credibility weight is fixed but unknown.
+3. The probative value propagation function remains consistent throughout the evidence chain, but the specific judicial tendency is unknown.
+4. The target evidence ID is {target_id}, and you need to deduce its credibility weight.
 
-You need to lock onto this illegal transaction pattern M* and its first committed position in the evidence chain (positions are numbered starting from 1).
+Evidence Chain Structure Information:
+{tree_structure}
 
-You can repeatedly issue the following four types of audit commands (one command per turn):
+Your goal is to deduce the credibility weight of target evidence {target_id} using as few cross-examination operations as possible.
 
-1. Existence Query: Ask whether a transaction pattern X of length K occurred in the ledger. Answer "Yes" or "No".
-2. Count Query: Ask for the exact occurrence count of a transaction pattern X of length K in the ledger. Answer a non-negative integer.
-3. Prefix Maximum Count Query: Ask for the highest record of occurrence count among all patterns of length K that start with a prefix transaction U of length t (1 to K-1). Answer a non-negative integer.
-4. Leftmost Position Query: Ask for the first node of a transaction pattern X of length K. Return a position index (between 1 and {max_pos}) if it exists, otherwise return "not found".
+You can use the following three operations:
 
-Please complete the forensics with rigorous and efficient commands. Once evidence is solidified, submit your final dossier.
+1. **Review Operation**: Motion the court to retrieve a specific piece of evidence (except the target) to query its credibility weight
+   Format: <listen>dossierID</listen>
+   Returns: The evidence's credibility weight (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-## Query and Answer Format
+2. **Moot Operation**: Introduce a hypothetical derived evidence based on an existing one in moot court, specifying the jurisprudential logic code
+   Format: <graft>parentDossierID,logicCode</graft>
+   Returns: The new evidence ID and credibility weight (Note: The system returns will use the generic terms "Node" and "Attribute value")
 
-Each command must contain only one query tag. Use the following XML format:
+3. **Submit Pleading**: When ready, submit the predicted credibility weight for the target evidence
+   Format: <answer>digit</answer>
+   Returns: Correct or incorrect
 
-- Existence Query (e.g., querying pattern "ABC"):
-<query_exists>ABC</query_exists>
+- You cannot use Review operation on target evidence {target_id}
+- Jurisprudential logic codes must be integers from 0 to 9
+- Moot operations permanently add new hypothetical evidence to the derivation tree
+- Answer must be an integer from 0 to 9
+- Deduction ends after answer submission
 
-- Count Query (e.g., querying pattern "ABC" occurrence count):
-<query_count>ABC</query_count>
-
-- Prefix Maximum Count Query (e.g., querying maximum count for prefix "AB"):
-<query_prefix_max>AB</query_prefix_max>
-
-- Leftmost Position Query (e.g., querying leftmost node of pattern "ABC"):
-<query_position>ABC</query_position>
-
-When submitting the final dossier, specify the pattern content and leftmost starting node in this format:
-
-<answer>pattern=ABC, position=5</answer>
+Start your legal cross-examination!
 """
 
-    tags = ["answer", "query_exists", "query_count", "query_prefix_max", "query_position"]
-
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
+    tags = ["answer", "listen", "graft"]
+    
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 10,
-                "k": 2,
-                "p": 3,
-                "alphabet": ["A", "B"],
-                "sequence": "ABAABABAAB",
-                "target_pattern": "BA",
-                "target_position": 2,
+                "n": 4,
+                "edges": [
+                    (1, 2, 3),
+                    (1, 3, 5),
+                    (2, 4, 2)
+                ],
+                "root": 1,
+                "target": 4,
+                "a": 2, "b": 1, "c": 0, "root_value": 3
             },
             2: {
-                "n": 15,
-                "k": 3,
-                "p": 2,
-                "alphabet": ["A", "B"],
-                "sequence": "ABABABABAABBBAA",
-                "target_pattern": "BAA",
-                "target_position": 8,
+                "n": 7,
+                "edges": [
+                    (1, 2, 1),
+                    (1, 3, 2),
+                    (2, 4, 3),
+                    (2, 5, 4),
+                    (3, 6, 5),
+                    (3, 7, 6)
+                ],
+                "root": 1,
+                "target": 5,
+                "a": 3, "b": 2, "c": 1, "root_value": 2
             },
             3: {
-                "n": 20,
-                "k": 3,
-                "p": 3,
-                "alphabet": ["A", "B", "C"],
-                "sequence": "ABCABCABCABCAACBBBBA",
-                "target_pattern": "CAB",
-                "target_position": 3,
+                "n": 10,
+                "edges": [
+                    (1, 2, 2),
+                    (1, 3, 3),
+                    (2, 4, 1),
+                    (2, 5, 4),
+                    (3, 6, 2),
+                    (3, 7, 5),
+                    (4, 8, 3),
+                    (5, 9, 6),
+                    (6, 10, 7)
+                ],
+                "root": 1,
+                "target": 9,
+                "a": 4, "b": 3, "c": 2, "root_value": 1
             },
             4: {
-                "n": 25,
-                "k": 4,
-                "p": 2,
-                "alphabet": ["A", "B", "C", "D"],
-                "sequence": "ABCDABCDABCDABABABABABABA",
-                "target_pattern": "DABC",
-                "target_position": 4,
+                "n": 12,
+                "edges": [
+                    (1, 2, 1),
+                    (1, 3, 2),
+                    (2, 4, 3),
+                    (2, 5, 4),
+                    (3, 6, 5),
+                    (3, 7, 6),
+                    (4, 8, 7),
+                    (5, 9, 8),
+                    (6, 10, 9),
+                    (7, 11, 1),
+                    (8, 12, 2)
+                ],
+                "root": 1,
+                "target": 12,
+                "a": 7, "b": 5, "c": 3, "root_value": 4
             },
             5: {
-                "n": 28,
-                "k": 4,
-                "p": 2,
-                "alphabet": ["A", "B", "C", "D"],
-                "sequence": "ABCDABCDABCDABABABABABABABAB",
-                "target_pattern": "DABC",
-                "target_position": 4,
-            },
+                "n": 15,
+                "edges": [
+                    (1, 2, 2),
+                    (1, 3, 3),
+                    (1, 4, 4),
+                    (2, 5, 1),
+                    (2, 6, 5),
+                    (3, 7, 6),
+                    (3, 8, 7),
+                    (4, 9, 8),
+                    (4, 10, 9),
+                    (5, 11, 2),
+                    (6, 12, 3),
+                    (7, 13, 4),
+                    (8, 14, 5),
+                    (9, 15, 6)
+                ],
+                "root": 1,
+                "target": 15,
+                "a": 9, "b": 7, "c": 6, "root_value": 5
+            }
         },
         "en": {
             1: {
-                "n": 10,
-                "k": 2,
-                "p": 3,
-                "alphabet": ["A", "B"],
-                "sequence": "ABAABABAAB",
-                "target_pattern": "BA",
-                "target_position": 2,
+                "n": 4,
+                "edges": [
+                    (1, 2, 3),
+                    (1, 3, 5),
+                    (2, 4, 2)
+                ],
+                "root": 1,
+                "target": 4,
+                "a": 2, "b": 1, "c": 0, "root_value": 3
             },
             2: {
-                "n": 15,
-                "k": 3,
-                "p": 2,
-                "alphabet": ["A", "B"],
-                "sequence": "ABABABABAABBBAA",
-                "target_pattern": "BAA",
-                "target_position": 8,
+                "n": 7,
+                "edges": [
+                    (1, 2, 1),
+                    (1, 3, 2),
+                    (2, 4, 3),
+                    (2, 5, 4),
+                    (3, 6, 5),
+                    (3, 7, 6)
+                ],
+                "root": 1,
+                "target": 5,
+                "a": 3, "b": 2, "c": 1, "root_value": 2
             },
             3: {
-                "n": 20,
-                "k": 3,
-                "p": 3,
-                "alphabet": ["A", "B", "C"],
-                "sequence": "ABCABCABCABCAACBBBBA",
-                "target_pattern": "CAB",
-                "target_position": 3,
+                "n": 10,
+                "edges": [
+                    (1, 2, 2),
+                    (1, 3, 3),
+                    (2, 4, 1),
+                    (2, 5, 4),
+                    (3, 6, 2),
+                    (3, 7, 5),
+                    (4, 8, 3),
+                    (5, 9, 6),
+                    (6, 10, 7)
+                ],
+                "root": 1,
+                "target": 9,
+                "a": 4, "b": 3, "c": 2, "root_value": 1
             },
             4: {
-                "n": 25,
-                "k": 4,
-                "p": 2,
-                "alphabet": ["A", "B", "C", "D"],
-                "sequence": "ABCDABCDABCDABABABABABABA",
-                "target_pattern": "DABC",
-                "target_position": 4,
+                "n": 12,
+                "edges": [
+                    (1, 2, 1),
+                    (1, 3, 2),
+                    (2, 4, 3),
+                    (2, 5, 4),
+                    (3, 6, 5),
+                    (3, 7, 6),
+                    (4, 8, 7),
+                    (5, 9, 8),
+                    (6, 10, 9),
+                    (7, 11, 1),
+                    (8, 12, 2)
+                ],
+                "root": 1,
+                "target": 12,
+                "a": 7, "b": 5, "c": 3, "root_value": 4
             },
             5: {
-                "n": 28,
-                "k": 4,
-                "p": 2,
-                "alphabet": ["A", "B", "C", "D"],
-                "sequence": "ABCDABCDABCDABABABABABABABAB",
-                "target_pattern": "DABC",
-                "target_position": 4,
-            },
-        },
+                "n": 15,
+                "edges": [
+                    (1, 2, 2),
+                    (1, 3, 3),
+                    (1, 4, 4),
+                    (2, 5, 1),
+                    (2, 6, 5),
+                    (3, 7, 6),
+                    (3, 8, 7),
+                    (4, 9, 8),
+                    (4, 10, 9),
+                    (5, 11, 2),
+                    (6, 12, 3),
+                    (7, 13, 4),
+                    (8, 14, 5),
+                    (9, 15, 6)
+                ],
+                "root": 1,
+                "target": 15,
+                "a": 9, "b": 7, "c": 6, "root_value": 5
+            }
+        }
     }
 
+    def __init__(self, config):
+        super().__init__(config)
+
     def _initialize_game(self):
-        """初始化游戏参数和隐藏序列"""
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -621,249 +668,166 @@ When submitting the final dossier, specify the pattern content and leftmost star
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = len(cfg["sequence"])
-        self._game_info["k"] = cfg["k"]
-        self._game_info["p"] = cfg["p"]
-        self._game_info["alphabet"] = ", ".join(cfg["alphabet"])
-        self._game_info["max_pos"] = len(cfg["sequence"]) - cfg["k"] + 1
+        
+        self.n = cfg["n"]
+        self.edges = cfg["edges"]
+        self.root = cfg["root"]
+        self.target = cfg["target"]
+        
+        self.a = cfg["a"]
+        self.b = cfg["b"]
+        self.c = cfg["c"]
+        self.root_value = cfg["root_value"]
+        
+        self.children = {}
+        self.parent_map = {}
+        for parent, child, label in self.edges:
+            if parent not in self.children:
+                self.children[parent] = []
+            self.children[parent].append((child, label))
+            self.parent_map[child] = (parent, label)
+        
+        self.node_values = {}
+        self._compute_values(self.root, self.root_value)
+        
+        self.true_answer = self.node_values[self.target]
+        
+        tree_desc = self._build_tree_description()
+        
+        self._game_info["n"] = self.n
+        self._game_info["target_id"] = self.target
+        self._game_info["tree_structure"] = tree_desc
+        
+        self.next_node_id = self.n + 1
 
-        # 存储游戏内部状态
-        self.sequence = cfg["sequence"]
-        self.k = cfg["k"]
-        self.p = cfg["p"]
-        self.target_pattern = cfg["target_pattern"]
-        self.target_position = cfg["target_position"]
-        self.alphabet_set = set(cfg["alphabet"])
+    def _compute_values(self, node, value):
+        self.node_values[node] = value
+        if node in self.children:
+            for child, label in self.children[node]:
+                child_value = (self.a * value + self.b * label + self.c) % 10
+                self._compute_values(child, child_value)
 
-        # 预计算所有长度为 k 的子串及其出现次数和位置
-        self._precompute_patterns()
-
-    def _precompute_patterns(self):
-        """预计算所有 K 长子串的出现次数和位置"""
-        self.pattern_counts = {}  # pattern -> count
-        self.pattern_positions = {}  # pattern -> list of positions (1-indexed)
-
-        n = len(self.sequence)
-        for i in range(n - self.k + 1):
-            pattern = self.sequence[i:i + self.k]
-            if pattern not in self.pattern_counts:
-                self.pattern_counts[pattern] = 0
-                self.pattern_positions[pattern] = []
-            self.pattern_counts[pattern] += 1
-            self.pattern_positions[pattern].append(i + 1)  # 1-indexed
-
-    def _count_pattern(self, pattern):
-        """返回指定模式的出现次数"""
-        return self.pattern_counts.get(pattern, 0)
-
-    def _get_leftmost_position(self, pattern):
-        """返回指定模式的最左位置，不存在则返回 None"""
-        positions = self.pattern_positions.get(pattern, [])
-        return positions[0] if positions else None
-
-    def _get_prefix_max_count(self, prefix):
-        """返回以指定前缀开头的所有 K 长子串中，单个子串出现次数的最大值"""
-        prefix_len = len(prefix)
-        if prefix_len >= self.k:
-            raise ValueError("Prefix length must be less than K")
-
-        max_count = 0
-        for pattern, count in self.pattern_counts.items():
-            if pattern.startswith(prefix):
-                max_count = max(max_count, count)
-        return max_count
+    def _build_tree_description(self):
+        if self.config.language == "zh":
+            lines = [f"根节点: {self.root}", "边列表 (父节点 -> 子节点 [边标签]):"]
+            for parent, child, label in self.edges:
+                lines.append(f"  {parent} -> {child} [标签={label}]")
+        else:
+            lines = [f"Root node: {self.root}", "Edge list (parent -> child [edge label]):"]
+            for parent, child, label in self.edges:
+                lines.append(f"  {parent} -> {child} [label={label}]")
+        return "\n".join(lines)
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"]
-        
-        # 解析答案: pattern=XXX, position=Y
-        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
-        ans_dict = {}
-        for kv in kv_pairs:
-            parts = kv.split("=", 1)
-            if len(parts) == 2:
-                k, v = parts
-                ans_dict[k.strip()] = v.strip()
-
-        if "pattern" not in ans_dict or "position" not in ans_dict:
-            return False
-
-        # 1. 检查模式是否正确
-        submitted_pattern = ans_dict["pattern"]
-        if submitted_pattern != self.target_pattern:
-            return False
-
-        # 2. 检查位置是否正确
         try:
-            submitted_position = int(ans_dict["position"])
-        except ValueError:
+            answer = int(parsed_info["answer"].strip())
+            if answer < 0 or answer > 9:
+                return False
+            return answer == self.true_answer
+        except (ValueError, KeyError, AttributeError):
             return False
-
-        if submitted_position != self.target_position:
-            return False
-
-        # 3. 验证该模式确实出现 P 次
-        if self._count_pattern(submitted_pattern) != self.p:
-            return False
-
-        return True
 
     def _cf_core_produce(self, parsed_info):
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            not_found_res = "不存在"
-            error_len_res = "错误：子串长度必须等于 {}"
-            error_prefix_len_res = "错误：前缀长度必须在 1 到 {} 之间"
-            error_char_res = "错误：子串包含非法字符"
+        is_zh = self.config.language == "zh"
+        
+        if "listen" in parsed_info:
+            try:
+                node_id = int(parsed_info["listen"].strip())
+                
+                if node_id == self.target:
+                    return "错误：不能查询目标节点的属性值。" if is_zh else "Error: Cannot query the target node's attribute."
+                
+                if node_id not in self.node_values:
+                    return "错误：节点不存在。" if is_zh else "Error: Node does not exist."
+                
+                value = self.node_values[node_id]
+                return f"节点 {node_id} 的属性值为: {value}" if is_zh else f"Node {node_id} attribute value: {value}"
+            except (ValueError, TypeError, AttributeError):
+                return "错误：无效的节点ID格式。" if is_zh else "Error: Invalid node ID format."
+        
+        elif "graft" in parsed_info:
+            try:
+                parts = parsed_info["graft"].strip().split(",")
+                if len(parts) != 2:
+                    raise ValueError("Expected exactly 2 comma-separated values")
+                
+                parent_id = int(parts[0].strip())
+                edge_label = int(parts[1].strip())
+                
+                if parent_id not in self.node_values:
+                    return "错误：父节点不存在。" if is_zh else "Error: Parent node does not exist."
+                
+                if edge_label < 0 or edge_label > 9:
+                    return "错误：边标签必须在0到9之间。" if is_zh else "Error: Edge label must be between 0 and 9."
+                
+                new_node_id = self.next_node_id
+                self.next_node_id += 1
+                
+                parent_value = self.node_values[parent_id]
+                new_value = (self.a * parent_value + self.b * edge_label + self.c) % 10
+                
+                if parent_id not in self.children:
+                    self.children[parent_id] = []
+                self.children[parent_id].append((new_node_id, edge_label))
+                self.parent_map[new_node_id] = (parent_id, edge_label)
+                self.node_values[new_node_id] = new_value
+                
+                if is_zh:
+                    return f"新节点已创建。节点ID: {new_node_id}, 属性值: {new_value}"
+                else:
+                    return f"New node created. Node ID: {new_node_id}, Attribute value: {new_value}"
+            except (ValueError, TypeError, AttributeError):
+                return "错误：无效的嫁接操作格式。格式应为: 父节点ID,边标签" if is_zh else "Error: Invalid graft format. Format should be: parentID,edgeLabel"
+        
         else:
-            yes_res, no_res = "Yes", "No"
-            not_found_res = "not found"
-            error_len_res = "Error: substring length must equal {}"
-            error_prefix_len_res = "Error: prefix length must be between 1 and {}"
-            error_char_res = "Error: substring contains invalid characters"
-
-        # 优先级：exists > count > prefix_max > position
-        if "query_exists" in parsed_info:
-            pattern = parsed_info["query_exists"].strip()
-            
-            # 验证长度
-            if len(pattern) != self.k:
-                return error_len_res.format(self.k)
-            
-            # 验证字符合法性
-            if not all(c in self.alphabet_set for c in pattern):
-                return error_char_res
-            
-            exists = self._count_pattern(pattern) > 0
-            return yes_res if exists else no_res
-
-        elif "query_count" in parsed_info:
-            pattern = parsed_info["query_count"].strip()
-            
-            # 验证长度
-            if len(pattern) != self.k:
-                return error_len_res.format(self.k)
-            
-            # 验证字符合法性
-            if not all(c in self.alphabet_set for c in pattern):
-                return error_char_res
-            
-            count = self._count_pattern(pattern)
-            return str(count)
-
-        elif "query_prefix_max" in parsed_info:
-            prefix = parsed_info["query_prefix_max"].strip()
-            
-            # 验证前缀长度
-            if len(prefix) < 1 or len(prefix) >= self.k:
-                return error_prefix_len_res.format(self.k - 1)
-            
-            # 验证字符合法性
-            if not all(c in self.alphabet_set for c in prefix):
-                return error_char_res
-            
-            max_count = self._get_prefix_max_count(prefix)
-            return str(max_count)
-
-        elif "query_position" in parsed_info:
-            pattern = parsed_info["query_position"].strip()
-            
-            # 验证长度
-            if len(pattern) != self.k:
-                return error_len_res.format(self.k)
-            
-            # 验证字符合法性
-            if not all(c in self.alphabet_set for c in pattern):
-                return error_char_res
-            
-            position = self._get_leftmost_position(pattern)
-            return str(position) if position is not None else not_found_res
-
-        else:
-            raise ValueError("No valid query tag found.")
+            raise ValueError("No valid operation tag found.")
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
-        alphabet = sorted(list(self.alphabet_set))  # 确保顺序确定
+        possible_queries = []
+        is_zh = self.config.language == "zh"
         
-        # 准备回答的文本，需与 _cf_core_produce 中的逻辑一致
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            not_found_res = "不存在"
-        else:
-            yes_res, no_res = "Yes", "No"
-            not_found_res = "not found"
-
-        # 1. 涉及完整长度 K 子串的查询 (Exists, Count, Position)
-        # 生成所有可能的长度为 K 的字符串
-        all_patterns = [''.join(p) for p in itertools.product(alphabet, repeat=self.k)]
+        existing_nodes = sorted(self.node_values.keys())
         
-        for pattern in all_patterns:
-            # Type 1: query_exists
-            exists = self._count_pattern(pattern) > 0
-            queries.append({
-                "query": f"<query_exists>{pattern}</query_exists>",
-                "answer": yes_res if exists else no_res
-            })
+        for node_id in existing_nodes:
+            if node_id == self.target:
+                continue
             
-            # Type 2: query_count
-            count = self._count_pattern(pattern)
-            queries.append({
-                "query": f"<query_count>{pattern}</query_count>",
-                "answer": str(count)
-            })
+            query = f"<listen>{node_id}</listen>"
+            value = self.node_values[node_id]
+            answer = f"节点 {node_id} 的属性值为: {value}" if is_zh else f"Node {node_id} attribute value: {value}"
             
-            # Type 4: query_position
-            position = self._get_leftmost_position(pattern)
-            ans_pos = str(position) if position is not None else not_found_res
-            queries.append({
-                "query": f"<query_position>{pattern}</query_position>",
-                "answer": ans_pos
+            possible_queries.append({
+                "query": query,
+                "answer": answer
             })
 
-        # 2. 涉及前缀的查询 (Prefix Max Count)
-        # 仅当 K > 1 时有效，前缀长度范围 [1, K-1]
-        if self.k > 1:
-            for t in range(1, self.k):
-                all_prefixes = [''.join(p) for p in itertools.product(alphabet, repeat=t)]
-                for prefix in all_prefixes:
-                    # Type 3: query_prefix_max
-                    max_count = self._get_prefix_max_count(prefix)
-                    queries.append({
-                        "query": f"<query_prefix_max>{prefix}</query_prefix_max>",
-                        "answer": str(max_count)
-                    })
-                    
-        return queries
+        return possible_queries
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        # 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
+    def _cf_make_wrong(self, correct):
+        import re as _re
+        import random
         
-        # 关键词替换
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
+        is_zh = self.config.language == "zh"
         
-        lower_correct = correct.lower()
-        if lower_correct == "yes":
-            # 保持原始大小写风格，这里假设 'Yes' -> 'No', 'yes' -> 'no'
-            return "No" if correct[0].isupper() else "no"
-        if lower_correct == "no":
-            return "Yes" if correct[0].isupper() else "yes"
-            
-        # 若都不匹配
+        pattern_listen = r'(属性值为:\s*|attribute value:\s*)(\d)'
+        match = _re.search(pattern_listen, correct)
+        if match:
+            orig_val = int(match.group(2))
+            wrong_val = (orig_val + random.randint(1, 9)) % 10
+            return correct[:match.start(2)] + str(wrong_val) + correct[match.end(2):]
+        
+        pattern_graft = r'(属性值:\s*|Attribute value:\s*)(\d)'
+        match = _re.search(pattern_graft, correct)
+        if match:
+            orig_val = int(match.group(2))
+            wrong_val = (orig_val + random.randint(1, 9)) % 10
+            return correct[:match.start(2)] + str(wrong_val) + correct[match.end(2):]
+        
+        matches = list(_re.finditer(r'\d', correct))
+        if matches:
+            last_match = matches[-1]
+            orig_val = int(last_match.group())
+            wrong_val = (orig_val + random.randint(1, 9)) % 10
+            return correct[:last_match.start()] + str(wrong_val) + correct[last_match.end():]
+        
         return correct + "_WRONG"

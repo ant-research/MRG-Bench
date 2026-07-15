@@ -1,1014 +1,585 @@
 from .base import Game
-import re
+import random
 
-
-class MaxPathInTreeGame(Game):
+class SequencePositionMappingGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"树中最大路径查询"游戏。规则如下：
+我们来玩一个"序列位置映射识别"的推理游戏，规则如下：
 
-游戏设定了一棵未知结构的有根树，节点编号为 1 到 N，根节点编号为 1。每个节点 u 有一个整数权重 w(u)，可以是正数、零或负数。边没有权重。
+游戏设定了一个长度为 {n} 的未知有序序列 S，序列中的元素均为大写字母。序列的索引从 1 到 {n}。
 
-你的目标是：在所有从根到叶的路径中，找出节点权重之和最大的那条路径，以及该路径的权重总和。保证所有根到叶路径的总和两两不同，即唯一最优路径一定存在。
+系统已秘密选择了一个目标符号 τ = {target}，它保证在序列中至少出现一次。同时，系统从以下四种映射模式中秘密选择了一种作为隐藏规则：
 
-初始时你只知道根节点的编号是 1，其余的树结构和节点权重都是未知的。你需要通过局部查询逐步获得信息。
+1. LF 模式：对任意符号 x，返回 x 在序列中首次出现的位置
+2. LL 模式：对任意符号 x，返回 x 在序列中最后出现的位置
+3. RF 模式：对任意符号 x，返回从右往左数，x 最后出现位置到右端的距离加 1
+4. RL 模式：对任意符号 x，返回从右往左数，x 首次出现位置到右端的距离加 1
 
-## 查询规则
+注意：当符号 x 不在序列中时，映射值定义为 0。
 
-每次你只能对一个节点或一条候选路径发起一次查询。不允许请求整棵树或整层的批量信息。
+你的目标是通过尽可能少的询问，识别出隐藏的映射模式，并计算出目标符号 τ 在该模式下的数值。
 
-允许的查询类型如下（请严格按照 XML 格式）：
+你可以进行以下两种类型的询问（每次仅限一个操作）：
 
-1. 查询节点总数：
-<query_n></query_n>
+1. 检查位置：查看序列中某个位置的符号是什么
+   格式：<inspect>位置编号</inspect>
+   示例：<inspect>3</inspect>
+   返回：Symbol=X（其中 X 是该位置的大写字母）
 
-2. 查询节点 u 的权重：
-<query_value>u</query_value>
+2. 查询符号：查询某个符号在当前隐藏模式下的映射值
+   格式：<query>符号</query>
+   示例：<query>A</query>
+   返回：
+   - 如果查询的是目标符号 τ：Silence（系统保持沉默，不返回数值）
+   - 如果符号不在序列中：0
+   - 否则：Echo=数值（一个 1 到 {n} 之间的整数）
 
-3. 查询节点 u 的所有子节点（返回升序列表，若 u 为叶则返回空列表）：
-<query_children>u</query_children>
+当你准备好提交答案时，必须同时声明映射模式和目标符号的数值，格式如下：
 
-4. 查询节点 u 是否为叶节点：
-<query_isleaf>u</query_isleaf>
+<answer>Mode=模式, Value=数值</answer>
 
-5. 查询节点 u 的父节点（若 u=1 则返回 NONE）：
-<query_parent>u</query_parent>
+其中模式必须是 LF、LL、RF、RL 之一，数值必须是 1 到 {n} 之间的整数。
 
-6. 验证并查询一条根到叶路径的总和（路径必须以 1 开头、以某叶结尾，且相邻节点为父子关系）：
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+示例：<answer>Mode=LF, Value=5</answer>
 
-7. 标注（仅作记录，不触发信息回应，不计入查询次数）：
-<note>你的标注内容</note>
-
-## 裁判回应格式
-
-- 对 query_n：返回节点总数
-- 对 query_value：返回该节点的权重值
-- 对 query_children：返回子节点列表（升序），若无子节点则返回空列表
-- 对 query_isleaf：返回"是"或"否"
-- 对 query_parent：返回父节点编号，若为根则返回"无"
-- 对 query_pathsum：若为有效路径则返回总和，否则返回"无效路径"
-- 对 note：不回应
-
-## 提交答案
-
-当你收集到足够信息后，可以提交最终答案。格式如下：
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-其中 path 是从根到叶的完整路径（用逗号分隔），sum 是该路径的权重总和。
-
-判定标准：
-- path 必须是有效的根到叶路径
-- sum 必须与该路径的真实总和一致
-- 该总和必须是所有根到叶路径中的最大值
-
-若答案正确，返回"答案正确"；否则返回"答案错误"。
-
-## 注意事项
-
-- 请尽可能减少查询次数
-- 每次只能进行一个查询
-- 格式错误的查询不会被响应
+若模式或数值任一错误，游戏失败。
 """
 
     game_rule_en = """\
-Let's play a "Maximum Path in Tree Query" game. Here are the rules:
+Let's play a "Sequence Position Mapping Recognition" deduction game. Here are the rules:
 
-The game involves an unknown rooted tree with nodes numbered from 1 to N, where node 1 is the root. Each node u has an integer weight w(u), which can be positive, zero, or negative. Edges have no weights.
+The game has an unknown ordered sequence S of length {n}, where all elements are uppercase letters. The sequence is indexed from 1 to {n}.
 
-Your goal is: among all root-to-leaf paths, find the one with the maximum sum of node weights, and determine that sum. It is guaranteed that all root-to-leaf path sums are distinct, so a unique optimal path exists.
+The system has secretly selected a target symbol τ = {target}, which is guaranteed to appear at least once in the sequence. Additionally, the system has secretly chosen one of the following four mapping modes as the hidden rule:
 
-Initially, you only know the root node is numbered 1. The rest of the tree structure and node weights are unknown. You must gradually gather information through local queries.
+1. LF Mode: For any symbol x, return the position of its first occurrence in the sequence
+2. LL Mode: For any symbol x, return the position of its last occurrence in the sequence
+3. RF Mode: For any symbol x, return the distance from its last occurrence to the right end plus 1 (counting from right)
+4. RL Mode: For any symbol x, return the distance from its first occurrence to the right end plus 1 (counting from right)
 
-## Query Rules
+Note: When symbol x does not exist in the sequence, the mapping value is defined as 0.
 
-Each time you can only query about one node or one candidate path. Batch requests for the entire tree or entire levels are not allowed.
+Your goal is to identify the hidden mapping mode and calculate the value of the target symbol τ under that mode, using as few queries as possible.
 
-Allowed query types (strictly follow XML format):
+You can perform the following two types of queries (one operation per turn):
 
-1. Query total number of nodes:
-<query_n></query_n>
+1. Inspect Position: Check what symbol is at a certain position in the sequence
+   Format: <inspect>position_number</inspect>
+   Example: <inspect>3</inspect>
+   Returns: Symbol=X (where X is the uppercase letter at that position)
 
-2. Query the weight of node u:
-<query_value>u</query_value>
+2. Query Symbol: Query the mapping value of a symbol under the current hidden mode
+   Format: <query>symbol</query>
+   Example: <query>A</query>
+   Returns:
+   - If querying the target symbol τ: Silence (system remains silent, no value returned)
+   - If symbol not in sequence: 0
+   - Otherwise: Echo=value (an integer between 1 and {n})
 
-3. Query all children of node u (returns sorted list; empty if u is a leaf):
-<query_children>u</query_children>
+When you are ready to submit your answer, you must declare both the mapping mode and the target symbol's value in the following format:
 
-4. Query whether node u is a leaf:
-<query_isleaf>u</query_isleaf>
+<answer>Mode=mode, Value=value</answer>
 
-5. Query the parent of node u (returns NONE if u=1):
-<query_parent>u</query_parent>
+The mode must be one of LF, LL, RF, RL, and the value must be an integer between 1 and {n}.
 
-6. Verify and query the sum of a root-to-leaf path (must start with 1, end at a leaf, with adjacent nodes being parent-child):
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+Example: <answer>Mode=LF, Value=5</answer>
 
-7. Note (for annotation only, no response, does not count as a query):
-<note>your annotation</note>
-
-## Judge Response Format
-
-- For query_n: returns total number of nodes
-- For query_value: returns the node's weight value
-- For query_children: returns list of children (sorted); empty list if no children
-- For query_isleaf: returns "Yes" or "No"
-- For query_parent: returns parent node number; "None" if root
-- For query_pathsum: returns sum if valid path; "Invalid path" otherwise
-- For note: no response
-
-## Submit Answer
-
-When you have gathered enough information, submit your final answer in this format:
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-where path is the complete root-to-leaf path (comma-separated), and sum is the total weight of that path.
-
-Judgment criteria:
-- path must be a valid root-to-leaf path
-- sum must match the actual sum of that path
-- that sum must be the maximum among all root-to-leaf paths
-
-If correct, returns "Correct answer"; otherwise returns "Incorrect answer".
-
-## Notes
-
-- Try to minimize the number of queries
-- Only one query per turn
-- Incorrectly formatted queries will not be responded to
+If either the mode or value is incorrect, the game fails.
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-我们来进行一项“交通网络最优通行路线规划”任务。规则如下：
+欢迎进入智能交通信号排班分析系统。本系统用于分析复杂的车流序列并提取特定目标车辆的通行模式特征。
 
-游戏设定了一个未知结构的交通管网系统，站点编号为 1 到 N，总枢纽编号为 1。每个站点 u 都有一个整数净收益 w(u)（代表客流收益减去运营成本），可以是正数、零或负数。站点间的连接路段没有独立权重。
+系统捕获了一段长度为 {n} 的未知时序路口通行记录序列 S，序列中的元素均为代表不同车辆类型或方向的大写字母。时间节点编号从 1 到 {n}。
 
-你的目标是：在所有从总枢纽到最终目的站（终点站）的通行路线中，找出站点净收益之和最大的那条路线，以及该路线的总收益。保证所有从总枢纽到终点站的路线收益总和两两不同，即唯一最优路线一定存在。
+系统已秘密锁定了一类重点监测的车辆类型 τ = {target}，它保证在序列中至少出现一次。同时，系统从以下四种评估模式中秘密选择了一种作为隐藏的排班规则：
 
-初始时你只知道总枢纽的编号是 1，其余的管网结构和站点收益都是未知的。你需要通过局部查询逐步获得信息。
+1. LF 模式：对任意车辆类型 x，返回其在序列中当日首次通行的时间节点
+2. LL 模式：对任意车辆类型 x，返回其在序列中当日最后一次通行的时间节点
+3. RF 模式：对任意车辆类型 x，返回从右往左数，其最后一次通行节点距晚高峰结束（右端）的倒数节点距离加 1
+4. RL 模式：对任意车辆类型 x，返回从右往左数，其首次通行节点距晚高峰结束（右端）的倒数节点距离加 1
 
-## 查询规则
+注意：当车辆类型 x 未出现时，评估值定义为 0。
 
-每次你只能对一个站点或一条候选路线发起一次查询。不允许请求全局管网或整层路网的批量信息。
+你的目标是通过尽可能少的系统询问，识别出隐藏的排班模式，并计算出重点监测车辆类型 τ 在该模式下的数值。
 
-允许的查询类型如下（请严格按照 XML 格式）：
+你可以进行以下两种类型的询问（每次仅限一个操作）：
 
-1. 查询系统站点总数：
-<query_n></query_n>
+1. 检查节点：查看序列中某个时间节点的车辆类型是什么
+   格式：<inspect>节点编号</inspect>
+   示例：<inspect>3</inspect>
+   返回：Symbol=X（其中 X 是该节点的大写字母代表的车辆类型）
 
-2. 查询站点 u 的净收益：
-<query_value>u</query_value>
+2. 查询特征：查询某个车辆类型在当前隐藏模式下的评估值
+   格式：<query>车辆类型</query>
+   示例：<query>A</query>
+   返回：
+   - 如果查询的是重点监测车辆类型 τ：Silence（系统保持沉默，由于权限限制不返回数值）
+   - 如果该车辆类型未在序列中出现：0
+   - 否则：Echo=数值（一个 1 到 {n} 之间的整数）
 
-3. 查询站点 u 的所有下游站点（返回升序列表，若 u 为终点站则返回空列表）：
-<query_children>u</query_children>
+当你准备好提交分析结果时，必须同时声明排班模式和目标车辆类型的特征数值，格式如下：
 
-4. 查询站点 u 是否为终点站：
-<query_isleaf>u</query_isleaf>
+<answer>Mode=模式, Value=数值</answer>
 
-5. 查询站点 u 的直属上游站点（若 u=1 则返回 NONE）：
-<query_parent>u</query_parent>
+其中模式必须是 LF、LL、RF、RL 之一，数值必须是 1 到 {n} 之间的整数。
 
-6. 验证并查询一条完整通行路线的总收益（路线必须以 1 开头、以某终点站结尾，且相邻站点为上下游关系）：
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+示例：<answer>Mode=LF, Value=5</answer>
 
-7. 标注（仅作记录，不触发信息回应，不计入查询次数）：
-<note>你的标注内容</note>
-
-## 裁判回应格式
-
-- 对 query_n：返回站点总数
-- 对 query_value：返回该站点的净收益值
-- 对 query_children：返回下游站点列表（升序），若无下游站点则返回空列表
-- 对 query_isleaf：返回"是"或"否"
-- 对 query_parent：返回上游站点编号，若为总枢纽则返回"无"
-- 对 query_pathsum：若为有效路线则返回总收益，否则返回"无效路径"
-- 对 note：不回应
-
-## 提交答案
-
-当你收集到足够信息后，可以提交最终方案。格式如下：
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-其中 path 是从总枢纽到终点站的完整路线（用逗号分隔），sum 是该路线的净收益总和。
-
-判定标准：
-- path 必须是有效的完整通行路线
-- sum 必须与该路线的真实总收益一致
-- 该总收益必须是所有完整路线中的最大值
-
-若方案正确，返回"答案正确"；否则返回"答案错误"。
-
-## 注意事项
-
-- 请尽可能减少查询次数
-- 每次只能进行一个查询
-- 格式错误的查询不会被响应
+若模式或数值任一错误，分析任务失败。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's conduct an "Optimal Traffic Network Route Planning" task. Here are the rules:
+Welcome to the Intelligent Traffic Signal Scheduling Analysis System. This system is designed to analyze complex traffic flow sequences and extract the passing pattern features of specific target vehicles.
 
-The system involves an unknown traffic network structure with stations numbered from 1 to N, where station 1 is the main hub. Each station u has an integer net benefit w(u) (representing passenger revenue minus operational costs), which can be positive, zero, or negative. Route connections between stations have no independent weights.
+The system has captured an unknown temporal traffic sequence S of length {n}, where all elements are uppercase letters representing different vehicle types or directions. The time nodes are indexed from 1 to {n}.
 
-Your goal is: among all possible routes from the main hub to any terminal station, find the one with the maximum sum of station net benefits, and determine that total benefit. It is guaranteed that all complete route sums are distinct, so a unique optimal route exists.
+The system has secretly locked onto a key monitored vehicle type τ = {target}, which is guaranteed to appear at least once in the sequence. Additionally, the system has secretly chosen one of the following four evaluation modes as the hidden scheduling rule:
 
-Initially, you only know the main hub is numbered 1. The rest of the network structure and station benefits are unknown. You must gradually gather information through local queries.
+1. LF Mode: For any vehicle type x, return the time node of its first passing in the sequence today
+2. LL Mode: For any vehicle type x, return the time node of its last passing in the sequence today
+3. RF Mode: For any vehicle type x, return the distance from its last passing node to the end of the evening peak (right end) plus 1 (counting from right)
+4. RL Mode: For any vehicle type x, return the distance from its first passing node to the end of the evening peak (right end) plus 1 (counting from right)
 
-## Query Rules
+Note: When vehicle type x does not appear in the sequence, the evaluation value is defined as 0.
 
-Each time you can only query about one station or one candidate route. Batch requests for the entire network or entire levels are not allowed.
+Your goal is to identify the hidden scheduling mode and calculate the value of the key monitored vehicle type τ under that mode, using as few system queries as possible.
 
-Allowed query types (strictly follow XML format):
+You can perform the following two types of queries (one operation per turn):
 
-1. Query total number of stations:
-<query_n></query_n>
+1. Inspect Node: Check what vehicle type is at a certain time node in the sequence
+   Format: <inspect>node_number</inspect>
+   Example: <inspect>3</inspect>
+   Returns: Symbol=X (where X is the uppercase letter representing the vehicle type at that node)
 
-2. Query the net benefit of station u:
-<query_value>u</query_value>
+2. Query Feature: Query the evaluation value of a vehicle type under the current hidden mode
+   Format: <query>vehicle_type</query>
+   Example: <query>A</query>
+   Returns:
+   - If querying the key monitored vehicle type τ: Silence (system remains silent due to permission limits, no value returned)
+   - If the vehicle type does not appear in the sequence: 0
+   - Otherwise: Echo=value (an integer between 1 and {n})
 
-3. Query all downstream stations of station u (returns sorted list; empty if u is a terminal station):
-<query_children>u</query_children>
+When you are ready to submit your analysis results, you must declare both the scheduling mode and the target vehicle type's feature value in the following format:
 
-4. Query whether station u is a terminal station:
-<query_isleaf>u</query_isleaf>
+<answer>Mode=mode, Value=value</answer>
 
-5. Query the direct upstream station of u (returns NONE if u=1):
-<query_parent>u</query_parent>
+The mode must be one of LF, LL, RF, RL, and the value must be an integer between 1 and {n}.
 
-6. Verify and query the total benefit of a complete route (must start with 1, end at a terminal station, with adjacent stations being upstream-downstream):
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+Example: <answer>Mode=LF, Value=5</answer>
 
-7. Note (for annotation only, no response, does not count as a query):
-<note>your annotation</note>
-
-## Judge Response Format
-
-- For query_n: returns total number of stations
-- For query_value: returns the station's net benefit value
-- For query_children: returns list of downstream stations (sorted); empty list if none
-- For query_isleaf: returns "Yes" or "No"
-- For query_parent: returns upstream station number; "None" if main hub
-- For query_pathsum: returns total benefit if valid route; "Invalid path" otherwise
-- For note: no response
-
-## Submit Answer
-
-When you have gathered enough information, submit your final plan in this format:
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-where path is the complete route from the main hub to a terminal station (comma-separated), and sum is the total net benefit of that route.
-
-Judgment criteria:
-- path must be a valid complete route
-- sum must match the actual total benefit of that route
-- that sum must be the maximum among all complete routes
-
-If correct, returns "Correct answer"; otherwise returns "Incorrect answer".
-
-## Notes
-
-- Try to minimize the number of queries
-- Only one query per turn
-- Incorrectly formatted queries will not be responded to
+If either the mode or value is incorrect, the analysis task fails.
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-我们来进行一项“最优临床诊疗路径推演”任务。规则如下：
+欢迎使用临床用药疗效监测与评估系统。本系统致力于分析患者整个疗程的用药干预序列，并识别核心药物的疗效模式。
 
-系统设定了一套未知结构的临床诊疗决策树，诊疗步骤（节点）编号为 1 到 N，初始接诊步骤编号为 1。每个步骤 u 都有一个整数效用得分 w(u)（代表对患者健康改善或确诊的综合贡献），可以是正数、零或负数。步骤间的流转本身没有独立权重。
+系统载入了一段长度为 {n} 的未知患者用药记录周期 S，序列中的元素均为代表不同药物种类的大写字母。疗程的阶段编号从 1 到 {n}。
 
-你的目标是：在所有从初始接诊到最终确诊方案（终端步骤）的完整诊疗路径中，找出效用得分之和最大的那条路径，以及该路径的总得分。保证所有完整诊疗路径的总得分两两不同，即唯一最优路径一定存在。
+系统已秘密锁定了一种重点关注的药物种类 τ = {target}，它保证在疗程中至少给药一次。同时，系统从以下四种评估模式中秘密选择了一种作为隐藏的疗效计算规则：
 
-初始时你只知道初始接诊步骤的编号是 1，其余的决策树结构和步骤得分都是未知的。你需要通过局部查询逐步获得信息。
+1. LF 模式：对任意药物 x，返回其在疗程中首次给药的阶段编号
+2. LL 模式：对任意药物 x，返回其在疗程中最后一次给药的阶段编号
+3. RF 模式：对任意药物 x，返回从右往左数，其最后一次给药阶段距疗程结束（右端）的倒数距离加 1
+4. RL 模式：对任意药物 x，返回从右往左数，其首次给药阶段距疗程结束（右端）的倒数距离加 1
 
-## 查询规则
+注意：当药物 x 未在疗程中开出时，评估值定义为 0。
 
-每次你只能对一个诊疗步骤或一条候选路径发起一次查询。不允许请求全局决策树或整层步骤的批量信息。
+你的目标是通过尽可能少的系统询问，识别出隐藏的疗效评估模式，并计算出重点关注药物 τ 在该模式下的数值。
 
-允许的查询类型如下（请严格按照 XML 格式）：
+你可以进行以下两种类型的询问（每次仅限一个操作）：
 
-1. 查询步骤总数：
-<query_n></query_n>
+1. 检查阶段：查看疗程序列中某个阶段的药物种类是什么
+   格式：<inspect>阶段编号</inspect>
+   示例：<inspect>3</inspect>
+   返回：Symbol=X（其中 X 是该阶段的大写字母代表的药物）
 
-2. 查询步骤 u 的效用得分：
-<query_value>u</query_value>
+2. 查询疗效：查询某个药物在当前隐藏模式下的评估值
+   格式：<query>药物种类</query>
+   示例：<query>A</query>
+   返回：
+   - 如果查询的是重点关注药物 τ：Silence（基于双盲原则，系统保持沉默）
+   - 如果该药物未在序列中出现：0
+   - 否则：Echo=数值（一个 1 到 {n} 之间的整数）
 
-3. 查询步骤 u 的所有后续步骤（返回升序列表，若 u 为终端步骤则返回空列表）：
-<query_children>u</query_children>
+当你准备好提交结论时，必须同时声明疗效评估模式和核心药物的特征数值，格式如下：
 
-4. 查询步骤 u 是否为最终的确诊终端步骤：
-<query_isleaf>u</query_isleaf>
+<answer>Mode=模式, Value=数值</answer>
 
-5. 查询步骤 u 的直属前置步骤（若 u=1 则返回 NONE）：
-<query_parent>u</query_parent>
+其中模式必须是 LF、LL、RF、RL 之一，数值必须是 1 到 {n} 之间的整数。
 
-6. 验证并查询一条完整诊疗路径的总得分（路径必须以 1 开头、以某终端步骤结尾，且相邻步骤为前后置关系）：
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+示例：<answer>Mode=LF, Value=5</answer>
 
-7. 标注（仅作记录，不触发信息回应，不计入查询次数）：
-<note>你的标注内容</note>
-
-## 裁判回应格式
-
-- 对 query_n：返回步骤总数
-- 对 query_value：返回该步骤的效用得分
-- 对 query_children：返回后续步骤列表（升序），若无后续步骤则返回空列表
-- 对 query_isleaf：返回"是"或"否"
-- 对 query_parent：返回前置步骤编号，若为初始步骤则返回"无"
-- 对 query_pathsum：若为有效诊疗路径则返回总得分，否则返回"无效路径"
-- 对 note：不回应
-
-## 提交答案
-
-当你收集到足够信息后，可以提交最终临床路径。格式如下：
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-其中 path 是从初始接诊到终端步骤的完整路径（用逗号分隔），sum 是该路径的效用总得分。
-
-判定标准：
-- path 必须是有效的完整诊疗路径
-- sum 必须与该路径的真实总得分一致
-- 该总得分必须是所有完整路径中的最大值
-
-若路径正确，返回"答案正确"；否则返回"答案错误"。
-
-## 注意事项
-
-- 请尽可能减少查询次数
-- 每次只能进行一个查询
-- 格式错误的查询不会被响应
+若模式或数值任一错误，则临床评估失败。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's conduct an "Optimal Clinical Pathway Deduction" task. Here are the rules:
+Welcome to the Clinical Medication Efficacy Monitoring and Evaluation System. This system is dedicated to analyzing the medication intervention sequence throughout a patient's course of treatment to identify the efficacy pattern of core drugs.
 
-The system involves an unknown clinical decision tree structure with medical steps (nodes) numbered from 1 to N, where the initial consultation step is numbered 1. Each step u has an integer utility score w(u) (representing the comprehensive contribution to the patient's health improvement or diagnosis certainty), which can be positive, zero, or negative. Transitions between steps have no independent weights.
+The system has loaded an unknown patient medication record sequence S of length {n}, where all elements are uppercase letters representing different drug types. The treatment stages are indexed from 1 to {n}.
 
-Your goal is: among all complete clinical pathways from the initial consultation to any final diagnostic regimen (terminal step), find the one with the maximum sum of utility scores, and determine that total score. It is guaranteed that all complete pathway sums are distinct, so a unique optimal pathway exists.
+The system has secretly locked onto a focal drug type τ = {target}, which is guaranteed to be administered at least once during the treatment. Additionally, the system has secretly chosen one of the following four evaluation modes as the hidden efficacy calculation rule:
 
-Initially, you only know the initial step is numbered 1. The rest of the decision tree structure and step scores are unknown. You must gradually gather information through local queries.
+1. LF Mode: For any drug x, return the stage number of its first administration in the sequence
+2. LL Mode: For any drug x, return the stage number of its last administration in the sequence
+3. RF Mode: For any drug x, return the distance from its last administration stage to the end of the treatment (right end) plus 1 (counting from right)
+4. RL Mode: For any drug x, return the distance from its first administration stage to the end of the treatment (right end) plus 1 (counting from right)
 
-## Query Rules
+Note: When drug x is not prescribed during the treatment, the evaluation value is defined as 0.
 
-Each time you can only query about one medical step or one candidate pathway. Batch requests for the entire decision tree or entire levels are not allowed.
+Your goal is to identify the hidden efficacy evaluation mode and calculate the value of the focal drug τ under that mode, using as few system queries as possible.
 
-Allowed query types (strictly follow XML format):
+You can perform the following two types of queries (one operation per turn):
 
-1. Query total number of steps:
-<query_n></query_n>
+1. Inspect Stage: Check what drug type was administered at a certain stage in the sequence
+   Format: <inspect>stage_number</inspect>
+   Example: <inspect>3</inspect>
+   Returns: Symbol=X (where X is the uppercase letter representing the drug at that stage)
 
-2. Query the utility score of step u:
-<query_value>u</query_value>
+2. Query Efficacy: Query the evaluation value of a drug under the current hidden mode
+   Format: <query>drug_type</query>
+   Example: <query>A</query>
+   Returns:
+   - If querying the focal drug τ: Silence (system remains silent based on double-blind principles)
+   - If the drug does not appear in the sequence: 0
+   - Otherwise: Echo=value (an integer between 1 and {n})
 
-3. Query all subsequent steps of step u (returns sorted list; empty if u is a terminal step):
-<query_children>u</query_children>
+When you are ready to submit your conclusion, you must declare both the efficacy evaluation mode and the focal drug's feature value in the following format:
 
-4. Query whether step u is a final terminal step:
-<query_isleaf>u</query_isleaf>
+<answer>Mode=mode, Value=value</answer>
 
-5. Query the direct prerequisite step of u (returns NONE if u=1):
-<query_parent>u</query_parent>
+The mode must be one of LF, LL, RF, RL, and the value must be an integer between 1 and {n}.
 
-6. Verify and query the total score of a complete clinical pathway (must start with 1, end at a terminal step, with adjacent steps having a prerequisite-subsequent relationship):
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+Example: <answer>Mode=LF, Value=5</answer>
 
-7. Note (for annotation only, no response, does not count as a query):
-<note>your annotation</note>
-
-## Judge Response Format
-
-- For query_n: returns total number of steps
-- For query_value: returns the step's utility score
-- For query_children: returns list of subsequent steps (sorted); empty list if none
-- For query_isleaf: returns "Yes" or "No"
-- For query_parent: returns prerequisite step number; "None" if initial step
-- For query_pathsum: returns total score if valid pathway; "Invalid path" otherwise
-- For note: no response
-
-## Submit Answer
-
-When you have gathered enough information, submit your final pathway in this format:
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-where path is the complete pathway from the initial to a terminal step (comma-separated), and sum is the total utility score of that pathway.
-
-Judgment criteria:
-- path must be a valid complete clinical pathway
-- sum must match the actual total score of that pathway
-- that sum must be the maximum among all complete pathways
-
-If correct, returns "Correct answer"; otherwise returns "Incorrect answer".
-
-## Notes
-
-- Try to minimize the number of queries
-- Only one query per turn
-- Incorrectly formatted queries will not be responded to
+If either the mode or value is incorrect, the clinical evaluation fails.
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-我们来进行一项“个性化学习路线最优化”任务。规则如下：
+欢迎登录学生知识点掌握轨迹评测系统。本系统用于分析学生的连续学习评测记录，以洞察知识模块的复习与考查规律。
 
-游戏设定了一个未知结构的学科知识树，学习模块编号为 1 到 N，基础起点模块编号为 1。每个学习模块 u 有一个整数的能力提升值 w(u)（代表掌握该模块带来的综合收益），可以是正数、零或负数。模块间的前置依赖关系没有权重。
+系统生成了一段长度为 {n} 的未知学习评测序列 S，序列中的元素均为代表不同知识模块的大写字母。测试的轮次编号从 1 到 {n}。
 
-你的目标是：在所有从基础起点到高阶专业方向（终端模块）的完整学习路线中，找出能力提升值之和最大的那条路线，以及该路线的总提升值。保证所有完整路线的总提升值两两不同，即唯一最优路线一定存在。
+系统已秘密圈定了一个核心考查知识模块 τ = {target}，它保证在整个评测序列中至少出现一次。同时，系统从以下四种评估模式中秘密选择了一种作为隐藏的考查规律：
 
-初始时你只知道基础起点的编号是 1，其余的学科树结构和模块提升值都是未知的。你需要通过局部查询逐步获得信息。
+1. LF 模式：对任意知识模块 x，返回其在序列中首次出现的测试轮次
+2. LL 模式：对任意知识模块 x，返回其在序列中最后一次出现的测试轮次
+3. RF 模式：对任意知识模块 x，返回从右往左数，其最后一次考查距期末测试（右端）的倒数轮次距离加 1
+4. RL 模式：对任意知识模块 x，返回从右往左数，其首次考查距期末测试（右端）的倒数轮次距离加 1
 
-## 查询规则
+注意：当知识模块 x 未在序列中涉及，评估值定义为 0。
 
-每次你只能对一个学习模块或一条候选路线发起一次查询。不允许请求全局学科树或整层模块的批量信息。
+你的目标是通过尽可能少的系统询问，识别出隐藏的考查规律，并计算出核心知识模块 τ 在该规律下的数值。
 
-允许的查询类型如下（请严格按照 XML format）：
+你可以进行以下两种类型的询问（每次仅限一个操作）：
 
-1. 查询学习模块总数：
-<query_n></query_n>
+1. 检查轮次：查看评测序列中某个测试轮次考查的知识模块是什么
+   格式：<inspect>轮次编号</inspect>
+   示例：<inspect>3</inspect>
+   返回：Symbol=X（其中 X 是该轮次考查的大写字母代表的知识模块）
 
-2. 查询模块 u 的能力提升值：
-<query_value>u</query_value>
+2. 查询规律：查询某个知识模块在当前隐藏规律下的评估值
+   格式：<query>知识模块</query>
+   示例：<query>A</query>
+   返回：
+   - 如果查询的是核心知识模块 τ：Silence（为防作弊，系统拒绝返回该核心模块的数据）
+   - 如果该模块未在序列中出现：0
+   - 否则：Echo=数值（一个 1 到 {n} 之间的整数）
 
-3. 查询模块 u 的所有后续衍生模块（返回升序列表，若 u 为终端方向则返回空列表）：
-<query_children>u</query_children>
+当你准备好提交结果时，必须同时声明考查规律模式和核心模块的评估数值，格式如下：
 
-4. 查询模块 u 是否为终端高阶方向：
-<query_isleaf>u</query_isleaf>
+<answer>Mode=模式, Value=数值</answer>
 
-5. 查询模块 u 的直接先修模块（若 u=1 则返回 NONE）：
-<query_parent>u</query_parent>
+其中模式必须是 LF、LL、RF、RL 之一，数值必须是 1 到 {n} 之间的整数。
 
-6. 验证并查询一条完整学习路线的总提升值（路线必须以 1 开头、以某终端模块结尾，且相邻模块为先修-衍生关系）：
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+示例：<answer>Mode=LF, Value=5</answer>
 
-7. 标注（仅作记录，不触发信息回应，不计入查询次数）：
-<note>你的标注内容</note>
-
-## 裁判回应格式
-
-- 对 query_n：返回模块总数
-- 对 query_value：返回该模块的能力提升值
-- 对 query_children：返回后续模块列表（升序），若无后续模块则返回空列表
-- 对 query_isleaf：返回"是"或"否"
-- 对 query_parent：返回先修模块编号，若为基础起点则返回"无"
-- 对 query_pathsum：若为有效路线则返回总提升值，否则返回"无效路径"
-- 对 note：不回应
-
-## 提交答案
-
-当你收集到足够信息后，可以提交最终学习路线。格式如下：
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-其中 path 是从基础起点到终端模块的完整路线（用逗号分隔），sum 是该路线的能力提升总和。
-
-判定标准：
-- path 必须是有效的完整学习路线
-- sum 必须与该路线的真实总提升值一致
-- 该总提升值必须是所有完整路线中的最大值
-
-若路线正确，返回"答案正确"；否则返回"答案错误"。
-
-## 注意事项
-
-- 请尽可能减少查询次数
-- 每次只能进行一个查询
-- 格式错误的查询不会被响应
+若模式或数值任一错误，评测分析失败。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's conduct a "Personalized Learning Route Optimization" task. Here are the rules:
+Welcome to the Student Knowledge Mastery Trajectory Assessment System. This system analyzes students' continuous learning assessment records to gain insights into the review and examination patterns of knowledge modules.
 
-The system involves an unknown academic knowledge tree structure with learning modules numbered from 1 to N, where the foundational starting module is numbered 1. Each module u has an integer capability enhancement value w(u) (representing the comprehensive benefit of mastering that module), which can be positive, zero, or negative. Prerequisite dependencies between modules have no weights.
+The system has generated an unknown learning assessment sequence S of length {n}, where all elements are uppercase letters representing different knowledge modules. The test rounds are indexed from 1 to {n}.
 
-Your goal is: among all complete learning routes from the foundational start to any advanced professional direction (terminal module), find the one with the maximum sum of capability enhancement values, and determine that total value. It is guaranteed that all complete route sums are distinct, so a unique optimal route exists.
+The system has secretly designated a core examined knowledge module τ = {target}, which is guaranteed to appear at least once in the entire assessment sequence. Additionally, the system has secretly chosen one of the following four evaluation modes as the hidden examination pattern:
 
-Initially, you only know the starting module is numbered 1. The rest of the knowledge tree structure and module values are unknown. You must gradually gather information through local queries.
+1. LF Mode: For any knowledge module x, return the test round of its first appearance in the sequence
+2. LL Mode: For any knowledge module x, return the test round of its last appearance in the sequence
+3. RF Mode: For any knowledge module x, return the distance from its last examination round to the final test (right end) plus 1 (counting from right)
+4. RL Mode: For any knowledge module x, return the distance from its first examination round to the final test (right end) plus 1 (counting from right)
 
-## Query Rules
+Note: When knowledge module x is not covered in the sequence, the evaluation value is defined as 0.
 
-Each time you can only query about one learning module or one candidate route. Batch requests for the entire knowledge tree or entire levels are not allowed.
+Your goal is to identify the hidden examination pattern and calculate the value of the core knowledge module τ under that pattern, using as few system queries as possible.
 
-Allowed query types (strictly follow XML format):
+You can perform the following two types of queries (one operation per turn):
 
-1. Query total number of learning modules:
-<query_n></query_n>
+1. Inspect Round: Check what knowledge module was examined in a certain test round of the sequence
+   Format: <inspect>round_number</inspect>
+   Example: <inspect>3</inspect>
+   Returns: Symbol=X (where X is the uppercase letter representing the knowledge module examined in that round)
 
-2. Query the capability enhancement value of module u:
-<query_value>u</query_value>
+2. Query Pattern: Query the evaluation value of a knowledge module under the current hidden pattern
+   Format: <query>knowledge_module</query>
+   Example: <query>A</query>
+   Returns:
+   - If querying the core knowledge module τ: Silence (system refuses to return data for the core module to prevent cheating)
+   - If the module does not appear in the sequence: 0
+   - Otherwise: Echo=value (an integer between 1 and {n})
 
-3. Query all subsequent derived modules of module u (returns sorted list; empty if u is a terminal direction):
-<query_children>u</query_children>
+When you are ready to submit your result, you must declare both the examination pattern mode and the core module's evaluation value in the following format:
 
-4. Query whether module u is a terminal advanced direction:
-<query_isleaf>u</query_isleaf>
+<answer>Mode=mode, Value=value</answer>
 
-5. Query the direct prerequisite module of u (returns NONE if u=1):
-<query_parent>u</query_parent>
+The mode must be one of LF, LL, RF, RL, and the value must be an integer between 1 and {n}.
 
-6. Verify and query the total value of a complete learning route (must start with 1, end at a terminal module, with adjacent modules having a prerequisite-derived relationship):
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+Example: <answer>Mode=LF, Value=5</answer>
 
-7. Note (for annotation only, no response, does not count as a query):
-<note>your annotation</note>
-
-## Judge Response Format
-
-- For query_n: returns total number of modules
-- For query_value: returns the module's capability enhancement value
-- For query_children: returns list of subsequent modules (sorted); empty list if none
-- For query_isleaf: returns "Yes" or "No"
-- For query_parent: returns prerequisite module number; "None" if foundational start
-- For query_pathsum: returns total value if valid route; "Invalid path" otherwise
-- For note: no response
-
-## Submit Answer
-
-When you have gathered enough information, submit your final learning route in this format:
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-where path is the complete route from the foundational start to a terminal module (comma-separated), and sum is the total enhancement value of that route.
-
-Judgment criteria:
-- path must be a valid complete learning route
-- sum must match the actual total value of that route
-- that sum must be the maximum among all complete routes
-
-If correct, returns "Correct answer"; otherwise returns "Incorrect answer".
-
-## Notes
-
-- Try to minimize the number of queries
-- Only one query per turn
-- Incorrectly formatted queries will not be responded to
+If either the mode or value is incorrect, the assessment analysis fails.
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-我们来进行一项“工业生产流程价值最大化”任务。规则如下：
+欢迎使用流水线质检工序排布追溯系统。本系统用于分析复杂的生产线检验配置，并优化关键产品缺陷的拦截率。
 
-游戏设定了一套未知结构的生产工序树，工序编号为 1 到 N，初始原料加工工序编号为 1。每道工序 u 都有一个整数的附加价值 w(u)（代表该道工艺的利润增值扣除损耗），可以是正数、零或负数。工序间的流转本身不产生额外价值。
+系统获取了一段长度为 {n} 的未知质检站点序列 S，序列中的元素均为代表不同检验项目的大写字母。流水线的工位编号从 1 到 {n}。
 
-你的目标是：在所有从初始加工到最终成品入库（终端工序）的生产流水线中，找出附加价值之和最大的那条流水线，以及该流水线的总附加价值。保证所有生产流水线的总价值两两不同，即唯一最优流水线一定存在。
+系统已秘密标记了一个关键检验项目 τ = {target}, 它保证在整条流水线上至少被配置一次。同时，系统从以下四种追溯模式中秘密选择了一种作为隐藏的质检规则：
 
-初始时你只知道初始加工工序的编号是 1，其余的工艺结构和工序附加价值都是未知的。你需要通过局部查询逐步获得信息。
+1. LF 模式：对任意检验项目 x，返回其在流水线上首次进行检测的工位编号
+2. LL 模式：对任意检验项目 x，返回其在流水线上最后一次进行检测的工位编号
+3. RF 模式：对任意检验项目 x，返回从右往左数，其最后一次检测距流水线末端（右端）的倒数工位距离加 1
+4. RL 模式：对任意检验项目 x，返回从右往左数，其首次检测距流水线末端（右端）的倒数工位距离加 1
 
-## 查询规则
+注意：当检验项目 x 未在流水线配置中出现时，追溯值定义为 0。
 
-每次你只能对一道生产工序或一条候选流水线发起一次查询。不允许请求全局工艺图或整层工序的批量信息。
+你的目标是通过尽可能少的系统询问，识别出隐藏的质检追溯模式，并计算出关键检验项目 τ 在该模式下的工位数值。
 
-允许的查询类型如下（请严格按照 XML 格式）：
+你可以进行以下两种类型的询问（每次仅限一个操作）：
 
-1. 查询涉及的生产工序总数：
-<query_n></query_n>
+1. 检查工位：查看流水线序列中某个工位的检验项目是什么
+   格式：<inspect>工位编号</inspect>
+   示例：<inspect>3</inspect>
+   返回：Symbol=X（其中 X 是该工位大写字母代表的检验项目）
 
-2. 查询工序 u 的附加价值：
-<query_value>u</query_value>
+2. 查询追溯：查询某个检验项目在当前隐藏规则下的追溯值
+   格式：<query>检验项目</query>
+   示例：<query>A</query>
+   返回：
+   - 如果查询的是关键检验项目 τ：Silence（传感器故障或数据屏蔽，系统不返回数值）
+   - 如果该项目未在序列中出现：0
+   - 否则：Echo=数值（一个 1 到 {n} 之间的整数）
 
-3. 查询工序 u 的所有下一道候选工序（返回升序列表，若 u 为终端工序则返回空列表）：
-<query_children>u</query_children>
+当你准备好提交分析报告时，必须同时声明质检规则模式和关键项目的追溯数值，格式如下：
 
-4. 查询工序 u 是否为最终的成品终端工序：
-<query_isleaf>u</query_isleaf>
+<answer>Mode=模式, Value=数值</answer>
 
-5. 查询工序 u 的上一道直属工序（若 u=1 则返回 NONE）：
-<query_parent>u</query_parent>
+其中模式必须是 LF、LL、RF、RL 之一，数值必须是 1 到 {n} 之间的整数。
 
-6. 验证并查询一条完整流水线的总价值（流水线必须以 1 开头、以某终端工序结尾，且相邻工序为前后承接关系）：
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+示例：<answer>Mode=LF, Value=5</answer>
 
-7. 标注（仅作记录，不触发信息回应，不计入查询次数）：
-<note>你的标注内容</note>
-
-## 裁判回应格式
-
-- 对 query_n：返回工序总数
-- 对 query_value：返回该工序的附加价值
-- 对 query_children：返回后续工序列表（升序），若无则返回空列表
-- 对 query_isleaf：返回"是"或"否"
-- 对 query_parent：返回上一道工序编号，若为初始加工则返回"无"
-- 对 query_pathsum：若为有效流水线则返回总价值，否则返回"无效路径"
-- 对 note：不回应
-
-## 提交答案
-
-当你收集到足够信息后，可以提交最优生产流水线。格式如下：
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-其中 path 是从初始加工到终端成品的完整流水线（用逗号分隔），sum 是该流水线的附加价值总和。
-
-判定标准：
-- path 必须是有效的完整流水线
-- sum 必须与该流水线的真实总价值一致
-- 该总价值必须是所有完整流水线中的最大值
-
-若方案正确，返回"答案正确"；否则返回"答案错误"。
-
-## 注意事项
-
-- 请尽可能减少查询次数
-- 每次只能进行一个查询
-- 格式错误的查询不会被响应
+若模式或数值任一错误，流水线排查任务失败。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Let's conduct an "Industrial Production Process Value Maximization" task. Here are the rules:
+[Manufacturing Scenario]
+Welcome to the Assembly Line Quality Inspection Process Traceability System. This system is used to analyze complex production line inspection configurations and optimize the interception rate of key product defects.
 
-The system involves an unknown production process tree structure with operational steps numbered from 1 to N, where the initial raw material processing step is numbered 1. Each step u has an integer added value w(u) (representing profit increase minus material loss), which can be positive, zero, or negative. Transitions between steps do not generate extra value.
+The system has obtained an unknown quality inspection station sequence S of length {n}, where all elements are uppercase letters representing different inspection items. The workstations on the assembly line are indexed from 1 to {n}.
 
-Your goal is: among all complete production assembly lines from the initial processing to final product warehousing (terminal step), find the one with the maximum sum of added values, and determine that total value. It is guaranteed that all complete assembly line sums are distinct, so a unique optimal assembly line exists.
+The system has secretly marked a key inspection item τ = {target}, which is guaranteed to be configured at least once on the entire line. Additionally, the system has secretly chosen one of the following four traceability modes as the hidden quality inspection rule:
 
-Initially, you only know the initial step is numbered 1. The rest of the process structure and step values are unknown. You must gradually gather information through local queries.
+1. LF Mode: For any inspection item x, return the workstation number of its first detection on the assembly line
+2. LL Mode: For any inspection item x, return the workstation number of its last detection on the assembly line
+3. RF Mode: For any inspection item x, return the distance from its last detection station to the end of the assembly line (right end) plus 1 (counting from right)
+4. RL Mode: For any inspection item x, return the distance from its first detection station to the end of the assembly line (right end) plus 1 (counting from right)
 
-## Query Rules
+Note: When inspection item x is not configured on the line, the traceability value is defined as 0.
 
-Each time you can only query about one operational step or one candidate assembly line. Batch requests for the entire process tree or entire levels are not allowed.
+Your goal is to identify the hidden quality inspection traceability mode and calculate the workstation value of the key inspection item τ under that mode, using as few system queries as possible.
 
-Allowed query types (strictly follow XML format):
+You can perform the following two types of queries (one operation per turn):
 
-1. Query total number of operational steps:
-<query_n></query_n>
+1. Inspect Workstation: Check what inspection item is configured at a certain workstation in the sequence
+   Format: <inspect>workstation_number</inspect>
+   Example: <inspect>3</inspect>
+   Returns: Symbol=X (where X is the uppercase letter representing the inspection item at that workstation)
 
-2. Query the added value of step u:
-<query_value>u</query_value>
+2. Query Traceability: Query the traceability value of an inspection item under the current hidden rule
+   Format: <query>inspection_item</query>
+   Example: <query>A</query>
+   Returns:
+   - If querying the key inspection item τ: Silence (sensor failure or data masked, system returns no value)
+   - If the item does not appear in the sequence: 0
+   - Otherwise: Echo=value (an integer between 1 and {n})
 
-3. Query all potential next steps of step u (returns sorted list; empty if u is a terminal step):
-<query_children>u</query_children>
+When you are ready to submit your analysis report, you must declare both the inspection rule mode and the key item's traceability value in the following format:
 
-4. Query whether step u is a final terminal product step:
-<query_isleaf>u</query_isleaf>
+<answer>Mode=mode, Value=value</answer>
 
-5. Query the direct previous step of u (returns NONE if u=1):
-<query_parent>u</query_parent>
+The mode must be one of LF, LL, RF, RL, and the value must be an integer between 1 and {n}.
 
-6. Verify and query the total value of a complete assembly line (must start with 1, end at a terminal step, with adjacent steps being in sequential order):
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+Example: <answer>Mode=LF, Value=5</answer>
 
-7. Note (for annotation only, no response, does not count as a query):
-<note>your annotation</note>
-
-## Judge Response Format
-
-- For query_n: returns total number of steps
-- For query_value: returns the step's added value
-- For query_children: returns list of next steps (sorted); empty list if none
-- For query_isleaf: returns "Yes" or "No"
-- For query_parent: returns previous step number; "None" if initial processing
-- For query_pathsum: returns total value if valid assembly line; "Invalid path" otherwise
-- For note: no response
-
-## Submit Answer
-
-When you have gathered enough information, submit your optimal assembly line in this format:
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-where path is the complete assembly line from initial processing to terminal product (comma-separated), and sum is the total added value of that line.
-
-Judgment criteria:
-- path must be a valid complete assembly line
-- sum must match the actual total value of that assembly line
-- that sum must be the maximum among all complete assembly lines
-
-If correct, returns "Correct answer"; otherwise returns "Incorrect answer".
-
-## Notes
-
-- Try to minimize the number of queries
-- Only one query per turn
-- Incorrectly formatted queries will not be responded to
+If either the mode or value is incorrect, the assembly line troubleshooting task fails.
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-我们来进行一项“诉讼策略链利益最大化”任务。规则如下：
+欢迎进入案件证据链审查评估系统。本系统致力于梳理复杂的庭审时间线证据提交记录，并校验关键证据的法律效力。
 
-系统设定了一套未知结构的法律程序决策树，程序或策略节点编号为 1 到 N，初步立案阶段编号为 1。每个策略节点 u 都有一个整数的预期利益 w(u)（代表该策略带来的收益扣除诉讼成本），可以是正数、零或负数。程序间的推进不单独计算利益。
+系统提取了一段长度为 {n} 的未知时间线证据提交序列 S，序列中的元素均为代表不同证据类别的大写字母。庭审阶段的编号从 1 到 {n}。
 
-你的目标是：在所有从初步立案到最终结案（终端程序）的完整策略链中，找出预期利益之和最大的那条策略链，以及该策略链的总利益。保证所有完整策略链的总利益两两不同，即唯一最优策略链一定存在。
+系统已秘密指定了一项核心证据类别 τ = {target}，它保证在整个庭审过程中至少被提交一次。同时，系统从以下四种审查模式中秘密选择了一种作为隐藏的效力评估规则：
 
-初始时你只知道初步立案节点的编号是 1，其余的决策树结构和策略预期利益都是未知的。你需要通过局部查询逐步获得信息。
+1. LF 模式：对任意证据类别 x，返回其在时间线上首次提交的庭审阶段编号
+2. LL 模式：对任意证据类别 x，返回其在时间线上最后一次提交的庭审阶段编号
+3. RF 模式：对任意证据类别 x，返回从右往左数，其最后一次提交距终审结案（右端）的倒数阶段距离加 1
+4. RL 模式：对任意证据类别 x，返回从右往左数，其首次提交距终审结案（右端）的倒数阶段距离加 1
 
-## 查询规则
+注意：当证据类别 x 未被提交时，评估值定义为 0。
 
-每次你只能对一个法律程序节点或一条候选策略链发起一次查询。不允许请求全局决策树或整层程序的批量信息。
+你的目标是通过尽可能少的系统询问，识别出隐藏的审查规则模式，并计算出核心证据 τ 在该模式下的效力数值。
 
-允许的查询类型如下（请严格按照 XML 格式）：
+你可以进行以下两种类型的询问（每次仅限一个操作）：
 
-1. 查询涉及的策略节点总数：
-<query_n></query_n>
+1. 检查阶段：查看时间线序列中某个阶段提交的证据类别是什么
+   格式：<inspect>阶段编号</inspect>
+   示例：<inspect>3</inspect>
+   返回：Symbol=X（其中 X 是该阶段的大写字母代表的证据类别）
 
-2. 查询节点 u 的预期利益：
-<query_value>u</query_value>
+2. 查询审查：查询某个证据类别在当前隐藏规则下的评估值
+   格式：<query>证据类别</query>
+   示例：<query>A</query>
+   返回：
+   - 如果查询的是核心证据类别 τ：Silence（因涉密或法庭隔离，系统拒绝返回数值）
+   - 如果该证据未在序列中出现：0
+   - 否则：Echo=数值（一个 1 到 {n} 之间的整数）
 
-3. 查询节点 u 的所有后续衍生程序（返回升序列表，若 u 为结案程序则返回空列表）：
-<query_children>u</query_children>
+当你准备好提交审查结论时，必须同时声明审查规则模式和核心证据的效力数值，格式如下：
 
-4. 查询节点 u 是否为最终的结案程序：
-<query_isleaf>u</query_isleaf>
+<answer>Mode=模式, Value=数值</answer>
 
-5. 查询节点 u 的直接前置程序（若 u=1 则返回 NONE）：
-<query_parent>u</query_parent>
+其中模式必须是 LF、LL、RF、RL 之一，数值必须是 1 到 {n} 之间的整数。
 
-6. 验证并查询一条完整策略链的总利益（策略链必须以 1 开头、以某结案程序结尾，且相邻节点为先后程序关系）：
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+示例：<answer>Mode=LF, Value=5</answer>
 
-7. 标注（仅作记录，不触发信息回应，不计入查询次数）：
-<note>你的标注内容</note>
-
-## 裁判回应格式
-
-- 对 query_n：返回节点总数
-- 对 query_value：返回该节点的预期利益
-- 对 query_children：返回后续程序列表（升序），若无后续程序则返回空列表
-- 对 query_isleaf：返回"是"或"否"
-- 对 query_parent：返回前置程序编号，若为初步立案则返回"无"
-- 对 query_pathsum：若为有效策略链则返回总利益，否则返回"无效路径"
-- 对 note：不回应
-
-## 提交答案
-
-当你收集到足够信息后，可以提交最优诉讼策略。格式如下：
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-其中 path 是从初步立案到结案程序的完整策略链（用逗号分隔），sum 是该策略链的预期利益总和。
-
-判定标准：
-- path 必须是有效的完整策略链
-- sum 必须与该策略链的真实总利益一致
-- 该总利益必须是所有完整策略链中的最大值
-
-若策略正确，返回"答案正确"；否则返回"答案错误"。
-
-## 注意事项
-
-- 请尽可能减少查询次数
-- 每次只能进行一个查询
-- 格式错误的查询不会被响应
+若模式或数值任一错误，案件审查失败。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's conduct a "Litigation Strategy Chain Benefit Maximization" task. Here are the rules:
+[Legal Scenario]
+Welcome to the Case Evidence Chain Review and Evaluation System. This system is dedicated to sorting out complex chronological evidence submission records and verifying the legal validity of key evidence.
 
-The system involves an unknown legal procedure decision tree structure with procedural or strategy nodes numbered from 1 to N, where the preliminary case filing phase is numbered 1. Each node u has an integer expected benefit w(u) (representing the revenue brought by the strategy minus litigation costs), which can be positive, zero, or negative. Transitions between procedures do not carry independent benefits.
+The system has extracted an unknown chronological evidence submission sequence S of length {n}, where all elements are uppercase letters representing different evidence categories. The trial stages are indexed from 1 to {n}.
 
-Your goal is: among all complete strategy chains from the preliminary case filing to the final case closure (terminal procedure), find the one with the maximum sum of expected benefits, and determine that total benefit. It is guaranteed that all complete strategy chain sums are distinct, so a unique optimal strategy chain exists.
+The system has secretly designated a core evidence category τ = {target}, which is guaranteed to be submitted at least once during the trial. Additionally, the system has secretly chosen one of the following four review modes as the hidden validity evaluation rule:
 
-Initially, you only know the preliminary case filing node is numbered 1. The rest of the decision tree structure and expected benefits are unknown. You must gradually gather information through local queries.
+1. LF Mode: For any evidence category x, return the trial stage number of its first submission on the timeline
+2. LL Mode: For any evidence category x, return the trial stage number of its last submission on the timeline
+3. RF Mode: For any evidence category x, return the distance from its last submission stage to the final judgment (right end) plus 1 (counting from right)
+4. RL Mode: For any evidence category x, return the distance from its first submission stage to the final judgment (right end) plus 1 (counting from right)
 
-## Query Rules
+Note: When evidence category x is not submitted, the evaluation value is defined as 0.
 
-Each time you can only query about one legal procedural node or one candidate strategy chain. Batch requests for the entire decision tree or entire levels are not allowed.
+Your goal is to identify the hidden review rule mode and calculate the validity value of the core evidence τ under that mode, using as few system queries as possible.
 
-Allowed query types (strictly follow XML format):
+You can perform the following two types of queries (one operation per turn):
 
-1. Query total number of strategy nodes:
-<query_n></query_n>
+1. Inspect Stage: Check what evidence category was submitted at a certain stage in the timeline sequence
+   Format: <inspect>stage_number</inspect>
+   Example: <inspect>3</inspect>
+   Returns: Symbol=X (where X is the uppercase letter representing the evidence category at that stage)
 
-2. Query the expected benefit of node u:
-<query_value>u</query_value>
+2. Query Review: Query the evaluation value of an evidence category under the current hidden rule
+   Format: <query>evidence_category</query>
+   Example: <query>A</query>
+   Returns:
+   - If querying the core evidence category τ: Silence (due to confidentiality or court isolation, the system refuses to return a value)
+   - If the evidence does not appear in the sequence: 0
+   - Otherwise: Echo=value (an integer between 1 and {n})
 
-3. Query all subsequent derived procedures of node u (returns sorted list; empty if u is a case closure procedure):
-<query_children>u</query_children>
+When you are ready to submit your review conclusion, you must declare both the review rule mode and the core evidence's validity value in the following format:
 
-4. Query whether node u is a final case closure procedure:
-<query_isleaf>u</query_isleaf>
+<answer>Mode=mode, Value=value</answer>
 
-5. Query the direct preceding procedure of u (returns NONE if u=1):
-<query_parent>u</query_parent>
+The mode must be one of LF, LL, RF, RL, and the value must be an integer between 1 and {n}.
 
-6. Verify and query the total benefit of a complete strategy chain (must start with 1, end at a case closure procedure, with adjacent nodes having a consecutive procedural relationship):
-<query_pathsum>v1,v2,...,vk</query_pathsum>
+Example: <answer>Mode=LF, Value=5</answer>
 
-7. Note (for annotation only, no response, does not count as a query):
-<note>your annotation</note>
-
-## Judge Response Format
-
-- For query_n: returns total number of nodes
-- For query_value: returns the node's expected benefit
-- For query_children: returns list of subsequent procedures (sorted); empty list if none
-- For query_isleaf: returns "Yes" or "No"
-- For query_parent: returns preceding procedure number; "None" if preliminary case filing
-- For query_pathsum: returns total benefit if valid strategy chain; "Invalid path" otherwise
-- For note: no response
-
-## Submit Answer
-
-When you have gathered enough information, submit your optimal litigation strategy in this format:
-
-<answer>path=1,a2,a3,...,L;sum=S</answer>
-
-where path is the complete strategy chain from preliminary filing to case closure (comma-separated), and sum is the total expected benefit of that chain.
-
-Judgment criteria:
-- path must be a valid complete strategy chain
-- sum must match the actual total benefit of that strategy chain
-- that sum must be the maximum among all complete strategy chains
-
-If correct, returns "Correct answer"; otherwise returns "Incorrect answer".
-
-## Notes
-
-- Try to minimize the number of queries
-- Only one query per turn
-- Incorrectly formatted queries will not be responded to
+If either the mode or value is incorrect, the case review fails.
 """
 
-    tags = ["answer", "query_n", "query_value", "query_children", "query_isleaf", 
-            "query_parent", "query_pathsum", "note"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "树"
+    tags = ["answer", "inspect", "query"]
+
+    reasoning_type = "溯因推理"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
                 "n": 5,
-                "tree": {
-                    1: {"weight": 10, "children": [2, 3]},
-                    2: {"weight": 5, "children": [4]},
-                    3: {"weight": -3, "children": [5]},
-                    4: {"weight": 8, "children": []},
-                    5: {"weight": 20, "children": []},
-                },
-                "max_path": [1, 3, 5],
-                "max_sum": 27,
+                "sequence": "A,B,C,A,E",
+                "target": "C",
+                "mode": "LF",
             },
             2: {
                 "n": 8,
-                "tree": {
-                    1: {"weight": 5, "children": [2, 3]},
-                    2: {"weight": 10, "children": [4, 5]},
-                    3: {"weight": -5, "children": [6]},
-                    4: {"weight": 3, "children": []},
-                    5: {"weight": -2, "children": [7, 8]},
-                    6: {"weight": 15, "children": []},
-                    7: {"weight": 20, "children": []},
-                    8: {"weight": 1, "children": []},
-                },
-                "max_path": [1, 2, 5, 7],
-                "max_sum": 33,
+                "sequence": "A,B,C,A,D,E,F,G",
+                "target": "A",
+                "mode": "LL",
             },
             3: {
                 "n": 10,
-                "tree": {
-                    1: {"weight": 8, "children": [2, 3]},
-                    2: {"weight": -3, "children": [4, 5]},
-                    3: {"weight": 6, "children": [6, 7]},
-                    4: {"weight": 15, "children": [8]},
-                    5: {"weight": -10, "children": [9, 10]},
-                    6: {"weight": -2, "children": []},
-                    7: {"weight": 12, "children": []},
-                    8: {"weight": 5, "children": []},
-                    9: {"weight": 29, "children": []},
-                    10: {"weight": -5, "children": []},
-                },
-                "max_path": [1, 3, 7],
-                "max_sum": 26,
+                "sequence": "A,B,C,D,B,E,F,B,G,H",
+                "target": "B",
+                "mode": "RF",
             },
             4: {
                 "n": 12,
-                "tree": {
-                    1: {"weight": 12, "children": [2, 3]},
-                    2: {"weight": -8, "children": [4, 5, 6]},
-                    3: {"weight": 5, "children": [7, 8]},
-                    4: {"weight": 25, "children": []},
-                    5: {"weight": 18, "children": [9, 10]},
-                    6: {"weight": -15, "children": []},
-                    7: {"weight": -3, "children": [11, 12]},
-                    8: {"weight": 8, "children": []},
-                    9: {"weight": -5, "children": []},
-                    10: {"weight": 22, "children": []},
-                    11: {"weight": 30, "children": []},
-                    12: {"weight": -8, "children": []},
-                },
-                "max_path": [1, 3, 7, 11],
-                "max_sum": 44,
+                "sequence": "A,B,C,D,E,A,F,G,H,A,I,J",
+                "target": "A",
+                "mode": "RL",
             },
             5: {
                 "n": 15,
-                "tree": {
-                    1: {"weight": 20, "children": [2, 3]},
-                    2: {"weight": -15, "children": [4, 5, 6]},
-                    3: {"weight": 10, "children": [7, 8]},
-                    4: {"weight": 8, "children": [9]},
-                    5: {"weight": 25, "children": [10, 11]},
-                    6: {"weight": -20, "children": []},
-                    7: {"weight": -8, "children": [12, 13]},
-                    8: {"weight": 15, "children": [14, 15]},
-                    9: {"weight": 40, "children": []},
-                    10: {"weight": -10, "children": []},
-                    11: {"weight": 35, "children": []},
-                    12: {"weight": 28, "children": []},
-                    13: {"weight": -12, "children": []},
-                    14: {"weight": -5, "children": []},
-                    15: {"weight": 30, "children": []},
-                },
-                "max_path": [1, 3, 8, 15],
-                "max_sum": 75,
+                "sequence": "A,B,C,D,E,F,B,G,H,I,B,J,K,L,M",
+                "target": "B",
+                "mode": "LF",
             },
         },
         "en": {
             1: {
                 "n": 5,
-                "tree": {
-                    1: {"weight": 10, "children": [2, 3]},
-                    2: {"weight": 5, "children": [4]},
-                    3: {"weight": -3, "children": [5]},
-                    4: {"weight": 8, "children": []},
-                    5: {"weight": 20, "children": []},
-                },
-                "max_path": [1, 3, 5],
-                "max_sum": 27,
+                "sequence": "A,B,C,A,E",
+                "target": "C",
+                "mode": "LF",
             },
             2: {
                 "n": 8,
-                "tree": {
-                    1: {"weight": 5, "children": [2, 3]},
-                    2: {"weight": 10, "children": [4, 5]},
-                    3: {"weight": -5, "children": [6]},
-                    4: {"weight": 3, "children": []},
-                    5: {"weight": -2, "children": [7, 8]},
-                    6: {"weight": 15, "children": []},
-                    7: {"weight": 20, "children": []},
-                    8: {"weight": 1, "children": []},
-                },
-                "max_path": [1, 2, 5, 7],
-                "max_sum": 33,
+                "sequence": "A,B,C,A,D,E,F,G",
+                "target": "A",
+                "mode": "LL",
             },
             3: {
                 "n": 10,
-                "tree": {
-                    1: {"weight": 8, "children": [2, 3]},
-                    2: {"weight": -3, "children": [4, 5]},
-                    3: {"weight": 6, "children": [6, 7]},
-                    4: {"weight": 15, "children": [8]},
-                    5: {"weight": -10, "children": [9, 10]},
-                    6: {"weight": -2, "children": []},
-                    7: {"weight": 12, "children": []},
-                    8: {"weight": 5, "children": []},
-                    9: {"weight": 29, "children": []},
-                    10: {"weight": -5, "children": []},
-                },
-                "max_path": [1, 3, 7],
-                "max_sum": 26,
+                "sequence": "A,B,C,D,B,E,F,B,G,H",
+                "target": "B",
+                "mode": "RF",
             },
             4: {
                 "n": 12,
-                "tree": {
-                    1: {"weight": 12, "children": [2, 3]},
-                    2: {"weight": -8, "children": [4, 5, 6]},
-                    3: {"weight": 5, "children": [7, 8]},
-                    4: {"weight": 25, "children": []},
-                    5: {"weight": 18, "children": [9, 10]},
-                    6: {"weight": -15, "children": []},
-                    7: {"weight": -3, "children": [11, 12]},
-                    8: {"weight": 8, "children": []},
-                    9: {"weight": -5, "children": []},
-                    10: {"weight": 22, "children": []},
-                    11: {"weight": 30, "children": []},
-                    12: {"weight": -8, "children": []},
-                },
-                "max_path": [1, 3, 7, 11],
-                "max_sum": 44,
+                "sequence": "A,B,C,D,E,A,F,G,H,A,I,J",
+                "target": "A",
+                "mode": "RL",
             },
             5: {
                 "n": 15,
-                "tree": {
-                    1: {"weight": 20, "children": [2, 3]},
-                    2: {"weight": -15, "children": [4, 5, 6]},
-                    3: {"weight": 10, "children": [7, 8]},
-                    4: {"weight": 8, "children": [9]},
-                    5: {"weight": 25, "children": [10, 11]},
-                    6: {"weight": -20, "children": []},
-                    7: {"weight": -8, "children": [12, 13]},
-                    8: {"weight": 15, "children": [14, 15]},
-                    9: {"weight": 40, "children": []},
-                    10: {"weight": -10, "children": []},
-                    11: {"weight": 35, "children": []},
-                    12: {"weight": 28, "children": []},
-                    13: {"weight": -12, "children": []},
-                    14: {"weight": -5, "children": []},
-                    15: {"weight": 30, "children": []},
-                },
-                "max_path": [1, 3, 8, 15],
-                "max_sum": 75,
+                "sequence": "A,B,C,D,E,F,B,G,H,I,B,J,K,L,M",
+                "target": "B",
+                "mode": "LF",
             },
         },
     }
@@ -1017,7 +588,6 @@ If correct, returns "Correct answer"; otherwise returns "Incorrect answer".
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，加载树结构"""
         lang = self.config.language
         diff = self.config.difficulty
 
@@ -1027,311 +597,168 @@ If correct, returns "Correct answer"; otherwise returns "Incorrect answer".
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
         
-        # 加载树结构
-        self.tree = cfg["tree"]
-        self.max_path = cfg["max_path"]
-        self.max_sum = cfg["max_sum"]
+        self.sequence = [s.strip() for s in cfg["sequence"].split(",")]
+        self.n = cfg["n"]
+        self.target = cfg["target"]
+        self.mode = cfg["mode"]
         
-        # 构建父节点映射
-        self.parent_map = {1: None}
-        for node_id, node_info in self.tree.items():
-            for child in node_info["children"]:
-                self.parent_map[child] = node_id
+        self._game_info["n"] = self.n
+        self._game_info["target"] = self.target
+        
+        self.first_pos = {}
+        self.last_pos = {}
+        
+        for i, symbol in enumerate(self.sequence, start=1):
+            if symbol not in self.first_pos:
+                self.first_pos[symbol] = i
+            self.last_pos[symbol] = i
+        
+        self.correct_value = self._compute_mapping(self.target, self.mode)
+
+    def _compute_mapping(self, symbol, mode):
+        if symbol not in self.first_pos:
+            return 0
+        
+        if mode == "LF":
+            return self.first_pos[symbol]
+        elif mode == "LL":
+            return self.last_pos[symbol]
+        elif mode == "RF":
+            return self.n - self.last_pos[symbol] + 1
+        elif mode == "RL":
+            return self.n - self.first_pos[symbol] + 1
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"]
+        
+        kv_pairs = [x.strip() for x in raw_ans.split(",")]
+        ans_dict = {}
+        
+        for kv in kv_pairs:
+            if "=" not in kv:
+                continue
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
+        
+        if "Mode" not in ans_dict or "Value" not in ans_dict:
+            return False
+        
+        if ans_dict["Mode"] != self.mode:
+            return False
         
         try:
-            parts = raw_ans.split(";")
-            path_part = None
-            sum_part = None
-            
-            for part in parts:
-                part = part.strip()
-                if part.startswith("path="):
-                    path_part = part[5:].strip()
-                elif part.startswith("sum="):
-                    sum_part = part[4:].strip()
-            
-            if not path_part or not sum_part:
-                return False
-            
-            # 解析路径
-            submitted_path = [int(x.strip()) for x in path_part.split(",")]
-            submitted_sum = int(sum_part)
-            
-            # 验证路径有效性
-            if not self._is_valid_path(submitted_path):
-                return False
-            
-            # 验证总和是否正确
-            actual_sum = self._calculate_path_sum(submitted_path)
-            if actual_sum != submitted_sum:
-                return False
-            
-            # 验证是否为最大路径（与预计算的最大值比较）
-            return actual_sum == self.max_sum
-            
-        except:
-            return False
-
-    def _is_valid_path(self, path):
-        """验证路径是否有效（从根到叶，相邻节点为父子关系）"""
-        if not path or path[0] != 1:
+            submitted_value = int(ans_dict["Value"])
+        except ValueError:
             return False
         
-        for i in range(len(path) - 1):
-            curr = path[i]
-            next_node = path[i + 1]
-            if curr not in self.tree or next_node not in self.tree[curr]["children"]:
-                return False
-        
-        # 最后一个节点必须是叶子
-        last_node = path[-1]
-        if last_node not in self.tree or len(self.tree[last_node]["children"]) > 0:
-            return False
-        
-        return True
-
-    def _calculate_path_sum(self, path):
-        """计算路径的权重总和"""
-        return sum(self.tree[node]["weight"] for node in path)
+        return submitted_value == self.correct_value
 
     def _cf_core_produce(self, parsed_info):
-        is_zh = self.config.language == "zh"
         
-        # 从 parsed_info 中移除 note，然后处理剩余查询
-        working_info = {k: v for k, v in parsed_info.items() if k != "note"}
-        
-        if not working_info:
-            # 仅有 note 标签
-            # 根据规则，note 不应触发回应
-            # 但 step() 的流程要求 produce_response 返回字符串
-            # 返回一个最小化的确认，告知继续提问
-            if is_zh:
-                return "请继续你的查询。"
-            else:
-                return "Please continue with your query."
-        
-        # query_n: 查询节点总数
-        if "query_n" in working_info:
-            return str(self._game_info["n"])
-        
-        # query_value: 查询节点权重
-        if "query_value" in working_info:
+        if "inspect" in parsed_info:
             try:
-                node_id = int(working_info["query_value"].strip())
-                if node_id not in self.tree:
-                    return "节点不存在" if is_zh else "Node does not exist"
-                return str(self.tree[node_id]["weight"])
-            except:
-                return "格式错误" if is_zh else "Format error"
-        
-        # query_children: 查询子节点列表
-        if "query_children" in working_info:
-            try:
-                node_id = int(working_info["query_children"].strip())
-                if node_id not in self.tree:
-                    return "节点不存在" if is_zh else "Node does not exist"
-                children = self.tree[node_id]["children"]
-                return str(children)
-            except:
-                return "格式错误" if is_zh else "Format error"
-        
-        # query_isleaf: 查询是否为叶节点
-        if "query_isleaf" in working_info:
-            try:
-                node_id = int(working_info["query_isleaf"].strip())
-                if node_id not in self.tree:
-                    return "节点不存在" if is_zh else "Node does not exist"
-                is_leaf = len(self.tree[node_id]["children"]) == 0
-                if is_leaf:
-                    return "是" if is_zh else "Yes"
+                pos = int(parsed_info["inspect"].strip())
+                if pos < 1 or pos > self.n:
+                    if self.config.language == "zh":
+                        return "错误：位置超出范围。"
+                    else:
+                        return "Error: Position out of range."
+                
+                symbol = self.sequence[pos - 1]
+                return f"Symbol={symbol}"
+            except ValueError:
+                if self.config.language == "zh":
+                    return "错误：无效的位置格式。"
                 else:
-                    return "否" if is_zh else "No"
-            except:
-                return "格式错误" if is_zh else "Format error"
+                    return "Error: Invalid position format."
         
-        # query_parent: 查询父节点
-        if "query_parent" in working_info:
-            try:
-                node_id = int(working_info["query_parent"].strip())
-                if node_id not in self.tree:
-                    return "节点不存在" if is_zh else "Node does not exist"
-                parent = self.parent_map.get(node_id)
-                if parent is None:
-                    return "无" if is_zh else "None"
-                return str(parent)
-            except:
-                return "格式错误" if is_zh else "Format error"
-        
-        # query_pathsum: 查询路径总和
-        if "query_pathsum" in working_info:
-            try:
-                path_str = working_info["query_pathsum"].strip()
-                path = [int(x.strip()) for x in path_str.split(",")]
-                if self._is_valid_path(path):
-                    path_sum = self._calculate_path_sum(path)
-                    return str(path_sum)
-                else:
-                    return "无效路径" if is_zh else "Invalid path"
-            except:
-                return "格式错误" if is_zh else "Format error"
-        
-        return "无效查询" if is_zh else "Invalid query"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        is_zh = self.config.language == "zh"
-        n = self._game_info["n"]
-
-        # 1. query_n
-        queries.append({
-            "query": "<query_n></query_n>",
-            "answer": str(n)
-        })
-
-        # 2-5. 遍历所有节点的相关查询
-        for u in range(1, n + 1):
-            if u not in self.tree:
-                continue
-
-            # query_value
-            w = self.tree[u]["weight"]
-            queries.append({
-                "query": f"<query_value>{u}</query_value>",
-                "answer": str(w)
-            })
-
-            # query_children
-            children = self.tree[u]["children"]
-            queries.append({
-                "query": f"<query_children>{u}</query_children>",
-                "answer": str(children)
-            })
-
-            # query_isleaf
-            is_leaf = len(children) == 0
-            if is_zh:
-                ans_leaf = "是" if is_leaf else "否"
-            else:
-                ans_leaf = "Yes" if is_leaf else "No"
-            queries.append({
-                "query": f"<query_isleaf>{u}</query_isleaf>",
-                "answer": ans_leaf
-            })
-
-            # query_parent
-            parent = self.parent_map.get(u)
-            if parent is None:
-                ans_parent = "无" if is_zh else "None"
-            else:
-                ans_parent = str(parent)
-            queries.append({
-                "query": f"<query_parent>{u}</query_parent>",
-                "answer": ans_parent
-            })
-
-        # 6. query_pathsum: 遍历所有有效的根到叶路径
-        # DFS 查找所有从根(1)到叶节点的路径
-        stack = [[1]]
-        valid_paths = []
-        
-        while stack:
-            current_path = stack.pop()
-            curr_node = current_path[-1]
-            children = self.tree[curr_node]["children"]
+        elif "query" in parsed_info:
+            symbol = parsed_info["query"].strip()
             
-            if not children:
-                # 已经是叶节点，记录路径
-                valid_paths.append(current_path)
+            if len(symbol) != 1 or not symbol.isupper():
+                if self.config.language == "zh":
+                    return "错误：符号必须是单个大写字母。"
+                else:
+                    return "Error: Symbol must be a single uppercase letter."
+            
+            if symbol == self.target:
+                return "Silence"
+            
+            value = self._compute_mapping(symbol, self.mode)
+            
+            if value == 0:
+                return "0"
             else:
-                # 继续延伸
-                for child in children:
-                    stack.append(current_path + [child])
+                return f"Echo={value}"
         
-        for path in valid_paths:
-            path_str = ",".join(str(x) for x in path)
-            total_sum = self._calculate_path_sum(path)
-            queries.append({
-                "query": f"<query_pathsum>{path_str}</query_pathsum>",
-                "answer": str(total_sum)
+        else:
+            raise ValueError("No valid query tag found.")
+    
+    def get_all_possible_queries(self) -> list[dict]:
+        import string
+        results = []
+
+        for i in range(1, self.n + 1):
+            query_content = str(i)
+            parsed_info = {"inspect": query_content}
+            answer = self._cf_core_produce(parsed_info)
+            results.append({
+                "query": f"<inspect>{query_content}</inspect>",
+                "answer": answer
             })
 
-        return queries
+        for char in string.ascii_uppercase:
+            parsed_info = {"query": char}
+            answer = self._cf_core_produce(parsed_info)
+            results.append({
+                "query": f"<query>{char}</query>",
+                "answer": answer
+            })
+
+        return results
 
     def _cf_make_wrong(self, correct):
-        """生成一个错误的回复"""
-        # 若 correct 是纯整数字符串
-        try:
-            val = int(correct)
-            return str(val + 1)
-        except ValueError:
-            pass
-
-        # 中文替换
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-            
-        # 英文替换
-        lower = correct.lower()
-        if lower == "yes":
-            if correct == "YES": return "NO"
-            if correct == "Yes": return "No"
-            return "no"
-        if lower == "no":
-            if correct == "NO": return "YES"
-            if correct == "No": return "Yes"
-            return "yes"
-
-        # 中文特殊回复
-        if correct == "无":
-            return "1"
-        if correct == "无效路径":
-            return "0"
-        if correct == "节点不存在":
-            return "0"
+        import re
         
-        # 英文特殊回复
-        if correct == "None":
-            return "1"
-        if correct == "Invalid path":
-            return "0"
-        if correct == "Node does not exist":
-            return "0"
-        if correct == "Format error":
-            return "0"
-        if correct == "格式错误":
-            return "0"
+        m = re.match(r'^Symbol=([A-Z])$', correct)
+        if m:
+            original = m.group(1)
+            for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                if c != original:
+                    return f"Symbol={c}"
         
-        # 列表字符串（如 "[2, 3]"）
-        if correct.startswith("[") and correct.endswith("]"):
-            try:
-                lst = eval(correct)
-                if isinstance(lst, list):
-                    if len(lst) == 0:
-                        return "[0]"
-                    else:
-                        # 修改第一个元素
-                        modified = lst.copy()
-                        modified[0] = modified[0] + 1
-                        return str(modified)
-            except:
-                pass
+        m = re.match(r'^Echo=(\d+)$', correct)
+        if m:
+            val = int(m.group(1))
+            wrong_val = val + 1 if val < self.n else val - 1
+            return f"Echo={wrong_val}"
+        
+        if correct == "0":
+            return "Echo=1"
+        
+        if correct == "Silence":
+            return "Echo=1"
+        
+        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
+            return str(int(correct) + 1)
+        
+        if self.config.language == "zh":
+            if "是" in correct:
+                return correct.replace("是", "否")
+            if "否" in correct:
+                return correct.replace("否", "是")
+        else:
+            lower_correct = correct.lower()
+            if "yes" in lower_correct:
+                if "Yes" in correct: return correct.replace("Yes", "No")
+                if "YES" in correct: return correct.replace("YES", "NO")
+                if "yes" in correct: return correct.replace("yes", "no")
+            if "no" in lower_correct:
+                if "No" in correct: return correct.replace("No", "Yes")
+                if "NO" in correct: return correct.replace("NO", "YES")
+                if "no" in correct: return correct.replace("no", "yes")
 
-        # note 回复
-        if correct in ["（已记录标注）", "(Note recorded)"]:
-            return "（错误标注）" if "已记录" in correct else "(Wrong note)"
-        if correct in ["请继续你的查询。", "Please continue with your query."]:
-            return "停止查询。" if "请继续" in correct else "Stop querying."
-        
-        # 都不匹配，添加错误后缀
-        return correct + "_WRONG"
+        return f"{correct}_WRONG"

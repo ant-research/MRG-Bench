@@ -1,771 +1,602 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   边存在性：两个给定节点之间是否存在直接相连的边
-# ============================================================
-
 from .base import Game
-import re
+import random
 
-
-class HiddenRelationGame(Game):
+class EquivalencePartitionGame(Game):
 
     reasoning_type = "归纳推理"
-    data_structure = "图"
-    enable_counterfactual = False   # 设为 True 时开启反事实干预模式
+    data_structure = "集合"
+    enable_counterfactual = False
 
     game_rule_zh = """\
-我们来玩一个"隐藏关系推理"游戏，规则如下：
+我们来玩一个"等价关系推理"游戏，规则如下：
 
-游戏设定了一个标号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 个元素。
+游戏设定了 {n} 个元素，标识为 E1, E2, ..., E{n}。这些标识仅用于指称，不包含顺序、数值或位置含义。
 
-在这个集合上，存在一个未知的二元关系 E。这个关系满足以下性质：
-1. 对称性：如果元素对 {{u, v}} 满足关系 E，那么 {{v, u}} 也满足关系 E。
-2. 无自环：任何元素不与自己构成关系，即 {{u, u}} 不存在。
-3. 非平凡：既存在满足关系的元素对，也存在不满足关系的元素对。
+系统已秘密确定了一个等价关系 R，将这 {n} 个元素划分为若干个不相交的等价类（分组）。等价类的数量未知且不会事先告知。两个元素是否"同类"完全由它们是否位于同一等价类决定。
 
-这个关系由一个仅依赖于元素标号的确定性规则决定，但该规则对你是未知的。
+你的目标是通过查询推断出完整的等价类划分。你有 {query_budget} 次查询预算，可以进行以下操作：
 
-## 禁问集合
-有一组特定的元素对被设置为"禁问对" F，你不能直接查询这些对是否满足关系 E。禁问对集合为：
-{forbidden_pairs_str}
+1. **配提查询**：询问两个不同元素 Ei 和 Ej 是否属于同一等价类。
+   - 系统会回答"同类"或"不同类"。
 
-## 查询配额
-你有 {quota} 次查询机会。你需要通过查询非禁问对来推断出生成关系 E 的规则，并最终预测所有禁问对是否满足关系 E。
+2. **分组提交**：提交你推断出的完整划分方案。
+   - 若划分完全正确，游戏成功。
+   - 若划分错误，系统会返回一个反例对，指出冲突：
+     * 类型A：你声称同组，但实际为不同类。
+     * 类型B：你声称不同组，但实际为同类。
+     - 反例不计入查询预算。
 
-## 你可以进行的操作
+3. **终局验证**（当查询预算用尽但未成功提交时触发）：
+   - 系统会选择 {challenge_count} 个未被查询过的元素对，逐一询问你的判断。
+   - 若全部答对，也视为游戏成功。
+   - 若存在至少一对答错，游戏失败。
 
-1. **查询边存在性**：询问某个非禁问的元素对 {{u, v}} 是否满足关系 E。
-   - 要求：u 不等于 v，{{u, v}} 不在禁问集合 F 中，且此前未查询过该对。
-   - 我会回答"有"或"没有"。
+每次只能包含一个标签。请使用以下 XML 格式：
 
-2. **查询剩余配额**：询问还剩多少次查询机会。
-   - 我会回答一个非负整数。
+- 配对查询（例如询问 E3 和 E7）：
+<query_pair>E3,E7</query_pair>
 
-3. **最终提交**：当你认为已掌握规律时，对所有禁问对进行预测。
-   - 你需要对每个禁问对给出"有"或"没有"的判断。
+- 分组提交（用分号分隔各组，组内元素用逗号分隔）：
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-## 查询与提交格式（必须严格遵守）
+- 终局验证回答（当系统询问某对元素时，回答同类或不同类）：
+<challenge_answer>同类</challenge_answer>
+或
+<challenge_answer>不同类</challenge_answer>
 
-每次操作只能包含一个标签，使用以下 XML格式：
-
-- 查询边存在性（例如查询元素 2 和 5）：
-<query_edge>2,5</query_edge>
-
-- 查询剩余配额：
-<query_budget></query_budget>
-
-- 最终提交答案（对所有禁问对进行预测）：
-<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
-
-注意：
-1. 答案中必须包含所有禁问对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
-2. 元素对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
-3. 不得查询禁问对或重复查询同一对。
-4. 不得超出查询配额。
-5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
-
-违反任何约束或预测错误将导致游戏失败。
+- 等价关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
+- 合理利用传递性可减少必要的查询次数。
+- 每个元素必须恰好属于一个等价类。
 """
 
     game_rule_en = """\
-Let's play a "Hidden Relation Inference" game. Here are the rules:
+Let's play an "Equivalence Relation Inference" game. Here are the rules:
 
-There is a labeled set V = {{0, 1, ..., {n_minus_1}}}, containing {n} elements in total.
+The game has {n} elements, labeled as E1, E2, ..., E{n}. These labels are for identification only and carry no ordering, numerical, or positional meaning.
 
-On this set, there exists an unknown binary relation E. This relation satisfies the following properties:
-1. Symmetry: If element pair {{u, v}} satisfies relation E, then {{v, u}} also satisfies relation E.
-2. No self-loops: No element is related to itself, i.e., {{u, u}} does not exist.
-3. Non-trivial: There exist both pairs that satisfy the relation and pairs that do not.
+The system has secretly determined an equivalence relation R that partitions these {n} elements into several disjoint equivalence classes (groups). The number of equivalence classes is unknown and will not be disclosed in advance. Whether two elements are "equivalent" is determined entirely by whether they belong to the same equivalence class.
 
-This relation is determined by a deterministic rule that depends only on element labels, but the rule is unknown to you.
+Your goal is to infer the complete equivalence class partition through queries. You have {query_budget} query budget and can perform the following operations:
 
-## Forbidden Set
-A specific set of element pairs is designated as "forbidden pairs" F. You cannot directly query whether these pairs satisfy relation E. The forbidden pair set is:
-{forbidden_pairs_str}
+1. **Pair Query**: Ask whether two different elements Ei and Ej belong to the same equivalence class.
+   - The system will answer "Same" or "Different".
 
-## Query Quota
-You have {quota} query opportunities. You need to infer the rule generating relation E by querying non-forbidden pairs, and ultimately predict whether all forbidden pairs satisfy relation E.
+2. **Partition Submission**: Submit your inferred complete partition.
+   - If the partition is completely correct, the game succeeds.
+   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
+     * Type A: You claimed same group, but actually different.
+     * Type B: You claimed different groups, but actually same.
+   - Counterexamples do not count toward the query budget.
 
-## Available Operations
+3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
+   - The system will select {challenge_count} element pairs that have never been queried and ask for your judgment one by one.
+   - If all answers are correct, the game also succeeds.
+   - If at least one pair is wrong, the game fails.
 
-1. **Query Edge Existence**: Ask whether a non-forbidden element pair {{u, v}} satisfies relation E.
-   - Requirements: u is not equal to v, {{u, v}} is not in forbidden set F, and the pair has not been queried before.
-   - I will answer "Yes" or "No".
+Each turn must contain only one tag. Use the following XML format:
 
-2. **Query Remaining Quota**: Ask how many query opportunities remain.
-   - I will answer with a non-negative integer.
+- Pair Query (e.g., asking about E3 and E7):
+<query_pair>E3,E7</query_pair>
 
-3. **Final Submission**: When you believe you have grasped the pattern, predict all forbidden pairs.
-   - You need to give a "Yes" or "No" judgment for each forbidden pair.
+- Partition Submission (use semicolons to separate groups, commas within groups):
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-## Query and Submission Format (must strictly follow)
+- Challenge Answer (when the system asks about a pair, answer same or different):
+<challenge_answer>Same</challenge_answer>
+or
+<challenge_answer>Different</challenge_answer>
 
-Each operation can only contain one tag, using the following XML format:
-
-- Query edge existence (e.g., query elements 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Query remaining quota:
-<query_budget></query_budget>
-
-- Final answer submission (predict all forbidden pairs):
-<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
-
-Notes:
-1. The answer must include predictions for all forbidden pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
-2. Element pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
-3. Do not query forbidden pairs or repeatedly query the same pair.
-4. Do not exceed the query quota.
-5. Use as few queries as possible and find the rule through inductive reasoning.
-
-Violating any constraint or making incorrect predictions will result in game failure.
+- Equivalence relations have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
+- Proper use of transitivity can reduce the number of necessary queries.
+- Each element must belong to exactly one equivalence class.
 """
 
     contextualized_rule_zh_1 = """\
-作为城市交通规划师，你需要摸清一张未知交通网络的连通规则。
+我们来解决一个“交通枢纽网络连通性”的排查问题，规则如下：
 
-我们来玩一个"隐藏交通网络推理"游戏，规则如下：
+游戏设定了 {n} 个交通节点，标识为 E1, E2, ..., E{n}。这些标识仅用于指称，不包含顺序、数值或位置含义。
 
-系统设定了一个交通枢纽编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 个枢纽。
+目前已知这些节点被若干个互不交叉的“独立运营网络”覆盖，系统秘密确定了这一划分。属于同一网络的节点之间可直接或间接互通（同类）。网络数量未知且不会事先告知。两个节点是否“同类”完全由它们是否位于同一运营网络决定。
 
-在这个集合上，存在一个未知的直达连通关系 E。这个连通关系满足以下性质：
-1. 对称性：如果枢纽对 {{u, v}} 存在双向直达连通 E，那么 {{v, u}} 也同样连通。
-2. 无自环：任何枢纽不与自己构成连通关系，即 {{u, u}} 不存在。
-3. 非平凡：既存在相互连通的枢纽对，也存在不连通的枢纽对。
+你的目标是通过查询推断出完整的网络连通性划分。你有 {query_budget} 次查询预算，可以进行以下操作：
 
-这个连通关系由一个仅依赖于枢纽编号的确定性规则决定，但该规则对你是未知的。
+1. **配对查询**：询问两个不同节点 Ei 和 Ej 是否属于同一运营网络。
+   - 系统会回答"同类"（同一网络）或"不同类"（不同网络）。
 
-## 禁问集合
-有一组特定的枢纽对被设置为"禁查路线" F，你不能直接查询这些对是否连通。禁查路线集合为：
-{forbidden_pairs_str}
+2. **分组提交**：提交你推断出的完整划分方案。
+   - 若划分完全正确，游戏成功。
+   - 若划分错误，系统会返回一个反例对，指出冲突：
+     * 类型A：你声称同组，但实际为不同类。
+     * 类型B：你声称不同组，但实际为同类。
+     - 反例不计入查询预算。
 
-## 查询配额
-你有 {quota} 次查询机会。你需要通过查询非禁查路线来推断出生成连通关系 E 的规则，并最终预测所有禁查路线是否连通。
+3. **终局验证**（当查询预算用尽但未成功提交时触发）：
+   - 系统会选择 {challenge_count} 个未被查询过的节点对，逐一询问你的判断。
+   - 若全部答对，也视为游戏成功。
+   - 若存在至少一对答错，游戏失败。
 
-## 你可以进行的操作
+每次只能包含一个标签。请使用以下 XML 格式：
 
-1. **查询边存在性**：询问某个非禁查的枢纽对 {{u, v}} 是否存在直达连通 E。
-   - 要求：u 不等于 v，{{u, v}} 不在禁查路线集合 F 中，且此前未查询过该路线。
-   - 我会回答"有"或"没有"。
+- 配对查询（例如询问 E3 和 E7）：
+<query_pair>E3,E7</query_pair>
 
-2. **查询剩余配额**：询问还剩多少次查询机会。
-   - 我会回答一个非负整数。
+- 分组提交（用分号分隔各网络组，组内节点用逗号分隔）：
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **最终提交**：当你认为已掌握规律时，对所有禁查路线进行预测。
-   - 你需要对每个禁查路线给出"有"或"没有"的判断。
+- 终局验证回答（当系统询问某对节点时，回答同类或不同类）：
+<challenge_answer>同类</challenge_answer>
+或
+<challenge_answer>不同类</challenge_answer>
 
-## 查询与提交格式（必须严格遵守）
-
-每次操作只能包含一个标签，使用以下 XML 格式：
-
-- 查询边存在性（例如查询枢纽 2 和 5）：
-<query_edge>2,5</query_edge>
-
-- 查询剩余配额：
-<query_budget></query_budget>
-
-- 最终提交答案（对所有禁查路线进行预测）：
-<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
-
-注意：
-1. 答案中必须包含所有禁查路线的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
-2. 枢纽对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
-3. 不得查询禁查路线或重复查询同一路线。
-4. 不得超出查询配额。
-5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
-
-违反任何约束或预测错误将导致规划任务失败。
+- 连通关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
+- 合理利用传递性可减少必要的查询次数。
+- 每个节点必须恰好属于一个网络。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-As an urban traffic planner, you need to uncover the connectivity rules of an unknown transportation network.
+Let's solve a "Traffic Node Network Connectivity" mapping problem. Here are the rules:
 
-Let's play a "Hidden Traffic Network Inference" game. Here are the rules:
+The system has logged {n} traffic nodes, labeled as E1, E2, ..., E{n}. These labels are for identification only and carry no ordering, numerical, or positional meaning.
 
-There is a designated set of traffic hub labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} hubs in total.
+These nodes are covered by several non-overlapping "independent operational networks." The system has secretly determined this partition. Nodes belonging to the same network can directly or indirectly communicate with each other (equivalent). The number of networks is unknown and will not be disclosed in advance. Whether two nodes are "equivalent" is determined entirely by whether they belong to the same operational network.
 
-On this set, there exists an unknown direct connectivity relation E. This relation satisfies the following properties:
-1. Symmetry: If hub pair {{u, v}} satisfies relation E, then {{v, u}} also satisfies relation E.
-2. No self-loops: No hub is connected to itself, i.e., {{u, u}} does not exist.
-3. Non-trivial: There exist both pairs that satisfy the relation and pairs that do not.
+Your goal is to infer the complete network connectivity partition through queries. You have {query_budget} query budget and can perform the following operations:
 
-This relation is determined by a deterministic rule that depends only on hub labels, but the rule is unknown to you.
+1. **Pair Query**: Ask whether two different nodes Ei and Ej belong to the same network.
+   - The system will answer "Same" (same network) or "Different" (different networks).
 
-## Forbidden Set
-A specific set of hub pairs is designated as "forbidden routes" F. You cannot directly query whether these routes satisfy relation E. The forbidden route set is:
-{forbidden_pairs_str}
+2. **Partition Submission**: Submit your inferred complete partition.
+   - If the partition is completely correct, the game succeeds.
+   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
+     * Type A: You claimed same group, but actually different.
+     * Type B: You claimed different groups, but actually same.
+   - Counterexamples do not count toward the query budget.
 
-## Query Quota
-You have {quota} query opportunities. You need to infer the rule generating relation E by querying non-forbidden routes, and ultimately predict whether all forbidden routes satisfy relation E.
+3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
+   - The system will select {challenge_count} node pairs that have never been queried and ask for your judgment one by one.
+   - If all answers are correct, the game also succeeds.
+   - If at least one pair is wrong, the game fails.
 
-## Available Operations
+Each turn must contain only one tag. Use the following XML format:
 
-1. **Query Edge Existence**: Ask whether a non-forbidden hub pair {{u, v}} satisfies relation E.
-   - Requirements: u is not equal to v, {{u, v}} is not in the forbidden set F, and the route has not been queried before.
-   - I will answer "Yes" or "No".
+- Pair Query (e.g., asking about E3 and E7):
+<query_pair>E3,E7</query_pair>
 
-2. **Query Remaining Quota**: Ask how many query opportunities remain.
-   - I will answer with a non-negative integer.
+- Partition Submission (use semicolons to separate network groups, commas within groups):
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **Final Submission**: When you believe you have grasped the pattern, predict all forbidden routes.
-   - You need to give a "Yes" or "No" judgment for each forbidden route.
+- Challenge Answer (when the system asks about a pair, answer same or different):
+<challenge_answer>Same</challenge_answer>
+or
+<challenge_answer>Different</challenge_answer>
 
-## Query and Submission Format (must strictly follow)
-
-Each operation can only contain one tag, using the following XML format:
-
-- Query edge existence (e.g., query hubs 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Query remaining quota:
-<query_budget></query_budget>
-
-- Final answer submission (predict all forbidden routes):
-<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
-
-Notes:
-1. The answer must include predictions for all forbidden routes, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
-2. Hub pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
-3. Do not query forbidden routes or repeatedly query the same route.
-4. Do not exceed the query quota.
-5. Use as few queries as possible and find the rule through inductive reasoning.
-
-Violating any constraint or making incorrect predictions will result in planning failure.
+- Network connectivity has transitivity: if Ea is connected to Eb, and Eb is connected to Ec, then Ea must be connected to Ec.
+- Proper use of transitivity can reduce the number of necessary queries.
+- Each node must belong to exactly one network.
 """
 
     contextualized_rule_zh_2 = """\
-作为临床药学专家，你需要推断一种新型药物库中不同成分之间是否存在相互作用。
+我们来进行一次“病原体变异株溯源”分析，规则如下：
 
-我们来玩一个"隐藏药物作用推理"游戏，规则如下：
+系统采集了 {n} 份病毒样本，标识为 E1, E2, ..., E{n}。这些标识仅用于指称，不包含顺序、数值或临床严重程度含义。
 
-系统设定了一个药物成分编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 种成分。
+系统已通过基因组测序秘密确定了一个等价关系，将这 {n} 个样本划分为若干个不相交的变异株毒系（分组）。变异株的数量未知且不会事先告知。两个样本是否“同类”完全由它们是否属于同一变异株毒系决定。
 
-在这个集合上，存在一个未知的相互作用关系 E。这个相互作用满足以下性质：
-1. 对称性：如果成分对 {{u, v}} 存在相互作用 E，那么 {{v, u}} 也同样存在。
-2. 无自环：任何成分不与自己构成相互作用测试，即 {{u, u}} 不存在。
-3. 非平凡：既存在产生相互作用的成分对，也存在无相互作用的成分对。
+你的目标是通过检测推断出完整的毒系划分方案。你有 {query_budget} 次查询预算，可以进行以下操作：
 
-这个相互作用由一个仅依赖于成分编号的确定性规则决定，但该规则对你是未知的。
+1. **配对查询**：询问两个不同样本 Ei 和 Ej 是否属于同一变异株毒系。
+   - 系统会回答"同类"（同毒系）或"不同类"（不同毒系）。
 
-## 禁问集合
-有一组特定的成分对被设置为"临床禁忌测试对" F，你不能直接查询这些对是否存在相互作用。禁忌测试集合为：
-{forbidden_pairs_str}
+2. **分组提交**：提交你推断出的完整划分方案。
+   - 若划分完全正确，游戏成功。
+   - 若划分错误，系统会返回一个反例对，指出冲突：
+     * 类型A：你声称同组，但实际为不同类。
+     * 类型B：你声称不同组，但实际为同类。
+     - 反例不计入查询预算。
 
-## 查询配额
-你有 {quota} 次查询机会。你需要通过查询非禁忌对来推断出生成关系 E 的规则，并最终预测所有禁忌测试对是否存在相互作用 E。
+3. **终局验证**（当查询预算用尽但未成功提交时触发）：
+   - 系统会选择 {challenge_count} 个未被检测过的样本对，逐一询问你的判断。
+   - 若全部答对，也视为游戏成功。
+   - 若存在至少一对答错，游戏失败。
 
-## 你可以进行的操作
+每次只能包含一个标签。请使用以下 XML 格式：
 
-1. **查询边存在性**：询问某个非禁忌的成分对 {{u, v}} 是否存在相互作用 E。
-   - 要求：u 不等于 v，{{u, v}} 不在禁忌测试集合 F 中，且此前未查询过该组合。
-   - 我会回答"有"或"没有"。
+- 配对查询（例如询问 E3 和 E7）：
+<query_pair>E3,E7</query_pair>
 
-2. **查询剩余配额**：询问还剩多少次查询机会。
-   - 我会回答一个非负整数。
+- 分组提交（用分号分隔各毒系，组内样本用逗号分隔）：
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **最终提交**：当你认为已掌握规律时，对所有临床禁忌测试对进行预测。
-   - 你需要对每个禁忌对给出"有"或"没有"的判断。
+- 终局验证回答（当系统询问某对样本时，回答同类或不同类）：
+<challenge_answer>同类</challenge_answer>
+或
+<challenge_answer>不同类</challenge_answer>
 
-## 查询与提交格式（必须严格遵守）
-
-每次操作只能包含一个标签，使用以下 XML 格式：
-
-- 查询边存在性（例如查询成分 2 和 5）：
-<query_edge>2,5</query_edge>
-
-- 查询剩余配额：
-<query_budget></query_budget>
-
-- 最终提交答案（对所有禁忌对进行预测）：
-<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
-
-注意：
-1. 答案中必须包含所有禁忌对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
-2. 成分对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
-3. 不得查询禁忌对或重复查询同一对。
-4. 不得超出查询配额。
-5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
-
-违反任何约束或预测错误将导致临床分析失败。
+- 同源关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
+- 合理利用传递性可减少必要的查询次数。
+- 每个样本必须恰好属于一个变异株毒系。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-As a clinical pharmacy expert, you need to infer whether there are drug-drug interactions between different compounds in a novel drug library.
+Let's conduct a "Pathogen Variant Traceability" analysis. Here are the rules:
 
-Let's play a "Hidden Drug Interaction Inference" game. Here are the rules:
+The system has collected {n} virus samples, labeled as E1, E2, ..., E{n}. These labels are for identification only and carry no sequence, numerical, or clinical severity meaning.
 
-There is a set of designated drug compound labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} compounds in total.
+Through genomic sequencing, the system has secretly determined an equivalence relation that partitions these {n} samples into several disjoint variant lineages (groups). The number of variants is unknown and will not be disclosed in advance. Whether two samples are "equivalent" is determined entirely by whether they belong to the same variant lineage.
 
-On this set, there exists an unknown interaction relation E. This interaction satisfies the following properties:
-1. Symmetry: If compound pair {{u, v}} has interaction E, then {{v, u}} also has it.
-2. No self-loops: No compound is tested for interaction with itself, i.e., {{u, u}} does not exist.
-3. Non-trivial: There exist both pairs that interact and pairs that do not.
+Your goal is to infer the complete lineage partition scheme through testing. You have {query_budget} query budget and can perform the following operations:
 
-This interaction is determined by a deterministic rule that depends only on compound labels, but the rule is unknown to you.
+1. **Pair Query**: Ask whether two different samples Ei and Ej belong to the same variant lineage.
+   - The system will answer "Same" (same lineage) or "Different" (different lineages).
 
-## Forbidden Set
-A specific set of compound pairs is designated as "clinical contraindication pairs" F. You cannot directly query whether these pairs have interactions. The forbidden pair set is:
-{forbidden_pairs_str}
+2. **Partition Submission**: Submit your inferred complete partition.
+   - If the partition is completely correct, the game succeeds.
+   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
+     * Type A: You claimed same group, but actually different.
+     * Type B: You claimed different groups, but actually same.
+   - Counterexamples do not count toward the query budget.
 
-## Query Quota
-You have {quota} query opportunities. You need to infer the rule generating relation E by querying non-forbidden pairs, and ultimately predict whether all contraindication pairs have interaction E.
+3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
+   - The system will select {challenge_count} sample pairs that have never been tested and ask for your judgment one by one.
+   - If all answers are correct, the game also succeeds.
+   - If at least one pair is wrong, the game fails.
 
-## Available Operations
+Each turn must contain only one tag. Use the following XML format:
 
-1. **Query Edge Existence**: Ask whether a non-forbidden compound pair {{u, v}} has interaction E.
-   - Requirements: u is not equal to v, {{u, v}} is not in the forbidden set F, and the pair has not been queried before.
-   - I will answer "Yes" or "No".
+- Pair Query (e.g., asking about E3 and E7):
+<query_pair>E3,E7</query_pair>
 
-2. **Query Remaining Quota**: Ask how many query opportunities remain.
-   - I will answer with a non-negative integer.
+- Partition Submission (use semicolons to separate lineages, commas within lineages):
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **Final Submission**: When you believe you have grasped the pattern, predict all clinical contraindication pairs.
-   - You need to give a "Yes" or "No" judgment for each forbidden pair.
+- Challenge Answer (when the system asks about a pair, answer same or different):
+<challenge_answer>Same</challenge_answer>
+or
+<challenge_answer>Different</challenge_answer>
 
-## Query and Submission Format (must strictly follow)
-
-Each operation can only contain one tag, using the following XML format:
-
-- Query edge existence (e.g., query compounds 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Query remaining quota:
-<query_budget></query_budget>
-
-- Final answer submission (predict all contraindication pairs):
-<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
-
-Notes:
-1. The answer must include predictions for all contraindication pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
-2. Compound pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
-3. Do not query contraindication pairs or repeatedly query the same pair.
-4. Do not exceed the query quota.
-5. Use as few queries as possible and find the rule through inductive reasoning.
-
-Violating any constraint or making incorrect predictions will result in clinical analysis failure.
+- Homologous relationships have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
+- Proper use of transitivity can reduce the number of necessary queries.
+- Each sample must belong to exactly one variant lineage.
 """
 
     contextualized_rule_zh_3 = """\
-作为课程研发主管，你需要梳理一套全新教学大纲中知识点之间的交叉融合关联逻辑。
+我们来处理一项“学术研讨小组分配”任务，规则如下：
 
-我们来玩一个"隐藏知识关联推理"游戏，规则如下：
+系统录入了 {n} 名学生，标识为 E1, E2, ..., E{n}。这些标识仅用于指称，不代表学号、成绩或座位号。
 
-大纲设定了一个核心知识点编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 个知识点。
+系统已秘密生成了一份研讨小组名单，将这 {n} 名学生划分为若干个互不重叠的研讨小组。小组的数量未知且不会事先告知。两名学生是否属于“同类”完全由他们是否被分入同一研讨小组决定。
 
-在这个集合上，存在一个未知的学科交叉关联 E。这个关联满足以下性质：
-1. 对称性：如果知识点对 {{u, v}} 存在交叉关联 E，那么 {{v, u}} 也同样存在关联。
-2. 无自环：任何知识点不与自己构成关联比较，即 {{u, u}} 不存在。
-3. 非平凡：既存在有关联的知识点对，也存在无关联的知识点对。
+你的目标是通过问询推断出完整的学生分组方案。你有 {query_budget} 次查询预算，可以进行以下操作：
 
-这个关联关系由一个仅依赖于知识点编号的确定性规则决定，但该规则对你是未知的。
+1. **配对查询**：询问两名不同学生 Ei 和 Ej 是否属于同一研讨小组。
+   - 系统会回答"同类"（同组）或"不同类"（不同组）。
 
-## 禁问集合
-有一组特定的知识点对被设置为"盲盒评估对" F，你不能直接查询这些对是否存在关联。盲盒评估集合为：
-{forbidden_pairs_str}
+2. **分组提交**：提交你推断出的完整划分方案。
+   - 若划分完全正确，游戏成功。
+   - 若划分错误，系统会返回一个反例对，指出冲突：
+     * 类型A：你声称同组，但实际为不同类。
+     * 类型B：你声称不同组，但实际为同类。
+     - 反例不计入查询预算。
 
-## 查询配额
-你有 {quota} 次查询机会。你需要通过查询非盲盒对来推断出生成关联 E 的规则，并最终预测所有盲盒评估对是否存在交叉关联。
+3. **终局验证**（当查询预算用尽但未成功提交时触发）：
+   - 系统会选择 {challenge_count} 个未被查询过的学生对，逐一询问你的判断。
+   - 若全部答对，也视为游戏成功。
+   - 若存在至少一对答错，游戏失败。
 
-## 你可以进行的操作
+每次只能包含一个标签。请使用以下 XML格式：
 
-1. **查询边存在性**：询问某个非盲盒的知识点对 {{u, v}} 是否存在交叉关联 E。
-   - 要求：u 不等于 v，{{u, v}} 不在盲盒评估集合 F 中，且此前未查询过该对。
-   - 我会回答"有"或"没有"。
+- 配对查询（例如询问 E3 和 E7）：
+<query_pair>E3,E7</query_pair>
 
-2. **查询剩余配额**：询问还剩多少次查询机会。
-   - 我会回答一个非负整数。
+- 分组提交（用分号分隔各小组，组内学生用逗号分隔）：
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **最终提交**：当你认为已掌握规律时，对所有盲盒评估对进行预测。
-   - 你需要对每个盲盒对给出"有"或"没有"的判断。
+- 终局验证回答（当系统询问某对学生时，回答同类或不同类）：
+<challenge_answer>同类</challenge_answer>
+或
+<challenge_answer>不同类</challenge_answer>
 
-## 查询与提交格式（必须严格遵守）
-
-每次操作只能包含一个标签，使用以下 XML 格式：
-
-- 查询边存在性（例如查询知识点 2 和 5）：
-<query_edge>2,5</query_edge>
-
-- 查询剩余配额：
-<query_budget></query_budget>
-
-- 最终提交答案（对所有盲盒评估对进行预测）：
-<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
-
-注意：
-1. 答案中必须包含所有盲盒评估对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
-2. 知识点对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
-3. 不得查询盲盒评估对或重复查询同一对。
-4. 不得超出查询配额。
-5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
-
-违反任何约束或预测错误将导致大纲梳理失败。
+- 同组关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
+- 合理利用传递性可减少必要的查询次数。
+- 每名学生必须恰好属于一个研讨小组。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-As a curriculum development director, you need to map out the cross-disciplinary correlation logic between knowledge points in a brand-new syllabus.
+Let's handle an "Academic Seminar Group Assignment" task. Here are the rules:
 
-Let's play a "Hidden Knowledge Correlation Inference" game. Here are the rules:
+The system has enrolled {n} students, labeled as E1, E2, ..., E{n}. These labels are for identification only and do not represent student IDs, grades, or seat numbers.
 
-The syllabus defines a set of core knowledge point labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} points in total.
+The system has secretly generated a seminar group roster, partitioning these {n} students into several non-overlapping seminar groups. The number of groups is unknown and will not be disclosed in advance. Whether two students are "equivalent" is determined entirely by whether they are assigned to the same seminar group.
 
-On this set, there exists an unknown cross-disciplinary correlation E. This correlation satisfies the following properties:
-1. Symmetry: If knowledge point pair {{u, v}} has correlation E, then {{v, u}} also has it.
-2. No self-loops: No knowledge point is correlated with itself for this purpose, i.e., {{u, u}} does not exist.
-3. Non-trivial: There exist both pairs that are correlated and pairs that are not.
+Your goal is to infer the complete student grouping scheme through inquiries. You have {query_budget} query budget and can perform the following operations:
 
-This correlation is determined by a deterministic rule that depends only on the point labels, but the rule is unknown to you.
+1. **Pair Query**: Ask whether two different students Ei and Ej belong to the same seminar group.
+   - The system will answer "Same" (same group) or "Different" (different groups).
 
-## Forbidden Set
-A specific set of knowledge point pairs is designated as "blind-box evaluation pairs" F. You cannot directly query whether these pairs are correlated. The forbidden pair set is:
-{forbidden_pairs_str}
+2. **Partition Submission**: Submit your inferred complete partition.
+   - If the partition is completely correct, the game succeeds.
+   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
+     * Type A: You claimed same group, but actually different.
+     * Type B: You claimed different groups, but actually same.
+   - Counterexamples do not count toward the query budget.
 
-## Query Quota
-You have {quota} query opportunities. You need to infer the rule generating correlation E by querying non-forbidden pairs, and ultimately predict whether all blind-box evaluation pairs have correlation E.
+3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
+   - The system will select {challenge_count} student pairs that have never been queried and ask for your judgment one by one.
+   - If all answers are correct, the game also succeeds.
+   - If at least one pair is wrong, the game fails.
 
-## Available Operations
+Each turn must contain only one tag. Use the following XML format:
 
-1. **Query Edge Existence**: Ask whether a non-forbidden knowledge point pair {{u, v}} has correlation E.
-   - Requirements: u is not equal to v, {{u, v}} is not in the blind-box evaluation set F, and the pair has not been queried before.
-   - I will answer "Yes" or "No".
+- Pair Query (e.g., asking about E3 and E7):
+<query_pair>E3,E7</query_pair>
 
-2. **Query Remaining Quota**: Ask how many query opportunities remain.
-   - I will answer with a non-negative integer.
+- Partition Submission (use semicolons to separate groups, commas within groups):
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **Final Submission**: When you believe you have grasped the pattern, predict all blind-box evaluation pairs.
-   - You need to give a "Yes" or "No" judgment for each forbidden pair.
+- Challenge Answer (when the system asks about a pair, answer same or different):
+<challenge_answer>Same</challenge_answer>
+or
+<challenge_answer>Different</challenge_answer>
 
-## Query and Submission Format (must strictly follow)
-
-Each operation can only contain one tag, using the following XML format:
-
-- Query edge existence (e.g., query knowledge points 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Query remaining quota:
-<query_budget></query_budget>
-
-- Final answer submission (predict all blind-box pairs):
-<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
-
-Notes:
-1. The answer must include predictions for all blind-box pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
-2. Knowledge point pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
-3. Do not query blind-box pairs or repeatedly query the same pair.
-4. Do not exceed the query quota.
-5. Use as few queries as possible and find the rule through inductive reasoning.
-
-Violating any constraint or making incorrect predictions will result in curriculum mapping failure.
+- Group relationships have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
+- Proper use of transitivity can reduce the number of necessary queries.
+- Each student must belong to exactly one seminar group.
 """
 
     contextualized_rule_zh_4 = """\
-作为智能制造系统工程师，你需要测试新产线上各模块间的装配兼容互换性。
+我们来执行一项“工业零件生产批次”的质量追踪任务，规则如下：
 
-我们来玩一个"隐藏装配兼容推理"游戏，规则如下：
+系统锁定了 {n} 个待检零件，标识为 E1, E2, ..., E{n}。这些标识仅为追踪码，不包含加工顺序、重量或位置含义。
 
-产线设定了一个加工模块编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 个模块。
+由于生产线调整，这些零件被划分为若干个不相交的生产批次。系统已秘密记录了这一划分，具体批次数量未知且不会事先告知。两个零件是否具有“同类”属性完全由它们是否出自同一生产批次决定。
 
-在这个集合上，存在一个未知的装配兼容关系 E。这个兼容关系满足以下性质：
-1. 对称性：如果模块对 {{u, v}} 存在装配兼容 E，那么 {{v, u}} 也同样兼容。
-2. 无自环：任何模块不与自己进行装配兼容测试，即 {{u, u}} 不存在。
-3. 非平凡：既存在兼容的模块对，也存在不兼容的模块对。
+你的目标是通过抽检查验推断出完整的零件批次划分。你有 {query_budget} 次查询预算，可以进行以下操作：
 
-这个兼容关系由一个仅依赖于模块编号的确定性工艺规则决定，但该规则对你是未知的。
+1. **配对查询**：询问两个不同零件 Ei 和 Ej 是否属于同一生产批次。
+   - 系统会回答"同类"（同批次）或"不同类"（不同批次）。
 
-## 禁问集合
-有一组特定的模块对被设置为"限制测试对" F，你不能直接查询这些对是否兼容。限制测试集合为：
-{forbidden_pairs_str}
+2. **分组提交**：提交你推断出的完整划分方案。
+   - 若划分完全正确，游戏成功。
+   - 若划分错误，系统会返回一个反例对，指出冲突：
+     * 类型A：你声称同组，但实际为不同类。
+     * 类型B：你声称不同组，但实际为同类。
+     - 反例不计入查询预算。
 
-## 查询配额
-你有 {quota} 次查询机会。你需要通过查询非限制测试对来推断出生成兼容关系 E 的工艺规则，并最终预测所有限制测试对是否兼容。
+3. **终局验证**（当查询预算用尽但未成功提交时触发）：
+   - 系统会选择 {challenge_count} 个未被抽检过的零件对，逐一询问你的判断。
+   - 若全部答对，也视为游戏成功。
+   - 若存在至少一对答错，游戏失败。
 
-## 你可以进行的操作
+每次只能包含一个标签。请使用以下 XML 格式：
 
-1. **查询边存在性**：询问某个非限制测试的模块对 {{u, v}} 是否存在装配兼容 E。
-   - 要求：u 不等于 v，{{u, v}} 不在限制测试集合 F 中，且此前未测试过该组合。
-   - 我会回答"有"或"没有"。
+- 配对查询（例如询问 E3 和 E7）：
+<query_pair>E3,E7</query_pair>
 
-2. **查询剩余配额**：询问还剩多少次查询机会。
-   - 我会回答一个非负整数。
+- 分组提交（用分号分隔各批次，组内零件用逗号分隔）：
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **最终提交**：当你认为已掌握规律时，对所有限制测试对进行预测。
-   - 你需要对每个限制测试对给出"有"或"没有"的判断。
+- 终局验证回答（当系统询问某对零件时，回答同类或不同类）：
+<challenge_answer>同类</challenge_answer>
+或
+<challenge_answer>不同类</challenge_answer>
 
-## 查询与提交格式（必须严格遵守）
-
-每次操作只能包含一个标签，使用以下 XML 格式：
-
-- 查询边存在性（例如查询模块 2 和 5）：
-<query_edge>2,5</query_edge>
-
-- 查询剩余配额：
-<query_budget></query_budget>
-
-- 最终提交答案（对所有限制测试对进行预测）：
-<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
-
-注意：
-1. 答案中必须包含所有限制测试对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
-2. 模块对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
-3. 不得查询限制测试对或重复测试同一对。
-4. 不得超出查询配额。
-5. 请尽可能少地使用查询次数，通过归纳推理找出规则。
-
-违反任何约束或预测错误将导致系统调试失败。
+- 同批次关系具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
+- 合理利用传递性可减少必要的查询次数。
+- 每个零件必须恰好属于一个生产批次。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industry Scenario]
-As a smart manufacturing systems engineer, you need to test the assembly compatibility and interchangeability among different modules on a new production line.
+Let's execute a quality tracking task for "Industrial Part Production Batches". Here are the rules:
 
-Let's play a "Hidden Assembly Compatibility Inference" game. Here are the rules:
+The system has locked onto {n} parts pending inspection, labeled as E1, E2, ..., E{n}. These labels are tracking codes only and carry no processing sequence, weight, or positional meaning.
 
-The production line designates a set of processing module labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} modules in total.
+Due to production line adjustments, these parts are partitioned into several disjoint production batches. The system has secretly recorded this partition, and the specific number of batches is unknown and will not be disclosed in advance. Whether two parts are "equivalent" is determined entirely by whether they originate from the same production batch.
 
-On this set, there exists an unknown assembly compatibility relation E. This compatibility relation satisfies the following properties:
-1. Symmetry: If module pair {{u, v}} is compatible for assembly E, then {{v, u}} is also compatible.
-2. No self-loops: No module is tested for compatibility with itself, i.e., {{u, u}} does not exist.
-3. Non-trivial: There exist both compatible module pairs and incompatible pairs.
+Your goal is to infer the complete part batch partition through spot checks. You have {query_budget} query budget and can perform the following operations:
 
-This compatibility is determined by a deterministic process rule that depends only on the module labels, but the rule is unknown to you.
+1. **Pair Query**: Ask whether two different parts Ei and Ej belong to the same production batch.
+   - The system will answer "Same" (same batch) or "Different" (different batches).
 
-## Forbidden Set
-A specific set of module pairs is designated as "restricted test pairs" F. You cannot directly query whether these pairs are compatible. The restricted test set is:
-{forbidden_pairs_str}
+2. **Partition Submission**: Submit your inferred complete partition.
+   - If the partition is completely correct, the game succeeds.
+   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
+     * Type A: You claimed same group, but actually different.
+     * Type B: You claimed different groups, but actually same.
+   - Counterexamples do not count toward the query budget.
 
-## Query Quota
-You have {quota} query opportunities. You need to infer the process rule generating compatibility E by querying non-restricted pairs, and ultimately predict whether all restricted test pairs are compatible.
+3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
+   - The system will select {challenge_count} part pairs that have never been spot-checked and ask for your judgment one by one.
+   - If all answers are correct, the game also succeeds.
+   - If at least one pair is wrong, the game fails.
 
-## Available Operations
+Each turn must contain only one tag. Use the following XML format:
 
-1. **Query Edge Existence**: Ask whether a non-restricted module pair {{u, v}} is compatible E.
-   - Requirements: u is not equal to v, {{u, v}} is not in the restricted test set F, and the pair has not been tested before.
-   - I will answer "Yes" or "No".
+- Pair Query (e.g., asking about E3 and E7):
+<query_pair>E3,E7</query_pair>
 
-2. **Query Remaining Quota**: Ask how many query opportunities remain.
-   - I will answer with a non-negative integer.
+- Partition Submission (use semicolons to separate batches, commas within batches):
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **Final Submission**: When you believe you have grasped the pattern, predict all restricted test pairs.
-   - You need to give a "Yes" or "No" judgment for each restricted pair.
+- Challenge Answer (when the system asks about a pair, answer same or different):
+<challenge_answer>Same</challenge_answer>
+or
+<challenge_answer>Different</challenge_answer>
 
-## Query and Submission Format (must strictly follow)
-
-Each operation can only contain one tag, using the following XML format:
-
-- Query edge existence (e.g., query modules 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Query remaining quota:
-<query_budget></query_budget>
-
-- Final answer submission (predict all restricted pairs):
-<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
-
-Notes:
-1. The answer must include predictions for all restricted test pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
-2. Module pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
-3. Do not query restricted test pairs or repeatedly query the same pair.
-4. Do not exceed the query quota.
-5. Use as few queries as possible and find the rule through inductive reasoning.
-
-Violating any constraint or making incorrect predictions will result in system debugging failure.
+- Batch relationships have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
+- Proper use of transitivity can reduce the number of necessary queries.
+- Each part must belong to exactly one production batch.
 """
 
     contextualized_rule_zh_5 = """\
-作为高级法务顾问，你需要分析一部新颁布法规中各条款之间潜在的竞合关系。
+我们来进行一次“涉案主体利益阵营”审查，规则如下：
 
-我们来玩一个"隐藏法律竞合推理"游戏，规则如下：
+系统整理了 {n} 个涉案主体，标识为 E1, E2, ..., E{n}。这些标识仅作代称，不代表诉讼地位、涉案金额或优先级含义。
 
-法典设定了一个法律条款编号集合 V = {{0, 1, ..., {n_minus_1}}}，共 {n} 项条款。
+基于商业关联，系统已查明并将这 {n} 个主体划分为若干个互不交叉的利益共同体（阵营）。利益共同体的数量未知且不会事先告知。两个主体是否属于“同类”完全由他们是否在同一利益阵营决定。
 
-在这个集合上，存在一个未知的条款竞合关系 E。这个竞合关系满足以下性质：
-1. 对称性：如果条款对 {{u, v}} 存在竞合关系 E，那么 {{v, u}} 也同样存在竞合。
-2. 无自环：任何条款不与自己进行竞合判定，即 {{u, u}} 不存在。
-3. 非平凡：既存在产生竞合的条款对，也存在不竞合的条款对。
+你的目标是通过尽职调查推断出完整的利益阵营划分。你有 {query_budget} 次查询预算，可以进行以下操作：
 
-这个竞合关系由一个仅依赖于条款编号的确定性法理规则决定，但该规则对你是未知的。
+1. **配对查询**：询问两个不同涉案主体 Ei 和 Ej 是否属于同一利益阵营。
+   - 系统会回答"同类"（同阵营）或"不同类"（不同阵营）。
 
-## 禁问集合
-有一组特定的条款对被设置为"未公开裁决条款对" F，你不能直接查询这些对是否存在竞合。未公开裁决集合为：
-{forbidden_pairs_str}
+2. **分组提交**：提交你推断出的完整划分方案。
+   - 若划分完全正确，游戏成功。
+   - 若划分错误，系统会返回一个反例对，指出冲突：
+     * 类型A：你声称同组，但实际为不同类。
+     * 类型B：你声称不同组，但实际为同类。
+     - 反例不计入查询预算。
 
-## 查询配额
-你有 {quota} 次查询机会。你需要通过查询非未公开的裁决对来推断出生成竞合关系 E 的法理规则，并最终预测所有未公开裁决条款对是否存在竞合。
+3. **终局验证**（当查询预算用尽但未成功提交时触发）：
+   - 系统会选择 {challenge_count} 个未被调查过的主体对，逐一询问你的判断。
+   - 若全部答对，也视为游戏成功。
+   - 若存在至少一对答错，游戏失败。
 
-## 你可以进行的操作
+每次只能包含一个标签。请使用以下 XML 格式：
 
-1. **查询边存在性**：询问某个非未公开裁决的条款对 {{u, v}} 是否存在竞合关系 E。
-   - 要求：u 不等于 v，{{u, v}} 不在未公开裁决集合 F 中，且此前未查询过该条款对。
-   - 我会回答"有"或"没有"。
+- 配对查询（例如询问 E3 和 E7）：
+<query_pair>E3,E7</query_pair>
 
-2. **查询剩余配额**：询问还剩多少次查询机会。
-   - 我会回答一个非负整数。
+- 分组提交（用分号分隔各阵营，组内主体用逗号分隔）：
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **最终提交**：当你认为已掌握法理规律时，对所有未公开裁决条款对进行预测。
-   - 你需要对每个未公开对给出"有"或"没有"的判断。
+- 终局验证回答（当系统询问某对主体时，回答同类或不同类）：
+<challenge_answer>同类</challenge_answer>
+或
+<challenge_answer>不同类</challenge_answer>
 
-## 查询与提交格式（必须严格遵守）
-
-每次操作只能包含一个标签，使用以下 XML 格式：
-
-- 查询边存在性（例如查询条款 2 和 5）：
-<query_edge>2,5</query_edge>
-
-- 查询剩余配额：
-<query_budget></query_budget>
-
-- 最终提交答案（对所有未公开裁决条款对进行预测）：
-<answer>{{0,3}}=有, {{1,4}}=没有, {{2,5}}=有</answer>
-
-注意：
-1. 答案中必须包含所有未公开裁决对的预测，格式为"{{u,v}}=有"或"{{u,v}}=没有"，用逗号分隔。
-2. 条款对顺序不限（{{2,5}} 和 {{5,2}} 等价）。
-3. 不得查询未公开裁决对或重复查询同一对。
-4. 不得超出查询配额。
-5. 请尽可能少地使用查询次数，通过归纳推理找出法理规则。
-
-违反任何约束或预测错误将导致法理分析失败。
+- 利益关联具有传递性：若 Ea 与 Eb 同类，Eb 与 Ec 同类，则 Ea 与 Ec 必然同类。
+- 合理利用传递性可减少必要的查询次数。
+- 每个涉案主体必须恰好属于一个利益阵营。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-As a senior legal counsel, you need to analyze the potential concurrence relationships between various articles in a newly enacted regulation.
+Let's conduct a "Subject Interest Faction" review. Here are the rules:
 
-Let's play a "Hidden Legal Concurrence Inference" game. Here are the rules:
+The system has compiled {n} subjects involved in a case, labeled as E1, E2, ..., E{n}. These labels are for designation only and do not represent litigation status, amount involved, or priority meaning.
 
-The legal code defines a set of article labels V = {{0, 1, ..., {n_minus_1}}}, containing {n} articles in total.
+Based on business affiliations, the system has identified and partitioned these {n} subjects into several non-overlapping communities of interest (factions). The number of interest communities is unknown and will not be disclosed in advance. Whether two subjects are "equivalent" is determined entirely by whether they belong to the same interest faction.
 
-On this set, there exists an unknown article concurrence relation E. This concurrence relation satisfies the following properties:
-1. Symmetry: If article pair {{u, v}} has a concurrence relationship E, then {{v, u}} also has it.
-2. No self-loops: No article is evaluated for concurrence with itself, i.e., {{u, u}} does not exist.
-3. Non-trivial: There exist both article pairs that concur and pairs that do not.
+Your goal is to infer the complete faction partition through due diligence. You have {query_budget} query budget and can perform the following operations:
 
-This concurrence relation is determined by a deterministic jurisprudential rule that depends only on the article labels, but the rule is unknown to you.
+1. **Pair Query**: Ask whether two different subjects Ei and Ej belong to the same interest faction.
+   - The system will answer "Same" (same faction) or "Different" (different factions).
 
-## Forbidden Set
-A specific set of article pairs is designated as "undisclosed ruling pairs" F. You cannot directly query whether these pairs have concurrence. The undisclosed ruling set is:
-{forbidden_pairs_str}
+2. **Partition Submission**: Submit your inferred complete partition.
+   - If the partition is completely correct, the game succeeds.
+   - If the partition is wrong, the system will return a counterexample pair indicating a conflict:
+     * Type A: You claimed same group, but actually different.
+     * Type B: You claimed different groups, but actually same.
+   - Counterexamples do not count toward the query budget.
 
-## Query Quota
-You have {quota} query opportunities. You need to infer the jurisprudential rule generating concurrence E by querying non-undisclosed pairs, and ultimately predict whether all undisclosed ruling article pairs have concurrence.
+3. **Final Challenge** (triggered when query budget is exhausted but no successful submission):
+   - The system will select {challenge_count} subject pairs that have never been investigated and ask for your judgment one by one.
+   - If all answers are correct, the game also succeeds.
+   - If at least one pair is wrong, the game fails.
 
-## Available Operations
+Each turn must contain only one tag. Use the following XML format:
 
-1. **Query Edge Existence**: Ask whether a non-undisclosed article pair {{u, v}} has concurrence relationship E.
-   - Requirements: u is not equal to v, {{u, v}} is not in the undisclosed ruling set F, and the pair has not been queried before.
-   - I will answer "Yes" or "No".
+- Pair Query (e.g., asking about E3 and E7):
+<query_pair>E3,E7</query_pair>
 
-2. **Query Remaining Quota**: Ask how many query opportunities remain.
-   - I will answer with a non-negative integer.
+- Partition Submission (use semicolons to separate factions, commas within factions):
+<answer>E1,E3,E5;E2,E4;E6,E7,E8</answer>
 
-3. **Final Submission**: When you believe you have grasped the jurisprudential pattern, predict all undisclosed ruling article pairs.
-   - You need to give a "Yes" or "No" judgment for each undisclosed pair.
+- Challenge Answer (when the system asks about a pair, answer same or different):
+<challenge_answer>Same</challenge_answer>
+or
+<challenge_answer>Different</challenge_answer>
 
-## Query and Submission Format (must strictly follow)
-
-Each operation can only contain one tag, using the following XML format:
-
-- Query edge existence (e.g., query articles 2 and 5):
-<query_edge>2,5</query_edge>
-
-- Query remaining quota:
-<query_budget></query_budget>
-
-- Final answer submission (predict all undisclosed pairs):
-<answer>{{0,3}}=Yes, {{1,4}}=No, {{2,5}}=Yes</answer>
-
-Notes:
-1. The answer must include predictions for all undisclosed pairs, formatted as "{{u,v}}=Yes" or "{{u,v}}=No", separated by commas.
-2. Article pair order does not matter ({{2,5}} and {{5,2}} are equivalent).
-3. Do not query undisclosed ruling pairs or repeatedly query the same pair.
-4. Do not exceed the query quota.
-5. Use as few queries as possible and find the rule through inductive reasoning.
-
-Violating any constraint or making incorrect predictions will result in legal analysis failure.
+- Interest affiliations have transitivity: if Ea is equivalent to Eb, and Eb is equivalent to Ec, then Ea must be equivalent to Ec.
+- Proper use of transitivity can reduce the number of necessary queries.
+- Each subject must belong to exactly one interest faction.
 """
 
-    tags = ["answer", "query_edge", "query_budget"]
+    tags = ["answer", "query_pair", "challenge_answer"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
                 "n": 6,
-                "rule_func": lambda u, v: (u + v) % 2 == 0,
-                "forbidden_pairs": [{0, 3}, {1, 4}, {2, 5}],
-                "quota": 8,
+                "partition": [[1, 2, 3], [4, 5, 6]],
+                "query_budget": 12,
+                "challenge_count": 3
             },
             2: {
-                "n": 8,
-                "rule_func": lambda u, v: (u % 2) == (v % 2),
-                "forbidden_pairs": [{0, 4}, {1, 5}, {2, 6}, {3, 7}],
-                "quota": 10,
+                "n": 9,
+                "partition": [[1, 4, 7], [2, 5, 8], [3, 6, 9]],
+                "query_budget": 18,
+                "challenge_count": 4
             },
             3: {
-                "n": 10,
-                "rule_func": lambda u, v: abs(u - v) <= 2,
-                "forbidden_pairs": [{0, 5}, {1, 6}, {2, 7}, {3, 8}, {4, 9}],
-                "quota": 12,
+                "n": 12,
+                "partition": [[1, 5, 9], [2, 6, 10], [3, 7, 11], [4, 8, 12]],
+                "query_budget": 20,
+                "challenge_count": 5
             },
             4: {
-                "n": 12,
-                "rule_func": lambda u, v: (u * v) % 3 == 0,
-                "forbidden_pairs": [{0, 7}, {1, 8}, {2, 9}, {3, 10}, {4, 11}, {5, 6}],
-                "quota": 15,
+                "n": 15,
+                "partition": [[1, 6, 11], [2, 7, 12], [3, 8, 13], [4, 9, 14], [5, 10, 15]],
+                "query_budget": 25,
+                "challenge_count": 5
             },
             5: {
-                "n": 15,
-                "rule_func": lambda u, v: (u + v) % 4 < 2,
-                "forbidden_pairs": [{0, 8}, {1, 9}, {2, 10}, {3, 11}, {4, 12}, {5, 13}, {6, 14}, {7, 8}],
-                "quota": 18,
-            },
+                "n": 18,
+                "partition": [[1, 7, 13], [2, 8, 14], [3, 9, 15], [4, 10, 16], [5, 11, 17], [6, 12, 18]],
+                "query_budget": 30,
+                "challenge_count": 6
+            }
         },
         "en": {
             1: {
                 "n": 6,
-                "rule_func": lambda u, v: (u + v) % 2 == 0,
-                "forbidden_pairs": [{0, 3}, {1, 4}, {2, 5}],
-                "quota": 8,
+                "partition": [[1, 2, 3], [4, 5, 6]],
+                "query_budget": 12,
+                "challenge_count": 3
             },
             2: {
-                "n": 8,
-                "rule_func": lambda u, v: (u % 2) == (v % 2),
-                "forbidden_pairs": [{0, 4}, {1, 5}, {2, 6}, {3, 7}],
-                "quota": 10,
+                "n": 9,
+                "partition": [[1, 4, 7], [2, 5, 8], [3, 6, 9]],
+                "query_budget": 18,
+                "challenge_count": 4
             },
             3: {
-                "n": 10,
-                "rule_func": lambda u, v: abs(u - v) <= 2,
-                "forbidden_pairs": [{0, 5}, {1, 6}, {2, 7}, {3, 8}, {4, 9}],
-                "quota": 12,
+                "n": 12,
+                "partition": [[1, 5, 9], [2, 6, 10], [3, 7, 11], [4, 8, 12]],
+                "query_budget": 20,
+                "challenge_count": 5
             },
             4: {
-                "n": 12,
-                "rule_func": lambda u, v: (u * v) % 3 == 0,
-                "forbidden_pairs": [{0, 7}, {1, 8}, {2, 9}, {3, 10}, {4, 11}, {5, 6}],
-                "quota": 15,
+                "n": 15,
+                "partition": [[1, 6, 11], [2, 7, 12], [3, 8, 13], [4, 9, 14], [5, 10, 15]],
+                "query_budget": 25,
+                "challenge_count": 5
             },
             5: {
-                "n": 15,
-                "rule_func": lambda u, v: (u + v) % 4 < 2,
-                "forbidden_pairs": [{0, 8}, {1, 9}, {2, 10}, {3, 11}, {4, 12}, {5, 13}, {6, 14}, {7, 8}],
-                "quota": 18,
-            },
-        },
+                "n": 18,
+                "partition": [[1, 7, 13], [2, 8, 14], [3, 9, 15], [4, 10, 16], [5, 11, 17], [6, 12, 18]],
+                "query_budget": 30,
+                "challenge_count": 6
+            }
+        }
     }
 
     def __init__(self, config):
-        self.queried_pairs = set()  # 已查询过的元素对
-        self.remaining_quota = 0    # 剩余查询配额
+        self.query_count = 0
+        self.queried_pairs = set()
+        self.in_challenge_mode = False
+        self.challenge_pairs = []
+        self.challenge_index = 0
+        self.challenge_correct_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏配置和规则"""
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -773,205 +604,303 @@ Violating any constraint or making incorrect predictions will result in legal an
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 基本配置
         self._game_info["n"] = cfg["n"]
-        self._game_info["n_minus_1"] = cfg["n"] - 1
-        self._game_info["quota"] = cfg["quota"]
+        self._game_info["query_budget"] = cfg["query_budget"]
+        self._game_info["challenge_count"] = cfg["challenge_count"]
         
-        # 规则函数和禁问对
-        self.rule_func = cfg["rule_func"]
-        self.forbidden_pairs = cfg["forbidden_pairs"]
-        self.remaining_quota = cfg["quota"]
+        original_partition = cfg["partition"]
+        self.query_budget = cfg["query_budget"]
+        self.challenge_count = cfg["challenge_count"]
+        self.n = cfg["n"]
         
-        # 格式化禁问对字符串用于显示
-        forbidden_str = ", ".join(["{" + f"{min(p)},{max(p)}" + "}" for p in self.forbidden_pairs])
-        self._game_info["forbidden_pairs_str"] = forbidden_str
+        elements = list(range(1, self.n + 1))
+        random.shuffle(elements)
+        mapping = dict(zip(range(1, self.n + 1), elements))
         
-        # 构建完整的关系 E（用于验证答案）
-        self.relation_E = set()
-        for u in range(cfg["n"]):
-            for v in range(u + 1, cfg["n"]):
-                if self.rule_func(u, v):
-                    self.relation_E.add(frozenset({u, v}))
+        self.true_partition = []
+        for group in original_partition:
+            self.true_partition.append([mapping[e] for e in group])
+        
+        self.element_to_class = {}
+        for class_id, elements_list in enumerate(self.true_partition):
+            for elem in elements_list:
+                self.element_to_class[elem] = class_id
 
-    def _normalize_pair(self, u, v):
-        """将元素对标准化为 frozenset"""
-        return frozenset({u, v})
+    def _parse_element(self, elem_str):
+        elem_str = elem_str.strip().upper()
+        if elem_str.startswith('E'):
+            try:
+                return int(elem_str[1:])
+            except:
+                raise ValueError(f"Invalid element format: {elem_str}")
+        raise ValueError(f"Invalid element format: {elem_str}")
+
+    def _are_same_class(self, elem1, elem2):
+        return self.element_to_class.get(elem1) == self.element_to_class.get(elem2)
+
+    def _normalize_pair(self, elem1, elem2):
+        return tuple(sorted([elem1, elem2]))
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"]
+        if "answer" not in parsed_info:
+            return False
+            
+        raw_ans = parsed_info["answer"].strip()
         
-        # 根据语言确定关键字
-        if self.config.language == "zh":
-            yes_keyword = "有"
-            no_keyword = "没有"
-        else:
-            yes_keyword = "Yes"
-            no_keyword = "No"
-        
-        # 解析答案：格式如 {0,3}=有, {1,4}=没有
-        # 使用正则提取所有的 {u,v}=答案 格式
-        pattern = r'\{(\d+),(\d+)\}\s*=\s*(' + yes_keyword + '|' + no_keyword + ')'
-        matches = re.findall(pattern, raw_ans, re.IGNORECASE)
-        
-        if not matches:
+        try:
+            submitted_groups = []
+            for group_str in raw_ans.split(';'):
+                group_str = group_str.strip()
+                if not group_str:
+                    continue
+                elements = []
+                for elem_str in group_str.split(','):
+                    elem_str = elem_str.strip()
+                    if elem_str:
+                        elements.append(self._parse_element(elem_str))
+                if elements:
+                    submitted_groups.append(set(elements))
+        except Exception:
             return False
         
-        # 构建模型的预测字典
-        model_predictions = {}
-        for match in matches:
-            u, v = int(match[0]), int(match[1])
-            prediction = match[2]
-            pair = self._normalize_pair(u, v)
-            # 使用大小写不敏感比较
-            model_predictions[pair] = (prediction.lower() == yes_keyword.lower())
+        all_submitted = set()
+        for group in submitted_groups:
+            all_submitted.update(group)
         
-        # 检查是否覆盖了所有禁问对
-        forbidden_pairs_set = {self._normalize_pair(*p) for p in self.forbidden_pairs}
-        if set(model_predictions.keys()) != forbidden_pairs_set:
+        expected_elements = set(range(1, self.n + 1))
+        if all_submitted != expected_elements:
             return False
         
-        # 检查每个禁问对的预测是否正确
-        for pair in forbidden_pairs_set:
-            predicted = model_predictions[pair]
-            actual = pair in self.relation_E
-            if predicted != actual:
+        total_count = sum(len(group) for group in submitted_groups)
+        if total_count != len(all_submitted):
+            return False
+        
+        true_groups = [set(group) for group in self.true_partition]
+        
+        if len(submitted_groups) != len(true_groups):
+            return False
+        
+        matched = [False] * len(true_groups)
+        for sub_group in submitted_groups:
+            found = False
+            for i, true_group in enumerate(true_groups):
+                if sub_group == true_group and not matched[i]:
+                    matched[i] = True
+                    found = True
+                    break
+            if not found:
                 return False
         
         return True
 
+    def _find_counterexample(self, submitted_groups, true_groups):
+        for sub_group in submitted_groups:
+            sub_list = list(sub_group)
+            if len(sub_list) >= 2:
+                for i in range(len(sub_list)):
+                    for j in range(i + 1, len(sub_list)):
+                        if not self._are_same_class(sub_list[i], sub_list[j]):
+                            return ('A', sub_list[i], sub_list[j])
+        
+        for i in range(len(submitted_groups)):
+            for j in range(i + 1, len(submitted_groups)):
+                for elem1 in submitted_groups[i]:
+                    for elem2 in submitted_groups[j]:
+                        if self._are_same_class(elem1, elem2):
+                            return ('B', elem1, elem2)
+        
+        return None
+
     def _cf_core_produce(self, parsed_info):
-        """原始的响应生成逻辑"""
-        if self.config.language == "zh":
-            yes_res, no_res = "有", "没有"
-            error_out_of_range = "错误：元素标号超出范围。"
-            error_self_loop = "错误：不能查询元素与自身的关系。"
-            error_forbidden = "错误：该元素对在禁问集合中，不能查询。"
-            error_repeated = "错误：该元素对已经查询过。"
-            error_quota_exceeded = "错误：查询配额已用尽。"
-            error_invalid_format = "错误：查询格式无效。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            error_out_of_range = "Error: Element ID out of range."
-            error_self_loop = "Error: Cannot query relation between an element and itself."
-            error_forbidden = "Error: This pair is in the forbidden set and cannot be queried."
-            error_repeated = "Error: This pair has already been queried."
-            error_quota_exceeded = "Error: Query quota exhausted."
-            error_invalid_format = "Error: Invalid query format."
-
-        # 优先处理查询配额
-        if "query_budget" in parsed_info:
-            return str(self.remaining_quota)
-
-        # 处理边查询
-        elif "query_edge" in parsed_info:
+        is_zh = self.config.language == "zh"
+        
+        if self.in_challenge_mode:
+            if "challenge_answer" not in parsed_info:
+                return "请使用 <challenge_answer> 标签回答。" if is_zh else "Please use <challenge_answer> tag to answer."
+            
+            user_answer = parsed_info["challenge_answer"].strip()
+            if is_zh:
+                is_same = user_answer == "同类"
+            else:
+                is_same = user_answer.lower() == "same"
+            
+            elem1, elem2 = self.challenge_pairs[self.challenge_index]
+            correct_same = self._are_same_class(elem1, elem2)
+            
+            if is_same == correct_same:
+                self.challenge_correct_count += 1
+            
+            self.challenge_index += 1
+            
+            if self.challenge_index >= len(self.challenge_pairs):
+                if self.challenge_correct_count == len(self.challenge_pairs):
+                    self.state.set_state("success", "All challenge answers correct")
+                    return "终局验证全部正确！" if is_zh else "All challenge answers correct!"
+                else:
+                    self.state.set_state("failed", "Challenge answer incorrect")
+                    return f"终局验证失败，答对 {self.challenge_correct_count}/{len(self.challenge_pairs)} 题。" if is_zh else f"Challenge failed, {self.challenge_correct_count}/{len(self.challenge_pairs)} correct."
+            else:
+                next_elem1, next_elem2 = self.challenge_pairs[self.challenge_index]
+                question = f"请判断 E{next_elem1} 和 E{next_elem2} 是否同类？" if is_zh else f"Are E{next_elem1} and E{next_elem2} equivalent?"
+                return question
+        
+        if "query_pair" in parsed_info:
+            if self.query_count >= self.query_budget:
+                self.in_challenge_mode = True
+                self._generate_challenge_pairs()
+                if len(self.challenge_pairs) == 0:
+                    self.state.set_state("failed", "Query budget exceeded, no unqueried pairs for challenge")
+                    return "查询预算已用尽，没有足够的未查询元素对进行终局验证。" if is_zh else "Query budget exceeded, not enough unqueried pairs for challenge."
+                
+                elem1, elem2 = self.challenge_pairs[0]
+                question = f"查询预算已用尽，进入终局验证。请判断 E{elem1} 和 E{elem2} 是否同类？" if is_zh else f"Query budget exhausted, entering final challenge. Are E{elem1} and E{elem2} equivalent?"
+                return question
+            
             try:
-                raw = parsed_info["query_edge"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    raise ValueError
-                u, v = int(parts[0]), int(parts[1])
+                raw_pair = parsed_info["query_pair"].strip()
+                elem_strs = [s.strip() for s in raw_pair.split(',')]
+                if len(elem_strs) != 2:
+                    raise ValueError("Query must contain exactly two elements")
                 
-                # 验证元素范围
-                if u < 0 or u >= self._game_info["n"] or v < 0 or v >= self._game_info["n"]:
-                    return error_out_of_range
+                elem1 = self._parse_element(elem_strs[0])
+                elem2 = self._parse_element(elem_strs[1])
                 
-                # 验证不是自环
-                if u == v:
-                    return error_self_loop
+                if elem1 == elem2:
+                    return "错误：不能查询相同的元素。" if is_zh else "Error: Cannot query the same element."
                 
-                pair = self._normalize_pair(u, v)
+                if elem1 < 1 or elem1 > self.n or elem2 < 1 or elem2 > self.n:
+                    return "错误：元素编号超出范围。" if is_zh else "Error: Element ID out of range."
                 
-                # 验证不在禁问集合
-                if pair in {self._normalize_pair(*p) for p in self.forbidden_pairs}:
-                    return error_forbidden
-                
-                # 验证未重复查询
-                if pair in self.queried_pairs:
-                    return error_repeated
-                
-                # 验证配额
-                if self.remaining_quota <= 0:
-                    return error_quota_exceeded
-                
-                # 执行查询
+                pair = self._normalize_pair(elem1, elem2)
                 self.queried_pairs.add(pair)
-                self.remaining_quota -= 1
+                self.query_count += 1
                 
-                # 返回结果
-                in_relation = pair in self.relation_E
-                return yes_res if in_relation else no_res
+                is_same = self._are_same_class(elem1, elem2)
                 
-            except (ValueError, IndexError):
-                return error_invalid_format
+                remaining = self.query_budget - self.query_count
+                result = "同类" if is_same else "不同类"
+                suffix = f"（剩余查询次数：{remaining}）" if is_zh else f" (Remaining queries: {remaining})"
+                
+                if is_zh:
+                    return result + suffix
+                else:
+                    return ("Same" if is_same else "Different") + suffix
+                    
+            except Exception as e:
+                return f"错误：{str(e)}" if is_zh else f"Error: {str(e)}"
+        
+        raise ValueError("No valid query tag found.")
 
+    def _generate_challenge_pairs(self):
+        all_pairs = []
+        for i in range(1, self.n + 1):
+            for j in range(i + 1, self.n + 1):
+                pair = (i, j)
+                if pair not in self.queried_pairs:
+                    all_pairs.append(pair)
+        
+        if len(all_pairs) >= self.challenge_count:
+            self.challenge_pairs = random.sample(all_pairs, self.challenge_count)
         else:
-            raise ValueError("No valid query tag found.")
+            self.challenge_pairs = all_pairs
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
         possible_queries = []
-        n = self._game_info["n"]
+        is_zh = self.config.language == "zh"
         
-        # 预处理禁问对集合，方便快速查找
-        forbidden_set = {self._normalize_pair(*p) for p in self.forbidden_pairs}
-        
-        # 根据语言确定回答文本
-        if self.config.language == "zh":
-            yes_res, no_res = "有", "没有"
-        else:
-            yes_res, no_res = "Yes", "No"
-            
-        # 遍历所有可能的无向边 (u, v) 其中 u < v
-        # 这涵盖了所有合法的、非自环的边查询
-        for u in range(n):
-            for v in range(u + 1, n):
-                pair = self._normalize_pair(u, v)
+        for i in range(1, self.n + 1):
+            for j in range(i + 1, self.n + 1):
+                query_str = f"<query_pair>E{i},E{j}</query_pair>"
                 
-                # 如果是禁问对，则跳过（因为规则禁止直接查询禁问对）
-                if pair in forbidden_set:
-                    continue
+                is_same = self._are_same_class(i, j)
                 
-                # 获取正确答案（利用初始化时构建的 relation_E）
-                # 这里不使用 produce_response，避免消耗配额或改变游戏状态
-                is_connected = pair in self.relation_E
-                ans = yes_res if is_connected else no_res
+                if is_zh:
+                    ans = "同类" if is_same else "不同类"
+                else:
+                    ans = "Same" if is_same else "Different"
                 
                 possible_queries.append({
-                    "query": f"<query_edge>{u},{v}</query_edge>",
+                    "query": query_str,
                     "answer": ans
                 })
                 
         return possible_queries
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成错误答案"""
-        # 纯整数字符串
+        if correct.startswith("不同类"):
+            return correct.replace("不同类", "同类", 1)
+        if correct.startswith("同类"):
+            return correct.replace("同类", "不同类", 1)
+        if correct.startswith("Different"):
+            return correct.replace("Different", "Same", 1)
+        if correct.startswith("Same"):
+            return correct.replace("Same", "Different", 1)
+            
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        # 中文是非
-        if correct == "有":
-            return "没有"
-        if correct == "没有":
-            return "有"
+        if correct == "是": return "否"
+        if correct == "否": return "是"
         
-        # 英文Yes/No (忽略大小写)
-        if correct.lower() == "yes":
+        lower_c = correct.lower()
+        if lower_c == "yes":
             return "No" if correct[0].isupper() else "no"
-        if correct.lower() == "no":
+        if lower_c == "no":
             return "Yes" if correct[0].isupper() else "yes"
-
-        # 其他情况
+            
         return correct + "_WRONG"
+
+    def step(self, response: str):
+        try:
+            parsed_info = self.parse(response)
+            
+            if self.in_challenge_mode:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+            elif "answer" in parsed_info:
+                is_success = self.evaluate(parsed_info)
+                is_zh = self.config.language == "zh"
+                
+                if is_success:
+                    res = f"答案正确！等价类数量为 {len(self.true_partition)}。" if is_zh else f"Correct answer! Number of equivalence classes: {len(self.true_partition)}."
+                    self.state.set_state("success", "success")
+                    self.state.add_message("user", res)
+                else:
+                    true_groups = [set(group) for group in self.true_partition]
+                    try:
+                        raw_ans = parsed_info["answer"].strip()
+                        submitted_groups = []
+                        for group_str in raw_ans.split(';'):
+                            group_str = group_str.strip()
+                            if not group_str:
+                                continue
+                            elements = []
+                            for elem_str in group_str.split(','):
+                                elem_str = elem_str.strip()
+                                if elem_str:
+                                    elements.append(self._parse_element(elem_str))
+                            if elements:
+                                submitted_groups.append(set(elements))
+                        
+                        counterexample = self._find_counterexample(submitted_groups, true_groups)
+                        if counterexample:
+                            ex_type, e1, e2 = counterexample
+                            if ex_type == 'A':
+                                res = f"答案错误。反例：你声称 E{e1} 和 E{e2} 同组，但它们实际为不同类。" if is_zh else f"Incorrect answer. Counterexample: You claimed E{e1} and E{e2} are in the same group, but they are actually different."
+                            else:
+                                res = f"答案错误。反例：你声称 E{e1} 和 E{e2} 不同组，但它们实际为同类。" if is_zh else f"Incorrect answer. Counterexample: You claimed E{e1} and E{e2} are in different groups, but they are actually same."
+                        else:
+                            res = "答案错误。" if is_zh else "Incorrect answer."
+                    except Exception:
+                        res = "答案错误。" if is_zh else "Incorrect answer."
+                    
+                    self.state.set_state("failed", "incorrect answer")
+                    self.state.add_message("user", res)
+            else:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+                
+        except Exception as e:
+            self.state.set_state("failed", str(e))
+        
+        return self.state

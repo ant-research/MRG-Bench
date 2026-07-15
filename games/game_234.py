@@ -1,627 +1,737 @@
 from .base import Game
-import random
 import re
-from itertools import combinations
 
-class SetIntersectionReasoningGame(Game):
-    reasoning_type = "溯因推理"
-    data_structure = "集合"
+class SequenceMultiplierGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"集合交集推理"游戏，规则如下：
+我们来玩一个"序列乘子推理"游戏，规则如下：
 
-游戏设定了一个包含 10 个元素的集合 U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}。
+游戏设定了一个整数序列 W(d)，索引 d 属于集合 {{0, 1, ..., {H}}}，其中 W(0) = 1。
 
-已知三个固定子集：
-- A = {x1, x2, x3, x6}
-- B = {x2, x3, x4, x7, x8}
-- C = {x1, x3, x5, x8, x9}
+存在一个未知的周期 T，T 可能是 2、3、4 或 5。同时存在一个未知的整数乘子序列 f[0], f[1], ..., f[T-1]，每个乘子 f[k] 的取值范围是 1 到 4 之间的整数。
 
-我已经从以下四个候选集合中秘密选择了一个作为目标集合 T：
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+对于任意索引 d（0 小于等于 d 小于 {H}），序列满足递推关系：
+W(d+1) = W(d) × f[d mod T]
 
-你的目标是通过查询来确定 T 是哪一个候选集合，并给出该集合的完整元素列表。
+也就是说，每一步的值等于上一步的值乘以对应周期位置的乘子。
 
-## 查询规则
+游戏参数：
+- H = {H}：序列的最大索引
+- L* = {L_star}：目标索引（这是你需要预测其值的索引，但不能直接查询它）
+- B = {B}：数值查询的次数上限
 
-你可以发起计数查询，每次查询时提供一个子集 S（S 是 U 的子集），我会告诉你 S 与目标集合 T 的交集中有多少个元素。
+你的目标是：在不超过预算次数的前提下，通过查询其他索引的值，推断出 W(L*) 的准确数值。
 
-查询限制：
-- 每次查询的子集 S 必须包含 2 到 6 个元素
-- 元素必须来自 U（即 x1 到 x10）
-- 你必须进行至少 2 次查询后才能提交答案
-- 最多可以进行 6 次查询
-- 你需要用尽可能少的查询次数找到答案
+你可以进行以下操作：
 
-## 查询与提交答案的格式
+1. 数值查询（会消耗查询次数）：查询某个索引 L 的值
+   - 约束：L 必须是 0 到 {H} 之间的整数，且 L 不能等于 {L_star}
+   - 返回：W(L) 的精确整数值，以及剩余的查询次数
+   - 注意：如果你查询 L = {L_star}，将被视为违规，游戏直接失败
 
-每次查询时，使用以下 XML 格式提供元素列表（用逗号分隔）：
+2. 预算查询（不消耗查询次数）：询问当前剩余的数值查询次数
+   - 返回：剩余查询次数的整数
 
-<query>x1,x3,x5</query>
+3. 参数查询（不消耗查询次数）：询问游戏参数 H、L*、B
+   - 返回：这三个参数的当前值
 
-我会返回一个整数，表示你查询的集合与目标集合 T 的交集大小。
+4. 最终提交（不消耗查询次数）：提交你对目标索引值的预测
+   - 必须指定索引为 {L_star}，并给出预测值
+   - 如果预测正确，游戏成功；否则游戏失败
 
-当你确定答案后，请提交最终答案，格式如下（指定候选编号和完整元素集合）：
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- 数值查询（例如查询索引 5 的值）：
+<query_value>5</query_value>
 
-注意：
-- 候选编号必须是 T1、T2、T3 或 T4 之一
-- 元素列表顺序不限，但必须完整且准确
-- 如果查询不符合规则（如元素数量不对、包含非法元素）或答案错误，游戏失败
+- 预算查询（查询剩余次数）：
+<query_budget></query_budget>
+
+- 参数查询（查询 H、L*、B）：
+<query_params></query_params>
+
+- 最终提交（例如预测索引 {L_star} 的值为 1024）：
+<answer>index={L_star}, value=1024</answer>
+
+注意：提交答案时，索引必须等于 {L_star}，否则提交无效。
 """
 
     game_rule_en = """\
-Let's play a "Set Intersection Reasoning" game. Here are the rules:
+Let's play a "Sequence Multiplier Inference" game. Here are the rules:
 
-The game involves a universal set U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}} containing 10 elements.
+There is an integer sequence W(d) with index d in the set {{0, 1, ..., {H}}}, where W(0) = 1.
 
-Three fixed subsets are known:
-- A = {x1, x2, x3, x6}
-- B = {x2, x3, x4, x7, x8}
-- C = {x1, x3, x5, x8, x9}
+There exists an unknown period T, which can be 2, 3, 4, or 5. There also exists an unknown integer multiplier sequence f[0], f[1], ..., f[T-1], where each multiplier f[k] is an integer between 1 and 4.
 
-I have secretly selected one target set T from the following four candidates:
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+For any index d (0 less than or equal to d less than {H}), the sequence follows the recurrence relation:
+W(d+1) = W(d) × f[d mod T]
 
-Your goal is to determine which candidate T is through queries, and provide the complete list of elements in that set.
+That is, each step's value equals the previous step's value multiplied by the corresponding multiplier at that period position.
 
-## Query Rules
+Game parameters:
+- H = {H}: maximum index of the sequence
+- L* = {L_star}: target index (the index whose value you need to predict, but cannot directly query)
+- B = {B}: maximum number of value queries allowed
 
-You can make counting queries. For each query, you provide a subset S (where S is a subset of U), and I will tell you how many elements are in the intersection of S and the target set T.
+Your goal is: within the query budget, infer the exact value of W(L*) by querying values at other indices.
 
-Query constraints:
-- Each query subset S must contain between 2 and 6 elements
-- Elements must be from U (i.e., x1 to x10)
-- You must make at least 2 queries before submitting an answer
-- You can make at most 6 queries
-- You should find the answer using as few queries as possible
+You can perform the following operations:
 
-## Query and Answer Format
+1. Value Query (consumes a query count): query the value at index L
+   - Constraint: L must be an integer between 0 and {H}, and L cannot equal {L_star}
+   - Returns: the exact integer value W(L) and the remaining query count
+   - Note: if you query L = {L_star}, it is a violation and the game fails immediately
 
-For each query, use the following XML format to provide the element list (comma-separated):
+2. Budget Query (does not consume a query count): ask for the remaining number of value queries
+   - Returns: an integer representing the remaining query count
 
-<query>x1,x3,x5</query>
+3. Parameters Query (does not consume a query count): ask for the game parameters H, L*, B
+   - Returns: the current values of these three parameters
 
-I will return an integer indicating the size of the intersection between your queried set and the target set T.
+4. Final Submission (does not consume a query count): submit your prediction for the target index value
+   - Must specify index as {L_star} and provide the predicted value
+   - If the prediction is correct, the game succeeds; otherwise, it fails
 
-When you determine the answer, submit your final answer in this format (specify candidate ID and complete element set):
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- Value Query (e.g., query value at index 5):
+<query_value>5</query_value>
 
-Notes:
-- Candidate ID must be one of T1, T2, T3, or T4
-- Element list order doesn't matter, but must be complete and accurate
-- If the query violates rules (e.g., wrong number of elements, illegal elements) or the answer is incorrect, the game fails
+- Budget Query (query remaining count):
+<query_budget></query_budget>
+
+- Parameters Query (query H, L*, B):
+<query_params></query_params>
+
+- Final Submission (e.g., predict value at index {L_star} is 1024):
+<answer>index={L_star}, value=1024</answer>
+
+Note: when submitting an answer, the index must equal {L_star}, otherwise the submission is invalid.
 """
 
     contextualized_rule_zh_1 = """\
-智能交通管控系统正在进行"关键故障节点排查"任务，规则如下：
+我们来操作“交通枢纽流量预测系统”，规则如下：
 
-辖区内共有 10 个核心交通监控节点，构成全集 U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}。
+系统记录了一个交通流量基数序列 W(d)，天数索引 d 属于集合 {{0, 1, ..., {H}}}，其中初始日流量 W(0) = 1。
 
-根据系统初步诊断，已知三个固定特征子集：
-- A（近期发生拥堵的节点） = {x1, x2, x3, x6}
-- B（传感器报警的节点） = {x2, x3, x4, x7, x8}
-- C（处于通信异常状态的节点） = {x1, x3, x5, x8, x9}
+该枢纽存在一个未知的交通潮汐周期 T，T 可能是 2、3、4 或 5 天。同时存在一个未知的日流量放大乘子序列 f[0], f[1], ..., f[T-1]，每个乘子 f[k] 的取值范围是 1 到 4 之间的整数。
 
-系统已将引发区域瘫痪的核心故障集合锁定为以下四个候选目标 T 之一：
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+对于任意天数 d（0 小于等于 d 小于 {H}），流量基数满足递推关系：
+W(d+1) = W(d) × f[d mod T]
 
-你的目标是通过调用"节点交叉探查"指令，确定实际的核心故障集合 T 是哪一个候选集合，并给出该集合的完整节点列表。
+也就是说，明天的流量基数等于今天的流量基数乘以该潮汐周期特定位置的放大乘子。
 
-## 探查规则
+系统参数：
+- H = {H}：流量监控的最大天数索引
+- L* = {L_star}：目标预测天数（这是你需要预测其流量的索引，但不能直接查询它）
+- B = {B}：系统允许的历史流量查询次数上限
 
-你可以发起探查查询，每次提供一个节点子集 S（S 是 U 的子集），系统将返回 S 与目标故障集合 T 的交集中包含了多少个实际故障节点。
+你的目标是：在不超过预算次数的前提下，通过查询其他天数的流量基数，推断出第 L* 天的确切流量基数 W(L*)。
 
-探查限制：
-- 每次探查的子集 S 必须包含 2 到 6 个节点
-- 节点必须来自全集 U（即 x1 到 x10）
-- 你必须进行至少 2 次探查后才能提交最终报告
-- 最多可以进行 6 次探查
-- 你需要用尽可能少的探查次数准确定位故障集合
+你可以进行以下操作：
 
-## 探查与提交报告的格式
+1. 数值查询（会消耗查询次数）：查询某一天数 L 的流量值
+   - 约束：L 必须是 0 到 {H} 之间的整数，且 L 不能等于 {L_star}
+   - 返回：W(L) 的精确整数值，以及剩余的查询次数
+   - 注意：如果你查询 L = {L_star}，将被视为违规，系统将锁定并导致任务失败
 
-每次探查时，使用以下 XML 格式提供节点列表（用逗号分隔）：
+2. 预算查询（不消耗查询次数）：询问当前剩余的流量查询次数
+   - 返回：剩余查询次数的整数
 
-<query>x1,x3,x5</query>
+3. 参数查询（不消耗查询次数）：询问系统参数 H、L*、B
+   - 返回：这三个参数的当前值
 
-系统会返回一个整数，表示你探查的集合与目标故障集合 T 的交集大小。
+4. 最终提交（不消耗查询次数）：提交你对目标天数流量基数的预测
+   - 必须指定索引为 {L_star}，并给出预测值
+   - 如果预测正确，任务成功；否则任务失败
 
-当你确定答案后，请提交最终报告，格式如下（指定候选编号和完整节点集合）：
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- 数值查询（例如查询天数 5 的流量值）：
+<query_value>5</query_value>
 
-注意：
-- 候选编号必须是 T1、T2、T3 或 T4 之一
-- 节点列表顺序不限，但必须完整且准确
-- 如果探查不符合规则（如节点数量不对、包含非法节点）或最终报告错误，排查任务失败
+- 预算查询（查询剩余次数）：
+<query_budget></query_budget>
+
+- 参数查询（查询 H、L*、B）：
+<query_params></query_params>
+
+- 最终提交（例如预测天数 {L_star} 的流量值为 1024）：
+<answer>index={L_star}, value=1024</answer>
+
+注意：提交答案时，索引必须等于 {L_star}，否则提交无效。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-The Intelligent Traffic Control System is conducting a "Critical Failure Node Isolation" task. The rules are as follows:
+[Transport Scenario]
+Let's operate the "Traffic Hub Flow Prediction System". Here are the rules:
 
-There are 10 core traffic monitoring nodes in the district, forming the universal set U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}.
+The system records a traffic flow base sequence W(d) with the day index d in the set {{0, 1, ..., {H}}}, where the initial daily flow W(0) = 1.
 
-Based on preliminary system diagnostics, three fixed feature subsets are known:
-- A (Nodes with recent congestion) = {x1, x2, x3, x6}
-- B (Nodes with sensor alarms) = {x2, x3, x4, x7, x8}
-- C (Nodes with communication anomalies) = {x1, x3, x5, x8, x9}
+The hub has an unknown traffic tidal period T, which can be 2, 3, 4, or 5 days. There also exists an unknown daily flow multiplier sequence f[0], f[1], ..., f[T-1], where each multiplier f[k] is an integer between 1 and 4.
 
-The system has isolated the critical failure set responsible for the regional gridlock to one of the following four candidate targets T:
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+For any day d (0 less than or equal to d less than {H}), the flow base follows the recurrence relation:
+W(d+1) = W(d) × f[d mod T]
 
-Your objective is to determine which candidate T is the actual critical failure set through intersection probes, and provide the complete list of nodes in that set.
+That is, tomorrow's flow base equals today's flow base multiplied by the corresponding multiplier at that position in the tidal period.
 
-## Probing Rules
+System parameters:
+- H = {H}: maximum day index for flow monitoring
+- L* = {L_star}: target prediction day (the index whose flow you need to predict, but cannot directly query)
+- B = {B}: maximum number of historical flow queries allowed
 
-You can initiate a probe query. For each query, you provide a subset S (S is a subset of U), and the system will return the number of actual failure nodes in the intersection of S and the target failure set T.
+Your goal is: within the query budget, infer the exact traffic flow base W(L*) for day L* by querying the flow values at other days.
 
-Probe constraints:
-- Each probe subset S must contain between 2 and 6 nodes
-- Nodes must be from U (i.e., x1 to x10)
-- You must make at least 2 probes before submitting the final report
-- You can make at most 6 probes
-- You should isolate the failure set using as few probes as possible
+You can perform the following operations:
 
-## Probe and Report Format
+1. Value Query (consumes a query count): query the flow value at day L
+   - Constraint: L must be an integer between 0 and {H}, and L cannot equal {L_star}
+   - Returns: the exact integer value W(L) and the remaining query count
+   - Note: if you query L = {L_star}, it is a violation and the system locks, causing immediate failure
 
-For each probe, use the following XML format to provide the node list (comma-separated):
+2. Budget Query (does not consume a query count): ask for the remaining number of flow queries
+   - Returns: an integer representing the remaining query count
 
-<query>x1,x3,x5</query>
+3. Parameters Query (does not consume a query count): ask for the system parameters H, L*, B
+   - Returns: the current values of these three parameters
 
-The system will return an integer indicating the size of the intersection between your probed set and the target failure set T.
+4. Final Submission (does not consume a query count): submit your prediction for the target day's flow base
+   - Must specify index as {L_star} and provide the predicted value
+   - If the prediction is correct, the task succeeds; otherwise, it fails
 
-When you have determined the answer, submit your final report in this format (specify candidate ID and complete node set):
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- Value Query (e.g., query flow value at day 5):
+<query_value>5</query_value>
 
-Notes:
-- Candidate ID must be one of T1, T2, T3, or T4
-- Node list order doesn't matter, but must be complete and accurate
-- If a probe violates the rules (e.g., wrong number of nodes, illegal nodes) or the final report is incorrect, the isolation task fails
+- Budget Query (query remaining count):
+<query_budget></query_budget>
+
+- Parameters Query (query H, L*, B):
+<query_params></query_params>
+
+- Final Submission (e.g., predict flow value at day {L_star} is 1024):
+<answer>index={L_star}, value=1024</answer>
+
+Note: when submitting an answer, the index must equal {L_star}, otherwise the submission is invalid.
 """
 
     contextualized_rule_zh_2 = """\
-临床决策支持系统正在进行"变异病毒核心感染特征分析"任务，规则如下：
+我们来操作“病原体增殖追踪系统”，规则如下：
 
-病理学库中共有 10 项初筛临床体征，构成全集 U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}。
+系统记录了一个病原体浓度序列 W(d)，培养周期索引 d 属于集合 {{0, 1, ..., {H}}}，其中初始浓度 W(0) = 1。
 
-已知三种已知毒株的典型体征子集：
-- A（Alpha 毒株典型体征） = {x1, x2, x3, x6}
-- B（Beta 毒株典型体征） = {x2, x3, x4, x7, x8}
-- C（Gamma 毒株典型体征） = {x1, x3, x5, x8, x9}
+病原体存在一个未知的突变周期 T，T 可能是 2、3、4 或 5 个培养周期。同时存在一个未知的浓度繁殖倍率序列 f[0], f[1], ..., f[T-1]，每个倍率 f[k] 的取值范围是 1 到 4 之间的整数。
 
-根据最新流行病学调查，已将新型变异毒株的核心特征集合锁定为以下四个候选目标 T 之一：
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+对于任意周期索引 d（0 小于等于 d 小于 {H}），浓度满足递推关系：
+W(d+1) = W(d) × f[d mod T]
 
-你的目标是通过实施"生化靶向检测"，确定新型变异毒株的实际核心特征集合 T 是哪一个候选集合，并给出该集合的完整体征列表。
+也就是说，下一个培养周期的浓度等于上一个周期的浓度乘以突变周期内对应阶段的繁殖倍率。
 
-## 检测规则
+系统参数：
+- H = {H}：培养监控的最大周期索引
+- L* = {L_star}：目标预测周期（这是你需要预测其浓度的索引，但不能直接查询它）
+- B = {B}：系统允许的浓度采样查询次数上限
 
-你可以发起生化检测查询，每次提供一个体征子集 S（S 是 U 的子集），实验室将返回 S 与目标特征集合 T 的交集中包含了多少个实际核心体征。
+你的目标是：在不超过预算次数的前提下，通过查询其他培养周期的浓度，推断出目标周期 L* 的确切病原体浓度 W(L*)。
 
-检测限制：
-- 每次检测的子集 S 必须包含 2 到 6 个体征
-- 体征必须来自全集 U（即 x1 到 x10）
-- 你必须进行至少 2 次检测后才能提交最终诊断
-- 最多可以进行 6 次检测
-- 你需要用尽可能少的检测次数出具诊断结果
+你可以进行以下操作：
 
-## 检测与提交诊断的格式
+1. 数值查询（会消耗查询次数）：采样查询某个培养周期 L 的浓度
+   - 约束：L 必须是 0 到 {H} 之间的整数，且 L 不能等于 {L_star}
+   - 返回：W(L) 的精确整数值，以及剩余的查询次数
+   - 注意：如果你查询 L = {L_star}，将被视为违规操作，导致样本污染，任务直接失败
 
-每次检测时，使用以下 XML 格式提供体征列表（用逗号分隔）：
+2. 预算查询（不消耗查询次数）：询问当前剩余的采样查询次数
+   - 返回：剩余查询次数的整数
 
-<query>x1,x3,x5</query>
+3. 参数查询（不消耗查询次数）：询问系统参数 H、L*、B
+   - 返回：这三个参数的当前值
 
-实验室会返回一个整数，表示你检测的集合与目标特征集合 T 的交集大小。
+4. 最终提交（不消耗查询次数）：提交你对目标培养周期浓度的预测
+   - 必须指定索引为 {L_star}，并给出预测值
+   - 如果预测正确，诊断成功；否则诊断失败
 
-当你确定答案后，请提交最终诊断，格式如下（指定候选编号和完整体征集合）：
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- 数值查询（例如查询周期 5 的浓度）：
+<query_value>5</query_value>
 
-注意：
-- 候选编号必须是 T1、T2、T3 或 T4 之一
-- 体征列表顺序不限，但必须完整且准确
-- 如果检测不符合规范（如体征数量不对、包含非法体征）或最终诊断错误，特征分析任务失败
+- 预算查询（查询剩余次数）：
+<query_budget></query_budget>
+
+- 参数查询（查询 H、L*、B）：
+<query_params></query_params>
+
+- 最终提交（例如预测周期 {L_star} 的浓度值为 1024）：
+<answer>index={L_star}, value=1024</answer>
+
+注意：提交答案时，索引必须等于 {L_star}，否则提交无效。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-The Clinical Decision Support System is conducting a "Mutant Virus Core Infection Feature Analysis" task. The rules are as follows:
+Let's operate the "Pathogen Proliferation Tracking System". Here are the rules:
 
-There are 10 primary screening clinical signs in the pathology database, forming the universal set U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}.
+The system records a pathogen concentration sequence W(d) with the culture period index d in the set {{0, 1, ..., {H}}}, where the initial concentration W(0) = 1.
 
-Three known strains exhibit the following typical sign subsets:
-- A (Alpha strain signs) = {x1, x2, x3, x6}
-- B (Beta strain signs) = {x2, x3, x4, x7, x8}
-- C (Gamma strain signs) = {x1, x3, x5, x8, x9}
+The pathogen has an unknown mutation cycle T, which can be 2, 3, 4, or 5 culture periods. There also exists an unknown concentration reproduction rate sequence f[0], f[1], ..., f[T-1], where each rate f[k] is an integer between 1 and 4.
 
-Based on recent epidemiological surveys, the core feature set of the new mutant strain has been narrowed down to one of the following four candidate targets T:
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+For any period index d (0 less than or equal to d less than {H}), the concentration follows the recurrence relation:
+W(d+1) = W(d) × f[d mod T]
 
-Your objective is to determine which candidate T is the actual core feature set of the new mutant strain through "biochemical targeted assays," and provide the complete list of signs in that set.
+That is, the concentration in the next culture period equals the previous period's concentration multiplied by the reproduction rate at the corresponding stage of the mutation cycle.
 
-## Assay Rules
+System parameters:
+- H = {H}: maximum period index for culture monitoring
+- L* = {L_star}: target prediction period (the index whose concentration you need to predict, but cannot directly query)
+- B = {B}: maximum number of concentration sampling queries allowed
 
-You can initiate an assay query. For each query, you provide a subset S (where S is a subset of U), and the laboratory will return the number of actual core signs in the intersection of S and the target feature set T.
+Your goal is: within the query budget, infer the exact pathogen concentration W(L*) for the target period L* by querying concentrations at other periods.
 
-Assay constraints:
-- Each assay subset S must contain between 2 and 6 signs
-- Signs must be from U (i.e., x1 to x10)
-- You must make at least 2 assays before submitting the final diagnosis
-- You can make at most 6 assays
-- You should finalize the diagnosis using as few assays as possible
+You can perform the following operations:
 
-## Assay and Diagnosis Format
+1. Value Query (consumes a query count): sample query the concentration at period L
+   - Constraint: L must be an integer between 0 and {H}, and L cannot equal {L_star}
+   - Returns: the exact integer value W(L) and the remaining query count
+   - Note: if you query L = {L_star}, it is a violation leading to sample contamination, and the task fails immediately
 
-For each assay, use the following XML format to provide the sign list (comma-separated):
+2. Budget Query (does not consume a query count): ask for the remaining number of sampling queries
+   - Returns: an integer representing the remaining query count
 
-<query>x1,x3,x5</query>
+3. Parameters Query (does not consume a query count): ask for the system parameters H, L*, B
+   - Returns: the current values of these three parameters
 
-The laboratory will return an integer indicating the size of the intersection between your assayed set and the target feature set T.
+4. Final Submission (does not consume a query count): submit your prediction for the target culture period's concentration
+   - Must specify index as {L_star} and provide the predicted value
+   - If the prediction is correct, the diagnosis succeeds; otherwise, it fails
 
-When you have determined the answer, submit your final diagnosis in this format (specify candidate ID and complete sign set):
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- Value Query (e.g., query concentration at period 5):
+<query_value>5</query_value>
 
-Notes:
-- Candidate ID must be one of T1, T2, T3, or T4
-- Sign list order doesn't matter, but must be complete and accurate
-- If an assay violates the protocols (e.g., wrong number of signs, illegal signs) or the final diagnosis is incorrect, the analysis task fails
+- Budget Query (query remaining count):
+<query_budget></query_budget>
+
+- Parameters Query (query H, L*, B):
+<query_params></query_params>
+
+- Final Submission (e.g., predict concentration at period {L_star} is 1024):
+<answer>index={L_star}, value=1024</answer>
+
+Note: when submitting an answer, the index must equal {L_star}, otherwise the submission is invalid.
 """
 
     contextualized_rule_zh_3 = """\
-智能教学测评系统正在进行"期末核心考点预测"任务，规则如下：
+我们来使用“学生知识点掌握度评估系统”，规则如下：
 
-本学期的大纲中共包含 10 个基础知识点，构成全集 U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}。
+系统记录了一个学习指数序列 W(d)，课时索引 d 属于集合 {{0, 1, ..., {H}}}，其中初始学习指数 W(0) = 1。
 
-已知以往三次模拟测验的高频知识点子集：
-- A（模考一高频考点） = {x1, x2, x3, x6}
-- B（模考二高频考点） = {x2, x3, x4, x7, x8}
-- C（模考三高频考点） = {x1, x3, x5, x8, x9}
+学生的认知存在一个未知的记忆周期 T，T 可能是 2、3、4 或 5 个课时。同时存在一个未知的知识吸收倍率序列 f[0], f[1], ..., f[T-1]，每个倍率 f[k] 的取值范围是 1 到 4 之间的整数。
 
-根据教学研讨，已将最终期末考试的必考核心知识点集合锁定为以下四个候选目标 T 之一：
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+对于任意课时 d（0 小于等于 d 小于 {H}），学习指数满足递推关系：
+W(d+1) = W(d) × f[d mod T]
 
-你的目标是通过发起"随堂抽测"，确定期末必考的核心知识点集合 T 是哪一个候选集合，并给出该集合的完整考点列表。
+也就是说，下一课时的学习指数等于上一课时的指数乘以该记忆周期特定阶段的知识吸收倍率。
 
-## 抽测规则
+系统参数：
+- H = {H}：教学追踪的最大课时索引
+- L* = {L_star}：目标评估课时（这是你需要预测其学习指数的索引，但不能直接查询它）
+- B = {B}：系统允许的历史水平测试查询次数上限
 
-你可以发起抽测查询，每次提供一个知识点子集 S（S 是 U 的子集），系统将返回 S 与目标核心考点集合 T 的交集中包含了多少个实际必考知识点。
+你的目标是：在不超过预算次数的前提下，通过查询其他课时的学习指数，推断出第 L* 课时的确切学习指数 W(L*)。
 
-抽测限制：
-- 每次抽测的子集 S 必须包含 2 到 6 个知识点
-- 知识点必须来自全集 U（即 x1 到 x10）
-- 你必须进行至少 2 次抽测后才能提交最终预测报告
-- 最多可以进行 6 次抽测
-- 你需要用尽可能少的抽测次数精准定位必考知识点
+你可以进行以下操作：
 
-## 抽测与提交预测的格式
+1. 数值查询（会消耗查询次数）：查询某个课时 L 的学习指数
+   - 约束：L 必须是 0 到 {H} 之间的整数，且 L 不能等于 {L_star}
+   - 返回：W(L) 的精确整数值，以及剩余的查询次数
+   - 注意：如果你查询 L = {L_star}，将被视为过度测验，导致系统锁定并评估失败
 
-每次抽测时，使用以下 XML 格式提供知识点列表（用逗号分隔）：
+2. 预算查询（不消耗查询次数）：询问当前剩余的测试查询次数
+   - 返回：剩余查询次数的整数
 
-<query>x1,x3,x5</query>
+3. 参数查询（不消耗查询次数）：询问系统参数 H、L*、B
+   - 返回：这三个参数的当前值
 
-系统会返回一个整数，表示你抽测的集合与目标必考集合 T 的交集大小。
+4. 最终提交（不消耗查询次数）：提交你对目标课时学习指数的预测
+   - 必须指定索引为 {L_star}，并给出预测值
+   - 如果预测正确，评估成功；否则评估失败
 
-当你确定答案后，请提交最终预测报告，格式如下（指定候选编号和完整知识点集合）：
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- 数值查询（例如查询课时 5 的学习指数）：
+<query_value>5</query_value>
 
-注意：
-- 候选编号必须是 T1、T2、T3 或 T4 之一
-- 知识点列表顺序不限，但必须完整且准确
-- 如果抽测不符合规则（如知识点数量不对、包含非法知识点）或最终预测错误，预测任务失败
+- 预算查询（查询剩余次数）：
+<query_budget></query_budget>
+
+- 参数查询（查询 H、L*、B）：
+<query_params></query_params>
+
+- 最终提交（例如预测课时 {L_star} 的学习指数为 1024）：
+<answer>index={L_star}, value=1024</answer>
+
+注意：提交答案时，索引必须等于 {L_star}，否则提交无效。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-The Intelligent Teaching and Assessment System is conducting a "Final Exam Core Topics Prediction" task. The rules are as follows:
+Let's use the "Student Knowledge Mastery Assessment System". Here are the rules:
 
-The syllabus for this semester contains 10 fundamental knowledge points, forming the universal set U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}.
+The system records a learning index sequence W(d) with the lesson index d in the set {{0, 1, ..., {H}}}, where the initial learning index W(0) = 1.
 
-The high-frequency topics from three previous mock exams form the following subsets:
-- A (Mock Exam 1 topics) = {x1, x2, x3, x6}
-- B (Mock Exam 2 topics) = {x2, x3, x4, x7, x8}
-- C (Mock Exam 3 topics) = {x1, x3, x5, x8, x9}
+The student's cognition has an unknown memory cycle T, which can be 2, 3, 4, or 5 lessons. There also exists an unknown knowledge absorption rate sequence f[0], f[1], ..., f[T-1], where each rate f[k] is an integer between 1 and 4.
 
-Based on pedagogical reviews, the mandatory core topics for the final exam have been narrowed down to one of the following four candidate targets T:
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+For any lesson d (0 less than or equal to d less than {H}), the learning index follows the recurrence relation:
+W(d+1) = W(d) × f[d mod T]
 
-Your objective is to determine which candidate T is the actual core topic set for the final exam through "pop quizzes," and provide the complete list of topics in that set.
+That is, the learning index of the next lesson equals the previous lesson's index multiplied by the absorption rate at that specific stage of the memory cycle.
 
-## Quiz Rules
+System parameters:
+- H = {H}: maximum lesson index for teaching tracking
+- L* = {L_star}: target assessment lesson (the index whose learning index you need to predict, but cannot directly query)
+- B = {B}: maximum number of historical proficiency test queries allowed
 
-You can initiate a quiz query. For each query, you provide a subset S (where S is a subset of U), and the system will return the number of actual mandatory topics in the intersection of S and the target core topic set T.
+Your goal is: within the query budget, infer the exact learning index W(L*) for lesson L* by querying indices at other lessons.
 
-Quiz constraints:
-- Each quiz subset S must contain between 2 and 6 topics
-- Topics must be from U (i.e., x1 to x10)
-- You must administer at least 2 quizzes before submitting the final prediction
-- You can administer at most 6 quizzes
-- You should accurately pinpoint the mandatory topics using as few quizzes as possible
+You can perform the following operations:
 
-## Quiz and Prediction Format
+1. Value Query (consumes a query count): query the learning index at lesson L
+   - Constraint: L must be an integer between 0 and {H}, and L cannot equal {L_star}
+   - Returns: the exact integer value W(L) and the remaining query count
+   - Note: if you query L = {L_star}, it is treated as over-testing, which locks the system and fails the assessment
 
-For each quiz, use the following XML format to provide the topic list (comma-separated):
+2. Budget Query (does not consume a query count): ask for the remaining number of test queries
+   - Returns: an integer representing the remaining query count
 
-<query>x1,x3,x5</query>
+3. Parameters Query (does not consume a query count): ask for the system parameters H, L*, B
+   - Returns: the current values of these three parameters
 
-The system will return an integer indicating the size of the intersection between your quizzed set and the target core topic set T.
+4. Final Submission (does not consume a query count): submit your prediction for the target lesson's learning index
+   - Must specify index as {L_star} and provide the predicted value
+   - If the prediction is correct, the assessment succeeds; otherwise, it fails
 
-When you have determined the answer, submit your final prediction report in this format (specify candidate ID and complete topic set):
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- Value Query (e.g., query learning index at lesson 5):
+<query_value>5</query_value>
 
-Notes:
-- Candidate ID must be one of T1, T2, T3, or T4
-- Topic list order doesn't matter, but must be complete and accurate
-- If a quiz violates the rules (e.g., wrong number of topics, illegal topics) or the final prediction is incorrect, the prediction task fails
+- Budget Query (query remaining count):
+<query_budget></query_budget>
+
+- Parameters Query (query H, L*, B):
+<query_params></query_params>
+
+- Final Submission (e.g., predict learning index at lesson {L_star} is 1024):
+<answer>index={L_star}, value=1024</answer>
+
+Note: when submitting an answer, the index must equal {L_star}, otherwise the submission is invalid.
 """
 
     contextualized_rule_zh_4 = """\
-工业自动化质检系统正在进行"缺陷零部件批次追溯"任务，规则如下：
+我们来操作“自动化产线产能推演系统”，规则如下：
 
-流水线上共有 10 种核心零部件批次，构成全集 U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}。
+系统记录了一个产出量序列 W(d)，工序层级索引 d 属于集合 {{0, 1, ..., {H}}}，其中第一道基础工序产出 W(0) = 1。
 
-已知三个特定供应商批次或工序的子集：
-- A（经一号车间加工的批次） = {x1, x2, x3, x6}
-- B（由供应商 X 提供的批次） = {x2, x3, x4, x7, x8}
-- C（采用旧工艺生产的批次） = {x1, x3, x5, x8, x9}
+流水线存在一个未知的机器运作周期 T，T 可能是 2、3、4 或 5 道工序。同时存在一个未知的产能放大系数序列 f[0], f[1], ..., f[T-1]，每个系数 f[k] 的取值范围是 1 到 4 之间的整数。
 
-系统已将引发近期产品不合格的真正缺陷零部件批次集合锁定为以下四个候选目标 T 之一：
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+对于任意工序 d（0 小于等于 d 小于 {H}），产出量满足递推关系：
+W(d+1) = W(d) × f[d mod T]
 
-你的目标是通过下发"批次抽样质检"指令，确定真正的缺陷零部件集合 T 是哪一个候选集合，并给出该集合的完整批次列表。
+也就是说，下一道工序的产出量等于上一道工序的产出量乘以机器运作周期内对应节点的放大系数。
 
-## 抽样规则
+系统参数：
+- H = {H}：产线记录的最大工序层级
+- L* = {L_star}：目标预测工序（这是你需要预测其产出量的层级，但不能直接查询它）
+- B = {B}：系统允许的质检采样查询次数上限
 
-你可以发起抽样查询，每次提供一个零部件批次子集 S（S 是 U 的子集），质检中心将返回 S 与目标缺陷集合 T 的交集中包含了多少个实际缺陷批次。
+你的目标是：在不超过预算次数的前提下，通过查询其他工序的产出量，推断出第 L* 道工序的确切产出量 W(L*)。
 
-抽样限制：
-- 每次抽样的子集 S 必须包含 2 到 6 个零部件批次
-- 批次必须来自全集 U（即 x1 到 x10）
-- 你必须进行至少 2 次抽样后才能提交最终追溯报告
-- 最多可以进行 6 次抽样
-- 你需要用尽可能少的抽样次数完成缺陷批次追溯
+你可以进行以下操作：
 
-## 抽样与提交报告的格式
+1. 数值查询（会消耗查询次数）：查询某道工序 L 的产出量
+   - 约束：L 必须是 0 到 {H} 之间的整数，且 L 不能等于 {L_star}
+   - 返回：W(L) 的精确整数值，以及剩余的查询次数
+   - 注意：如果你查询 L = {L_star}，将触发安全警报并导致生产线停机，推演直接失败
 
-每次抽样时，使用以下 XML 格式提供零部件批次列表（用逗号分隔）：
+2. 预算查询（不消耗查询次数）：询问当前剩余的采样查询次数
+   - 返回：剩余查询次数的整数
 
-<query>x1,x3,x5</query>
+3. 参数查询（不消耗查询次数）：询问系统参数 H、L*、B
+   - 返回：这三个参数的当前值
 
-质检中心会返回一个整数，表示你抽样的集合与目标缺陷集合 T 的交集大小。
+4. 最终提交（不消耗查询次数）：提交你对目标工序产出量的预测
+   - 必须指定索引为 {L_star}，并给出预测值
+   - 如果预测正确，推演成功；否则推演失败
 
-当你确定答案后，请提交最终追溯报告，格式如下（指定候选编号和完整批次集合）：
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- 数值查询（例如查询工序 5 的产出量）：
+<query_value>5</query_value>
 
-注意：
-- 候选编号必须是 T1、T2、T3 或 T4 之一
-- 批次列表顺序不限，但必须完整且准确
-- 如果抽样不符合规范（如批次数量不对、包含非法批次）或最终追溯报告错误，质检追溯任务失败
+- 预算查询（查询剩余次数）：
+<query_budget></query_budget>
+
+- 参数查询（查询 H、L*、B）：
+<query_params></query_params>
+
+- 最终提交（例如预测工序 {L_star} 的产出量为 1024）：
+<answer>index={L_star}, value=1024</answer>
+
+注意：提交答案时，索引必须等于 {L_star}，否则提交无效。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-The Industrial Automated Quality Inspection System is conducting a "Defective Component Batch Traceability" task. The rules are as follows:
+[Industry Scenario]
+Let's operate the "Automated Production Line Capacity Deduction System". Here are the rules:
 
-There are 10 core component batches on the assembly line, forming the universal set U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}.
+The system records an output sequence W(d) with the process level index d in the set {{0, 1, ..., {H}}}, where the initial base process output W(0) = 1.
 
-Three specific subsets based on suppliers or processes are known:
-- A (Batches processed in Workshop 1) = {x1, x2, x3, x6}
-- B (Batches supplied by Vendor X) = {x2, x3, x4, x7, x8}
-- C (Batches produced using the old technique) = {x1, x3, x5, x8, x9}
+The assembly line has an unknown machine operation cycle T, which can be 2, 3, 4, or 5 processes. There also exists an unknown capacity amplification coefficient sequence f[0], f[1], ..., f[T-1], where each coefficient f[k] is an integer between 1 and 4.
 
-The system has isolated the actual defective component batches causing recent product failures to one of the following four candidate targets T:
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+For any process d (0 less than or equal to d less than {H}), the output follows the recurrence relation:
+W(d+1) = W(d) × f[d mod T]
 
-Your objective is to determine which candidate T is the actual set of defective batches through "batch sampling inspections," and provide the complete list of batches in that set.
+That is, the output of the next process equals the previous process's output multiplied by the amplification coefficient at the corresponding node in the machine operation cycle.
 
-## Sampling Rules
+System parameters:
+- H = {H}: maximum process level recorded on the line
+- L* = {L_star}: target prediction process (the level whose output you need to predict, but cannot directly query)
+- B = {B}: maximum number of quality inspection sampling queries allowed
 
-You can initiate a sampling query. For each query, you provide a subset S (where S is a subset of U), and the QA center will return the number of actual defective batches in the intersection of S and the target defective set T.
+Your goal is: within the query budget, infer the exact output W(L*) for process L* by querying outputs at other processes.
 
-Sampling constraints:
-- Each sampling subset S must contain between 2 and 6 component batches
-- Batches must be from U (i.e., x1 to x10)
-- You must conduct at least 2 samplings before submitting the final trace report
-- You can conduct at most 6 samplings
-- You should complete the traceability task using as few samplings as possible
+You can perform the following operations:
 
-## Sampling and Report Format
+1. Value Query (consumes a query count): query the output at process L
+   - Constraint: L must be an integer between 0 and {H}, and L cannot equal {L_star}
+   - Returns: the exact integer value W(L) and the remaining query count
+   - Note: if you query L = {L_star}, it triggers a safety alarm causing the production line to halt, and the deduction fails immediately
 
-For each sampling, use the following XML format to provide the batch list (comma-separated):
+2. Budget Query (does not consume a query count): ask for the remaining number of sampling queries
+   - Returns: an integer representing the remaining query count
 
-<query>x1,x3,x5</query>
+3. Parameters Query (does not consume a query count): ask for the system parameters H, L*, B
+   - Returns: the current values of these three parameters
 
-The QA center will return an integer indicating the size of the intersection between your sampled set and the target defective set T.
+4. Final Submission (does not consume a query count): submit your prediction for the target process's output
+   - Must specify index as {L_star} and provide the predicted value
+   - If the prediction is correct, the deduction succeeds; otherwise, it fails
 
-When you have determined the answer, submit your final trace report in this format (specify candidate ID and complete batch set):
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- Value Query (e.g., query output at process 5):
+<query_value>5</query_value>
 
-Notes:
-- Candidate ID must be one of T1, T2, T3, or T4
-- Batch list order doesn't matter, but must be complete and accurate
-- If a sampling violates the protocols (e.g., wrong number of batches, illegal batches) or the final report is incorrect, the traceability task fails
+- Budget Query (query remaining count):
+<query_budget></query_budget>
+
+- Parameters Query (query H, L*, B):
+<query_params></query_params>
+
+- Final Submission (e.g., predict output at process {L_star} is 1024):
+<answer>index={L_star}, value=1024</answer>
+
+Note: when submitting an answer, the index must equal {L_star}, otherwise the submission is invalid.
 """
 
     contextualized_rule_zh_5 = """\
-智慧法务辅助系统正在进行"关键定案证据链排查"任务，规则如下：
+我们来操作“案件证据链效力推演系统”，规则如下：
 
-案卷材料中共有 10 份初步证据，构成全集 U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}。
+系统记录了一个法律效力指数序列 W(d)，证据传导层级 d 属于集合 {{0, 1, ..., {H}}}，其中初始核心证据的效力 W(0) = 1。
 
-已知三个特定来源的证据子集：
-- A（原告方提交的证据） = {x1, x2, x3, x6}
-- B（被告方提交的证据） = {x2, x3, x4, x7, x8}
-- C（警方现场调取的证据） = {x1, x3, x5, x8, x9}
+司法审查存在一个未知的流程周期 T，T 可能是 2、3、4 或 5 个层级。同时存在一个未知的效力放大系数序列 f[0], f[1], ..., f[T-1]，每个系数 f[k] 的取值范围是 1 到 4 之间的整数。
 
-经过法理分析，已将最终能被法庭采信的核心定案证据集合锁定为以下四个候选目标 T 之一：
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+对于任意传导层级 d（0 小于等于 d 小于 {H}），效力指数满足递推关系：
+W(d+1) = W(d) × f[d mod T]
 
-你的目标是通过向合议庭发起"证据预审"，确定核心定案证据集合 T 是哪一个候选集合，并给出该集合的完整证据列表。
+也就是说，下一级传导的效力等于上一级效力乘以审查周期内对应环节的放大系数。
 
-## 预审规则
+系统参数：
+- H = {H}：证据追踪的最大传导层级
+- L* = {L_star}：目标推演层级（这是你需要预测其效力指数的层级，但不能直接查询它）
+- B = {B}：系统允许的卷宗调阅次数上限
 
-你可以发起预审查询，每次提供一个证据子集 S（S 是 U 的子集），合议庭将返回 S 与目标定案集合 T 的交集中包含了多少份实际有效的定案证据。
+你的目标是：在不超过预算次数的前提下，通过调阅其他层级的效力指数，推断出第 L* 级证据的确切效力指数 W(L*)。
 
-预审限制：
-- 每次预审的子集 S 必须包含 2 到 6 份证据
-- 证据必须来自全集 U（即 x1 到 x10）
-- 你必须进行至少 2 次预审后才能提交最终法务意见书
-- 最多可以进行 6 次预审
-- 你需要用尽可能少的预审次数锁定定案证据链
+你可以进行以下操作：
 
-## 预审与提交意见书的格式
+1. 数值查询（会消耗查询次数）：调阅某一层级 L 的效力指数
+   - 约束：L 必须是 0 到 {H} 之间的整数，且 L 不能等于 {L_star}
+   - 返回：W(L) 的精确整数值，以及剩余的查询次数
+   - 注意：如果你越权调阅 L = {L_star}，将被视为违规干预司法，系统将封锁并导致推演失败
 
-每次预审时，使用以下 XML 格式提供证据列表（用逗号分隔）：
+2. 预算查询（不消耗查询次数）：询问当前剩余的调阅次数
+   - 返回：剩余查询次数的整数
 
-<query>x1,x3,x5</query>
+3. 参数查询（不消耗查询次数）：询问系统参数 H、L*、B
+   - 返回：这三个参数的当前值
 
-合议庭会返回一个整数，表示你提交预审的集合与目标定案集合 T 的交集大小。
+4. 最终提交（不消耗查询次数）：提交你对目标层级效力指数的预测
+   - 必须指定索引为 {L_star}，并给出预测值
+   - 如果预测正确，推演成功；否则推演失败
 
-当你确定答案后，请提交最终法务意见书，格式如下（指定候选编号和完整证据集合）：
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- 数值查询（例如查询层级 5 的效力指数）：
+<query_value>5</query_value>
 
-注意：
-- 候选编号必须是 T1、T2、T3 或 T4 之一
-- 证据列表顺序不限，但必须完整且准确
-- 如果预审不符合规则（如证据数量不对、包含非法证据）或最终意见书错误，证据排查任务失败
+- 预算查询（查询剩余次数）：
+<query_budget></query_budget>
+
+- 参数查询（查询 H、L*、B）：
+<query_params></query_params>
+
+- 最终提交（例如预测层级 {L_star} 的效力指数为 1024）：
+<answer>index={L_star}, value=1024</answer>
+
+注意：提交答案时，索引必须等于 {L_star}，否则提交无效。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-The Smart Legal Assistant System is conducting a "Decisive Evidence Chain Discovery" task. The rules are as follows:
+Let's operate the "Case Evidence Chain Validity Deduction System". Here are the rules:
 
-There are 10 pieces of preliminary evidence in the case file, forming the universal set U = {{x1, x2, x3, x4, x5, x6, x7, x8, x9, x10}}.
+The system records a legal validity index sequence W(d) with the evidence transmission level d in the set {{0, 1, ..., {H}}}, where the initial core evidence validity W(0) = 1.
 
-Three specific subsets based on their sources are known:
-- A (Evidence submitted by the plaintiff) = {x1, x2, x3, x6}
-- B (Evidence submitted by the defendant) = {x2, x3, x4, x7, x8}
-- C (Evidence collected by the police) = {x1, x3, x5, x8, x9}
+The judicial review has an unknown process cycle T, which can be 2, 3, 4, or 5 levels. There also exists an unknown validity amplification coefficient sequence f[0], f[1], ..., f[T-1], where each coefficient f[k] is an integer between 1 and 4.
 
-Based on jurisprudential analysis, the core set of decisive evidence that will be accepted by the court has been narrowed down to one of the following four candidate targets T:
-- T1 = {x2, x3}
-- T2 = {x1, x3}
-- T3 = {x3, x8}
-- T4 = {x3}
+For any transmission level d (0 less than or equal to d less than {H}), the validity index follows the recurrence relation:
+W(d+1) = W(d) × f[d mod T]
 
-Your objective is to determine which candidate T is the actual core decisive evidence set through "preliminary reviews" by the collegiate bench, and provide the complete list of evidence in that set.
+That is, the validity of the next transmission level equals the previous level's validity multiplied by the amplification coefficient at the corresponding stage of the review cycle.
 
-## Review Rules
+System parameters:
+- H = {H}: maximum transmission level for evidence tracking
+- L* = {L_star}: target deduction level (the level whose validity index you need to predict, but cannot directly query)
+- B = {B}: maximum number of dossier access queries allowed
 
-You can initiate a preliminary review query. For each query, you provide a subset S (where S is a subset of U), and the collegiate bench will return the number of actually valid decisive pieces of evidence in the intersection of S and the target decisive set T.
+Your goal is: within the query budget, infer the exact validity index W(L*) for level L* by accessing indices at other levels.
 
-Review constraints:
-- Each review subset S must contain between 2 and 6 pieces of evidence
-- Evidence must be from U (i.e., x1 to x10)
-- You must conduct at least 2 reviews before submitting the final legal opinion
-- You can conduct at most 6 reviews
-- You should lock down the decisive evidence chain using as few reviews as possible
+You can perform the following operations:
 
-## Review and Legal Opinion Format
+1. Value Query (consumes a query count): access the validity index at level L
+   - Constraint: L must be an integer between 0 and {H}, and L cannot equal {L_star}
+   - Returns: the exact integer value W(L) and the remaining query count
+   - Note: if you access L = {L_star} without authorization, it is treated as illegal judicial interference, causing system lockdown and immediate failure
 
-For each review, use the following XML format to provide the evidence list (comma-separated):
+2. Budget Query (does not consume a query count): ask for the remaining number of access queries
+   - Returns: an integer representing the remaining query count
 
-<query>x1,x3,x5</query>
+3. Parameters Query (does not consume a query count): ask for the system parameters H, L*, B
+   - Returns: the current values of these three parameters
 
-The collegiate bench will return an integer indicating the size of the intersection between your reviewed set and the target decisive set T.
+4. Final Submission (does not consume a query count): submit your prediction for the target level's validity index
+   - Must specify index as {L_star} and provide the predicted value
+   - If the prediction is correct, the deduction succeeds; otherwise, it fails
 
-When you have determined the answer, submit your final legal opinion in this format (specify candidate ID and complete evidence set):
+Each operation must contain only one tag. Use the following XML format:
 
-<answer>candidate=T1, elements=x2,x3</answer>
+- Value Query (e.g., query validity index at level 5):
+<query_value>5</query_value>
 
-Notes:
-- Candidate ID must be one of T1, T2, T3, or T4
-- Evidence list order doesn't matter, but must be complete and accurate
-- If a review violates the rules (e.g., wrong number of pieces of evidence, illegal evidence) or the final opinion is incorrect, the evidence discovery task fails
+- Budget Query (query remaining count):
+<query_budget></query_budget>
+
+- Parameters Query (query H, L*, B):
+<query_params></query_params>
+
+- Final Submission (e.g., predict validity index at level {L_star} is 1024):
+<answer>index={L_star}, value=1024</answer>
+
+Note: when submitting an answer, the index must equal {L_star}, otherwise the submission is invalid.
 """
 
-    tags = ["answer", "query"]
+    tags = ["answer", "query_value", "query_budget", "query_params"]
 
-    # 难度配置：通过随机种子固定每个难度的目标集合
-    # 1 (简单)       - 目标: T1 = {x2, x3} (A∩B)
-    # 2 (中等偏下)   - 目标: T2 = {x1, x3} (A∩C)
-    # 3 (中等偏上)   - 目标: T3 = {x3, x8} (B∩C)
-    # 4 (较难)       - 目标: T4 = {x3} (A∩B∩C)
-    # 5 (难)         - 随机选择，但固定种子保证可复现
+    reasoning_type = "归纳推理"
+    data_structure = "序列"
+
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {"target": "T1", "seed": 42},
-            2: {"target": "T2", "seed": 43},
-            3: {"target": "T3", "seed": 44},
-            4: {"target": "T4", "seed": 45},
-            5: {"target": "random", "seed": 46},
+            1: {
+                "H": 10,
+                "L_star": 6,
+                "B": 6,
+                "T": 2,
+                "f": [2, 3],
+            },
+            2: {
+                "H": 15,
+                "L_star": 10,
+                "B": 8,
+                "T": 3,
+                "f": [2, 2, 3],
+            },
+            3: {
+                "H": 20,
+                "L_star": 15,
+                "B": 10,
+                "T": 4,
+                "f": [2, 3, 2, 4],
+            },
+            4: {
+                "H": 25,
+                "L_star": 18,
+                "B": 12,
+                "T": 4,
+                "f": [3, 2, 4, 2],
+            },
+            5: {
+                "H": 30,
+                "L_star": 22,
+                "B": 14,
+                "T": 5,
+                "f": [2, 3, 2, 4, 3],
+            },
         },
         "en": {
-            1: {"target": "T1", "seed": 42},
-            2: {"target": "T2", "seed": 43},
-            3: {"target": "T3", "seed": 44},
-            4: {"target": "T4", "seed": 45},
-            5: {"target": "random", "seed": 46},
+            1: {
+                "H": 10,
+                "L_star": 6,
+                "B": 6,
+                "T": 2,
+                "f": [2, 3],
+            },
+            2: {
+                "H": 15,
+                "L_star": 10,
+                "B": 8,
+                "T": 3,
+                "f": [2, 2, 3],
+            },
+            3: {
+                "H": 20,
+                "L_star": 15,
+                "B": 10,
+                "T": 4,
+                "f": [2, 3, 2, 4],
+            },
+            4: {
+                "H": 25,
+                "L_star": 18,
+                "B": 12,
+                "T": 4,
+                "f": [3, 2, 4, 2],
+            },
+            5: {
+                "H": 30,
+                "L_star": 22,
+                "B": 14,
+                "T": 5,
+                "f": [2, 3, 2, 4, 3],
+            },
         },
     }
 
     def __init__(self, config):
-        # 定义候选集合（在初始化游戏前需要用到）
-        self.candidates = {
-            "T1": {"x2", "x3"},      # A ∩ B
-            "T2": {"x1", "x3"},      # A ∩ C
-            "T3": {"x3", "x8"},      # B ∩ C
-            "T4": {"x3"},            # A ∩ B ∩ C
-        }
-        
-        # 定义全集
-        self.universe = {f"x{i}" for i in range(1, 11)}
-        
-        # 查询计数器
-        self.query_count = 0
-        
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，确定目标集合"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保 difficulty 为整数
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -630,140 +740,137 @@ Notes:
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 使用固定种子确保可复现
-        rng = random.Random(cfg["seed"])
+        self.H = cfg["H"]
+        self.L_star = cfg["L_star"]
+        self.B = cfg["B"]
+        self.T = cfg["T"]
+        self.f = cfg["f"]
         
-        # 确定目标集合
-        if cfg["target"] == "random":
-            self.target_key = rng.choice(["T1", "T2", "T3", "T4"])
-        else:
-            self.target_key = cfg["target"]
+        self._game_info["H"] = self.H
+        self._game_info["L_star"] = self.L_star
+        self._game_info["B"] = self.B
         
-        self.target_set = self.candidates[self.target_key]
+        self.remaining_queries = self.B
         
-        # 用于格式化游戏规则（如果需要）
-        self._game_info = {}
-
-    def evaluate(self, parsed_info):
-        """评估玩家的最终答案"""
-        # 检查是否满足最小查询次数
-        if self.query_count < 2:
-            return False
-        
-        raw_ans = parsed_info["answer"]
-        
-        # 答案格式: candidate=T1, elements=x2,x3
-        # 先按 "elements=" 拆分，以避免逗号歧义
-        ans_dict = {}
-        
-        # 尝试提取 candidate 和 elements
-        candidate_match = re.search(r'candidate\s*=\s*(T[1-4])', raw_ans)
-        elements_match = re.search(r'elements\s*=\s*(.+)', raw_ans)
-        
-        if not candidate_match or not elements_match:
-            return False
-        
-        answer_candidate = candidate_match.group(1).strip()
-        elements_str = elements_match.group(1).strip()
-        
-        # 检查候选编号
-        if answer_candidate not in self.candidates:
-            return False
-        
-        # 检查元素集合
-        try:
-            answer_elements = set(x.strip() for x in elements_str.split(",") if x.strip())
-        except:
-            return False
-        
-        # 验证：候选编号正确且元素集合完全匹配
-        return (answer_candidate == self.target_key and 
-                answer_elements == self.target_set)
-
-    def _cf_core_produce(self, parsed_info):
-        """处理查询并返回响应的原始核心逻辑"""
-        if "query" not in parsed_info:
-            raise ValueError("No valid query tag found.")
-        
-        # 检查查询次数上限
-        if self.query_count >= 6:
-            if self.config.language == "zh":
-                raise ValueError("已达到最大查询次数（6次）。")
-            else:
-                raise ValueError("Maximum number of queries (6) reached.")
-        
-        # 解析查询的集合
-        raw_query = parsed_info["query"].strip()
-        try:
-            query_set = set(x.strip() for x in raw_query.split(",") if x.strip())
-        except:
-            raise ValueError("Invalid query format.")
-        
-        # 验证查询集合大小
-        if len(query_set) < 2 or len(query_set) > 6:
-            raise ValueError("Query set must contain between 2 and 6 elements.")
-        
-        # 验证所有元素都在全集中
-        if not query_set.issubset(self.universe):
-            invalid_elements = query_set - self.universe
-            raise ValueError(f"Query contains invalid elements: {invalid_elements}.")
-        
-        # 计算交集大小
-        intersection_size = len(query_set & self.target_set)
-        self.query_count += 1
-        
-        # 返回计数结果
-        if self.config.language == "zh":
-            return f"结果：{intersection_size}"
-        else:
-            return f"Result: {intersection_size}"
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成错误答案"""
-        # 尝试从答案字符串中提取数字并修改
-        match = re.search(r'(\d+)', correct)
-        if match:
-            num = int(match.group(1))
-            # 生成一个不同的数字
-            wrong_num = num + 1
-            return correct.replace(match.group(1), str(wrong_num))
-        
-        # fallback
-        return correct + "_WRONG"
+        self.W = [0] * (self.H + 1)
+        self.W[0] = 1
+        for d in range(self.H):
+            multiplier = self.f[d % self.T]
+            self.W[d + 1] = self.W[d] * multiplier
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        返回一组精选的查询及其答案，足以区分所有候选集合。
-        选择有区分度的查询子集，而非穷举所有可能。
-        """
-        possible_queries = []
+        queries = []
         
-        # 选择有区分度的代表性查询
-        # 这些查询可以区分 T1={x2,x3}, T2={x1,x3}, T3={x3,x8}, T4={x3}
-        representative_queries = [
-            ["x1", "x2"],          # T1->1, T2->1, T3->0, T4->0
-            ["x2", "x3"],          # T1->2, T2->1, T3->1, T4->1
-            ["x1", "x3", "x8"],    # T1->1, T2->2, T3->2, T4->1
-            ["x2", "x8"],          # T1->1, T2->0, T3->1, T4->0
-            ["x1", "x3"],          # T1->1, T2->2, T3->1, T4->1
-            ["x3", "x8"],          # T1->1, T2->1, T3->2, T4->1
-        ]
+        simulated_remaining = self.B
         
-        for combo in representative_queries:
-            query_content = ",".join(combo)
-            query_str = f"<query>{query_content}</query>"
-            query_set = set(combo)
+        for L in range(self.H + 1):
+            if L == self.L_star:
+                continue
             
-            intersection_size = len(query_set & self.target_set)
+            if simulated_remaining <= 0:
+                break
+                
+            value = self.W[L]
+            simulated_remaining -= 1
+            
+            query_str = f"<query_value>{L}</query_value>"
             
             if self.config.language == "zh":
-                ans_str = f"结果：{intersection_size}"
+                answer = f"W({L}) = {value}。剩余查询次数：{simulated_remaining}。"
             else:
-                ans_str = f"Result: {intersection_size}"
-            
-            possible_queries.append({
+                answer = f"W({L}) = {value}. Remaining queries: {simulated_remaining}."
+                
+            queries.append({
                 "query": query_str,
-                "answer": ans_str
+                "answer": answer
             })
             
-        return possible_queries
+        return queries
+
+    def evaluate(self, parsed_info):
+        raw_ans = parsed_info["answer"]
+        
+        try:
+            kv_pairs = [x.strip() for x in raw_ans.split(",")]
+            ans_dict = {}
+            for kv in kv_pairs:
+                if "=" not in kv:
+                    continue
+                k, v = kv.split("=", 1)
+                ans_dict[k.strip()] = v.strip()
+            
+            if "index" not in ans_dict or "value" not in ans_dict:
+                return False
+            
+            submitted_index = int(ans_dict["index"])
+            if submitted_index != self.L_star:
+                return False
+            
+            predicted_value = int(ans_dict["value"])
+            return predicted_value == self.W[self.L_star]
+            
+        except (ValueError, KeyError):
+            return False
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        import re as _re
+        match = _re.search(r'W\(\d+\)\s*=\s*(\d+)', correct)
+        if match:
+            original_value = int(match.group(1))
+            wrong_value = original_value + 1 if original_value > 0 else 2
+            return correct.replace(match.group(1), str(wrong_value), 1)
+        return correct + " [tampered]"
+
+    def _cf_core_produce(self, parsed_info):
+        if "query_value" in parsed_info:
+            try:
+                L = int(parsed_info["query_value"].strip())
+                
+                if L < 0 or L > self.H:
+                    if self.config.language == "zh":
+                        return f"错误：索引超出范围。索引必须在 0 到 {self.H} 之间。"
+                    else:
+                        return f"Error: Index out of range. Index must be between 0 and {self.H}."
+                
+                if L == self.L_star:
+                    if self.config.language == "zh":
+                        self.state.set_state("failed", "违规查询目标索引")
+                        return f"违规！你不能查询目标索引 {self.L_star}。游戏失败。"
+                    else:
+                        self.state.set_state("failed", "illegal query of target index")
+                        return f"Violation! You cannot query the target index {self.L_star}. Game failed."
+                
+                if self.remaining_queries <= 0:
+                    if self.config.language == "zh":
+                        return "错误：已用完所有查询次数。你不能再进行数值查询，但可以直接提交答案。"
+                    else:
+                        return "Error: All query counts have been used. You cannot make more value queries, but you can submit your answer."
+                
+                self.remaining_queries -= 1
+                value = self.W[L]
+                
+                if self.config.language == "zh":
+                    return f"W({L}) = {value}。剩余查询次数：{self.remaining_queries}。"
+                else:
+                    return f"W({L}) = {value}. Remaining queries: {self.remaining_queries}."
+                    
+            except ValueError:
+                if self.config.language == "zh":
+                    return "错误：索引必须是整数。"
+                else:
+                    return "Error: Index must be an integer."
+        
+        elif "query_budget" in parsed_info:
+            if self.config.language == "zh":
+                return f"剩余查询次数：{self.remaining_queries}。"
+            else:
+                return f"Remaining queries: {self.remaining_queries}."
+        
+        elif "query_params" in parsed_info:
+            if self.config.language == "zh":
+                return f"H = {self.H}, L* = {self.L_star}, B = {self.B}。"
+            else:
+                return f"H = {self.H}, L* = {self.L_star}, B = {self.B}."
+        
+        else:
+            raise ValueError("No valid query tag found.")

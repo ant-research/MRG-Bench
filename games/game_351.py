@@ -1,480 +1,574 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   属性分类：某属性将集合划分为几个类别、各类别分别有哪些元素
-# ============================================================
-
 from .base import Game
+import random
 import re
-import itertools
-import random as _random
 
+class TreeDistanceQueryGame(Game):
 
-class EquivalenceClassGame(Game):
+    reasoning_type = "演绎推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们现在来玩一个"等价类划分推理"游戏，规则如下：
+我们来玩一个"树图距离查询"的推理游戏，规则如下：
 
-游戏设定了一个有限集合 S = {{1, 2, ..., {n}}}。这个集合被一个未知的等价关系划分为若干个不相交的等价类。等价关系满足自反性、对称性和传递性，每个元素恰好属于一个等价类。
+游戏设定了一个未知的无向树图 T，包含 N 个顶点，编号为 1 到 N。树图是连通的且无环。我已指定一个起点 S = {start} 和一个距离阈值 K = {threshold}。
 
-你的目标是通过查询推断出完整的等价类划分。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据真实设定如实回答：
+你的目标是：确定从起点 S 出发，距离小于等于 K 的顶点总数 X。这里的距离指的是两点之间唯一简单路径的边数。
 
-1. 两元素等价判定（类型 A）：询问编号 i 和 j 是否属于同一等价类（要求 i 小于 j）。回答"是"或"否"。
-2. 子集内等价类数量（类型 B）：询问给定子集中包含多少个不同的等价类。回答一个整数。
-3. 子集中与锚等价的数量（类型 C）：询问给定子集中有多少个元素与指定的锚元素属于同一等价类（含锚本身）。回答一个整数。
+初始时，你只知道起点 S = {start}，它在"已发现顶点集合"D 中。你只能对 D 中的顶点发起查询。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+你可以反复提出以下三类查询（每次仅限一个查询）：
 
-## 查询与提交答案的格式（必须严格遵守）
+1. **邻居查询**：询问某个已发现顶点 u 的所有相邻顶点。返回一个列表，所有返回的顶点会自动加入已发现集合 D。
+2. **距离查询**：询问两个已发现顶点 u 和 v 之间的距离。返回一个整数。
+3. **范围判定查询**：询问某个已发现顶点 u 是否在距离起点 S 不超过 K 的范围内。返回"是"或"否"。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+注意：
+- 任何涉及未发现顶点的查询都是非法的，会返回"非法查询"。
+- 你不能直接询问"距离 S 不超过 K 的顶点总数是多少"。
 
-- 两元素等价判定（例如问编号 2 和 5 是否等价）：
-<query_pair>2,5</query_pair>
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-- 子集内等价类数量（例如问子集 {{1,3,5}} 中有多少个等价类）：
-<query_subset_count>1,3,5</query_subset_count>
+- 邻居查询（例如查询顶点 5 的邻居）：
+<query_neighbor>5</query_neighbor>
 
-- 子集中与锚等价的数量（例如问子集 {{2,4,6,8}} 中有多少个与锚 4 等价）：
-<query_anchor>4|2,4,6,8</query_anchor>
+- 距离查询（例如查询顶点 1 和 3 之间的距离）：
+<query_distance>1,3</query_distance>
 
-提交最终答案时，必须列出所有等价类，每个等价类用花括号包围，编号用逗号隔开且按递增顺序排列，等价类之间用竖线隔开，格式如下：
+- 范围判定查询（例如查询顶点 7 是否在范围内）：
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+当你收集到足够信息后，提交最终答案。答案必须包含顶点总数 X，可选地附加顶点列表作为佐证：
 
-注意：等价类的顺序不影响判定，但每个等价类内的编号必须递增排列。
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+或仅提交总数：
+
+<answer>count=5</answer>
+
+若答案错误或格式不符，游戏失败。
 """
 
     game_rule_en = """\
-Let's play an "Equivalence Class Partition Inference" game. Here are the rules:
+Let's play a "Tree Distance Query" deduction game. Here are the rules:
 
-There is a finite set S = {{1, 2, ..., {n}}}. This set is partitioned by an unknown equivalence relation into several disjoint equivalence classes. The equivalence relation satisfies reflexivity, symmetry, and transitivity, and each element belongs to exactly one equivalence class.
+The game is set on an unknown undirected tree graph T with N vertices, numbered from 1 to N. The tree is connected and acyclic. I have specified a starting vertex S = {start} and a distance threshold K = {threshold}.
 
-Your goal is to infer the complete equivalence class partition through queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully:
+Your goal is: determine the total number X of vertices whose distance from the starting vertex S is at most K. Distance here refers to the number of edges in the unique simple path between two vertices.
 
-1. Pairwise Equivalence Check (Type A): Ask if elements i and j belong to the same equivalence class (requires i less than j). Answer "Yes" or "No".
-2. Subset Class Count (Type B): Ask how many distinct equivalence classes exist in a given subset. Answer an integer.
-3. Anchor Equivalence Count (Type C): Ask how many elements in a given subset belong to the same equivalence class as a specified anchor element (including the anchor itself). Answer an integer.
+Initially, you only know the starting vertex S = {start}, which is in the "discovered vertex set" D. You can only query vertices in D.
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+You can repeatedly make the following three types of queries (one query per turn):
 
-## Query and Answer Format (strictly required)
+1. **Neighbor Query**: Ask for all adjacent vertices of a discovered vertex u. Returns a list, and all returned vertices are automatically added to the discovered set D.
+2. **Distance Query**: Ask for the distance between two discovered vertices u and v. Returns an integer.
+3. **Range Check Query**: Ask whether a discovered vertex u is within distance K from the starting vertex S. Returns "Yes" or "No".
 
-Each query must contain only one tag. Use the following XML format:
+Note:
+- Any query involving undiscovered vertices is illegal and will return "Illegal query".
+- You cannot directly ask "What is the total number of vertices within distance K from S".
 
-- Pairwise Equivalence Check (e.g., asking if 2 and 5 are equivalent):
-<query_pair>2,5</query_pair>
+Each query must contain only one tag, using the following XML format:
 
-- Subset Class Count (e.g., asking how many classes in subset {{1,3,5}}):
-<query_subset_count>1,3,5</query_subset_count>
+- Neighbor Query (e.g., querying neighbors of vertex 5):
+<query_neighbor>5</query_neighbor>
 
-- Anchor Equivalence Count (e.g., asking how many in subset {{2,4,6,8}} are equivalent to anchor 4):
-<query_anchor>4|2,4,6,8</query_anchor>
+- Distance Query (e.g., querying distance between vertices 1 and 3):
+<query_distance>1,3</query_distance>
 
-When submitting the final answer, list all equivalence classes with each class enclosed in curly braces, elements comma-separated in ascending order, and classes separated by vertical bars:
+- Range Check Query (e.g., checking if vertex 7 is in range):
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+When you have gathered enough information, submit your final answer. The answer must include the total count X, and optionally a list of vertices as evidence:
 
-Note: The order of classes does not matter, but elements within each class must be in ascending order.
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+Or submit only the count:
+
+<answer>count=5</answer>
+
+If the answer is incorrect or the format is invalid, the game fails.
 """
 
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-欢迎进入智能交通运输调度系统。我们正在进行"车队归属划分推理"分析，排查规则如下：
+我们正在进行“城市路网应急封控”的推演，规则如下：
 
-系统记录了一个由 {{1, 2, ..., {n}}} 组成的车辆集合 S。由于中枢故障，车队编组信息丢失。已知这些车辆原本被划分为若干个互不相交的车队。同一车队内的车辆归属关系满足自反性、对称性和传递性，每辆车恰好属于一个单独的车队。
+系统设定了一个未知的城市道路管网（无向树图 T），包含 N 个交通枢纽（编号 1 到 N），枢纽间连通且无环路。当前已确定事故核心枢纽 S = {start}，并下达了封控距离阈值 K = {threshold}。
 
-你的目标是通过数据查询推断出完整的车队编组。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
+你的目标是：确定从核心枢纽 S 出发，连通距离小于等于 K 的受影响枢纽总数 X。这里的距离指两枢纽间唯一通道所包含的路段数（边数）。
 
-1. 两车同队判定（类型 A）：询问车辆编号 i 和 j 是否属于同一车队（要求 i 小于 j）。回答"是"或"否"。
-2. 车队数量统计（类型 B）：询问给定车辆子集中包含多少个不同的车队。回答一个整数。
-3. 同队车辆计数（类型 C）：询问给定车辆子集中有多少辆车与指定的锚点车辆属于同一车队（含锚点本身）。回答一个整数。
+初始时，你只掌握核心枢纽 S = {start} 的情报，它处于“已知枢纽集合”D 中。你只能对 D 中的枢纽发起勘测查询。
 
-当你收集足够信息后，请提交最终的车队编组答案。若答案错误或格式不符，排查任务失败。
+你可以反复提出以下三类指令（每次仅限一个）：
 
-## 查询与提交答案的格式（必须严格遵守）
+1. **路段连通查询**（邻居查询）：询问某个已知枢纽 u 的所有直接相连枢纽。返回一个列表，返回的枢纽自动加入已知集合 D。
+2. **枢纽距离查询**（距离查询）：询问两个已知枢纽 u 和 v 之间的路段数距离。返回一个整数。
+3. **封控范围判定**（范围判定查询）：询问某个已知枢纽 u 是否处于距核心 S 不超过 K 的封控范围内。返回"是"或"否"。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+注意：
+- 任何涉及未知枢纽的指令都会被驳回并返回"非法查询"。
+- 你不能直接询问"距离 S 不超过 K 的枢纽总数是多少"。
 
-- 两车同队判定（例如问车辆 2 和 5 是否同队）：
-<query_pair>2,5</query_pair>
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-- 车队数量统计（例如问车辆子集 {{1,3,5}} 中涉及多少个车队）：
-<query_subset_count>1,3,5</query_subset_count>
+- 邻居查询（例如查询枢纽 5 的相邻枢纽）：
+<query_neighbor>5</query_neighbor>
 
-- 同队车辆计数（例如问车辆子集 {{2,4,6,8}} 中有多少辆与锚点车 4 同队）：
-<query_anchor>4|2,4,6,8</query_anchor>
+- 距离查询（例如查询枢纽 1 和 3 之间的路段距离）：
+<query_distance>1,3</query_distance>
 
-提交最终答案时，必须列出所有车队，每个车队用花括号包围，编号用逗号隔开且按递增顺序排列，车队之间用竖线隔开，格式如下：
+- 范围判定查询（例如查询枢纽 7 是否在封控范围内）：
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+当你收集到足够信息后，提交最终评估。答案必须包含受影响枢纽总数 X，可选地附加枢纽列表作为佐证：
 
-注意：车队的排列顺序不影响判定，但每个车队内的车辆编号必须递增排列。
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+或仅提交总数：
+
+<answer>count=5</answer>
+
+若评估错误或格式不符，推演失败。
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Welcome to the Intelligent Transportation Dispatch System. We are conducting a "Fleet Affiliation Partition Inference" analysis. The diagnostic rules are as follows:
+[Traffic Scenario]
+We are conducting an "Urban Road Network Emergency Lockdown" simulation. Here are the rules:
 
-The system recorded a fleet of vehicles S = {{1, 2, ..., {n}}}. Due to a mainframe fault, the fleet grouping data has been lost. It is known that these vehicles are partitioned into several disjoint transit fleets. The fleet affiliation satisfies reflexivity, symmetry, and transitivity, and each vehicle belongs to exactly one fleet.
+The system models an unknown urban road network (undirected tree graph T) containing N traffic hubs (numbered from 1 to N). The network is connected and has no cyclic routes. The core accident hub S = {start} has been identified, and a lockdown distance threshold K = {threshold} is designated.
 
-Your goal is to infer the complete fleet grouping through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
+Your goal is: determine the total number X of affected traffic hubs whose connected distance from the core hub S is at most K. The distance here refers to the number of road segments (edges) in the unique simple path between two hubs.
 
-1. Pairwise Fleet Check (Type A): Ask if vehicle i and j belong to the same fleet (requires i less than j). Answer "Yes" or "No".
-2. Subset Fleet Count (Type B): Ask how many distinct fleets exist in a given subset of vehicles. Answer an integer.
-3. Anchor Fleet Count (Type C): Ask how many vehicles in a given subset belong to the same fleet as a specified anchor vehicle (including the anchor itself). Answer an integer.
+Initially, you only have intelligence on the core hub S = {start}, which is in the "known hubs set" D. You can only query hubs in D.
 
-When you have enough information, submit your final fleet grouping. If the answer is wrong or the format is invalid, the diagnostic task fails.
+You can repeatedly issue the following three types of queries (one query per turn):
 
-## Query and Answer Format (strictly required)
+1. **Segment Connection Query** (Neighbor Query): Ask for all directly connected hubs of a known hub u. Returns a list, and the returned hubs are automatically added to the known set D.
+2. **Hub Distance Query** (Distance Query): Ask for the distance in road segments between two known hubs u and v. Returns an integer.
+3. **Lockdown Range Check** (Range Check Query): Ask whether a known hub u is within the lockdown range of distance K from the core S. Returns "Yes" or "No".
 
-Each query must contain only one tag. Use the following XML format:
+Note:
+- Any query involving unknown hubs will be rejected as an "Illegal query".
+- You cannot directly ask "What is the total number of hubs within distance K from S".
 
-- Pairwise Fleet Check (e.g., asking if vehicles 2 and 5 are in the same fleet):
-<query_pair>2,5</query_pair>
+Each query must contain only one tag, using the following XML format:
 
-- Subset Fleet Count (e.g., asking how many fleets are in subset {{1,3,5}}):
-<query_subset_count>1,3,5</query_subset_count>
+- Neighbor Query (e.g., querying adjacent hubs of hub 5):
+<query_neighbor>5</query_neighbor>
 
-- Anchor Fleet Count (e.g., asking how many in subset {{2,4,6,8}} share a fleet with anchor 4):
-<query_anchor>4|2,4,6,8</query_anchor>
+- Distance Query (e.g., querying road distance between hubs 1 and 3):
+<query_distance>1,3</query_distance>
 
-When submitting the final answer, list all fleets with each group enclosed in curly braces, elements comma-separated in ascending order, and groups separated by vertical bars:
+- Range Check Query (e.g., checking if hub 7 is in the lockdown range):
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+When you have gathered enough information, submit your final evaluation. The answer must include the total count X, and optionally a list of hubs as evidence:
 
-Note: The order of fleets does not matter, but vehicle IDs within each fleet must be in ascending order.
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+Or submit only the count:
+
+<answer>count=5</answer>
+
+If the assessment is incorrect or the format is invalid, the simulation fails.
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-欢迎进入流行病学调查系统。我们正在进行"病毒毒株划分推理"分析，排查规则如下：
+我们正在进行“流行病接触史追踪”推演，规则如下：
 
-系统记录了一个由 {{1, 2, ..., {n}}} 组成的患者集合 S。由于数据混淆，毒株类型的映射信息丢失。已知这些患者感染了若干种互不相交的病毒毒株。同源感染关系满足自反性、对称性和传递性，每位患者恰好感染一种毒株。
+系统设定了一个未知的传染病传播网络（无向树图 T），包含 N 名涉疫人员（编号 1 到 N），传播链连续且无交叉感染（无环）。已确定源头病例 S = {start}，并设定最大追踪代际 K = {threshold}。
 
-你的目标是通过数据查询推断出完整的毒株群体划分。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
+你的目标是：确定从源头病例 S 算起，传播代际小于等于 K 的高危感染者总数 X。这里的代际指的是两名人员之间最短接触链条的人数（边数）。
 
-1. 感染同源判定（类型 A）：询问患者编号 i 和 j 是否感染同种毒株（要求 i 小于 j）。回答"是"或"否"。
-2. 毒株种类统计（类型 B）：询问给定患者子集中包含多少种不同的毒株。回答一个整数。
-3. 同源患者计数（类型 C）：询问给定患者子集中有多少人与指定的锚点患者感染了同种毒株（含锚点本身）。回答一个整数。
+初始时，你只掌握源头病例 S = {start} 的信息，该人员处于“已排查名单”D 中。你只能对 D 中的人员发起流调查询。
 
-当你收集足够信息后，请提交最终的毒株群体划分答案。若答案错误或格式不符，排查任务失败。
+你可以反复提出以下三类查询（每次仅限一个查询）：
 
-## 查询与提交答案的格式（必须严格遵守）
+1. **密接查询**（邻居查询）：询问某位已排查人员 u 的所有直接接触者。返回一个列表，名单内人员自动加入排查名单 D。
+2. **传播跨度查询**（距离查询）：询问两名已排查人员 u 和 v 之间的接触代差。返回一个整数。
+3. **高危判定**（范围判定查询）：询问某位已排查人员 u 是否在距源头 S 不超过 K 代的追踪范围内。返回"是"或"否"。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+注意：
+- 任何涉及未排查人员的查询都是非法的，会返回"非法查询"。
+- 你不能直接询问"距离 S 不超过 K 代的总人数是多少"。
 
-- 感染同源判定（例如问患者 2 和 5 是否感染同种毒株）：
-<query_pair>2,5</query_pair>
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-- 毒株种类统计（例如问患者子集 {{1,3,5}} 中涉及多少种毒株）：
-<query_subset_count>1,3,5</query_subset_count>
+- 邻居查询（例如查询人员 5 的直接密接）：
+<query_neighbor>5</query_neighbor>
 
-- 同源患者计数（例如问患者子集 {{2,4,6,8}} 中有多少人与锚点患者 4 感染同源）：
-<query_anchor>4|2,4,6,8</query_anchor>
+- 距离查询（例如查询人员 1 和 3 之间的代差）：
+<query_distance>1,3</query_distance>
 
-提交最终答案时，必须列出所有毒株群体，每个群体用花括号包围，编号用逗号隔开且按递增顺序排列，群体之间用竖线隔开，格式如下：
+- 范围判定查询（例如查询人员 7 是否属于高危范围）：
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+当你收集到足够信息后，提交最终排查报告。答案必须包含高危总人数 X，可选地附加人员名单作为佐证：
 
-注意：群体的排列顺序不影响判定，但每个群体内的患者编号必须递增排列。
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+或仅提交总数：
+
+<answer>count=5</answer>
+
+若报告错误或格式不符，推演失败。
 """
 
     contextualized_rule_en_2 = """\
 [Healthcare Scenario]
-Welcome to the Epidemiological Investigation System. We are conducting a "Virus Strain Partition Inference" analysis. The diagnostic rules are as follows:
+We are conducting an "Epidemic Contact Tracing" simulation. Here are the rules:
 
-The system recorded a set of patients S = {{1, 2, ..., {n}}}. Due to data obfuscation, the mapping of strain types has been lost. It is known that these patients are infected by several disjoint virus strains. The homologous infection relation satisfies reflexivity, symmetry, and transitivity, and each patient is infected with exactly one strain.
+The system outlines an unknown infectious disease transmission network (undirected tree graph T) involving N exposed individuals (numbered 1 to N). The transmission chain is continuous with no cross-infections (acyclic). The patient zero S = {start} has been identified, and a maximum tracing generation K = {threshold} is set.
 
-Your goal is to infer the complete virus strain partition through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
+Your goal is: determine the total number X of high-risk infected individuals whose transmission generation from patient zero S is at most K. Generation here refers to the number of steps (edges) in the shortest contact chain between two individuals.
 
-1. Pairwise Homology Check (Type A): Ask if patient i and j are infected with the same strain (requires i less than j). Answer "Yes" or "No".
-2. Subset Strain Count (Type B): Ask how many distinct virus strains exist in a given subset of patients. Answer an integer.
-3. Anchor Homology Count (Type C): Ask how many patients in a given subset are infected with the same strain as a specified anchor patient (including the anchor itself). Answer an integer.
+Initially, you only have the profile of patient zero S = {start}, who is in the "investigated list" D. You can only initiate epidemiological queries on individuals in D.
 
-When you have enough information, submit your final strain partition. If the answer is wrong or the format is invalid, the diagnostic task fails.
+You can repeatedly make the following three types of queries (one query per turn):
 
-## Query and Answer Format (strictly required)
+1. **Close Contact Query** (Neighbor Query): Ask for all direct contacts of an investigated individual u. Returns a list, and those individuals are automatically added to the investigated list D.
+2. **Transmission Span Query** (Distance Query): Ask for the contact generation gap between two investigated individuals u and v. Returns an integer.
+3. **High-Risk Check** (Range Check Query): Ask whether an investigated individual u is within K generations of tracing range from the source S. Returns "Yes" or "No".
 
-Each query must contain only one tag. Use the following XML format:
+Note:
+- Any query involving uninvestigated individuals is invalid and will return "Illegal query".
+- You cannot directly ask "What is the total number of individuals within K generations from S".
 
-- Pairwise Homology Check (e.g., asking if patients 2 and 5 share a strain):
-<query_pair>2,5</query_pair>
+Each query must contain only one tag, using the following XML format:
 
-- Subset Strain Count (e.g., asking how many strains are in subset {{1,3,5}}):
-<query_subset_count>1,3,5</query_subset_count>
+- Neighbor Query (e.g., querying direct contacts of individual 5):
+<query_neighbor>5</query_neighbor>
 
-- Anchor Homology Count (e.g., asking how many in subset {{2,4,6,8}} share a strain with anchor 4):
-<query_anchor>4|2,4,6,8</query_anchor>
+- Distance Query (e.g., querying generation gap between individuals 1 and 3):
+<query_distance>1,3</query_distance>
 
-When submitting the final answer, list all strain groups with each group enclosed in curly braces, elements comma-separated in ascending order, and groups separated by vertical bars:
+- Range Check Query (e.g., checking if individual 7 is in the high-risk range):
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+When you have gathered enough information, submit your final tracing report. The answer must include the total high-risk count X, and optionally a list of individuals as evidence:
 
-Note: The order of groups does not matter, but patient IDs within each group must be in ascending order.
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+Or submit only the count:
+
+<answer>count=5</answer>
+
+If the report is incorrect or the format is invalid, the simulation fails.
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-欢迎进入教学编组管理系统。我们正在进行"研究小组划分推理"分析，排查规则如下：
+我们来体验“知识图谱前置依赖分析”系统，规则如下：
 
-系统记录了一个由 {{1, 2, ..., {n}}} 组成的学生集合 S。由于数据迁移，编组映射信息丢失。已知这些学生被分入了若干个互不相交的课题研究小组。同组关系满足自反性、对称性和传递性，每位学生恰好属于一个研究小组。
+系统设定了一个未知的学科知识结构（无向树图 T），包含 N 个知识模块（编号 1 到 N），知识点间存在严密的关联且无循环依赖。现指定当前核心概念 S = {start}，以及大纲要求的拓展深度 K = {threshold}。
 
-你的目标是通过数据查询推断出完整的研究小组名单。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
+你的目标是：确定从核心概念 S 出发，关联层级小于等于 K 的必需知识模块总数 X。这里的层级指的是两模块间唯一的推理路径跨度（边数）。
 
-1. 同组判定（类型 A）：询问学生编号 i 和 j 是否在同一个研究小组（要求 i 小于 j）。回答"是"或"否"。
-2. 小组数量统计（类型 B）：询问给定学生子集中包含多少个不同的研究小组。回答一个整数。
-3. 同组学生计数（类型 C）：询问给定学生子集中有多少人与指定的锚点学生同属一个小组（含锚点本身）。回答一个整数。
+初始时，你只解锁了核心概念 S = {start}，它位于“已解析概念库”D 中。你只能对 D 中的概念发起分析。
 
-当你收集足够信息后，请提交最终的研究小组名单答案。若答案错误或格式不符，排查任务失败。
+你可以反复提出以下三类查询（每次仅限一个查询）：
 
-## 查询与提交答案的格式（必须严格遵守）
+1. **关联概念查询**（邻居查询）：询问某个已解析概念 u 的所有直接关联概念。返回一个列表，返回的概念自动加入解析库 D。
+2. **认知跨度查询**（距离查询）：询问两个已解析概念 u 和 v 之间的推理路径跨度。返回一个整数。
+3. **大纲范围判定**（范围判定查询）：询问某个已解析概念 u 是否处于距核心 S 不超过 K 的教学拓展范围内。返回"是"或"否"。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+注意：
+- 任何涉及未解析概念的查询都会失败并返回"非法查询"。
+- 你不能直接询问"距离 S 不超过 K 的概念总数是多少"。
 
-- 同组判定（例如问学生 2 和 5 是否同组）：
-<query_pair>2,5</query_pair>
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-- 小组数量统计（例如问学生子集 {{1,3,5}} 中涉及多少个小组）：
-<query_subset_count>1,3,5</query_subset_count>
+- 邻居查询（例如查询概念 5 的直接关联）：
+<query_neighbor>5</query_neighbor>
 
-- 同组学生计数（例如问学生子集 {{2,4,6,8}} 中有多少人与锚点学生 4 同组）：
-<query_anchor>4|2,4,6,8</query_anchor>
+- 距离查询（例如查询概念 1 和 3 之间的认知跨度）：
+<query_distance>1,3</query_distance>
 
-提交最终答案时，必须列出所有研究小组，每个小组用花括号包围，编号用逗号隔开且按递增顺序排列，小组之间用竖线隔开，格式如下：
+- 范围判定查询（例如查询概念 7 是否在大纲拓展范围内）：
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+当你收集到足够信息后，提交最终的大纲分析。答案必须包含必需知识模块总数 X，可选地附加模块列表作为佐证：
 
-注意：小组的排列顺序不影响判定，但每个小组内的学生编号必须递增排列。
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+或仅提交总数：
+
+<answer>count=5</answer>
+
+若分析错误或格式不符，任务失败。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Educational Grouping Management System. We are conducting a "Research Group Partition Inference" analysis. The diagnostic rules are as follows:
+Let's experience the "Knowledge Graph Prerequisite Analysis" system. Here are the rules:
 
-The system recorded a set of students S = {{1, 2, ..., {n}}}. Due to data migration, the grouping mapping has been lost. It is known that these students are assigned to several disjoint research groups. The co-grouping relation satisfies reflexivity, symmetry, and transitivity, and each student belongs to exactly one research group.
+The system constructs an unknown subject knowledge structure (undirected tree graph T) consisting of N knowledge modules (numbered 1 to N). The concepts have strict correlations and no circular dependencies. The core concept S = {start} is designated, along with an expansion depth K = {threshold} required by the syllabus.
 
-Your goal is to infer the complete research grouping through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
+Your goal is: determine the total number X of essential knowledge modules whose correlation level from the core concept S is at most K. The level here refers to the span of the unique reasoning path (edges) between two modules.
 
-1. Pairwise Group Check (Type A): Ask if student i and j belong to the same research group (requires i less than j). Answer "Yes" or "No".
-2. Subset Group Count (Type B): Ask how many distinct research groups exist in a given subset of students. Answer an integer.
-3. Anchor Group Count (Type C): Ask how many students in a given subset belong to the same research group as a specified anchor student (including the anchor itself). Answer an integer.
+Initially, you have only unlocked the core concept S = {start}, which resides in the "parsed concept repository" D. You can only analyze concepts present in D.
 
-When you have enough information, submit your final group lists. If the answer is wrong or the format is invalid, the diagnostic task fails.
+You can repeatedly make the following three types of queries (one query per turn):
 
-## Query and Answer Format (strictly required)
+1. **Correlated Concept Query** (Neighbor Query): Ask for all directly correlated concepts of a parsed concept u. Returns a list, and the returned concepts are automatically added to the parsed repository D.
+2. **Cognitive Span Query** (Distance Query): Ask for the reasoning path span between two parsed concepts u and v. Returns an integer.
+3. **Syllabus Scope Check** (Range Check Query): Ask whether a parsed concept u falls within the teaching expansion scope of distance K from the core S. Returns "Yes" or "No".
 
-Each query must contain only one tag. Use the following XML format:
+Note:
+- Any query involving unparsed concepts will fail and return "Illegal query".
+- You cannot directly ask "What is the total number of concepts within distance K from S".
 
-- Pairwise Group Check (e.g., asking if students 2 and 5 are in the same group):
-<query_pair>2,5</query_pair>
+Each query must contain only one tag, using the following XML format:
 
-- Subset Group Count (e.g., asking how many groups are represented in subset {{1,3,5}}):
-<query_subset_count>1,3,5</query_subset_count>
+- Neighbor Query (e.g., querying directly correlated concepts of concept 5):
+<query_neighbor>5</query_neighbor>
 
-- Anchor Group Count (e.g., asking how many in subset {{2,4,6,8}} share a group with anchor 4):
-<query_anchor>4|2,4,6,8</query_anchor>
+- Distance Query (e.g., querying cognitive span between concepts 1 and 3):
+<query_distance>1,3</query_distance>
 
-When submitting the final answer, list all groups with each group enclosed in curly braces, elements comma-separated in ascending order, and groups separated by vertical bars:
+- Range Check Query (e.g., checking if concept 7 is within the syllabus expansion scope):
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+When you have gathered enough information, submit your final syllabus analysis. The answer must include the total count of essential modules X, and optionally a list of modules as evidence:
 
-Note: The order of groups does not matter, but student IDs within each group must be in ascending order.
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+Or submit only the count:
+
+<answer>count=5</answer>
+
+If the analysis is incorrect or the format is invalid, the task fails.
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-欢迎进入工业质量溯源系统。我们正在进行"生产批次划分推理"分析，排查规则如下：
+我们正在进行“工业管网故障排查”模拟，规则如下：
 
-系统记录了一个由 {{1, 2, ..., {n}}} 组成的零件集合 S。由于标签磨损，批次溯源信息丢失。已知这些零件来自于若干个互不相交的生产批次。同批次关系满足自反性、对称性和传递性，每个零件恰好属于一个生产批次。
+系统设定了一个未知的供压管网系统（无向树图 T），包含 N 个阀门节点（编号 1 到 N），管线全连通且无回路。当前核心故障泵站 S = {start} 已停机，系统发出了压力波及层级警报 K = {threshold}。
 
-你的目标是通过数据查询推断出完整的生产批次划分。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
+你的目标是：确定从故障泵站 S 算起，受波及层级小于等于 K 的必须停机检修阀门总数 X。这里的层级指两节点间唯一管道路径所包含的管段数（边数）。
 
-1. 同批次判定（类型 A）：询问零件编号 i 和 j 是否属于同一生产批次（要求 i 小于 j）。回答"是"或"否"。
-2. 批次数量统计（类型 B）：询问给定零件子集中包含多少个不同的生产批次。回答一个整数。
-3. 同批次零件计数（类型 C）：询问给定零件子集中有多少个零件与指定的锚点零件属于同一批次（含锚点本身）。回答一个整数。
+初始时，你只定位了故障泵站 S = {start}，记录于“已排查节点集”D 中。你只能对 D 中的节点进行检测。
 
-当你收集足够信息后，请提交最终的生产批次答案。若答案错误或格式不符，排查任务失败。
+你可以反复提出以下三类指令（每次仅限一个）：
 
-## 查询与提交答案的格式（必须严格遵守）
+1. **连通管段查询**（邻居查询）：询问某个已排查节点 u 沿管道直接相邻的所有阀门。返回一个列表，返回的节点自动加入排查集 D。
+2. **管网距离查询**（距离查询）：询问两个已排查节点 u 和 v 之间的管段数。返回一个整数。
+3. **波及范围判定**（范围判定查询）：询问某个已排查节点 u 是否在距故障源 S 不超过 K 的波及范围内。返回"是"或"否"。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+注意：
+- 任何涉及未排查节点的指令都会被系统拦截并返回"非法查询"。
+- 你不能直接询问"距离 S 不超过 K 的阀门总数是多少"。
 
-- 同批次判定（例如问零件 2 和 5 是否同批次）：
-<query_pair>2,5</query_pair>
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-- 批次数量统计（例如问零件子集 {{1,3,5}} 中涉及多少个批次）：
-<query_subset_count>1,3,5</query_subset_count>
+- 邻居查询（例如查询节点 5 的相邻阀门）：
+<query_neighbor>5</query_neighbor>
 
-- 同批次零件计数（例如问零件子集 {{2,4,6,8}} 中有多少个零件与锚点零件 4 同批次）：
-<query_anchor>4|2,4,6,8</query_anchor>
+- 距离查询（例如查询节点 1 和 3 之间的管段数）：
+<query_distance>1,3</query_distance>
 
-提交最终答案时，必须列出所有批次，每个批次用花括号包围，编号用逗号隔开且按递增顺序排列，批次之间用竖线隔开，格式如下：
+- 范围判定查询（例如查询节点 7 是否在波及范围内）：
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+当你收集到足够信息后，提交最终检修工单。答案必须包含停机检修阀门总数 X，可选地附加节点列表作为佐证：
 
-注意：批次的排列顺序不影响判定，但每个批次内的零件编号必须递增排列。
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+或仅提交总数：
+
+<answer>count=5</answer>
+
+若工单评估错误或格式不符，模拟失败。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the Industrial Quality Traceability System. We are conducting a "Production Batch Partition Inference" analysis. The diagnostic rules are as follows:
+[Industrial Scenario]
+We are conducting an "Industrial Pipeline Fault Troubleshooting" simulation. Here are the rules:
 
-The system recorded a set of components S = {{1, 2, ..., {n}}}. Due to label wear, the batch traceability data has been lost. It is known that these components originate from several disjoint production batches. The co-batch relation satisfies reflexivity, symmetry, and transitivity, and each component belongs to exactly one production batch.
+The system configures an unknown pressure supply pipeline network (undirected tree graph T) comprising N valve nodes (numbered 1 to N). The pipelines are fully connected with no loops. The core faulty pump station S = {start} has been shut down, and the system has issued a pressure impact tier alert K = {threshold}.
 
-Your goal is to infer the complete production batch grouping through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
+Your goal is: determine the total number X of valve nodes that must be shut down for maintenance, which are impacted within tier K from the faulty station S. The tier refers to the number of pipe segments (edges) in the unique path between two nodes.
 
-1. Pairwise Batch Check (Type A): Ask if component i and j belong to the same production batch (requires i less than j). Answer "Yes" or "No".
-2. Subset Batch Count (Type B): Ask how many distinct production batches exist in a given subset of components. Answer an integer.
-3. Anchor Batch Count (Type C): Ask how many components in a given subset belong to the same batch as a specified anchor component (including the anchor itself). Answer an integer.
+Initially, you have only located the faulty pump station S = {start}, recorded in the "inspected node set" D. You can only perform diagnostics on nodes in D.
 
-When you have enough information, submit your final batch grouping. If the answer is wrong or the format is invalid, the diagnostic task fails.
+You can repeatedly issue the following three types of commands (one command per turn):
 
-## Query and Answer Format (strictly required)
+1. **Connected Segment Query** (Neighbor Query): Ask for all adjacent valves directly connected by pipes to an inspected node u. Returns a list, and the returned nodes are automatically added to the inspected set D.
+2. **Pipeline Distance Query** (Distance Query): Ask for the number of pipe segments between two inspected nodes u and v. Returns an integer.
+3. **Impact Range Check** (Range Check Query): Ask whether an inspected node u is within the impact range of tier K from the fault source S. Returns "Yes" or "No".
 
-Each query must contain only one tag. Use the following XML format:
+Note:
+- Any command involving uninspected nodes will be intercepted by the system and return "Illegal query".
+- You cannot directly ask "What is the total number of valves within tier K from S".
 
-- Pairwise Batch Check (e.g., asking if components 2 and 5 are from the same batch):
-<query_pair>2,5</query_pair>
+Each command must contain only one tag, using the following XML format:
 
-- Subset Batch Count (e.g., asking how many batches are represented in subset {{1,3,5}}):
-<query_subset_count>1,3,5</query_subset_count>
+- Neighbor Query (e.g., querying adjacent valves of node 5):
+<query_neighbor>5</query_neighbor>
 
-- Anchor Batch Count (e.g., asking how many in subset {{2,4,6,8}} share a batch with anchor 4):
-<query_anchor>4|2,4,6,8</query_anchor>
+- Distance Query (e.g., querying the number of pipe segments between nodes 1 and 3):
+<query_distance>1,3</query_distance>
 
-When submitting the final answer, list all batches with each batch enclosed in curly braces, elements comma-separated in ascending order, and batches separated by vertical bars:
+- Range Check Query (e.g., checking if node 7 is within the impact range):
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+When you have gathered enough information, submit the final maintenance work order. The answer must include the total shut-down valve count X, and optionally a list of nodes as evidence:
 
-Note: The order of batches does not matter, but component IDs within each batch must be in ascending order.
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+Or submit only the count:
+
+<answer>count=5</answer>
+
+If the work order evaluation is incorrect or the format is invalid, the simulation fails.
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-欢迎进入司法案件并案分析系统。我们正在进行"系列并案划分推理"分析，排查规则如下：
+我们正在进行“反洗钱资金链穿透”调查，规则如下：
 
-系统记录了一个由 {{1, 2, ..., {n}}} 组成的案卷集合 S。由于档案重组，关联并案信息丢失。已知这些案卷被归并为若干个互不相交的系列并案。同案关系满足自反性、对称性和传递性，每份案卷恰好属于一个系列并案。
+系统设定了一个未知的涉案资金流转网络（无向树图 T），包含 N 个实体账户（编号 1 到 N），资金转移关系确凿且无循环转账。现锁定核心洗钱账户 S = {start}，法定的穿透追溯层级为 K = {threshold}。
 
-你的目标是通过数据查询推断出完整的系列并案划分。你可以反复向我提出以下三类问题（每次可以提一个问题），我会根据底层系统数据如实回答：
+你的目标是：确定从核心账户 S 算起，资金穿透层级小于等于 K 的需冻结关联账户总数 X。这里的层级指的是两账户间唯一的转账链路跳数（边数）。
 
-1. 同案判定（类型 A）：询问案卷编号 i 和 j 是否属于同一个系列并案（要求 i 小于 j）。回答"是"或"否"。
-2. 并案数量统计（类型 B）：询问给定案卷子集中包含多少个不同的系列并案。回答一个整数。
-3. 同案案卷计数（类型 C）：询问给定案卷子集中有多少份案卷与指定的锚点主案卷属于同一并案（含锚点本身）。回答一个整数。
+初始时，你只掌握核心账户 S = {start} 的卷宗，存放在“已穿透账户清单”D 中。你只能对 D 中的账户发起调证。
 
-当你收集足够信息后，请提交最终的系列并案答案。若答案错误或格式不符，排查任务失败。
+你可以反复提出以下三类调证请求（每次仅限一个）：
 
-## 查询与提交答案的格式（必须严格遵守）
+1. **直接流水查询**（邻居查询）：询问某个已穿透账户 u 有直接资金往来的所有账户。返回一个列表，涉案账户自动并入穿透清单 D。
+2. **流转链路查询**（距离查询）：询问两个已穿透账户 u 和 v 之间的流转跳数。返回一个整数。
+3. **冻结范围判定**（范围判定查询）：询问某个已穿透账户 u 是否在距核心 S 不超过 K 层的法定冻结范围内。返回"是"或"否"。
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+注意：
+- 任何涉及未穿透账户的请求都是越权的，会返回"非法查询"。
+- 你不能直接询问"距离 S 不超过 K 层的账户总数是多少"。
 
-- 同案判定（例如问案卷 2 和 5 是否同案）：
-<query_pair>2,5</query_pair>
+每次请求只能包含一个标签，使用以下 XML 格式：
 
-- 并案数量统计（例如问案卷子集 {{1,3,5}} 中涉及多少个并案）：
-<query_subset_count>1,3,5</query_subset_count>
+- 邻居查询（例如查询账户 5 的直接资金往来账户）：
+<query_neighbor>5</query_neighbor>
 
-- 同案案卷计数（例如问案卷子集 {{2,4,6,8}} 中有多少份与锚点案卷 4 同案）：
-<query_anchor>4|2,4,6,8</query_anchor>
+- 距离查询（例如查询账户 1 和 3 之间的流转跳数）：
+<query_distance>1,3</query_distance>
 
-提交最终答案时，必须列出所有系列并案，每个并案用花括号包围，编号用逗号隔开且按递增顺序排列，并案之间用竖线隔开，格式如下：
+- 范围判定查询（例如查询账户 7 是否在法定冻结范围内）：
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+当你收集到足够线索后，提交最终查封令。答案必须包含需冻结关联账户总数 X，可选地附加账户列表作为佐证：
 
-注意：并案的排列顺序不影响判定，但每个并案内的案卷编号必须递增排列。
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+或仅提交总数：
+
+<answer>count=5</answer>
+
+若查封令错误或格式不符，调查宣告失败。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the Judicial Case Consolidation System. We are conducting a "Consolidated Proceeding Partition Inference" analysis. The diagnostic rules are as follows:
+[Legal Scenario]
+We are conducting an "Anti-Money Laundering Fund Penetration" investigation. Here are the rules:
 
-The system recorded a set of legal dossiers S = {{1, 2, ..., {n}}}. Due to archival restructuring, the consolidation mapping has been lost. It is known that these dossiers are merged into several disjoint consolidated cases. The consolidation relation satisfies reflexivity, symmetry, and transitivity, and each dossier belongs to exactly one consolidated case.
+The system models an unknown illicit fund transfer network (undirected tree graph T) involving N entity accounts (numbered 1 to N). The fund transfer relationships are well-established without circular transfers. The core money laundering account S = {start} is targeted, and the statutory penetration tracing tier is K = {threshold}.
 
-Your goal is to infer the complete consolidation grouping through data queries. You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the underlying system data:
+Your goal is: determine the total number X of associated accounts that need to be frozen, whose fund penetration tier from the core account S is at most K. The tier refers to the number of transfer linkage hops (edges) in the unique path between two accounts.
 
-1. Pairwise Consolidation Check (Type A): Ask if dossier i and j belong to the same consolidated case (requires i less than j). Answer "Yes" or "No".
-2. Subset Case Count (Type B): Ask how many distinct consolidated cases exist in a given subset of dossiers. Answer an integer.
-3. Anchor Dossier Count (Type C): Ask how many dossiers in a given subset belong to the same consolidated case as a specified anchor dossier (including the anchor itself). Answer an integer.
+Initially, you only possess the dossier of the core account S = {start}, stored in the "penetrated account list" D. You can only request subpoenas for accounts in D.
 
-When you have enough information, submit your final consolidation grouping. If the answer is wrong or the format is invalid, the diagnostic task fails.
+You can repeatedly issue the following three types of subpoena requests (one request per turn):
 
-## Query and Answer Format (strictly required)
+1. **Direct Transaction Query** (Neighbor Query): Ask for all accounts that have direct fund transfers with a penetrated account u. Returns a list, and the involved accounts are automatically merged into the penetrated list D.
+2. **Transfer Linkage Query** (Distance Query): Ask for the number of transfer hops between two penetrated accounts u and v. Returns an integer.
+3. **Freeze Scope Check** (Range Check Query): Ask whether a penetrated account u is within the statutory freeze range of K tiers from the core S. Returns "Yes" or "No".
 
-Each query must contain only one tag. Use the following XML format:
+Note:
+- Any request involving unpenetrated accounts is unauthorized and will return "Illegal query".
+- You cannot directly ask "What is the total number of accounts within K tiers from S".
 
-- Pairwise Consolidation Check (e.g., asking if dossiers 2 and 5 belong to the same case):
-<query_pair>2,5</query_pair>
+Each request must contain only one tag, using the following XML format:
 
-- Subset Case Count (e.g., asking how many consolidated cases are represented in subset {{1,3,5}}):
-<query_subset_count>1,3,5</query_subset_count>
+- Neighbor Query (e.g., querying direct transaction accounts of account 5):
+<query_neighbor>5</query_neighbor>
 
-- Anchor Dossier Count (e.g., asking how many in subset {{2,4,6,8}} share a case with anchor 4):
-<query_anchor>4|2,4,6,8</query_anchor>
+- Distance Query (e.g., querying transfer hops between accounts 1 and 3):
+<query_distance>1,3</query_distance>
 
-When submitting the final answer, list all consolidated cases with each case enclosed in curly braces, elements comma-separated in ascending order, and cases separated by vertical bars:
+- Range Check Query (e.g., checking if account 7 is within the statutory freeze range):
+<query_in_range>7</query_in_range>
 
-<answer>{{1,2,3}}|{{4,5}}|{{6}}</answer>
+When you have collected sufficient evidence, submit the final freezing injunction. The answer must include the total frozen account count X, and optionally a list of accounts as evidence:
 
-Note: The order of consolidated cases does not matter, but dossier IDs within each case must be in ascending order.
+<answer>count=5, nodes=1,2,3,4,5</answer>
+
+Or submit only the count:
+
+<answer>count=5</answer>
+
+If the injunction is incorrect or the format is invalid, the investigation fails.
 """
 
-    tags = ["answer", "query_pair", "query_subset_count", "query_anchor"]
-
-    # 类属性：推理类型和数据结构
-    reasoning_type = "演绎推理"
-    data_structure = "集合"
-
-    # 难度配置说明：
-    # 1 (简单)       - N=4, 2个等价类
-    # 2 (中等偏下)   - N=6, 3个等价类
-    # 3 (中等偏上)   - N=8, 3个等价类
-    # 4 (较难)       - N=10, 4个等价类
-    # 5 (难)         - N=12, 5个等价类
+    tags = ["answer", "query_neighbor", "query_distance", "query_in_range"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 4,
-                "partition": [[1, 2], [3, 4]],
+                "n": 5,
+                "start": 3,
+                "threshold": 1,
+                "edges": [(1,2), (2,3), (3,4), (4,5)],
             },
             2: {
-                "n": 6,
-                "partition": [[1, 3], [2, 5], [4, 6]],
+                "n": 7,
+                "start": 1,
+                "threshold": 2,
+                "edges": [(1,2), (1,3), (1,4), (1,5), (1,6), (1,7)],
             },
             3: {
-                "n": 8,
-                "partition": [[1, 4, 7], [2, 5], [3, 6, 8]],
+                "n": 10,
+                "start": 5,
+                "threshold": 2,
+                "edges": [(1,2), (1,3), (2,4), (2,5), (5,6), (5,7), (3,8), (8,9), (8,10)],
             },
             4: {
-                "n": 10,
-                "partition": [[1, 5], [2, 6, 9], [3, 7], [4, 8, 10]],
+                "n": 12,
+                "start": 1,
+                "threshold": 3,
+                "edges": [(1,2), (1,3), (2,4), (2,5), (3,6), (3,7), (4,8), (5,9), (6,10), (7,11), (11,12)],
             },
             5: {
-                "n": 12,
-                "partition": [[1, 7], [2, 8, 11], [3, 9], [4, 10], [5, 6, 12]],
+                "n": 15,
+                "start": 8,
+                "threshold": 3,
+                "edges": [(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (7,8), (8,9), (9,10), (10,11), (3,12), (5,13), (9,14), (11,15)],
             },
         },
         "en": {
             1: {
-                "n": 4,
-                "partition": [[1, 2], [3, 4]],
+                "n": 5,
+                "start": 3,
+                "threshold": 1,
+                "edges": [(1,2), (2,3), (3,4), (4,5)],
             },
             2: {
-                "n": 6,
-                "partition": [[1, 3], [2, 5], [4, 6]],
+                "n": 7,
+                "start": 1,
+                "threshold": 2,
+                "edges": [(1,2), (1,3), (1,4), (1,5), (1,6), (1,7)],
             },
             3: {
-                "n": 8,
-                "partition": [[1, 4, 7], [2, 5], [3, 6, 8]],
+                "n": 10,
+                "start": 5,
+                "threshold": 2,
+                "edges": [(1,2), (1,3), (2,4), (2,5), (5,6), (5,7), (3,8), (8,9), (8,10)],
             },
             4: {
-                "n": 10,
-                "partition": [[1, 5], [2, 6, 9], [3, 7], [4, 8, 10]],
+                "n": 12,
+                "start": 1,
+                "threshold": 3,
+                "edges": [(1,2), (1,3), (2,4), (2,5), (3,6), (3,7), (4,8), (5,9), (6,10), (7,11), (11,12)],
             },
             5: {
-                "n": 12,
-                "partition": [[1, 7], [2, 8, 11], [3, 9], [4, 10], [5, 6, 12]],
+                "n": 15,
+                "start": 8,
+                "threshold": 3,
+                "edges": [(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (7,8), (8,9), (9,10), (10,11), (3,12), (5,13), (9,14), (11,15)],
             },
         },
     }
@@ -482,23 +576,9 @@ Note: The order of consolidated cases does not matter, but dossier IDs within ea
     def __init__(self, config):
         super().__init__(config)
 
-    @staticmethod
-    def _generate_partition(n, num_classes, seed=42):
-        """使用固定种子生成随机等价类划分"""
-        rng = _random.Random(seed)
-        elements = list(range(1, n + 1))
-        rng.shuffle(elements)
-        partition = [[] for _ in range(num_classes)]
-        for i, elem in enumerate(elements):
-            partition[i % num_classes].append(elem)
-        # 每个等价类内部排序
-        for cls in partition:
-            cls.sort()
-        return partition
-
     def _initialize_game(self):
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 防御性转换，确保兼容字符串和整数
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -506,239 +586,211 @@ Note: The order of consolidated cases does not matter, but dossier IDs within ea
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
         
-        # 使用确定性种子随机生成分区，保证可复现但不固定，防作弊
-        num_classes = len(cfg["partition"])
-        self.partition = self._generate_partition(cfg["n"], num_classes, seed=diff * 1000 + cfg["n"])
+        self._game_info["start"] = cfg["start"]
+        self._game_info["threshold"] = cfg["threshold"]
         
-        # 构建元素到等价类ID的映射
-        self.element_to_class = {}
-        for class_id, equiv_class in enumerate(self.partition):
-            for elem in equiv_class:
-                self.element_to_class[elem] = class_id
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        为控制查询总量，限制类型 B 和类型 C 查询的子集大小不超过 min(4, n)。
-        """
-        queries = []
-        n = self._game_info["n"]
-        full_set = range(1, n + 1)
+        self.n = cfg["n"]
+        self.start = cfg["start"]
+        self.threshold = cfg["threshold"]
+        self.edges = cfg["edges"]
         
-        # 准备回答的文本
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
+        self.adjacency = {i: [] for i in range(1, self.n + 1)}
+        for u, v in self.edges:
+            self.adjacency[u].append(v)
+            self.adjacency[v].append(u)
+        
+        self.distances = self._compute_distances()
+        
+        self.target_vertices = set()
+        for v in range(1, self.n + 1):
+            if self.distances[v] <= self.threshold:
+                self.target_vertices.add(v)
+        
+        self.discovered = {self.start}
 
-        # 1. 两元素等价判定（类型 A）
-        # 枚举所有 i < j
-        for i, j in itertools.combinations(full_set, 2):
-            query_content = f"{i},{j}"
-            is_same_class = self.element_to_class[i] == self.element_to_class[j]
-            ans = yes_res if is_same_class else no_res
-            
-            queries.append({
-                "query": f"<query_pair>{query_content}</query_pair>",
-                "answer": ans
-            })
-
-        # 2. 类型 B 和类型 C：仅枚举大小 1 到 min(4, n) 的子集，控制总量
-        max_subset_size = min(4, n)
-        for r in range(1, max_subset_size + 1):
-            for subset in itertools.combinations(full_set, r):
-                # 转为列表并排序（虽然combinations产生的就是有序的）
-                subset_list = list(subset)
-                subset_str = ",".join(map(str, subset_list))
-                
-                # --- 类型 B：子集内等价类数量 ---
-                classes_in_subset = set(self.element_to_class[x] for x in subset_list)
-                ans_b = str(len(classes_in_subset))
-                
-                queries.append({
-                    "query": f"<query_subset_count>{subset_str}</query_subset_count>",
-                    "answer": ans_b
-                })
-                
-                # --- 类型 C：子集中与锚等价的数量 ---
-                # 对该子集中的每个元素作为锚点生成查询
-                for anchor in subset_list:
-                    anchor_class = self.element_to_class[anchor]
-                    count = sum(1 for x in subset_list if self.element_to_class[x] == anchor_class)
-                    ans_c = str(count)
-                    
-                    queries.append({
-                        "query": f"<query_anchor>{anchor}|{subset_str}</query_anchor>",
-                        "answer": ans_c
-                    })
-                    
-        return queries
+    def _compute_distances(self):
+        distances = {i: float('inf') for i in range(1, self.n + 1)}
+        distances[self.start] = 0
+        queue = [self.start]
+        head = 0
+        
+        while head < len(queue):
+            u = queue[head]
+            head += 1
+            for v in self.adjacency[u]:
+                if distances[v] == float('inf'):
+                    distances[v] = distances[u] + 1
+                    queue.append(v)
+        
+        return distances
 
     def evaluate(self, parsed_info):
-        """评估提交的答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"]
+        
+        ans_dict = {}
+        count_match = re.search(r"count\s*=\s*(\d+)", raw_ans)
+        if count_match:
+            ans_dict["count"] = count_match.group(1)
+            
+        nodes_match = re.search(r"nodes\s*=\s*([\d\s,]+)", raw_ans)
+        if nodes_match:
+            ans_dict["nodes"] = nodes_match.group(1)
+            
+        if "count" not in ans_dict:
+            return False
         
         try:
-            # 解析答案格式: {1,2,3}|{4,5}|{6}
-            # 使用正则表达式提取所有的等价类
-            pattern = r'\{([^}]+)\}'
-            matches = re.findall(pattern, raw_ans)
-            
-            if not matches:
-                return False
-            
-            # 构建提交的等价类集合
-            submitted_partition = []
-            all_elements = set()
-            
-            for match in matches:
-                # 解析每个等价类中的元素
-                elements = [int(x.strip()) for x in match.split(',') if x.strip()]
-                if not elements:
-                    return False
-                
-                # 检查元素是否重复
-                for elem in elements:
-                    if elem in all_elements:
-                        return False
-                    all_elements.add(elem)
-                
-                submitted_partition.append(sorted(elements))
-            
-            # 检查是否覆盖了所有元素
-            if all_elements != set(range(1, self._game_info["n"] + 1)):
-                return False
-            
-            # 规范化：对等价类进行排序以便比较
-            submitted_partition_normalized = sorted([sorted(cls) for cls in submitted_partition])
-            correct_partition_normalized = sorted([sorted(cls) for cls in self.partition])
-            
-            return submitted_partition_normalized == correct_partition_normalized
-            
-        except Exception:
+            submitted_count = int(ans_dict["count"])
+        except:
             return False
+        
+        if submitted_count != len(self.target_vertices):
+            return False
+        
+        if "nodes" in ans_dict:
+            try:
+                node_str = ans_dict["nodes"].strip()
+                if node_str:
+                    submitted_nodes = set(int(x.strip()) for x in node_str.split(",") if x.strip())
+                    if submitted_nodes != self.target_vertices:
+                        return False
+            except:
+                return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑，用于生成真实的正确回答"""
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            invalid_res = "无效查询"
+            illegal = "非法查询"
+            error_format = "错误：查询格式无效。"
         else:
             yes_res, no_res = "Yes", "No"
-            invalid_res = "Invalid query"
+            illegal = "Illegal query"
+            error_format = "Error: Invalid query format."
 
-        # 优先级：query_pair > query_subset_count > query_anchor
-        if "query_pair" in parsed_info:
-            return self._handle_pair_query(parsed_info["query_pair"], yes_res, no_res, invalid_res)
-        
-        elif "query_subset_count" in parsed_info:
-            return self._handle_subset_count_query(parsed_info["query_subset_count"], invalid_res)
-        
-        elif "query_anchor" in parsed_info:
-            return self._handle_anchor_query(parsed_info["query_anchor"], invalid_res)
-        
+        if "query_neighbor" in parsed_info:
+            try:
+                u = int(parsed_info["query_neighbor"].strip())
+                if u not in self.discovered:
+                    return illegal
+                if u < 1 or u > self.n:
+                    return illegal
+                
+                neighbors = self.adjacency[u]
+                for v in neighbors:
+                    self.discovered.add(v)
+                
+                neighbor_str = ",".join(str(v) for v in sorted(neighbors))
+                return f"[{neighbor_str}]"
+            except:
+                return error_format
+
+        elif "query_distance" in parsed_info:
+            try:
+                raw = parsed_info["query_distance"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                u, v = int(parts[0]), int(parts[1])
+                
+                if u not in self.discovered or v not in self.discovered:
+                    return illegal
+                
+                dist = self._compute_distance_between(u, v)
+                return str(dist)
+            except:
+                return error_format
+
+        elif "query_in_range" in parsed_info:
+            try:
+                u = int(parsed_info["query_in_range"].strip())
+                if u not in self.discovered:
+                    return illegal
+                if u < 1 or u > self.n:
+                    return illegal
+                
+                in_range = self.distances[u] <= self.threshold
+                return yes_res if in_range else no_res
+            except:
+                return error_format
+
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct):
-        """生成一个明显不同的错误答案"""
-        # 1. 若是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        # 2. 关键词替换
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
         if self.config.language == "zh":
-            if correct == "是":
-                return "否"
-            elif correct == "否":
-                return "是"
+            yes_res, no_res = "是", "否"
         else:
-            # 英文 Yes/No 处理，忽略大小写
-            if correct.lower() == "yes":
-                return "No"
-            elif correct.lower() == "no":
-                return "Yes"
+            yes_res, no_res = "Yes", "No"
+
+        for u in range(1, self.n + 1):
+            neighbors = sorted(self.adjacency[u])
+            neighbor_str = ",".join(str(v) for v in neighbors)
+            ans = f"[{neighbor_str}]"
+            queries.append({
+                "query": f"<query_neighbor>{u}</query_neighbor>",
+                "answer": ans
+            })
+
+        for u in range(1, self.n + 1):
+            for v in range(u, self.n + 1):
+                dist = self._compute_distance_between(u, v)
+                queries.append({
+                    "query": f"<query_distance>{u},{v}</query_distance>",
+                    "answer": str(dist)
+                })
+
+        for u in range(1, self.n + 1):
+            in_range = self.distances[u] <= self.threshold
+            ans = yes_res if in_range else no_res
+            queries.append({
+                "query": f"<query_in_range>{u}</query_in_range>",
+                "answer": ans
+            })
+
+        return queries
+
+    def _cf_make_wrong(self, correct):
+        s = str(correct)
         
-        # 3. 都不匹配
-        return correct + "_WRONG"
+        if s.isdigit():
+            return str(int(s) + 1)
+        
+        if s == "是": return "否"
+        if s == "否": return "是"
+        
+        if s.lower() == "yes":
+            if s.isupper(): return "NO"
+            if s.istitle(): return "No"
+            return "no"
+        if s.lower() == "no":
+            if s.isupper(): return "YES"
+            if s.istitle(): return "Yes"
+            return "yes"
+            
+        return s + "_WRONG"
 
-    def _handle_pair_query(self, query_str, yes_res, no_res, invalid_res):
-        """处理两元素等价判定查询"""
-        try:
-            parts = [x.strip() for x in query_str.split(',')]
-            if len(parts) != 2:
-                return invalid_res
+    def _compute_distance_between(self, u, v):
+        if u == v:
+            return 0
+        
+        distances = {u: 0}
+        queue = [u]
+        head = 0
+        
+        while head < len(queue):
+            current = queue[head]
+            head += 1
             
-            i, j = int(parts[0]), int(parts[1])
+            if current == v:
+                return distances[v]
             
-            # 检查有效性：范围、i < j
-            if i < 1 or i > self._game_info["n"] or j < 1 or j > self._game_info["n"]:
-                return invalid_res
-            if i >= j:
-                return invalid_res
-            
-            # 判断是否在同一等价类
-            return yes_res if self.element_to_class[i] == self.element_to_class[j] else no_res
-            
-        except Exception:
-            return invalid_res
-
-    def _handle_subset_count_query(self, query_str, invalid_res):
-        """处理子集内等价类数量查询"""
-        try:
-            elements = [int(x.strip()) for x in query_str.split(',') if x.strip()]
-            
-            if not elements:
-                return invalid_res
-            
-            # 检查有效性：范围、无重复
-            if len(elements) != len(set(elements)):
-                return invalid_res
-            
-            for elem in elements:
-                if elem < 1 or elem > self._game_info["n"]:
-                    return invalid_res
-            
-            # 计算子集中不同等价类的数量
-            classes = set(self.element_to_class[elem] for elem in elements)
-            return str(len(classes))
-            
-        except Exception:
-            return invalid_res
-
-    def _handle_anchor_query(self, query_str, invalid_res):
-        """处理子集中与锚等价的数量查询"""
-        try:
-            # 格式: anchor|elem1,elem2,elem3
-            parts = query_str.split('|')
-            if len(parts) != 2:
-                return invalid_res
-            
-            anchor = int(parts[0].strip())
-            elements = [int(x.strip()) for x in parts[1].split(',') if x.strip()]
-            
-            if not elements:
-                return invalid_res
-            
-            # 检查有效性：无重复
-            if len(elements) != len(set(elements)):
-                return invalid_res
-            
-            for elem in elements:
-                if elem < 1 or elem > self._game_info["n"]:
-                    return invalid_res
-            
-            if anchor < 1 or anchor > self._game_info["n"]:
-                return invalid_res
-            
-            # 允许锚不在子集中，仅计算子集中与锚同类的元素数
-            anchor_class = self.element_to_class[anchor]
-            count = sum(1 for elem in elements if self.element_to_class[elem] == anchor_class)
-            return str(count)
-            
-        except Exception:
-            return invalid_res
-
-
+            for neighbor in self.adjacency[current]:
+                if neighbor not in distances:
+                    distances[neighbor] = distances[current] + 1
+                    queue.append(neighbor)
+        
+        return distances.get(v, float('inf'))

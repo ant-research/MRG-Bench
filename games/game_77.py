@@ -1,646 +1,506 @@
-# -*- coding: utf-8 -*-
-from .base import Game
 import random
+from .base import Game
 
-class TreeDiameterGame(Game):
+class HiddenTreeRootGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"树直径推断"的游戏，规则如下：
+我们现在来玩一个"隐藏树根"的推理游戏，规则如下：
 
-游戏设定了一棵隐藏的无向连通无环图（树），共有 {n} 个节点，编号为 1 到 {n}。树中任意两个节点之间存在唯一的简单路径，两节点间的距离定义为连接它们的唯一路径上的边数。
+游戏设定了一棵包含 {n} 个节点的有根树（连通无环图），节点名称为：{node_names}。树的根节点已被秘密选定，但不会告诉你。树中存在从根节点向外指向子节点的有向关系，形成了祖先—后代关系。
 
-你的目标是推断出这棵树的直径信息，包括：
-- 直径的两个端点（编号）
-- 直径的长度
-- 从一个端点到另一个端点的完整路径（节点序列）
+你的目标是通过询问推断出这棵树的根节点。你可以反复向我提出以下类型的问题：
 
-直径定义为树中最长的简单路径，即使存在多条等长的最长路径，找到其中任意一条即可。
+- Reach 查询：询问节点 u 是否为节点 v 的祖先（包括 u 等于 v 的情况）。我会回答"是"或"否"。
 
-你可以通过查询来获取信息。每次查询可以询问任意两个不同节点之间的距离，我会如实回答。请尽可能少地使用查询次数。
+你需要在收集足够信息后提交最终答案。若答案错误或格式不符，游戏失败。
 
-## 查询和提交答案的格式（必须严格遵守）
+每次询问使用以下 XML 格式：
 
-每次只能进行一个操作。使用以下 XML 格式：
+- Reach 查询（例如询问节点 A 是否为节点 B 的祖先）：
+<query_reach>A,B</query_reach>
 
-- 距离查询（例如查询节点 1 和节点 5 之间的距离）：
-<query_dist>1,5</query_dist>
+提交最终答案时，指定你认为的根节点名称，格式如下：
 
-- 提交最终答案时，必须包含端点、长度和路径，格式如下：
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-说明：
-- endpoints 是两个端点的编号，用空格分隔
-- length 是直径的长度（边数）
-- path 是从第一个端点到第二个端点的完整节点序列，用空格分隔，第一个节点必须是第一个端点，最后一个节点必须是第二个端点
-
-若答案错误或格式不符，游戏失败。
+注意：请尽可能少地进行查询，在确定答案后即可提交。
 """
 
     game_rule_en = """\
-Let's play a "Tree Diameter Inference" game. Here are the rules:
+Let's play a "Hidden Tree Root" deduction game. Here are the rules:
 
-The game features a hidden undirected connected acyclic graph (tree) with {n} nodes, numbered from 1 to {n}. There exists a unique simple path between any two nodes in the tree. The distance between two nodes is defined as the number of edges on the unique path connecting them.
+The game has set up a rooted tree (connected acyclic graph) containing {n} nodes with names: {node_names}. The root node has been secretly chosen but will not be revealed to you. The tree has directed relationships from the root outward to child nodes, forming ancestor-descendant relationships.
 
-Your goal is to infer the diameter information of this tree, including:
-- The two endpoints of the diameter (node IDs)
-- The length of the diameter
-- The complete path from one endpoint to the other (node sequence)
+Your goal is to deduce the root node of this tree through queries. You can repeatedly ask me the following type of question:
 
-The diameter is defined as the longest simple path in the tree. If there are multiple longest paths of equal length, finding any one of them is acceptable.
+- Reach Query: Ask whether node u is an ancestor of node v (including the case where u equals v). I will answer "Yes" or "No".
 
-You can obtain information through queries. Each query can ask for the distance between any two different nodes, and I will answer truthfully. Please use as few queries as possible.
+You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the game fails.
 
-## Query and Answer Format (strictly required)
+Each query uses the following XML format:
 
-You can only perform one operation at a time. Use the following XML format:
+- Reach Query (e.g., asking if node A is an ancestor of node B):
+<query_reach>A,B</query_reach>
 
-- Distance Query (e.g., querying the distance between node 1 and node 5):
-<query_dist>1,5</query_dist>
+When submitting the final answer, specify the root node name you believe is correct, using this format:
 
-- When submitting the final answer, you must include endpoints, length, and path in this format:
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-Explanation:
-- endpoints are the two endpoint IDs, separated by a space
-- length is the diameter length (number of edges)
-- path is the complete node sequence from the first endpoint to the second, separated by spaces, with the first node being the first endpoint and the last node being the second endpoint
-
-If the answer is wrong or the format is invalid, the game fails.
+Note: Please use as few queries as possible and submit once you are confident of the answer.
 """
 
     contextualized_rule_zh_1 = """\
-我们现在来进行一场“轨道交通最长主线推断”的演练，规则如下：
+我们在进行一项"追踪总调度中心"的交通流向排查任务。
 
-城市轨道交通网络由一棵隐藏的无向连通无环图（树）构成，共有 {n} 个地铁站点，编号为 1 到 {n}。任意两个站点之间存在唯一的简单乘车路径，两站点间的距离定义为连接它们的唯一路径上的区间（边）数。
+当前交通网络包含 {n} 个路口节点，名称为：{node_names}。道路均为单向行驶，且呈现出从某一个隐藏的"总调度中心"向外发散的无环树状结构。
 
-你的目标是推断出该交通网络的最长运营主线（直径）信息，包括：
-- 主线的两个首末站点（编号）
-- 主线的长度（区间数）
-- 从一个首末站点到另一个的完整乘车路线（站点序列）
+你的目标是通过查询上下游关系，找出这个"总调度中心"。你可以反复向我提出以下查询：
 
-直径定义为网络中最长的简单路径，即使存在多条等长的主线，找到其中任意一条即可。
+- Reach 查询：询问路口 u 是否为路口 v 的上游（即车辆能否从 u 顺向行驶到 v，包含 u 等于 v 的情况）。我会回答"是"或"否"。
 
-你可以通过查询来获取信息。每次查询可以询问任意两个不同站点之间的区间距离，我会如实回答。请尽可能少地使用查询次数。
+你需要通过收集信息来提交最终答案。若答案错误或格式不符，任务失败。
 
-## 查询和提交答案的格式（必须严格遵守）
+每次询问使用以下 XML 格式：
 
-每次只能进行一个操作。使用以下 XML 格式：
+- Reach 查询（例如询问路口 A 是否为路口 B 的上游）：
+<query_reach>A,B</query_reach>
 
-- 距离查询（例如查询站点 1 和站点 5 之间的距离）：
-<query_dist>1,5</query_dist>
+提交最终答案时，指定你认为的总调度中心所在路口，格式如下：
 
-- 提交最终答案时，必须包含端点、长度和路径，格式如下：
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-说明：
-- endpoints 是两个端点的编号，用空格分隔
-- length 是直径的长度（边数）
-- path 是从第一个端点到第二个端点的完整站点序列，用空格分隔，第一个节点必须是第一个端点，最后一个节点必须是第二个端点
-
-若答案错误或格式不符，演练失败。
+注意：请尽可能少地进行查询，在确定答案后即可提交。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Let's conduct an exercise on "Urban Rail Longest Mainline Inference". Here are the rules:
+[Transportation Scenario]
+We are conducting a "Trace the Central Dispatch Station" traffic flow investigation.
 
-The urban rail transit network forms a hidden undirected connected acyclic graph (tree) with {n} subway stations, numbered from 1 to {n}. There exists a unique simple travel path between any two stations. The distance between two stations is defined as the number of sections (edges) on the unique path connecting them.
+The current traffic network contains {n} intersection nodes, named: {node_names}. All roads are one-way and form a directed acyclic tree structure branching out from a hidden "Central Dispatch Station".
 
-Your goal is to infer the longest mainline (diameter) information of this transit network, including:
-- The two terminal stations of the mainline (station IDs)
-- The length of the mainline (number of sections)
-- The complete travel route from one terminal to the other (station sequence)
+Your goal is to identify this "Central Dispatch Station" by querying upstream-downstream relationships. You can repeatedly ask me the following type of question:
 
-The diameter is defined as the longest simple path in the network. If there are multiple longest paths of equal length, finding any one of them is acceptable.
+- Reach Query: Ask whether intersection u is an upstream node of intersection v (i.e., whether a vehicle can travel downstream from u to v, including the case where u equals v). I will answer "Yes" or "No".
 
-You can obtain information through queries. Each query can ask for the section distance between any two different stations, and I will answer truthfully. Please use as few queries as possible.
+You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query uses the following XML format:
 
-You can only perform one operation at a time. Use the following XML format:
+- Reach Query (e.g., asking if intersection A is upstream of intersection B):
+<query_reach>A,B</query_reach>
 
-- Distance Query (e.g., querying the distance between station 1 and station 5):
-<query_dist>1,5</query_dist>
+When submitting the final answer, specify the intersection you believe is the Central Dispatch Station, using this format:
 
-- When submitting the final answer, you must include endpoints, length, and path in this format:
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-Explanation:
-- endpoints are the two endpoint IDs, separated by a space
-- length is the diameter length (number of edges)
-- path is the complete station sequence from the first endpoint to the second, separated by spaces, with the first node being the first endpoint and the last node being the second endpoint
-
-If the answer is wrong or the format is invalid, the exercise fails.
+Note: Please use as few queries as possible and submit once you are confident of the answer.
 """
 
     contextualized_rule_zh_2 = """\
-我们现在来进行一场“传染病最长传播链推断”的调查，规则如下：
+我们在进行一项"定位零号病人"的流行病学溯源任务。
 
-此次疫情的传播接触网络构成了一棵隐藏的无向连通无环图（树），共有 {n} 名感染者或接触者，编号为 1 到 {n}。任意两人之间存在唯一的传播追溯路径，两人间的距离定义为连接他们的唯一路径上的传播代数（边数）。
+已确认一个包含 {n} 名患者的传播链条，患者编号为：{node_names}。病毒由一名未知的"零号病人"开始，呈树状单向传播给了其他所有人。
 
-你的目标是推断出此次疫情的最长传播链（直径）信息，包括：
-- 传播链的两个源头和终端病例（编号）
-- 传播链的长度（代数）
-- 从源头病例到终端病例的完整传播序列（病例编号序列）
+你的目标是通过询问传播关系推断出这位"零号病人"。你可以反复向我提出以下类型的问题：
 
-直径定义为传播网络中最长的简单路径，即使存在多条等长的最长传播链，找出其中任意一条即可。
+- Reach 查询：询问患者 u 是否为患者 v 的直接或间接感染源（包括 u 等于 v 的情况）。我会回答"是"或"否"。
 
-你可以通过查询来获取信息。每次查询可以询问任意两个不同病例之间的传播代数距离，我会如实回答。请尽可能少地使用查询次数。
+你需要通过收集信息来提交最终答案。若答案错误或格式不符，排查失败。
 
-## 查询和提交答案的格式（必须严格遵守）
+每次询问使用以下 XML 格式：
 
-每次只能进行一个操作。使用以下 XML 格式：
+- Reach 查询（例如询问患者 A 是否为患者 B 的感染源）：
+<query_reach>A,B</query_reach>
 
-- 距离查询（例如查询病例 1 和病例 5 之间的距离）：
-<query_dist>1,5</query_dist>
+提交最终答案时，指定你认为的零号病人编号，格式如下：
 
-- 提交最终答案时，必须包含端点、长度和路径，格式如下：
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-说明：
-- endpoints 是两个端点的编号，用空格分隔
-- length 是直径的长度（边数）
-- path 是从第一个端点到第二个端点的完整病例序列，用空格分隔，第一个节点必须是第一个端点，最后一个节点必须是第二个端点
-
-若答案错误或格式不符，调查失败。
+注意：请尽可能少地进行查询，在确定答案后即可提交。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's conduct an investigation on "Infectious Disease Longest Transmission Chain Inference". Here are the rules:
+We are conducting an epidemiological tracing task to "Locate Patient Zero".
 
-The transmission contact network of this outbreak forms a hidden undirected connected acyclic graph (tree) with {n} infected individuals or contacts, numbered from 1 to {n}. There exists a unique traceability path between any two individuals. The distance between them is defined as the number of transmission generations (edges) on the unique path connecting them.
+A transmission chain involving {n} patients has been confirmed, with patient IDs: {node_names}. The virus spread in a one-way tree structure starting from an unknown "Patient Zero" to all others.
 
-Your goal is to infer the longest transmission chain (diameter) information of this outbreak, including:
-- The two source and terminal cases of the chain (case IDs)
-- The length of the chain (number of generations)
-- The complete transmission sequence from the source case to the terminal case (case ID sequence)
+Your goal is to deduce "Patient Zero" by querying transmission relationships. You can repeatedly ask me the following type of question:
 
-The diameter is defined as the longest simple path in the network. If there are multiple longest chains of equal length, finding any one of them is acceptable.
+- Reach Query: Ask whether patient u is a direct or indirect infection source for patient v (including the case where u equals v). I will answer "Yes" or "No".
 
-You can obtain information through queries. Each query can ask for the generation distance between any two different cases, and I will answer truthfully. Please use as few queries as possible.
+You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the tracing fails.
 
-## Query and Answer Format (strictly required)
+Each query uses the following XML format:
 
-You can only perform one operation at a time. Use the following XML format:
+- Reach Query (e.g., asking if patient A is an infection source for patient B):
+<query_reach>A,B</query_reach>
 
-- Distance Query (e.g., querying the distance between case 1 and case 5):
-<query_dist>1,5</query_dist>
+When submitting the final answer, specify the patient ID you believe is Patient Zero, using this format:
 
-- When submitting the final answer, you must include endpoints, length, and path in this format:
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-Explanation:
-- endpoints are the two endpoint IDs, separated by a space
-- length is the diameter length (number of edges)
-- path is the complete case sequence from the first endpoint to the second, separated by spaces, with the first node being the first endpoint and the last node being the second endpoint
-
-If the answer is wrong or the format is invalid, the investigation fails.
+Note: Please use as few queries as possible and submit once you are confident of the answer.
 """
 
     contextualized_rule_zh_3 = """\
-我们现在来进行一场“最长学习路径推导”的规划，规则如下：
+我们在进行一项"挖掘基石课程"的教学体系分析任务。
 
-学科的核心知识点图谱构成了一棵隐藏的无向连通无环图（树），共有 {n} 个知识模块，编号为 1 到 {n}。任意两个知识模块之间存在唯一的关联推导路径，两模块间的距离定义为连接它们的唯一路径上的知识跨度（边数）。
+某专业有 {n} 门必修课程，代号为：{node_names}。这些课程之间存在严格的先修依赖关系，形成了一棵从唯一的"基石课程"发散出来的依赖树。
 
-你的目标是推断出该知识图谱中的最长学习主线（直径）信息，包括：
-- 学习主线的两个首尾知识模块（编号）
-- 学习主线的长度（知识跨度）
-- 从首模块到尾模块的完整学习路径（模块序列）
+你的目标是通过询问先决条件来找出这门"基石课程"。你可以反复向我提出以下类型的问题：
 
-直径定义为知识图谱中最长的简单路径，即使存在多条等长的最长主线，规划出其中任意一条即可。
+- Reach 查询：询问课程 u 是否为课程 v 的直接或间接先修课（包括 u 等于 v 的情况）。我会回答"是"或"否"。
 
-你可以通过查询来获取信息。每次查询可以询问任意两个不同知识模块之间的推导跨度距离，我会如实回答。请尽可能少地使用查询次数。
+你需要通过收集信息来提交最终答案。若答案错误或格式不符，分析失败。
 
-## 查询和提交答案的格式（必须严格遵守）
+每次询问使用以下 XML 格式：
 
-每次只能进行一个操作。使用以下 XML 格式：
+- Reach 查询（例如询问课程 A 是否为课程 B 的先修课）：
+<query_reach>A,B</query_reach>
 
-- 距离查询（例如查询模块 1 和模块 5 之间的距离）：
-<query_dist>1,5</query_dist>
+提交最终答案时，指定你认为的基石课程代号，格式如下：
 
-- 提交最终答案时，必须包含端点、长度和路径，格式如下：
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-说明：
-- endpoints 是两个端点的编号，用空格分隔
-- length 是直径的长度（边数）
-- path 是从第一个端点到第二个端点的完整模块序列，用空格分隔，第一个节点必须是第一个端点，最后一个节点必须是第二个端点
-
-若答案错误或格式不符，规划失败。
+注意：请尽可能少地进行查询，在确定答案后即可提交。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's conduct a planning session on "Longest Learning Path Inference". Here are the rules:
+We are conducting a curriculum analysis task to "Uncover the Foundational Course".
 
-The core knowledge graph of the subject forms a hidden undirected connected acyclic graph (tree) with {n} knowledge modules, numbered from 1 to {n}. There exists a unique derivation path between any two modules. The distance between them is defined as the knowledge span (number of edges) on the unique path connecting them.
+A major has {n} required courses, coded as: {node_names}. There are strict prerequisite dependencies among these courses, forming a dependency tree branching out from a single "Foundational Course".
 
-Your goal is to infer the longest learning mainline (diameter) information in this knowledge graph, including:
-- The two start and end knowledge modules of the mainline (module IDs)
-- The length of the mainline (knowledge span)
-- The complete learning path from the start module to the end module (module sequence)
+Your goal is to identify this "Foundational Course" by querying prerequisites. You can repeatedly ask me the following type of question:
 
-The diameter is defined as the longest simple path in the graph. If there are multiple longest mainlines of equal length, planning any one of them is acceptable.
+- Reach Query: Ask whether course u is a direct or indirect prerequisite for course v (including the case where u equals v). I will answer "Yes" or "No".
 
-You can obtain information through queries. Each query can ask for the derivation span distance between any two different knowledge modules, and I will answer truthfully. Please use as few queries as possible.
+You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the analysis fails.
 
-## Query and Answer Format (strictly required)
+Each query uses the following XML format:
 
-You can only perform one operation at a time. Use the following XML format:
+- Reach Query (e.g., asking if course A is a prerequisite for course B):
+<query_reach>A,B</query_reach>
 
-- Distance Query (e.g., querying the distance between module 1 and module 5):
-<query_dist>1,5</query_dist>
+When submitting the final answer, specify the course code you believe is the Foundational Course, using this format:
 
-- When submitting the final answer, you must include endpoints, length, and path in this format:
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-Explanation:
-- endpoints are the two endpoint IDs, separated by a space
-- length is the diameter length (number of edges)
-- path is the complete module sequence from the first endpoint to the second, separated by spaces, with the first node being the first endpoint and the last node being the second endpoint
-
-If the answer is wrong or the format is invalid, the planning fails.
+Note: Please use as few queries as possible and submit once you are confident of the answer.
 """
 
     contextualized_rule_zh_4 = """\
-我们现在来进行一场“工业管网主干道推断”的排查，规则如下：
+我们在进行一项"排查主配料中心"的工业流水线审查任务。
 
-大型工厂的流体输送管网构成了一棵隐藏的无向连通无环图（树），共有 {n} 个阀门节点，编号为 1 到 {n}。任意两个阀门之间存在唯一的简单连通路径，两阀门间的距离定义为连接它们的唯一路径上的管道段数（边数）。
+当前生产线包含 {n} 个加工工位，编号为：{node_names}。物料从一个隐藏的"主配料中心"流出，经过逐级分发和加工，形成了无环的树状流水线拓扑结构。
 
-你的目标是推断出管道网络中最长的主干道（直径）信息，以部署最高扬程的水泵，包括：
-- 主干道两端的两个首尾阀门（编号）
-- 主干道的长度（管道段数）
-- 从一个端点阀门到另一个端点阀门的完整流体路径（阀门序列）
+你的目标是通过查询物料的流向推断出这个"主配料中心"。你可以反复向我提出以下类型的问题：
 
-直径定义为管网中最长的简单路径，即使存在多条等长的主干道，找出其中任意一条即可。
+- Reach 查询：询问工位 u 是否处于工位 v 的上游（即物料是否从 u 流向 v，包括 u 等于 v 的情况）。我会回答"是"或"否"。
 
-你可以通过查询来获取信息。每次查询可以询问任意两个不同阀门之间的管道段数距离，我会如实回答。请尽可能少地使用查询次数。
+你需要通过收集信息来提交最终答案。若答案错误或格式不符，审查失败。
 
-## 查询和提交答案的格式（必须严格遵守）
+每次询问使用以下 XML 格式：
 
-每次只能进行一个操作。使用以下 XML 格式：
+- Reach 查询（例如询问工位 A 是否为工位 B 的上游）：
+<query_reach>A,B</query_reach>
 
-- 距离查询（例如查询阀门 1 和阀门 5 之间的距离）：
-<query_dist>1,5</query_dist>
+提交最终答案时，指定你认为的主配料中心所在工位，格式如下：
 
-- 提交最终答案时，必须包含端点、长度和路径，格式如下：
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-说明：
-- endpoints 是两个端点的编号，用空格分隔
-- length 是直径的长度（边数）
-- path 是从第一个端点到第二个端点的完整阀门序列，用空格分隔，第一个节点必须是第一个端点，最后一个节点必须是第二个端点
-
-若答案错误或格式不符，排查失败。
+注意：请尽可能少地进行查询，在确定答案后即可提交。
 """
 
     contextualized_rule_en_4 = """\
-[Industry Scenario]
-Let's conduct an inspection on "Industrial Pipeline Mainline Inference". Here are the rules:
+[Manufacturing/Industrial Scenario]
+We are conducting an industrial pipeline audit to "Trace the Primary Distribution Point".
 
-The fluid transportation pipeline network of a large factory forms a hidden undirected connected acyclic graph (tree) with {n} valve nodes, numbered from 1 to {n}. There exists a unique simple connected path between any two valves. The distance between them is defined as the number of pipeline segments (edges) on the unique path connecting them.
+The current production line contains {n} processing workstations, numbered: {node_names}. Materials flow from a hidden "Primary Distribution Point", being distributed and processed step-by-step to form an acyclic tree topology.
 
-Your goal is to infer the longest mainline (diameter) information in the pipeline network to deploy the highest-lift water pump, including:
-- The two terminal valves at both ends of the mainline (node IDs)
-- The length of the mainline (number of pipeline segments)
-- The complete fluid path from one terminal valve to the other (valve sequence)
+Your goal is to deduce this "Primary Distribution Point" by querying the material flow. You can repeatedly ask me the following type of question:
 
-The diameter is defined as the longest simple path in the network. If there are multiple mainlines of equal length, finding any one of them is acceptable.
+- Reach Query: Ask whether workstation u is upstream of workstation v (i.e., whether materials flow from u to v, including the case where u equals v). I will answer "Yes" or "No".
 
-You can obtain information through queries. Each query can ask for the pipeline segment distance between any two different valves, and I will answer truthfully. Please use as few queries as possible.
+You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the audit fails.
 
-## Query and Answer Format (strictly required)
+Each query uses the following XML format:
 
-You can only perform one operation at a time. Use the following XML format:
+- Reach Query (e.g., asking if workstation A is upstream of workstation B):
+<query_reach>A,B</query_reach>
 
-- Distance Query (e.g., querying the distance between valve 1 and valve 5):
-<query_dist>1,5</query_dist>
+When submitting the final answer, specify the workstation you believe is the Primary Distribution Point, using this format:
 
-- When submitting the final answer, you must include endpoints, length, and path in this format:
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-Explanation:
-- endpoints are the two endpoint IDs, separated by a space
-- length is the diameter length (number of edges)
-- path is the complete valve sequence from the first endpoint to the second, separated by spaces, with the first node being the first endpoint and the last node being the second endpoint
-
-If the answer is wrong or the format is invalid, the inspection fails.
+Note: Please use as few queries as possible and submit once you are confident of the answer.
 """
 
     contextualized_rule_zh_5 = """\
-我们现在来进行一场“公司股权穿透链推断”的调查，规则如下：
+我们在进行一项"追踪主源头账户"的反洗钱资金流向调查任务。
 
-复杂公司的关联实体控制关系构成了一棵隐藏的无向连通无环图（树），共有 {n} 个关联实体（公司或自然人），编号为 1 到 {n}。任意两个实体之间存在唯一的穿透关系路径，两实体间的距离定义为连接它们的唯一路径上的嵌套层级数（边数）。
+监控网络捕获了 {n} 个涉案银行账户，账号为：{node_names}。黑钱从一个神秘的"主源头账户"汇出，经过层层转账，形成了树状的资金流向网络。
 
-你的目标是推断出隐藏最深的控制链条（直径）信息，包括：
-- 控制链两端的两个顶层/底层实体（编号）
-- 控制链的长度（穿透层级数）
-- 从一端实体到另一端实体的完整穿透路径（实体序列）
+你的目标是通过查询资金流向来揪出这个"主源头账户"。你可以反复向我提出以下类型的问题：
 
-直径定义为控制关系网中最长的简单路径，即使存在多条等长的最深控制链，查出其中任意一条即可。
+- Reach 查询：询问账户 u 的资金是否直接或间接流入了账户 v（包括 u 等于 v 的情况）。我会回答"是"或"否"。
 
-你可以通过查询来获取信息。每次查询可以询问任意两个不同实体之间的关系嵌套距离，我会如实回答。请尽可能少地使用查询次数。
+你需要通过收集信息来提交最终答案。若答案错误或格式不符，调查失败。
 
-## 查询和提交答案的格式（必须严格遵守）
+每次询问使用以下 XML 格式：
 
-每次只能进行一个操作。使用以下 XML 格式：
+- Reach 查询（例如询问账户 A 的资金是否流入账户 B）：
+<query_reach>A,B</query_reach>
 
-- 距离查询（例如查询实体 1 和实体 5 之间的距离）：
-<query_dist>1,5</query_dist>
+提交最终答案时，指定你认为的主源头账户，格式如下：
 
-- 提交最终答案时，必须包含端点、长度和路径，格式如下：
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-说明：
-- endpoints 是两个端点的编号，用空格分隔
-- length 是直径的长度（边数）
-- path 是从第一个端点到第二个端点的完整实体序列，用空格分隔，第一个节点必须是第一个端点，最后一个节点必须是第二个端点
-
-若答案错误或格式不符，调查失败。
+注意：请尽可能少地进行查询，在确定答案后即可提交。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Let's conduct an investigation on "Corporate Equity Penetration Chain Inference". Here are the rules:
+[Law Scenario]
+We are conducting an anti-money laundering funds flow investigation to "Trace the Primary Offshore Account".
 
-The control relationships among associated entities of a complex corporation form a hidden undirected connected acyclic graph (tree) with {n} associated entities (companies or individuals), numbered from 1 to {n}. There exists a unique penetration relationship path between any two entities. The distance between them is defined as the number of nested levels (edges) on the unique path connecting them.
+The monitoring network has captured {n} involved bank accounts, named: {node_names}. Illicit funds were transferred from a mysterious "Primary Offshore Account" and went through multiple layers of transfers, forming a tree-like network of funds flow.
 
-Your goal is to infer the deepest hidden control chain (diameter) information, including:
-- The two top/bottom-level entities at both ends of the control chain (entity IDs)
-- The length of the control chain (number of penetration levels)
-- The complete penetration path from one end entity to the other (entity sequence)
+Your goal is to expose this "Primary Offshore Account" by querying the funds flow. You can repeatedly ask me the following type of question:
 
-The diameter is defined as the longest simple path in the control network. If there are multiple deepest control chains of equal length, identifying any one of them is acceptable.
+- Reach Query: Ask whether funds from account u flowed directly or indirectly into account v (including the case where u equals v). I will answer "Yes" or "No".
 
-You can obtain information through queries. Each query can ask for the nested relationship distance between any two different entities, and I will answer truthfully. Please use as few queries as possible.
+You need to submit your final answer after collecting enough information. If the answer is wrong or the format is invalid, the investigation fails.
 
-## Query and Answer Format (strictly required)
+Each query uses the following XML format:
 
-You can only perform one operation at a time. Use the following XML format:
+- Reach Query (e.g., asking if funds from account A flowed into account B):
+<query_reach>A,B</query_reach>
 
-- Distance Query (e.g., querying the distance between entity 1 and entity 5):
-<query_dist>1,5</query_dist>
+When submitting the final answer, specify the account you believe is the Primary Offshore Account, using this format:
 
-- When submitting the final answer, you must include endpoints, length, and path in this format:
-<answer>endpoints: 1 8; length: 5; path: 1 2 4 6 7 8</answer>
+<answer>Root=A</answer>
 
-Explanation:
-- endpoints are the two endpoint IDs, separated by a space
-- length is the diameter length (number of edges)
-- path is the complete entity sequence from the first endpoint to the second, separated by spaces, with the first node being the first endpoint and the last node being the second endpoint
-
-If the answer is wrong or the format is invalid, the investigation fails.
+Note: Please use as few queries as possible and submit once you are confident of the answer.
 """
 
-    tags = ["answer", "query_dist"]
+    tags = ["answer", "query_reach"]
     
-    reasoning_type = "演绎推理"
+    reasoning_type = "归纳推理"
     data_structure = "树"
 
     DIFFICULTY_CONFIG = {
-        "common": {
+        "zh": {
             1: {
-                "n": 5,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
-                "diameter_endpoints": (1, 5),
-                "diameter_length": 4,
-                "diameter_path": [1, 2, 3, 4, 5],
+                "n": 4,
+                "nodes": ["A", "B", "C", "D"],
+                "edges": [("A", "B"), ("B", "C"), ("C", "D")],
+                "root": "A"
             },
             2: {
-                "n": 7,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (3, 6), (6, 7)],
-                "diameter_endpoints": (1, 5),
-                "diameter_length": 4,
-                "diameter_path": [1, 2, 3, 4, 5],
+                "n": 5,
+                "nodes": ["A", "B", "C", "D", "E"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E")],
+                "root": "A"
             },
             3: {
-                "n": 10,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (3, 6), (6, 7), (7, 8), (2, 9), (9, 10)],
-                "diameter_endpoints": (5, 8),
-                "diameter_length": 5,
-                "diameter_path": [5, 4, 3, 6, 7, 8],
+                "n": 6,
+                "nodes": ["A", "B", "C", "D", "E", "F"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F")],
+                "root": "A"
             },
             4: {
-                "n": 12,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (3, 7), (7, 8), (8, 9), (2, 10), (10, 11), (11, 12)],
-                "diameter_endpoints": (6, 12),
-                "diameter_length": 7,
-                "diameter_path": [6, 5, 4, 3, 2, 10, 11, 12],
+                "n": 7,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("C", "G")],
+                "root": "A"
             },
             5: {
-                "n": 15,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (3, 8), (8, 9), (9, 10), (2, 11), (11, 12), (12, 13), (13, 14), (14, 15)],
-                "diameter_endpoints": (7, 15),
-                "diameter_length": 10,
-                "diameter_path": [7, 6, 5, 4, 3, 2, 11, 12, 13, 14, 15],
+                "n": 8,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("F", "G"), ("F", "H")],
+                "root": "A"
             },
-        }
+        },
+        "en": {
+            1: {
+                "n": 4,
+                "nodes": ["A", "B", "C", "D"],
+                "edges": [("A", "B"), ("B", "C"), ("C", "D")],
+                "root": "A"
+            },
+            2: {
+                "n": 5,
+                "nodes": ["A", "B", "C", "D", "E"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E")],
+                "root": "A"
+            },
+            3: {
+                "n": 6,
+                "nodes": ["A", "B", "C", "D", "E", "F"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F")],
+                "root": "A"
+            },
+            4: {
+                "n": 7,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("C", "G")],
+                "root": "A"
+            },
+            5: {
+                "n": 8,
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"), ("C", "F"), ("F", "G"), ("F", "H")],
+                "root": "A"
+            },
+        },
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        diff = int(self.config.difficulty)
+        lang = self.config.language
+        diff = self.config.difficulty
 
-        if diff not in self.DIFFICULTY_CONFIG["common"]:
+        if isinstance(diff, str):
+            diff = int(diff)
+
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG["common"][diff]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        
+        rng = random.Random(hash((lang, diff, "HiddenTreeRootGame")))
+        
+        original_nodes = cfg["nodes"][:]
+        shuffled_nodes = original_nodes[:]
+        rng.shuffle(shuffled_nodes)
+        
+        name_map = {orig: new for orig, new in zip(original_nodes, shuffled_nodes)}
+        
         self._game_info["n"] = cfg["n"]
+        self.nodes = shuffled_nodes
+        self._game_info["node_names"] = ", ".join(self.nodes)
+        self.edges = [(name_map[p], name_map[c]) for p, c in cfg["edges"]]
+        self.root = name_map[cfg["root"]]
         
-        # 构建邻接表
-        self.n = cfg["n"]
-        self.edges = cfg["edges"]
-        self.adj = [[] for _ in range(self.n + 1)]
-        for u, v in self.edges:
-            self.adj[u].append(v)
-            self.adj[v].append(u)
+        self.descendants_map = {node: {node} for node in self.nodes}
+        self.parent_map = {}
         
-        # 预计算所有节点对之间的距离
-        self.dist_cache = {}
-        for i in range(1, self.n + 1):
-            distances = self._bfs_distances(i)
-            for j in range(1, self.n + 1):
-                if i != j:
-                    self.dist_cache[(i, j)] = distances[j]
+        for parent, child in self.edges:
+            self.parent_map[child] = parent
         
-        # 存储正确答案
-        self.correct_endpoints = set(cfg["diameter_endpoints"])
-        self.correct_length = cfg["diameter_length"]
-        self.correct_path = cfg["diameter_path"]
+        def get_all_descendants(node):
+            descendants = {node}
+            for parent, child in self.edges:
+                if parent == node:
+                    descendants.update(get_all_descendants(child))
+            return descendants
+        
+        for node in self.nodes:
+            self.descendants_map[node] = get_all_descendants(node)
+        
+        self.query_count = 0
 
-    def _bfs_distances(self, start):
-        """使用BFS计算从start到所有其他节点的距离"""
-        from collections import deque
-        distances = [-1] * (self.n + 1)
-        distances[start] = 0
-        queue = deque([start])
-        
-        while queue:
-            u = queue.popleft()
-            for v in self.adj[u]:
-                if distances[v] == -1:
-                    distances[v] = distances[u] + 1
-                    queue.append(v)
-        
-        return distances
-
-    def _get_distance(self, u, v):
-        """获取两个节点之间的距离"""
-        if u == v:
-            return 0
-        return self.dist_cache.get((u, v), self.dist_cache.get((v, u), -1))
-
-    def _validate_path(self, path):
-        """验证路径是否有效（相邻节点距离为1）"""
-        if len(path) < 2:
-            return False
-        for i in range(len(path) - 1):
-            if self._get_distance(path[i], path[i + 1]) != 1:
-                return False
-        return True
+    def _is_ancestor(self, u, v):
+        return v in self.descendants_map.get(u, set())
 
     def evaluate(self, parsed_info):
-        """评估答案是否正确"""
-        raw_ans = parsed_info.get("answer", "")
-        if not raw_ans:
+        raw_ans = parsed_info["answer"].strip()
+        
+        if "=" not in raw_ans:
             return False
         
         try:
-            # 解析答案格式: endpoints: a b; length: L; path: p1 p2 ... pk
-            parts = raw_ans.split(";")
-            if len(parts) != 3:
+            parts = raw_ans.split("=", 1)
+            if len(parts) != 2:
                 return False
             
-            # 解析endpoints
-            endpoints_part = parts[0].strip()
-            if not endpoints_part.startswith("endpoints:"):
-                return False
-            endpoints_str = endpoints_part.replace("endpoints:", "").strip()
-            endpoints = [int(x.strip()) for x in endpoints_str.split()]
-            if len(endpoints) != 2:
-                return False
-            a, b = endpoints
-            
-            # 验证节点范围
-            if a < 1 or a > self.n or b < 1 or b > self.n:
-                return False
-            if a == b:
+            key, value = parts[0].strip(), parts[1].strip()
+            if key.lower() != "root":
                 return False
             
-            # 解析length
-            length_part = parts[1].strip()
-            if not length_part.startswith("length:"):
-                return False
-            length_str = length_part.replace("length:", "").strip()
-            L = int(length_str)
+            submitted_root = value.strip()
             
-            # 解析path
-            path_part = parts[2].strip()
-            if not path_part.startswith("path:"):
-                return False
-            path_str = path_part.replace("path:", "").strip()
-            path = [int(x.strip()) for x in path_str.split()]
-            
-            # 验证基本格式
-            if len(path) < 2:
-                return False
-            if path[0] != a or path[-1] != b:
-                return False
-            if L != len(path) - 1:
+            if submitted_root not in self.nodes:
                 return False
             
-            # 验证路径的有效性（相邻节点在树中是邻居）
-            if not self._validate_path(path):
-                return False
+            return submitted_root == self.root
             
-            # 验证路径无重复节点（简单路径）
-            if len(set(path)) != len(path):
-                return False
-            
-            # 验证路径长度是否等于直径长度
-            if L != self.correct_length:
-                return False
-            
-            # 不再硬性检查端点，只要路径合法且长度等于直径即可
-            return True
-            
-        except Exception as e:
+        except Exception:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的响应生成逻辑"""
-        if "query_dist" in parsed_info:
-            try:
-                raw = parsed_info["query_dist"]
-                nodes = [int(x.strip()) for x in raw.split(",")]
-                if len(nodes) != 2:
-                    raise ValueError
-                u, v = nodes
-                
-                # 验证节点范围
-                if u < 1 or u > self.n or v < 1 or v > self.n:
-                    if self.config.language == "zh":
-                        return "错误：节点编号超出范围。"
-                    else:
-                        return "Error: Node ID out of range."
-                
-                if u == v:
-                    if self.config.language == "zh":
-                        return "错误：查询的两个节点必须不同。"
-                    else:
-                        return "Error: The two nodes must be different."
-                
-                # 返回距离
-                dist = self._get_distance(u, v)
-                return str(dist)
-                
-            except:
-                if self.config.language == "zh":
-                    return "错误：查询格式无效。"
-                else:
-                    return "Error: Invalid query format."
-        
-        raise ValueError("No valid query tag found.")
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_format = "错误：查询格式无效。请使用格式 <query_reach>u,v</query_reach>"
+            error_node = "错误：节点名称无效。有效节点为：{}"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid query format. Please use format <query_reach>u,v</query_reach>"
+            error_node = "Error: Invalid node name. Valid nodes are: {}"
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        本游戏查询为无向图中任意不同两点的距离。为了避免重复，只生成 u < v 的组合。
-        """
-        queries = []
-        for u in range(1, self.n + 1):
-            for v in range(u + 1, self.n + 1):
-                # 构造查询字符串，必须包含XML标签
-                query_str = f"<query_dist>{u},{v}</query_dist>"
-                # 计算距离
-                dist = self._get_distance(u, v)
-                queries.append({
-                    "query": query_str,
-                    "answer": str(dist)
-                })
-        return queries
+        if "query_reach" in parsed_info:
+            try:
+                raw = parsed_info["query_reach"].strip()
+                if not raw:
+                    return error_format
+                
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                
+                u, v = parts[0], parts[1]
+                
+                if u not in self.nodes or v not in self.nodes:
+                    return error_node.format(", ".join(self.nodes))
+                
+                self.query_count += 1
+                
+                result = self._is_ancestor(u, v)
+                return yes_res if result else no_res
+                
+            except Exception:
+                return error_format
+        else:
+            raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成错误答案"""
-        # 如果是纯数字（距离），加1
-        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
+        if correct.isdigit():
             return str(int(correct) + 1)
         
-        # 中文是非替换
         if correct == "是":
             return "否"
         if correct == "否":
             return "是"
+        if correct == "Yes":
+            return "No"
+        if correct == "No":
+            return "Yes"
         
-        # 英文Yes/No替换（保持大小写）
-        lower_correct = correct.lower()
-        if lower_correct == "yes":
-            return "NO" if correct.isupper() else ("No" if correct[0].isupper() else "no")
-        if lower_correct == "no":
-            return "YES" if correct.isupper() else ("Yes" if correct[0].isupper() else "yes")
-            
-        # 其他情况追加 _WRONG
         return correct + "_WRONG"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+            
+        for u in self.nodes:
+            for v in self.nodes:
+                query_str = f"<query_reach>{u},{v}</query_reach>"
+                
+                is_anc = self._is_ancestor(u, v)
+                answer = yes_res if is_anc else no_res
+                
+                results.append({
+                    "query": query_str,
+                    "answer": answer
+                })
+                
+        return results

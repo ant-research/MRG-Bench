@@ -1,542 +1,519 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   条件边计数：权重满足某条件的边共有多少条
-# ============================================================
-
 from .base import Game
-import random
 
-
-class ConditionalEdgeCountingGame(Game):
+class BinaryTreeTraversalGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"图上条件边计数"的推理游戏，规则如下：
+我们现在来玩一个"二叉树遍历推理"游戏，规则如下：
 
-游戏设定了一个无向简单图 G，包含 {num_vertices} 个顶点和 {num_edges} 条边。每条边都被秘密地标注了一个 0 到 9 之间的整数（包括 0 和 9）。
+游戏设定了一棵固定的有根二叉树，节点集合为 {{A, B, C, D, E, F, G, H, I}}，结构如下：
+- 根节点：A
+- A 的左子节点：B；右子节点：C
+- B 的左子节点：D；右子节点：E
+- C 的左子节点：F；右子节点：G
+- E 的左子节点：H；右子节点：I
+- 其他未列出的子节点为空
 
-现在定义一个"条件集合" S = {opening_braces}0, 2, 5, 7{closing_braces}。如果一条边的标注值属于集合 S，我们就称这条边为"条件边"。
+我已秘密选择了一种遍历规则（先序、中序、后序或层序遍历），并将这棵树按该规则遍历，得到一个节点的全排列序列。
 
-你的目标是：推断出整个图中条件边的总数 T。
+你的目标是通过询问推断出：
+1. 我选择的遍历规则是哪一种
+2. 在该遍历序列中第 {k} 个位置的节点是什么
 
-你可以反复向我提问（每次一个问题），询问某个顶点的"条件度数"，即：与该顶点相邻的边中，有多少条是条件边？我会如实回答一个整数。
+你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-当你认为已经收集到足够信息后，请提交你推断出的条件边总数。若答案正确则游戏成功，否则失败。
+1. 先后比较：询问在遍历序列中，节点 X 与节点 Y 谁更靠前。我会回答节点名称。
+2. 相邻查询：询问在遍历序列中，节点 X 是否紧挨在节点 Y 之前（即 X 的位置恰好是 Y 的位置减 1）。我会回答"是"或"否"。
 
-## 顶点列表
+注意：
+- 询问中的节点必须属于 {{A, B, C, D, E, F, G, H, I}} 且两个节点不能相同
+- 你需要至少进行两次有效询问后才能提交最终答案
+- 请用尽可能少的询问次数推断出答案
 
-本局游戏的顶点为：{vertex_list}
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-## 提问与提交答案的格式
+- 先后比较（例如询问节点 A 和节点 B 谁更靠前）：
+<query_order>A,B</query_order>
 
-每次提问时，请使用以下 XML 格式询问某个顶点的条件度数（例如询问顶点 A）：
+- 相邻查询（例如询问节点 A 是否紧挨在节点 B 之前）：
+<query_adjacent>A,B</query_adjacent>
 
-<query>A</query>
+提交最终答案时，必须说明遍历规则类型（Preorder、Inorder、Postorder 或 Level-order）并给出第 {k} 个位置的节点，格式如下：
 
-提交最终答案时，请使用以下格式（T 为你推断的条件边总数）：
-
-<answer>T</answer>
-
-请尽可能少地提问，并在确信答案正确时提交。
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     game_rule_en = """\
-Let's play a "Conditional Edge Counting on Graph" deduction game. Here are the rules:
+Let's play a "Binary Tree Traversal Inference" game. Here are the rules:
 
-The game is set on an undirected simple graph G with {num_vertices} vertices and {num_edges} edges. Each edge has been secretly labeled with an integer between 0 and 9 (inclusive).
+The game uses a fixed rooted binary tree with node set {{A, B, C, D, E, F, G, H, I}}, structured as follows:
+- Root: A
+- A's left child: B; right child: C
+- B's left child: D; right child: E
+- C's left child: F; right child: G
+- E's left child: H; right child: I
+- Other unlisted children are null
 
-A "condition set" S = {opening_braces}0, 2, 5, 7{closing_braces} is defined. An edge is called a "conditional edge" if its label belongs to set S.
+I have secretly selected a traversal rule (Preorder, Inorder, Postorder, or Level-order) and traversed this tree according to that rule, obtaining a complete permutation sequence of the nodes.
 
-Your goal is to infer T, the total number of conditional edges in the entire graph.
+Your goal is to infer through queries:
+1. Which traversal rule I selected
+2. What node is at position {k} in that traversal sequence
 
-You can repeatedly ask questions (one per turn) about the "conditional degree" of a vertex, which is: among all edges adjacent to that vertex, how many are conditional edges? I will answer truthfully with an integer.
+You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
 
-When you believe you have gathered enough information, submit your inferred total count of conditional edges. If correct, you win; otherwise, you fail.
+1. Order Comparison: Ask which of nodes X and Y appears earlier in the traversal sequence. I will answer with a node name.
+2. Adjacency Query: Ask whether node X immediately precedes node Y in the traversal sequence (i.e., X's position is exactly Y's position minus 1). I will answer "Yes" or "No".
 
-## Vertex List
+Notes:
+- Query nodes must belong to {{A, B, C, D, E, F, G, H, I}} and the two nodes must be different
+- You must make at least two valid queries before submitting your final answer
+- Please use as few queries as possible to infer the answer
 
-The vertices in this game are: {vertex_list}
+Each query must contain only one tag. Use the following XML format:
 
-## Query and Answer Format
+- Order Comparison (e.g., asking which of nodes A and B comes first):
+<query_order>A,B</query_order>
 
-To query the conditional degree of a vertex (e.g., vertex A), use this XML format:
+- Adjacency Query (e.g., asking if node A immediately precedes node B):
+<query_adjacent>A,B</query_adjacent>
 
-<query>A</query>
+When submitting the final answer, specify the traversal rule type (Preorder, Inorder, Postorder, or Level-order) and the node at position {k}, using this format:
 
-To submit your final answer, use this format (where T is your inferred total count of conditional edges):
-
-<answer>T</answer>
-
-Try to ask as few questions as possible and submit when you are confident in your answer.
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用城市交通路网分析系统。
-本系统接入了全市的道路拓扑网络 G，包含 {num_vertices} 个关键路口（顶点）和 {num_edges} 条连接路段（边）。每条路段的传感器均实时测算出了一个 0 到 9 之间的拥堵风险指数（包括 0 和 9）。
+我们正在规划一个"交通枢纽巡检路径"推理系统，规则如下：
 
-根据交管局最新规定，风险指数属于集合 S = {opening_braces}0, 2, 5, 7{closing_braces} 的路段将被标记为“高危路段”。
+系统设定了一个固定的干线物流分发网络，枢纽站点集合为 {{A, B, C, D, E, F, G, H, I}}，网络呈二叉树层级结构：
+- 总枢纽：A
+- A 的左线枢纽：B；右线枢纽：C
+- B 的左线枢纽：D；右线枢纽：E
+- C 的左线枢纽：F；右线枢纽：G
+- E 的左线枢纽：H；右线枢纽：I
+- 其他未列出的分支为空
 
-你的目标是：排查并推断出整个交通网络中“高危路段”的总数 T。
+调度中心秘密采取了一种固定的巡检策略（先序 Preorder、中序 Inorder、后序 Postorder 或层序 Level-order），对所有枢纽进行了一次完整巡视，形成了一个站点全排列的巡检序列。
 
-你可以反复调用系统接口（每次查询一个），输入特定路口的编号，系统将反馈该路口相连的“高危路段”数量（即条件度数）。
+你的目标是通过询问推断出：
+1. 调度中心选择的巡检策略是哪一种
+2. 在该巡检序列中第 {k} 个位置的枢纽站点是什么
 
-当你确认已充分收集情报后，请提交你推断的高危路段总数。若上报数据完全准确则排查成功，否则将面临重大交通隐患。
+你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-## 路口列表
+1. 先后比较：询问在巡检序列中，站点 X 与站点 Y 哪个更早被巡视。我会回答站点名称。
+2. 相邻查询：询问在巡检序列中，站点 X 是否紧挨在站点 Y 之前被巡视（即 X 的访问次序恰好是 Y 的次序减 1）。我会回答"是"或"否"。
 
-本区域的关键路口为：{vertex_list}
+注意：
+- 询问中的站点必须属于 {{A, B, C, D, E, F, G, H, I}} 且两个站点不能相同
+- 你需要至少进行两次有效询问后才能提交最终答案
+- 请用尽可能少的询问次数推断出答案
 
-## 查询与提交格式
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-每次调用接口时，请使用以下 XML 格式查询某个路口的涉危路段数（例如查询路口 A）：
+- 先后比较（例如询问站点 A 和站点 B 谁更早）：
+<query_order>A,B</query_order>
 
-<query>A</query>
+- 相邻查询（例如询问站点 A 是否紧挨在站点 B 之前）：
+<query_adjacent>A,B</query_adjacent>
 
-提交最终排查报告时，请使用以下格式（T 为你推断的高危路段总数）：
+提交最终答案时，必须说明巡检策略类型（Preorder、Inorder、Postorder 或 Level-order）并给出第 {k} 个被巡视的站点，格式如下：
 
-<answer>T</answer>
-
-请尽可能减少系统调用次数，并在确信排查无误后提交。
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the Urban Traffic Network Analysis System.
-This system monitors the city's road topology network G, which includes {num_vertices} key intersections (vertices) and {num_edges} connecting road segments (edges). The sensors on each road segment have calculated a real-time congestion risk index, which is an integer between 0 and 9 (inclusive).
+[Traffic / Transportation Scenario]
+We are planning a "Traffic Hub Inspection Path" inference system. Here are the rules:
 
-According to the latest regulations from the Traffic Management Bureau, road segments with a risk index belonging to the set S = {opening_braces}0, 2, 5, 7{closing_braces} are flagged as "High-Risk Segments".
+The system operates on a fixed trunk logistics distribution network with a hub set {{A, B, C, D, E, F, G, H, I}}, structured as a hierarchical binary tree:
+- Main hub: A
+- A's left line hub: B; right line hub: C
+- B's left line hub: D; right line hub: E
+- C's left line hub: F; right line hub: G
+- E's left line hub: H; right line hub: I
+- Other unlisted branches are null
 
-Your objective is to investigate and infer T, the total number of High-Risk Segments in the entire traffic network.
+The dispatch center has secretly adopted a fixed inspection strategy (Preorder, Inorder, Postorder, or Level-order) to conduct a complete inspection of all hubs, resulting in a complete permutation sequence of the stations.
 
-You can repeatedly call the system interface (one query per turn) by entering a specific intersection's ID. The system will return the number of High-Risk Segments connected to that intersection (its conditional degree).
+Your goal is to infer through queries:
+1. Which inspection strategy the dispatch center selected
+2. What hub is at position {k} in that inspection sequence
 
-When you are confident that you have gathered sufficient intelligence, submit your inferred total count of High-Risk Segments. If your reported data is completely accurate, the investigation succeeds; otherwise, a major traffic hazard will occur.
+You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
 
-## Intersection List
+1. Order Comparison: Ask which of hubs X and Y is inspected earlier in the sequence. I will answer with the hub name.
+2. Adjacency Query: Ask whether hub X is inspected immediately before hub Y (i.e., X's turn is exactly Y's turn minus 1). I will answer "Yes" or "No".
 
-The key intersections in this sector are: {vertex_list}
+Notes:
+- Query hubs must belong to {{A, B, C, D, E, F, G, H, I}} and the two hubs must be different
+- You must make at least two valid queries before submitting your final answer
+- Please use as few queries as possible to infer the answer
 
-## Query and Answer Format
+Each query must contain only one tag. Use the following XML format:
 
-To query the number of High-Risk Segments connected to an intersection (e.g., intersection A), use this XML format:
+- Order Comparison (e.g., asking which of hubs A and B is inspected first):
+<query_order>A,B</query_order>
 
-<query>A</query>
+- Adjacency Query (e.g., asking if hub A is inspected immediately before hub B):
+<query_adjacent>A,B</query_adjacent>
 
-To submit your final investigation report, use this format (where T is your inferred total count of High-Risk Segments):
+When submitting the final answer, specify the inspection strategy type (Preorder, Inorder, Postorder, or Level-order) and the hub at position {k}, using this format:
 
-<answer>T</answer>
-
-Try to minimize the number of system calls and submit only when you are absolutely certain of your report.
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用流行病学接触史追踪系统。
-本系统记录了一个封闭社区的病例接触网络 G，包含 {num_vertices} 名被观察者（顶点）和 {num_edges} 条双向接触记录（边）。每次接触都被流行病学专家评估并赋予了一个 0 到 9 之间的暴露风险指数（包括 0 和 9）。
+我们现在来执行"临床诊疗路径审查"推理程序，规则如下：
 
-根据疾控中心的判定标准，暴露风险指数属于集合 S = {opening_braces}0, 2, 5, 7{closing_braces} 的接触记录将被定性为“高危传播链”。
+系统依托于一个固定的疾病诊断决策树，临床检查项目集合为 {{A, B, C, D, E, F, G, H, I}}，层级结构如下：
+- 初诊评估：A
+- A 的左分支检查：B；右分支检查：C
+- B 的左分支检查：D；右分支检查：E
+- C 的左分支检查：F；右分支检查：G
+- E 的左分支检查：H；右分支检查：I
+- 其他未列出的分支无需检查
 
-你的目标是：推断出整个观察网络中“高危传播链”的总数 T。
+医疗质控中心秘密选定了一种临床审查路径（先序 Preorder、中序 Inorder、后序 Postorder 或层序 Level-order），依据该标准对所有检查项目执行了审查，形成了一个完整的审查顺序序列。
 
-你可以反复向系统提问（每次一个问题），询问某位被观察者的“高危暴露度”，即：与其直接接触的记录中，有多少条属于“高危传播链”？系统会如实返回具体数量。
+你的目标是通过询问推断出：
+1. 质控中心采用的临床审查路径类型是什么
+2. 在该审查序列中，第 {k} 个被审查的检查项目是哪一项
 
-当你认为已经收集到足够的数据后，请提交你推断出的高危传播链总数。若答案正确则追踪成功，否则防疫失败。
+你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-## 被观察者列表
+1. 先后比较：询问在审查序列中，项目 X 与项目 Y 哪个优先被审查。我会回答项目名称。
+2. 相邻查询：询问在审查序列中，项目 X 是否紧接在项目 Y 之前被审查（即 X 的审查次序恰好是 Y 的次序减 1）。我会回答"是"或"否"。
 
-本区域的被观察者编号为：{vertex_list}
+注意：
+- 询问中的项目必须属于 {{A, B, C, D, E, F, G, H, I}} 且两个项目不能相同
+- 你需要至少进行两次有效询问后才能提交最终答案
+- 请用尽可能少的询问次数推断出答案
 
-## 提问与提交答案的格式
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-每次提问时，请使用以下 XML 格式询问某位被观察者的高危暴露度（例如查询被观察者 A）：
+- 先后比较（例如询问项目 A 和项目 B 谁优先审查）：
+<query_order>A,B</query_order>
 
-<query>A</query>
+- 相邻查询（例如询问项目 A 是否紧接在项目 B 之前审查）：
+<query_adjacent>A,B</query_adjacent>
 
-提交最终答案时，请使用以下格式（T 为你推断的高危传播链总数）：
+提交最终答案时，必须说明临床审查路径类型（Preorder、Inorder、Postorder 或 Level-order）并给出第 {k} 个位置的检查项目，格式如下：
 
-<answer>T</answer>
-
-请尽可能少地进行查询操作，并在确信答案正确时提交报告。
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the Epidemiological Contact Tracing System.
-This system records the contact network G of a closed community, comprising {num_vertices} observed individuals (vertices) and {num_edges} two-way contact records (edges). Each contact has been evaluated by epidemiologists and assigned an exposure risk index between 0 and 9 (inclusive).
+[Medical / Healthcare Scenario]
+Let's execute the "Clinical Pathway Audit Inference" procedure. Here are the rules:
 
-According to CDC criteria, contact records with a risk index belonging to the set S = {opening_braces}0, 2, 5, 7{closing_braces} are classified as "High-Risk Transmission Chains".
+The system relies on a fixed disease diagnostic decision tree, with a clinical examination items set {{A, B, C, D, E, F, G, H, I}}, structured hierarchically as follows:
+- Primary assessment: A
+- A's left branch exam: B; right branch exam: C
+- B's left branch exam: D; right branch exam: E
+- C's left branch exam: F; right branch exam: G
+- E's left branch exam: H; right branch exam: I
+- Other unlisted branches require no examination
 
-Your objective is to infer T, the total number of High-Risk Transmission Chains in the entire observation network.
+The medical quality control center has secretly selected a clinical audit pathway (Preorder, Inorder, Postorder, or Level-order) and audited all examination items according to that standard, obtaining a complete permutation sequence of the audit order.
 
-You can repeatedly query the system (one question per turn) about a specific individual's "high-risk exposure degree," which means: among all direct contact records associated with that person, how many are High-Risk Transmission Chains? The system will answer truthfully with an exact count.
+Your goal is to infer through queries:
+1. Which clinical audit pathway type the control center adopted
+2. What examination item is at position {k} in that audit sequence
 
-When you believe you have gathered enough data, submit your inferred total count of High-Risk Transmission Chains. If correct, the tracing succeeds; otherwise, epidemic prevention fails.
+You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
 
-## Observed Individuals List
+1. Order Comparison: Ask which of items X and Y is audited earlier. I will answer with the item name.
+2. Adjacency Query: Ask whether item X is audited immediately before item Y (i.e., X's turn is exactly Y's turn minus 1). I will answer "Yes" or "No".
 
-The observed individuals in this sector are: {vertex_list}
+Notes:
+- Query items must belong to {{A, B, C, D, E, F, G, H, I}} and the two items must be different
+- You must make at least two valid queries before submitting your final answer
+- Please use as few queries as possible to infer the answer
 
-## Query and Answer Format
+Each query must contain only one tag. Use the following XML format:
 
-To query the high-risk exposure degree of an individual (e.g., individual A), use this XML format:
+- Order Comparison (e.g., asking which of items A and B is audited first):
+<query_order>A,B</query_order>
 
-<query>A</query>
+- Adjacency Query (e.g., asking if item A is audited immediately before item B):
+<query_adjacent>A,B</query_adjacent>
 
-To submit your final answer, use this format (where T is your inferred total count of High-Risk Transmission Chains):
+When submitting the final answer, specify the clinical audit pathway type (Preorder, Inorder, Postorder, or Level-order) and the examination item at position {k}, using this format:
 
-<answer>T</answer>
-
-Try to perform as few queries as possible and submit your report when you are confident in its accuracy.
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎进入学科知识图谱构建与分析工具。
-当前分析的学科知识网络 G 包含 {num_vertices} 个核心知识点（顶点）以及 {num_edges} 条知识点间的关联边。每条关联边都经由教学研讨会评定了一个 0 到 9 之间的认知跨度评级（包括 0 和 9）。
+我们现在来使用"课程知识图谱授课顺序"推理系统，规则如下：
 
-为了优化教学大纲，我们将认知跨度评级属于集合 S = {opening_braces}0, 2, 5, 7{closing_braces} 的关联定义为“重难点关联”。
+系统内置了一门核心课程的前置依赖知识树，知识点集合为 {{A, B, C, D, E, F, G, H, I}}，依赖关系呈现严格的二叉树结构：
+- 基础核心知识点：A
+- A 的左分支进阶点：B；右分支进阶点：C
+- B 的左分支进阶点：D；右分支进阶点：E
+- C 的左分支进阶点：F；右分支进阶点：G
+- E 的左分支进阶点：H；右分支进阶点：I
+- 其他未列出的分支点为空
 
-你的教学任务是：推断出整个知识网络中包含的“重难点关联”总数 T。
+教务处秘密制定了一种教学大纲授课策略（先序 Preorder、中序 Inorder、后序 Postorder 或层序 Level-order），对所有知识点进行了一次系统性讲解，形成了一个知识点的全排列授课序列。
 
-你可以反复调用分析工具（每次一项），查询某个知识点的“重难点度数”，即：与该知识点直接相连的关联中，有几条被定性为“重难点关联”？工具将反馈准确的整数。
+你的目标是通过询问推断出：
+1. 教务处制定的授课策略是哪一种
+2. 在该大纲授课序列中第 {k} 个被讲授的知识点是什么
 
-当你确认已全面掌握知识架构后，请提交你推断出的重难点关联总数。若核对无误则教研任务达成，否则大纲将存在缺陷。
+你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-## 知识点列表
+1. 先后比较：询问在授课序列中，知识点 X 与知识点 Y 哪个先被讲授。我会回答知识点名称。
+2. 相邻查询：询问在授课序列中，知识点 X 是否紧连在知识点 Y 之前讲授（即 X 的课时进度恰好是 Y 的进度减 1）。我会回答"是"或"否"。
 
-本模块的核心知识点代号为：{vertex_list}
+注意：
+- 询问中的知识点必须属于 {{A, B, C, D, E, F, G, H, I}} 且两个知识点不能相同
+- 你需要至少进行两次有效询问后才能提交最终答案
+- 请用尽可能少的询问次数推断出答案
 
-## 查询与提交格式
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-每次调用分析工具时，请使用以下 XML 格式查询特定知识点的重难点度数（例如查询知识点 A）：
+- 先后比较（例如询问知识点 A 和知识点 B 谁先讲授）：
+<query_order>A,B</query_order>
 
-<query>A</query>
+- 相邻查询（例如询问知识点 A 是否紧连在知识点 B 之前讲授）：
+<query_adjacent>A,B</query_adjacent>
 
-提交最终教学大纲评估时，请使用以下格式（T 为你推断的重难点关联总数）：
+提交最终答案时，必须说明授课策略类型（Preorder、Inorder、Postorder 或 Level-order）并给出第 {k} 个进度的知识点，格式如下：
 
-<answer>T</answer>
-
-请尽可能高效地进行查询，并在确信结论正确时提交评估。
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Subject Knowledge Graph Construction and Analysis Tool.
-The current subject knowledge network G contains {num_vertices} core knowledge nodes (vertices) and {num_edges} associative links between them (edges). Each associative link has been assigned a cognitive span rating between 0 and 9 (inclusive) by the pedagogical committee.
+Let's use the "Course Knowledge Graph Teaching Order" inference system. Here are the rules:
 
-To optimize the syllabus, we define associative links with a cognitive span rating belonging to the set S = {opening_braces}0, 2, 5, 7{closing_braces} as "Critical Difficulty Links".
+The system integrates a prerequisite dependency tree for a core course. The knowledge point set is {{A, B, C, D, E, F, G, H, I}}, showing a strict binary tree structure:
+- Fundamental core point: A
+- A's left advanced point: B; right advanced point: C
+- B's left advanced point: D; right advanced point: E
+- C's left advanced point: F; right advanced point: G
+- E's left advanced point: H; right advanced point: I
+- Other unlisted branch points are null
 
-Your teaching objective is to infer T, the total number of Critical Difficulty Links within the entire knowledge network.
+The academic affairs office has secretly formulated a syllabus teaching strategy (Preorder, Inorder, Postorder, or Level-order) to systematically explain all knowledge points, forming a complete permutation sequence of teaching.
 
-You can repeatedly consult the analysis tool (one query per turn) regarding a specific knowledge node's "critical difficulty degree," which means: among all links directly connected to that node, how many are identified as Critical Difficulty Links? The tool will return an accurate integer.
+Your goal is to infer through queries:
+1. Which teaching strategy the academic affairs office formulated
+2. What knowledge point is taught at position {k} in that syllabus sequence
 
-When you confirm that you have fully grasped the knowledge architecture, submit your inferred total count of Critical Difficulty Links. If verified correctly, your pedagogical task is accomplished; otherwise, the syllabus will be flawed.
+You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
 
-## Knowledge Nodes List
+1. Order Comparison: Ask which of knowledge points X and Y is taught earlier. I will answer with the knowledge point name.
+2. Adjacency Query: Ask whether knowledge point X is taught immediately before point Y (i.e., X's schedule is exactly Y's schedule minus 1). I will answer "Yes" or "No".
 
-The core knowledge nodes in this module are: {vertex_list}
+Notes:
+- Query knowledge points must belong to {{A, B, C, D, E, F, G, H, I}} and the two points must be different
+- You must make at least two valid queries before submitting your final answer
+- Please use as few queries as possible to infer the answer
 
-## Query and Answer Format
+Each query must contain only one tag. Use the following XML format:
 
-To consult the tool about the critical difficulty degree of a node (e.g., node A), use this XML format:
+- Order Comparison (e.g., asking which of points A and B is taught first):
+<query_order>A,B</query_order>
 
-<query>A</query>
+- Adjacency Query (e.g., asking if point A is taught immediately before point B):
+<query_adjacent>A,B</query_adjacent>
 
-To submit your final syllabus evaluation, use this format (where T is your inferred total count of Critical Difficulty Links):
+When submitting the final answer, specify the teaching strategy type (Preorder, Inorder, Postorder, or Level-order) and the knowledge point at position {k}, using this format:
 
-<answer>T</answer>
-
-Try to query as efficiently as possible and submit your evaluation only when you are certain of the conclusion.
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎使用智能工厂管线监控与排查系统。
-系统正监控着工厂的流体输送网络 G，该网络由 {num_vertices} 个生产设备节点（顶点）和 {num_edges} 条物理管线（边）构成。每条管线均配备了传感器，实时测算出一个 0 到 9 之间的管壁老化指数（包括 0 和 9）。
+我们现在来进行"产品装配工序 SOP 推理"验证，规则如下：
 
-基于安全生产红线，老化指数属于集合 S = {opening_braces}0, 2, 5, 7{closing_braces} 的管线已被系统标记为“急需检修管线”。
+工艺文件设定了一个固定的产品装配 BOM 树，装配工序集合为 {{A, B, C, D, E, F, G, H, I}}，结构流向如下：
+- 总成装配：A
+- A 的左子系统装配：B；右子系统装配：C
+- B 的左子系统装配：D；右子系统装配：E
+- C 的左子系统装配：F；右子系统装配：G
+- E 的左子系统装配：H；右子系统装配：I
+- 其他未列出的子装配工序为空
 
-你的维护目标是：推断出整个厂区网络中“急需检修管线”的总数 T，以便调配检修资源。
+工艺工程师秘密确定了一种流水线装配策略（先序 Preorder、中序 Inorder、后序 Postorder 或层序 Level-order），并按此策略完成了整个产品的流水线作业，得到一个工序的全排列执行序列。
 
-你可以反复向控制台下达指令（每次排查一个设备），查询某个设备节点的“高危连接数”，即：与该设备直接相接的管线中，有多少条是“急需检修管线”？控制台会返回精确数值。
+你的目标是通过询问推断出：
+1. 工程师选定的装配策略类型是什么
+2. 在该作业 SOP 序列中第 {k} 步执行的装配工序是什么
 
-当你认为已收集完足够的数据，请提交你推断的检修管线总数。若资源调配数量完全吻合则排查成功，否则将面临停线风险。
+你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据生产记录如实回答：
 
-## 设备节点列表
+1. 先后比较：询问在执行序列中，工序 X 与工序 Y 哪个先被执行。我会回答工序名称。
+2. 相邻查询：询问在执行序列中，工序 X 是否无缝衔接在工序 Y 之前执行（即 X 的工位进度恰好是 Y 的进度减 1）。我会回答"是"或"否"。
 
-本产线的关键设备节点为：{vertex_list}
+注意：
+- 询问中的工序必须属于 {{A, B, C, D, E, F, G, H, I}} 且两个工序不能相同
+- 你需要至少进行两次有效询问后才能提交最终答案
+- 请用尽可能少的询问次数推断出答案
 
-## 查询与提交答案格式
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-每次下达指令时，请使用以下 XML 格式查询特定设备节点的高危连接数（例如查询设备 A）：
+- 先后比较（例如询问工序 A 和工序 B 谁先执行）：
+<query_order>A,B</query_order>
 
-<query>A</query>
+- 相邻查询（例如询问工序 A 是否无缝衔接在工序 B 之前执行）：
+<query_adjacent>A,B</query_adjacent>
 
-提交最终检修计划时，请使用以下格式（T 为你推断的急需检修管线总数）：
+提交最终答案时，必须说明装配策略类型（Preorder、Inorder、Postorder 或 Level-order）并给出第 {k} 个位置的装配工序，格式如下：
 
-<answer>T</answer>
-
-请尽可能少地执行查询指令，并在确信检修数量无误时进行提交。
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Welcome to the Smart Factory Pipeline Monitoring and Inspection System.
-The system is monitoring the factory's fluid transport network G, which consists of {num_vertices} production equipment nodes (vertices) and {num_edges} physical pipelines (edges). Each pipeline is equipped with sensors that calculate a real-time wall aging index between 0 and 9 (inclusive).
+[Manufacturing / Industry Scenario]
+Let's conduct the "Product Assembly SOP Inference" verification. Here are the rules:
 
-Based on safety protocols, pipelines with an aging index belonging to the set S = {opening_braces}0, 2, 5, 7{closing_braces} are flagged by the system as "Urgent Maintenance Pipelines".
+The technical document defines a fixed product assembly BOM tree, with an assembly process set {{A, B, C, D, E, F, G, H, I}}, structured as follows:
+- Final assembly: A
+- A's left subsystem assembly: B; right subsystem assembly: C
+- B's left subsystem assembly: D; right subsystem assembly: E
+- C's left subsystem assembly: F; right subsystem assembly: G
+- E's left subsystem assembly: H; right subsystem assembly: I
+- Other unlisted sub-assemblies are null
 
-Your maintenance objective is to infer T, the total number of Urgent Maintenance Pipelines in the entire factory network, in order to allocate maintenance resources.
+The process engineer has secretly determined an assembly line strategy (Preorder, Inorder, Postorder, or Level-order) and completed the entire product line operation according to this strategy, resulting in a complete permutation sequence of the processes.
 
-You can repeatedly issue commands to the console (one inspection per turn) to query a specific equipment node's "high-risk connection count," which means: among all pipelines directly connected to that equipment, how many are Urgent Maintenance Pipelines? The console will return a precise number.
+Your goal is to infer through queries:
+1. Which assembly strategy type the engineer selected
+2. What assembly process is executed at step {k} in that SOP sequence
 
-When you believe you have collected enough data, submit your inferred total count of pipelines requiring maintenance. If the resource allocation matches perfectly, the inspection is successful; otherwise, there will be a risk of production line shutdown.
+You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully based on production records:
 
-## Equipment Nodes List
+1. Order Comparison: Ask which of processes X and Y is executed earlier. I will answer with the process name.
+2. Adjacency Query: Ask whether process X is executed seamlessly immediately before process Y (i.e., X's step is exactly Y's step minus 1). I will answer "Yes" or "No".
 
-The key equipment nodes in this production line are: {vertex_list}
+Notes:
+- Query processes must belong to {{A, B, C, D, E, F, G, H, I}} and the two processes must be different
+- You must make at least two valid queries before submitting your final answer
+- Please use as few queries as possible to infer the answer
 
-## Query and Answer Format
+Each query must contain only one tag. Use the following XML format:
 
-To query the high-risk connection count of an equipment node (e.g., equipment A), use this XML format:
+- Order Comparison (e.g., asking which of processes A and B is executed first):
+<query_order>A,B</query_order>
 
-<query>A</query>
+- Adjacency Query (e.g., asking if process A is executed immediately before process B):
+<query_adjacent>A,B</query_adjacent>
 
-To submit your final maintenance plan, use this format (where T is your inferred total count of Urgent Maintenance Pipelines):
+When submitting the final answer, specify the assembly strategy type (Preorder, Inorder, Postorder, or Level-order) and the process at position {k}, using this format:
 
-<answer>T</answer>
-
-Try to execute as few query commands as possible and submit only when you are certain the maintenance count is correct.
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎进入经侦案件资金链路追踪系统。
-本案侦查涉及的资金往来网络 G 包含了 {num_vertices} 个涉案账户（顶点）和 {num_edges} 条大额转账记录（边）。每条转账记录都已被反洗钱模型打上了一个 0 到 9 之间的洗钱嫌疑评级（包括 0 和 9）。
+我们现在来进行"庭审证据链审查逻辑推理"，规则如下：
 
-根据检察机关的定性标准，嫌疑评级属于集合 S = {opening_braces}0, 2, 5, 7{closing_braces} 的转账记录被认定为“核心洗钱链路”。
+案卷设定了一个固定的法庭辩论逻辑树，核心诉求与支撑证据集合为 {{A, B, C, D, E, F, G, H, I}}，证据链结构如下：
+- 核心诉求点：A
+- A 的左侧支撑证据：B；右侧支撑证据：C
+- B 的左侧支撑证据：D；右侧支撑证据：E
+- C 的左侧支撑证据：F；右侧支撑证据：G
+- E 的左侧支撑证据：H；右侧支撑证据：I
+- 其他未列出的延展证据为空
 
-你的侦查目标是：推断出整个资金网络中“核心洗钱链路”的总数 T，以确定涉案总规模。
+法官与审判长秘密采纳了一种庭审审查顺序逻辑（先序 Preorder、中序 Inorder、后序 Postorder 或层序 Level-order），对所有诉求与证据点进行了一轮完整的法庭质证，形成了一个完整的证据链审查序列。
 
-你可以反复向系统发起协查请求（每次查询一个账户），了解某个涉案账户的“涉案连接度”，即：与该账户直接相关的转账记录中，有几条属于“核心洗钱链路”？系统将反馈确切的整数。
+你的目标是通过询问推断出：
+1. 法庭采纳的审查顺序逻辑是哪一种
+2. 在该庭审审查序列中第 {k} 顺位被审查的证据点是什么
 
-当你认定已摸清资金网全貌后，请提交你推断的核心洗钱链路总数。若上报数据无误则结案成功，否则会导致案件关键线索遗漏。
+你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据庭审记录如实回答：
 
-## 涉案账户列表
+1. 先后比较：询问在审查序列中，证据 X 与证据 Y 哪个先被法庭质证。我会回答证据点名称。
+2. 相邻查询：询问在审查序列中，证据 X 是否紧接在证据 Y 之前被质证（即 X 的出示次序恰好是 Y 的次序减 1）。我会回答"是"或"否"。
 
-本案重点关注的账户代号为：{vertex_list}
+注意：
+- 询问中的证据点必须属于 {{A, B, C, D, E, F, G, H, I}} 且两个证据点不能相同
+- 你需要至少进行两次有效询问后才能提交最终答案
+- 请用尽可能少的询问次数推断出答案
 
-## 协查与提交格式
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-每次发起协查请求时，请使用以下 XML 格式查询特定账户的涉案连接度（例如查询账户 A）：
+- 先后比较（例如询问证据 A 和证据 B 谁先被审查）：
+<query_order>A,B</query_order>
 
-<query>A</query>
+- 相邻查询（例如询问证据 A 是否紧接在证据 B 之前审查）：
+<query_adjacent>A,B</query_adjacent>
 
-提交最终侦查结论时，请使用以下格式（T 为你推断的核心洗钱链路总数）：
+提交最终答案时，必须说明审查逻辑类型（Preorder、Inorder、Postorder 或 Level-order）并给出第 {k} 个位置的证据点，格式如下：
 
-<answer>T</answer>
-
-请尽可能减少不必要的协查请求，并在确信侦查结论绝对准确时提交。
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the Economic Crime Financial Linkage Tracking System.
-The financial transaction network G involved in this investigation comprises {num_vertices} implicated accounts (vertices) and {num_edges} large-scale transfer records (edges). Each transfer record has been tagged by the anti-money laundering model with an AML suspicion rating between 0 and 9 (inclusive).
+Let's conduct the "Court Trial Evidence Chain Review Logic Inference". Here are the rules:
 
-According to the prosecutor's classification standards, transfer records with a suspicion rating belonging to the set S = {opening_braces}0, 2, 5, 7{closing_braces} are identified as "Core Money Laundering Links".
+The case file establishes a fixed court debate logic tree, with the core claim and supporting evidence set {{A, B, C, D, E, F, G, H, I}}, structured as follows:
+- Core claim: A
+- A's left supporting evidence: B; right supporting evidence: C
+- B's left supporting evidence: D; right supporting evidence: E
+- C's left supporting evidence: F; right supporting evidence: G
+- E's left supporting evidence: H; right supporting evidence: I
+- Other unlisted extended evidence are null
 
-Your investigative objective is to infer T, the total number of Core Money Laundering Links in the entire financial network, in order to determine the overall scale of the case.
+The presiding judge has secretly adopted a trial review sequence logic (Preorder, Inorder, Postorder, or Level-order) to conduct a complete round of cross-examination on all claims and evidence points, resulting in a complete permutation sequence of the evidence chain review.
 
-You can repeatedly submit inquiry requests to the system (one account per turn) to ascertain an implicated account's "illicit connectivity degree," which means: among all transfer records directly involving that account, how many are Core Money Laundering Links? The system will return an exact integer.
+Your goal is to infer through queries:
+1. Which review sequence logic the court adopted
+2. What evidence point is reviewed at rank {k} in that trial review sequence
 
-When you conclude that you have mapped the full scope of the financial network, submit your inferred total count of Core Money Laundering Links. If your reported data is flawless, the case is successfully closed; otherwise, critical leads will be missed.
+You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully based on trial records:
 
-## Implicated Accounts List
+1. Order Comparison: Ask which of evidence points X and Y is cross-examined earlier. I will answer with the evidence point name.
+2. Adjacency Query: Ask whether evidence point X is cross-examined immediately before evidence point Y (i.e., X's presentation turn is exactly Y's turn minus 1). I will answer "Yes" or "No".
 
-The key accounts in this case are: {vertex_list}
+Notes:
+- Query evidence points must belong to {{A, B, C, D, E, F, G, H, I}} and the two evidence points must be different
+- You must make at least two valid queries before submitting your final answer
+- Please use as few queries as possible to infer the answer
 
-## Inquiry and Answer Format
+Each query must contain only one tag. Use the following XML format:
 
-To inquire about the illicit connectivity degree of an account (e.g., account A), use this XML format:
+- Order Comparison (e.g., asking which of evidence A and B is reviewed first):
+<query_order>A,B</query_order>
 
-<query>A</query>
+- Adjacency Query (e.g., asking if evidence A is reviewed immediately before evidence B):
+<query_adjacent>A,B</query_adjacent>
 
-To submit your final investigative conclusion, use this format (where T is your inferred total count of Core Money Laundering Links):
+When submitting the final answer, specify the review logic type (Preorder, Inorder, Postorder, or Level-order) and the evidence point at position {k}, using this format:
 
-<answer>T</answer>
-
-Try to minimize unnecessary inquiry requests and submit only when you are absolutely certain of your investigative conclusion.
+<answer>traversal=Preorder, position_{k}=B</answer>
 """
 
-    tags = ["answer", "query"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+    tags = ["answer", "query_order", "query_adjacent"]
 
-    # 难度配置说明：
-    # 1 (简单)         - 小图，较少边
-    # 2 (中等偏下)     - 中等规模图
-    # 3 (中等偏上)     - 原题规模图
-    # 4 (较难)         - 稍大规模图
-    # 5 (难)           - 更大规模图
+    reasoning_type = "溯因推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "vertices": ["A", "B", "C", "D"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"),
-                    ("B", "C"), ("C", "D")
-                ],
-                # 预设边标注（用于确定性测试）
-                "edge_labels": {
-                    ("A", "B"): 0, ("A", "C"): 2, ("A", "D"): 5,
-                    ("B", "C"): 7, ("C", "D"): 3
-                }
-            },
-            2: {
-                "vertices": ["A", "B", "C", "D", "E", "F"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"),
-                    ("B", "C"), ("B", "E"), ("C", "D"),
-                    ("C", "F"), ("D", "E"), ("E", "F")
-                ],
-                "edge_labels": {
-                    ("A", "B"): 1, ("A", "C"): 0, ("A", "D"): 4,
-                    ("B", "C"): 2, ("B", "E"): 7, ("C", "D"): 5,
-                    ("C", "F"): 8, ("D", "E"): 0, ("E", "F"): 9
-                }
-            },
-            3: {
-                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"),
-                    ("B", "C"), ("B", "E"), ("C", "D"),
-                    ("C", "F"), ("D", "E"), ("D", "F"),
-                    ("D", "G"), ("E", "G"), ("E", "H"),
-                    ("F", "G"), ("G", "H")
-                ],
-                "edge_labels": {
-                    ("A", "B"): 0, ("A", "C"): 1, ("A", "D"): 2,
-                    ("B", "C"): 3, ("B", "E"): 5, ("C", "D"): 7,
-                    ("C", "F"): 4, ("D", "E"): 0, ("D", "F"): 6,
-                    ("D", "G"): 2, ("E", "G"): 8, ("E", "H"): 5,
-                    ("F", "G"): 7, ("G", "H"): 9
-                }
-            },
-            4: {
-                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"), ("A", "E"),
-                    ("B", "C"), ("B", "F"), ("C", "D"), ("C", "G"),
-                    ("D", "E"), ("D", "H"), ("E", "F"), ("E", "I"),
-                    ("F", "G"), ("G", "H"), ("H", "I"), ("F", "I")
-                ],
-                "edge_labels": {
-                    ("A", "B"): 2, ("A", "C"): 5, ("A", "D"): 1, ("A", "E"): 7,
-                    ("B", "C"): 0, ("B", "F"): 3, ("C", "D"): 4, ("C", "G"): 2,
-                    ("D", "E"): 6, ("D", "H"): 0, ("E", "F"): 8, ("E", "I"): 5,
-                    ("F", "G"): 7, ("G", "H"): 9, ("H", "I"): 2, ("F", "I"): 0
-                }
-            },
-            5: {
-                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"), ("A", "E"),
-                    ("B", "C"), ("B", "F"), ("B", "G"), ("C", "D"),
-                    ("C", "H"), ("D", "E"), ("D", "I"), ("E", "F"),
-                    ("E", "J"), ("F", "G"), ("F", "J"), ("G", "H"),
-                    ("H", "I"), ("I", "J"), ("G", "J"), ("H", "J")
-                ],
-                "edge_labels": {
-                    ("A", "B"): 0, ("A", "C"): 2, ("A", "D"): 5, ("A", "E"): 7,
-                    ("B", "C"): 1, ("B", "F"): 0, ("B", "G"): 3, ("C", "D"): 2,
-                    ("C", "H"): 6, ("D", "E"): 4, ("D", "I"): 5, ("E", "F"): 8,
-                    ("E", "J"): 7, ("F", "G"): 9, ("F", "J"): 0, ("G", "H"): 2,
-                    ("H", "I"): 5, ("I", "J"): 1, ("G", "J"): 7, ("H", "J"): 4
-                }
-            }
+            1: {"traversal": "Preorder", "k": 6},
+            2: {"traversal": "Inorder", "k": 6},
+            3: {"traversal": "Postorder", "k": 6},
+            4: {"traversal": "Level-order", "k": 6},
+            5: {"traversal": "Postorder", "k": 3},
         },
         "en": {
-            1: {
-                "vertices": ["A", "B", "C", "D"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"),
-                    ("B", "C"), ("C", "D")
-                ],
-                "edge_labels": {
-                    ("A", "B"): 0, ("A", "C"): 2, ("A", "D"): 5,
-                    ("B", "C"): 7, ("C", "D"): 3
-                }
-            },
-            2: {
-                "vertices": ["A", "B", "C", "D", "E", "F"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"),
-                    ("B", "C"), ("B", "E"), ("C", "D"),
-                    ("C", "F"), ("D", "E"), ("E", "F")
-                ],
-                "edge_labels": {
-                    ("A", "B"): 1, ("A", "C"): 0, ("A", "D"): 4,
-                    ("B", "C"): 2, ("B", "E"): 7, ("C", "D"): 5,
-                    ("C", "F"): 8, ("D", "E"): 0, ("E", "F"): 9
-                }
-            },
-            3: {
-                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"),
-                    ("B", "C"), ("B", "E"), ("C", "D"),
-                    ("C", "F"), ("D", "E"), ("D", "F"),
-                    ("D", "G"), ("E", "G"), ("E", "H"),
-                    ("F", "G"), ("G", "H")
-                ],
-                "edge_labels": {
-                    ("A", "B"): 0, ("A", "C"): 1, ("A", "D"): 2,
-                    ("B", "C"): 3, ("B", "E"): 5, ("C", "D"): 7,
-                    ("C", "F"): 4, ("D", "E"): 0, ("D", "F"): 6,
-                    ("D", "G"): 2, ("E", "G"): 8, ("E", "H"): 5,
-                    ("F", "G"): 7, ("G", "H"): 9
-                }
-            },
-            4: {
-                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"), ("A", "E"),
-                    ("B", "C"), ("B", "F"), ("C", "D"), ("C", "G"),
-                    ("D", "E"), ("D", "H"), ("E", "F"), ("E", "I"),
-                    ("F", "G"), ("G", "H"), ("H", "I"), ("F", "I")
-                ],
-                "edge_labels": {
-                    ("A", "B"): 2, ("A", "C"): 5, ("A", "D"): 1, ("A", "E"): 7,
-                    ("B", "C"): 0, ("B", "F"): 3, ("C", "D"): 4, ("C", "G"): 2,
-                    ("D", "E"): 6, ("D", "H"): 0, ("E", "F"): 8, ("E", "I"): 5,
-                    ("F", "G"): 7, ("G", "H"): 9, ("H", "I"): 2, ("F", "I"): 0
-                }
-            },
-            5: {
-                "vertices": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
-                "edges": [
-                    ("A", "B"), ("A", "C"), ("A", "D"), ("A", "E"),
-                    ("B", "C"), ("B", "F"), ("B", "G"), ("C", "D"),
-                    ("C", "H"), ("D", "E"), ("D", "I"), ("E", "F"),
-                    ("E", "J"), ("F", "G"), ("F", "J"), ("G", "H"),
-                    ("H", "I"), ("I", "J"), ("G", "J"), ("H", "J")
-                ],
-                "edge_labels": {
-                    ("A", "B"): 0, ("A", "C"): 2, ("A", "D"): 5, ("A", "E"): 7,
-                    ("B", "C"): 1, ("B", "F"): 0, ("B", "G"): 3, ("C", "D"): 2,
-                    ("C", "H"): 6, ("D", "E"): 4, ("D", "I"): 5, ("E", "F"): 8,
-                    ("E", "J"): 7, ("F", "G"): 9, ("F", "J"): 0, ("G", "H"): 2,
-                    ("H", "I"): 5, ("I", "J"): 1, ("G", "J"): 7, ("H", "J"): 4
-                }
-            }
-        }
+            1: {"traversal": "Preorder", "k": 6},
+            2: {"traversal": "Inorder", "k": 6},
+            3: {"traversal": "Postorder", "k": 6},
+            4: {"traversal": "Level-order", "k": 6},
+            5: {"traversal": "Postorder", "k": 3},
+        },
     }
 
     def __init__(self, config):
+        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：加载图结构、边标注，并计算条件边集合"""
         lang = self.config.language
         diff = int(self.config.difficulty)
 
@@ -546,113 +523,189 @@ Try to minimize unnecessary inquiry requests and submit only when you are absolu
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.traversal_type = cfg["traversal"]
+        self.target_k = cfg["k"]
+        self._game_info["k"] = self.target_k
+
+        self.tree = {
+            'A': ('B', 'C'),
+            'B': ('D', 'E'),
+            'C': ('F', 'G'),
+            'D': (None, None),
+            'E': ('H', 'I'),
+            'F': (None, None),
+            'G': (None, None),
+            'H': (None, None),
+            'I': (None, None),
+        }
+
+        self.traversals = {
+            'Preorder': self._preorder('A'),
+            'Inorder': self._inorder('A'),
+            'Postorder': self._postorder('A'),
+            'Level-order': self._levelorder(),
+        }
+
+        self.current_sequence = self.traversals[self.traversal_type]
         
-        # 顶点和边列表
-        self.vertices = cfg["vertices"]
-        self.edges = cfg["edges"]
-        
-        # 标准化边（保证无序对的一致性）
-        self.edge_labels = {}
-        for edge, label in cfg["edge_labels"].items():
-            normalized_edge = tuple(sorted(edge))
-            self.edge_labels[normalized_edge] = label
-        
-        # 条件集合 S = {0, 2, 5, 7}
-        self.condition_set = {0, 2, 5, 7}
-        
-        # 计算条件边集合（Ground Truth）
-        self.conditional_edges = set()
-        for edge, label in self.edge_labels.items():
-            if label in self.condition_set:
-                self.conditional_edges.add(edge)
-        
-        # 正确答案：条件边总数
-        self.correct_answer = len(self.conditional_edges)
-        
-        # 构建邻接表，方便计算条件度数
-        self.adjacency = {v: [] for v in self.vertices}
-        for u, v in self.edges:
-            self.adjacency[u].append(v)
-            self.adjacency[v].append(u)
-        
-        # 填充游戏信息（用于格式化规则文本）
-        self._game_info["num_vertices"] = len(self.vertices)
-        self._game_info["num_edges"] = len(self.edges)
-        self._game_info["vertex_list"] = ", ".join(self.vertices)
-        self._game_info["opening_braces"] = "{"
-        self._game_info["closing_braces"] = "}"
+        self.node_position = {node: idx for idx, node in enumerate(self.current_sequence)}
+
+    def _preorder(self, node):
+        if node is None:
+            return []
+        left, right = self.tree[node]
+        return [node] + self._preorder(left) + self._preorder(right)
+
+    def _inorder(self, node):
+        if node is None:
+            return []
+        left, right = self.tree[node]
+        return self._inorder(left) + [node] + self._inorder(right)
+
+    def _postorder(self, node):
+        if node is None:
+            return []
+        left, right = self.tree[node]
+        return self._postorder(left) + self._postorder(right) + [node]
+
+    def _levelorder(self):
+        if not self.tree:
+            return []
+        result = []
+        queue = ['A']
+        while queue:
+            node = queue.pop(0)
+            result.append(node)
+            left, right = self.tree[node]
+            if left:
+                queue.append(left)
+            if right:
+                queue.append(right)
+        return result
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案"""
-        try:
-            # 解析答案
-            answer_str = parsed_info["answer"].strip()
-            player_answer = int(answer_str)
-            
-            # 检查答案是否正确
-            return player_answer == self.correct_answer
-        except (ValueError, KeyError):
+        if self.query_count < 2:
             return False
 
-    def _cf_core_produce(self, parsed_info):
-        if "query" not in parsed_info:
-            if self.config.language == "zh":
-                return "错误：未找到有效的查询标签。"
-            else:
-                return "Error: No valid query tag found."
-        
-        vertex = parsed_info["query"].strip()
-        
-        # 检查顶点是否有效
-        if vertex not in self.vertices:
-            if self.config.language == "zh":
-                return f"错误：顶点 {vertex} 不在图中。有效顶点为：{', '.join(self.vertices)}"
-            else:
-                return f"Error: Vertex {vertex} is not in the graph. Valid vertices are: {', '.join(self.vertices)}"
-        
-        # 计算该顶点的条件度数
-        conditional_degree = 0
-        for neighbor in self.adjacency[vertex]:
-            edge = tuple(sorted([vertex, neighbor]))
-            if edge in self.conditional_edges:
-                conditional_degree += 1
-        
-        return str(conditional_degree)
+        raw_ans = parsed_info["answer"]
+        kv_pairs = [x.strip() for x in raw_ans.split(",")]
+        ans_dict = {}
+        for kv in kv_pairs:
+            if "=" not in kv:
+                continue
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
+
+        position_key = f"position_{self.target_k}"
+        if "traversal" not in ans_dict or position_key not in ans_dict:
+            return False
+
+        if ans_dict["traversal"] != self.traversal_type:
+            return False
+
+        expected_node = self.current_sequence[self.target_k - 1]
+        return ans_dict[position_key] == expected_node
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        results = []
-        for vertex in self.vertices:
-            # 计算该顶点的条件度数
-            conditional_degree = 0
-            if vertex in self.adjacency:
-                for neighbor in self.adjacency[vertex]:
-                    edge = tuple(sorted([vertex, neighbor]))
-                    if edge in self.conditional_edges:
-                        conditional_degree += 1
-            
-            results.append({
-                "query": f"<query>{vertex}</query>",
-                "answer": str(conditional_degree)
-            })
-        return results
+        queries = []
+        nodes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
+        
+        if self.config.language == "zh":
+            yes_str, no_str = "是", "否"
+        else:
+            yes_str, no_str = "Yes", "No"
+
+        for n1 in nodes:
+            for n2 in nodes:
+                if n1 == n2:
+                    continue
+                
+                q_order = f"<query_order>{n1},{n2}</query_order>"
+                
+                idx1 = self.node_position[n1]
+                idx2 = self.node_position[n2]
+                ans_order = n1 if idx1 < idx2 else n2
+                
+                queries.append({"query": q_order, "answer": ans_order})
+
+                q_adj = f"<query_adjacent>{n1},{n2}</query_adjacent>"
+                
+                is_adj = (idx1 + 1 == idx2)
+                ans_adj = yes_str if is_adj else no_str
+                
+                queries.append({"query": q_adj, "answer": ans_adj})
+                
+        return queries
+
+    def _cf_core_produce(self, parsed_info):
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_format = "错误：格式无效或节点名称错误。"
+            error_same = "错误：两个节点不能相同。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid format or node name."
+            error_same = "Error: The two nodes must be different."
+
+        if "query_order" in parsed_info:
+            try:
+                raw = parsed_info["query_order"]
+                node1, node2 = [x.strip() for x in raw.split(",")]
+                
+                if node1 not in self.node_position or node2 not in self.node_position:
+                    return error_format
+                if node1 == node2:
+                    return error_same
+
+                pos1 = self.node_position[node1]
+                pos2 = self.node_position[node2]
+                self.query_count += 1
+                return node1 if pos1 < pos2 else node2
+            except Exception:
+                return error_format
+
+        elif "query_adjacent" in parsed_info:
+            try:
+                raw = parsed_info["query_adjacent"]
+                node1, node2 = [x.strip() for x in raw.split(",")]
+                
+                if node1 not in self.node_position or node2 not in self.node_position:
+                    return error_format
+                if node1 == node2:
+                    return error_same
+
+                pos1 = self.node_position[node1]
+                pos2 = self.node_position[node2]
+                is_adjacent = (pos1 + 1 == pos2)
+                self.query_count += 1
+                return yes_res if is_adjacent else no_res
+            except Exception:
+                return error_format
+
+        else:
+            raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct):
-        try:
-            val = int(correct)
-            return str(val + 1)
-        except ValueError:
-            pass
-
-        if self.config.language == "zh":
-            if correct == "是": return "否"
-            if correct == "否": return "是"
-        else:
-            if correct.lower() == "yes":
-                return "No" if correct[0].isupper() else "no"
-            if correct.lower() == "no":
-                return "Yes" if correct[0].isupper() else "yes"
-
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if correct == "是": return "否"
+        if correct == "否": return "是"
+        
+        lower_correct = correct.lower()
+        if lower_correct == "yes":
+            if correct.isupper(): return "NO"
+            if correct.istitle(): return "No"
+            return "no"
+        if lower_correct == "no":
+            if correct.isupper(): return "YES"
+            if correct.istitle(): return "Yes"
+            return "yes"
+            
+        nodes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
+        if correct in nodes:
+            for n in nodes:
+                if n != correct:
+                    return n
+                    
         return correct + "_WRONG"

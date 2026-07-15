@@ -1,723 +1,736 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: 交互式推理/解谜游戏 - 行业场景改造
-# 推理类型: 溯因推理
-# 数据结构: 序列
-
-from .base import Game
 import re
+from typing import Set, Tuple, Dict, List
+from .base import Game
 
-class PermutationSortingGame(Game):
-
-    reasoning_type = "溯因推理"
-    data_structure = "序列"
+class ShortestPathProbeGame(Game):
 
     game_rule_zh = """\
-我们来进行一场"隐藏排列识别与最优排序"任务，规则如下：
+我们来玩一个"最短路径探测"推理游戏，规则如下：
 
-当前有 {n} 个不同的元素，用标识 {labels} 区分。
+游戏设定了一个未知的无向带权连通图 G，所有边的权重均为正整数。图中节点集合为 {nodes}，起点为 {start}，终点为 {end}。图的边集合及其权重对你是未知的。
 
-初始排列：{initial_sequence}
+记基准最短距离为 D_base，即在原图 G 中从起点 {start} 到终点 {end} 的最短路径长度。这个值对你也是未知的。
 
-系统已设定了一个目标排列 R*（从 {k} 个候选排列中选出，但你不知道具体是哪一个）。你的任务是：
-1. 通过查询识别出真实的目标排列 R*
-2. 通过尽可能少的对调操作将当前排列变换为目标排列
+现在给定一组候选增边清单：
+{candidates}
 
-## 可用操作
+你的目标是：判断每条候选增边加入图后，是否会使起点到终点的最短距离缩短；若缩短，需要给出新的最短距离的精确整数值。
 
-你可以进行以下操作（每次只能执行一个）：
+你可以进行以下类型的提问（探测次数有上限，请尽可能少地使用）：
 
-1. **询问距离**：查询当前排列到目标排列所需的最少对调次数
-   格式：<query_distance></query_distance>
+1. **探测查询**：临时在图上加入一条无向边 (u, v)，权重为正整数 w。系统会返回：
+   - 加入该边后，从起点到终点的最短距离 D_test（整数）
+   - 该距离是否小于基准距离 D_base（"是"或"否"）
+   注意：该临时边在反馈后会被移除，不影响基准图。
 
-2. **试探互换**：假设对调位置 i 和 j 的元素，查询对调后的距离（不改变真实排列）
-   格式：<test_swap>i,j</test_swap>
-   示例：<test_swap>1,3</test_swap> 表示试探互换位置1和位置3的元素
+2. **基准查询**（至多使用 1 次）：直接查询基准最短距离 D_base 的值。
 
-3. **执行互换**：真实对调位置 i 和 j 的元素（会改变当前排列状态）
-   格式：<do_swap>i,j</do_swap>
-   示例：<do_swap>2,4</do_swap> 表示真实互换位置2和位置4的元素
+3. **提交答案**：对候选清单中的每条边给出最终判断。
 
-4. **查看当前排列**：查看当前元素的真实排列状态
-   格式：<query_sequence></query_sequence>
+每次提问只能包含一个标签，使用以下 XML 格式：
 
-5. **提交答案**：当你确定目标排列后，提交最终方案
-   格式：<answer>标识1,标识2,...,标识{n}</answer>
-   示例：<answer>{example_answer}</answer>
+- 探测查询（例如在节点 {example_node1} 和 {example_node2} 之间加入权重为 3 的边）：
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## 成功条件
+- 基准查询：
+<query_base></query_base>
 
-- 正确识别目标排列 R*
-- 使用的真实互换次数等于初始的最小对调次数（最优次数）
+- 提交最终答案（对每条候选边按顺序给出判断）：
+<answer>
+1: shortened=是, new_dist=5
+2: shortened=否
+3: shortened=是, new_dist=7
+</answer>
 
-## 失败条件
+答案格式说明：
+- 每行对应一条候选边（按给定顺序编号 1, 2, 3, ...）
+- shortened=是 表示该边会缩短距离，shortened=否 表示不会
+- 若 shortened=是，必须用 new_dist= 给出新的最短距离整数值
+- 若 shortened=否，可省略 new_dist 或写为 new_dist={base_placeholder}
 
-- 提交错误的目标排列
-- 使用的真实互换次数超过初始最小对调次数
-- 格式错误
-
-注意：位置编号从 1 到 {n}。
+请仔细分析探测反馈，推断出每条候选边的真实效果。祝你好运！
 """
 
     game_rule_en = """\
-Let's play a "Hidden Permutation Identification and Optimal Sorting" task. Rules:
+Let's play a "Shortest Path Probe" deduction game. Here are the rules:
 
-There are {n} distinct elements, identified by labels: {labels}
+The game has set up an unknown undirected weighted connected graph G, where all edge weights are positive integers. The node set is {nodes}, the start node is {start}, and the end node is {end}. The edge set and weights are unknown to you.
 
-Initial sequence: {initial_sequence}
+Let D_base denote the baseline shortest distance, i.e., the shortest path length from {start} to {end} in the original graph G. This value is also unknown to you.
 
-The system has set a target permutation R* (chosen from {k} candidates, but you don't know which one). Your tasks are:
-1. Identify the true target permutation R* through queries
-2. Transform the current sequence into the target permutation using as few swaps as possible
+Now you are given a list of candidate edges to add:
+{candidates}
 
-## Available Operations
+Your goal is: for each candidate edge, determine whether adding it to the graph will shorten the shortest distance from start to end; if yes, provide the exact integer value of the new shortest distance.
 
-You can perform the following operations (one at a time):
+You can perform the following types of queries (there is an upper limit on probe count, please use as few as possible):
 
-1. **Query Distance**: Get the minimum number of swaps needed from the current sequence to the target
-   Format: <query_distance></query_distance>
+1. **Probe Query**: Temporarily add an undirected edge (u, v) with positive integer weight w to the graph. The system returns:
+   - D_test: the shortest distance from start to end after adding the edge (integer)
+   - Whether this distance is less than D_base ("Yes" or "No")
+   Note: The temporary edge is removed after feedback and does not affect the baseline graph.
 
-2. **Test Swap**: Hypothetically swap elements at positions i and j, query the resulting distance (does not change current sequence)
-   Format: <test_swap>i,j</test_swap>
-   Example: <test_swap>1,3</test_swap> means test swapping position 1 and position 3
+2. **Base Query** (use at most once): Directly query the value of baseline shortest distance D_base.
 
-3. **Execute Swap**: Actually swap elements at positions i and j (changes current sequence)
-   Format: <do_swap>i,j</do_swap>
-   Example: <do_swap>2,4</do_swap> means actually swap position 2 and position 4
+3. **Submit Answer**: Provide final judgment for each edge in the candidate list.
 
-4. **Query Current Sequence**: View the current element sequence state
-   Format: <query_sequence></query_sequence>
+Each query must contain only one tag, using the following XML format:
 
-5. **Submit Answer**: Submit your final plan when you've identified the target permutation
-   Format: <answer>label1,label2,...,label{n}</answer>
-   Example: <answer>{example_answer}</answer>
+- Probe Query (e.g., add an edge between nodes {example_node1} and {example_node2} with weight 3):
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## Success Conditions
+- Base Query:
+<query_base></query_base>
 
-- Correctly identify the target permutation R*
-- Number of actual swaps equals the initial minimum swap count (optimal count)
+- Submit Final Answer (provide judgment for each candidate edge in order):
+<answer>
+1: shortened=Yes, new_dist=5
+2: shortened=No
+3: shortened=Yes, new_dist=7
+</answer>
 
-## Failure Conditions
+Answer format explanation:
+- Each line corresponds to a candidate edge (numbered 1, 2, 3, ... in given order)
+- shortened=Yes means the edge will shorten the distance, shortened=No means it will not
+- If shortened=Yes, must provide new_dist= with the new shortest distance integer value
+- If shortened=No, new_dist can be omitted or written as new_dist={base_placeholder}
 
-- Submit the wrong target permutation
-- Number of actual swaps exceeds the initial minimum count
-- Format error
-
-Note: Position indices range from 1 to {n}.
+Please carefully analyze the probe feedback to infer the true effect of each candidate edge. Good luck!
 """
 
     contextualized_rule_zh_1 = """\
-作为智能列车调度员，我们来进行一场"隐藏编组识别与最优重构"任务，规则如下：
+欢迎使用“城市路网优化”沙盘推演系统。
 
-调度站内目前有 {n} 节不同的车厢，用标识 {labels} 区分。
+系统设定了一个未知的城市交通路网 G，所有道路的通行时间均为正整数（分钟）。路网节点（路口/立交桥）集合为 {nodes}，起点为出发地 {start}，终点为目的地 {end}。现有路网的具体道路分布和通行时间对你是未知的。
 
-当前初始编组状态：{initial_sequence}
+记当前路网的基准最短通勤时间为 D_base，即在原路网 G 中从起点 {start} 到终点 {end} 的最快通行时间。这个值对你也是未知的。
 
-系统已下达了一个机密的最终目标编组 R*（从 {k} 个候选安全编组中选出，但你目前权限无法直接获取）。你的任务是：
-1. 通过排查识别出真实的目标编组 R*
-2. 通过尽可能少的车厢对调操作（即道岔切换）将当前编组重构为目标编组
+现在给定一组拟规划的新道路建设项目（候选清单）：
+{candidates}
 
-## 可用操作
+你的目标是：评估每条新道路建成并加入路网后，是否会缩短起点到终点的最短通勤时间；若缩短，需要给出新的最短通行时间的精确整数值。
 
-你可以进行以下操作（每次只能执行一个）：
+你可以进行以下类型的沙盘探测（探测计算资源有限，请尽可能少地使用）：
 
-1. **询问调度步数**：查询当前编组到目标编组所需的最少对调次数
-   格式：<query_distance></query_distance>
+1. **探测查询**：临时在路网上开通一条无向新道路 (u, v)，预计通行时间为正整数 w。系统会返回：
+   - 开通该道路后，从起点到终点的最短通勤时间 D_test（整数）
+   - 该时间是否小于基准时间 D_base（"是"或"否"）
+   注意：该临时道路在反馈后会被移除，不影响基准路网。
 
-2. **试探互换**：在沙盘中假设对调位置 i 和 j 的车厢，查询对调后的步数（不改变真实编组）
-   格式：<test_swap>i,j</test_swap>
-   示例：<test_swap>1,3</test_swap> 表示试探互换位置1和位置3的车厢
+2. **基准查询**（至多使用 1 次）：直接查询基准最短通勤时间 D_base 的值。
 
-3. **执行互换**：在轨道上真实对调位置 i 和 j 的车厢（会改变当前编组状态）
-   格式：<do_swap>i,j</do_swap>
-   示例：<do_swap>2,4</do_swap> 表示真实互换位置2和位置4的车厢
+3. **提交答案**：对候选清单中的每条规划道路给出最终评估。
 
-4. **查看当前编组**：查看当前车厢的真实排列状态
-   格式：<query_sequence></query_sequence>
+每次提问只能包含一个标签，使用以下 XML 格式：
 
-5. **宣告目标编组**：当你确定目标编组后，提交最终方案
-   格式：<answer>标识1,标识2,...,标识{n}</answer>
-   示例：<answer>{example_answer}</answer>
+- 探测查询（例如在路口 {example_node1} 和 {example_node2} 之间开通通行时间为 3 分钟的道路）：
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## 成功条件
+- 基准查询：
+<query_base></query_base>
 
-- 正确识别目标编组 R*
-- 使用的真实互换次数等于初始的最小调度步数（最优次数）
+- 提交最终答案（对每条候选道路按顺序给出判断）：
+<answer>
+1: shortened=是, new_dist=5
+2: shortened=否
+3: shortened=是, new_dist=7
+</answer>
 
-## 失败条件
+答案格式说明：
+- 每行对应一条候选道路（按给定顺序编号 1, 2, 3, ...）
+- shortened=是 表示该道路会缩短通勤时间，shortened=否 表示不会
+- 若 shortened=是，必须用 new_dist= 给出新的最短通行时间整数值
+- 若 shortened=否，可省略 new_dist 或写为 new_dist={base_placeholder}
 
-- 宣告错误的目标编组
-- 使用的真实互换次数超过初始最小调度步数
-- 格式错误
-
-注意：位置编号从 1 到 {n}。
+请仔细分析探测反馈，推断出每条候选道路的真实优化效果。祝你好运！
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-As an intelligent train dispatcher, let's play a "Hidden Formation Identification and Optimal Restructuring" task. Rules:
+Welcome to the "Urban Road Network Optimization" simulation system.
 
-The shunting yard has {n} distinct train carriages, identified by labels: {labels}
+The system has configured an unknown urban traffic road network G, where all road travel times are positive integers (in minutes). The set of network nodes (intersections/overpasses) is {nodes}, the starting point is {start}, and the destination is {end}. The exact road distribution and travel times of the existing network are unknown to you.
 
-Initial formation sequence: {initial_sequence}
+Let D_base denote the baseline shortest commute time, i.e., the fastest travel time from {start} to {end} in the original network G. This value is also unknown to you.
 
-The system has issued a classified target formation R* (chosen from {k} candidate safe formations, but you don't know which one). Your tasks are:
-1. Identify the true target formation R*
-2. Transform the current formation into the target formation using as few carriage position swaps (track switches) as possible
+Now you are given a list of proposed new road construction projects (candidates):
+{candidates}
 
-## Available Operations
+Your goal is: for each proposed new road, assess whether adding it to the network will shorten the shortest commute time from the start to the destination; if yes, provide the exact integer value of the new shortest travel time.
 
-You can perform the following operations (one at a time):
+You can perform the following types of simulation probes (probe computing resources are limited, please use as few as possible):
 
-1. **Query Switching Steps**: Get the minimum number of swaps needed from the current formation to the target
-   Format: <query_distance></query_distance>
+1. **Probe Query**: Temporarily open an undirected new road (u, v) in the network, with an estimated travel time of positive integer w. The system returns:
+   - D_test: the shortest commute time from start to destination after opening this road (integer)
+   - Whether this time is less than the baseline time D_base ("Yes" or "No")
+   Note: The temporary road is removed after feedback and does not affect the baseline network.
 
-2. **Test Swap**: Hypothetically swap carriages at positions i and j in the sandbox, query the resulting steps (does not change current sequence)
-   Format: <test_swap>i,j</test_swap>
-   Example: <test_swap>1,3</test_swap> means test swapping position 1 and position 3
+2. **Base Query** (use at most once): Directly query the value of baseline shortest commute time D_base.
 
-3. **Execute Swap**: Actually swap carriages at positions i and j on the tracks (changes current formation)
-   Format: <do_swap>i,j</do_swap>
-   Example: <do_swap>2,4</do_swap> means actually swap position 2 and position 4
+3. **Submit Answer**: Provide final assessment for each proposed road in the candidate list.
 
-4. **Query Current Formation**: View the current carriage sequence state
-   Format: <query_sequence></query_sequence>
+Each query must contain only one tag, using the following XML format:
 
-5. **Declare Target Formation**: Submit your final plan when you've identified the target formation
-   Format: <answer>label1,label2,...,label{n}</answer>
-   Example: <answer>{example_answer}</answer>
+- Probe Query (e.g., open a road with a 3-minute travel time between intersections {example_node1} and {example_node2}):
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## Success Conditions
+- Base Query:
+<query_base></query_base>
 
-- Correctly identify the target formation R*
-- Number of actual swaps equals the initial minimum switching steps (optimal count)
+- Submit Final Answer (provide judgment for each candidate road in order):
+<answer>
+1: shortened=Yes, new_dist=5
+2: shortened=No
+3: shortened=Yes, new_dist=7
+</answer>
 
-## Failure Conditions
+Answer format explanation:
+- Each line corresponds to a candidate road (numbered 1, 2, 3, ... in given order)
+- shortened=Yes means the road will shorten the commute time, shortened=No means it will not
+- If shortened=Yes, must provide new_dist= with the new shortest travel time integer value
+- If shortened=No, new_dist can be omitted or written as new_dist={base_placeholder}
 
-- Declare the wrong target formation
-- Number of actual swaps exceeds the initial minimum steps
-- Format error
-
-Note: Position indices range from 1 to {n}.
+Please carefully analyze the probe feedback to infer the true optimization effect of each candidate road. Good luck!
 """
 
     contextualized_rule_zh_2 = """\
-作为基因组学专家，我们来进行一场"隐藏健康基因组识别与最优编辑"任务，规则如下：
+欢迎进入“临床康复路径推演”专家系统。
 
-当前样本存在 {n} 个关键的基因片段，用标签 {labels} 标示。
+系统设定了一个未知的医疗干预图谱 G，所有干预状态的转化康复周期均为正整数（天数）。生理状态节点集合为 {nodes}，初始病症节点为 {start}，完全康复节点为 {end}。现有的标准治疗干预手段及其周期对你是未知的。
 
-初始基因序列为：{initial_sequence}
+记当前标准方案的基准最短康复周期为 D_base，即在原图谱 G 中从初始病症 {start} 到完全康复 {end} 的最短天数。这个值对你也是未知的。
 
-系统已匹配到一个理想的健康目标序列 R*（从 {k} 个已知健康候选变体中选出，但你尚不知晓具体是哪一个）。你的任务是：
-1. 识别出真实的健康目标序列 R*
-2. 通过尽可能少的片段重组（即对调）操作将当前序列修复为目标序列
+现在给定一组研发中的新型靶向药物或新疗法（候选清单）：
+{candidates}
 
-## 可用操作
+你的目标是：评估每项新疗法引入临床路径后，是否会缩短从初始病症到完全康复的最短周期；若缩短，需要给出新的最短康复周期的精确整数值。
 
-你可以进行以下操作（每次只能执行一个）：
+你可以进行以下类型的沙盘探测（探测次数有限，请尽可能少地使用）：
 
-1. **询问干预次数**：查询当前序列达到目标序列所需的最少对调次数
-   格式：<query_distance></query_distance>
+1. **探测查询**：临时在干预图谱中引入一项新疗法转化 (u, v)，预计康复周期为正整数 w 天。系统会返回：
+   - 引入该疗法后，从初始病症到完全康复的最短周期 D_test（整数）
+   - 该周期是否小于基准周期 D_base（"是"或"否"）
+   注意：该临时疗法在反馈后会被撤销，不影响基准图谱。
 
-2. **试探重组**：在模拟器中假设对调位置 i 和 j 的片段，查询重组后的次数（不改变真实序列）
-   格式：<test_swap>i,j</test_swap>
-   示例：<test_swap>1,3</test_swap> 表示试探重组位置1和位置3的基因片段
+2. **基准查询**（至多使用 1 次）：直接查询基准最短康复周期 D_base 的值。
 
-3. **执行重组**：在样本中真实对调位置 i 和 j 的片段（会改变当前序列）
-   格式：<do_swap>i,j</do_swap>
-   示例：<do_swap>2,4</do_swap> 表示真实对调位置2和位置4的基因片段
+3. **提交答案**：对候选清单中的每项新疗法给出最终临床评估。
 
-4. **查看当前序列**：查看当前基因序列状态
-   格式：<query_sequence></query_sequence>
+每次提问只能包含一个标签，使用以下 XML 格式：
 
-5. **宣告目标序列**：当你确定健康目标序列后，提交最终答案
-   格式：<answer>标签1,标签2,...,标签{n}</answer>
-   示例：<answer>{example_answer}</answer>
+- 探测查询（例如在生理状态 {example_node1} 和 {example_node2} 之间引入周期为 3 天的新疗法）：
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## 成功条件
+- 基准查询：
+<query_base></query_base>
 
-- 正确识别目标序列 R*
-- 使用的真实重组次数等于初始的最小干预次数（最优次数）
+- 提交最终答案（对每项候选疗法按顺序给出判断）：
+<answer>
+1: shortened=是, new_dist=5
+2: shortened=否
+3: shortened=是, new_dist=7
+</answer>
 
-## 失败条件
+答案格式说明：
+- 每行对应一项候选疗法（按给定顺序编号 1, 2, 3, ...）
+- shortened=是 表示该疗法会缩短康复周期，shortened=否 表示不会
+- 若 shortened=是，必须用 new_dist= 给出新的最短康复周期整数值
+- 若 shortened=否，可省略 new_dist 或写为 new_dist={base_placeholder}
 
-- 宣告错误的目标序列
-- 使用的真实重组次数超过初始最少干预次数
-- 格式错误
-
-注意：位置编号从 1 到 {n}。
+请仔细分析探测反馈，推断出每项新疗法的真实临床效果。祝你好运！
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-As a genomics expert, let's play a "Hidden Healthy Genome Identification and Optimal Editing" task. Rules:
+Welcome to the "Clinical Recovery Pathway Simulation" expert system.
 
-The sample contains {n} key gene segments, indicated by labels: {labels}
+The system has configured an unknown medical intervention graph G, where all state transition recovery cycles are positive integers (in days). The set of physiological state nodes is {nodes}, the initial symptom node is {start}, and the full recovery node is {end}. The existing standard therapeutic interventions and their cycles are unknown to you.
 
-Initial genetic sequence: {initial_sequence}
+Let D_base denote the baseline shortest recovery cycle, i.e., the minimum days from the initial symptom {start} to full recovery {end} in the original graph G. This value is also unknown to you.
 
-The system has matched an ideal healthy target sequence R* (chosen from {k} known healthy candidate variants, but you don't know which one). Your tasks are:
-1. Identify the true healthy target sequence R*
-2. Repair the current sequence into the target sequence using as few segment recombinations (swaps) as possible
+Now you are given a list of novel targeted drugs or new therapies under development (candidates):
+{candidates}
 
-## Available Operations
+Your goal is: for each new therapy, assess whether integrating it into the clinical pathway will shorten the shortest recovery cycle from the initial symptom to full recovery; if yes, provide the exact integer value of the new shortest recovery cycle.
 
-You can perform the following operations (one at a time):
+You can perform the following types of clinical probes (probe counts are limited, please use as few as possible):
 
-1. **Query Intervention Steps**: Get the minimum number of swaps needed from the current sequence to the target
-   Format: <query_distance></query_distance>
+1. **Probe Query**: Temporarily introduce a new therapy transition (u, v) in the intervention graph, with an estimated recovery cycle of positive integer w days. The system returns:
+   - D_test: the shortest recovery cycle from initial symptom to full recovery after introducing this therapy (integer)
+   - Whether this cycle is less than the baseline cycle D_base ("Yes" or "No")
+   Note: The temporary therapy is revoked after feedback and does not affect the baseline graph.
 
-2. **Test Recombination**: Hypothetically swap segments at positions i and j in the simulator, query the resulting steps (does not change current sequence)
-   Format: <test_swap>i,j</test_swap>
-   Example: <test_swap>1,3</test_swap> means test swapping gene segments at position 1 and position 3
+2. **Base Query** (use at most once): Directly query the value of baseline shortest recovery cycle D_base.
 
-3. **Execute Recombination**: Actually swap segments at positions i and j in the sample (changes current sequence)
-   Format: <do_swap>i,j</do_swap>
-   Example: <do_swap>2,4</do_swap> means actually swap gene segments at position 2 and position 4
+3. **Submit Answer**: Provide final clinical assessment for each new therapy in the candidate list.
 
-4. **Query Current Sequence**: View the current genetic sequence state
-   Format: <query_sequence></query_sequence>
+Each query must contain only one tag, using the following XML format:
 
-5. **Declare Target Sequence**: Submit your final answer when you've identified the healthy target sequence
-   Format: <answer>label1,label2,...,label{n}</answer>
-   Example: <answer>{example_answer}</answer>
+- Probe Query (e.g., introduce a new therapy with a 3-day cycle between physiological states {example_node1} and {example_node2}):
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## Success Conditions
+- Base Query:
+<query_base></query_base>
 
-- Correctly identify the target sequence R*
-- Number of actual recombinations equals the initial minimum intervention steps (optimal count)
+- Submit Final Answer (provide judgment for each candidate therapy in order):
+<answer>
+1: shortened=Yes, new_dist=5
+2: shortened=No
+3: shortened=Yes, new_dist=7
+</answer>
 
-## Failure Conditions
+Answer format explanation:
+- Each line corresponds to a candidate therapy (numbered 1, 2, 3, ... in given order)
+- shortened=Yes means the therapy will shorten the recovery cycle, shortened=No means it will not
+- If shortened=Yes, must provide new_dist= with the new shortest recovery cycle integer value
+- If shortened=No, new_dist can be omitted or written as new_dist={base_placeholder}
 
-- Declare the wrong target sequence
-- Number of actual recombinations exceeds the initial minimum steps
-- Format error
-
-Note: Position indices range from 1 to {n}.
+Please carefully analyze the probe feedback to infer the true clinical efficacy of each new therapy. Good luck!
 """
 
     contextualized_rule_zh_3 = """\
-作为课程规划主管，我们来进行一场"隐藏最佳大纲识别与最优课表调整"任务，规则如下：
+欢迎使用“自适应学习路径规划”系统。
 
-本学期包含 {n} 个核心教学模块，用标签 {labels} 区分。
+系统设定了一套未知的学科知识图谱 G，所有掌握知识点所需的过渡学习课时均为正整数（小时）。知识点模块集合为 {nodes}，起点为零基础 {start}，终点为掌握核心技能的 {end}。现有的标准课程体系及其课时消耗对你是未知的。
 
-当前初始课程序列：{initial_sequence}
+记当前学习路径的基准最短总课时为 D_base，即在原图谱 G 中从起点 {start} 达到目标 {end} 的最少学习课时。这个值对你也是未知的。
 
-教研组已秘密确立了一个最优的教学大纲 R*（从 {k} 个候选大纲中选出，但你不知道具体是哪个）。你的任务是：
-1. 识别出真实的最优教学大纲 R*
-2. 通过尽可能少的模块调换操作，将当前课表调整为最优大纲顺序
+现在给定一组拟引入的创新桥梁课程或直达集训营（候选清单）：
+{candidates}
 
-## 可用操作
+你的目标是：评估每门新课程加入知识图谱后，是否会缩短达到核心技能目标的最短总学习课时；若缩短，需要给出新的最快学习完成时间的精确整数值。
 
-你可以进行以下操作（每次只能执行一个）：
+你可以进行以下类型的学情探测（探测次数有限，请尽可能少地使用）：
 
-1. **询问调整次数**：查询当前课表达到目标大纲所需的最少调换次数
-   格式：<query_distance></query_distance>
+1. **探测查询**：临时在图谱中开设一门连接两个知识点的新课程 (u, v)，预计学习课时为正整数 w。系统会返回：
+   - 引入该课程后，从起点到核心技能的最短总课时 D_test（整数）
+   - 该总课时是否小于基准总课时 D_base（"是"或"否"）
+   注意：该临时课程在反馈后会被移除，不影响基准图谱。
 
-2. **试探调换**：假设调换排期 i 和 j 的教学模块，查询调换后的次数（不改变当前课表）
-   格式：<test_swap>i,j</test_swap>
-   示例：<test_swap>1,3</test_swap> 表示试探调换排期1和排期3的模块
+2. **基准查询**（至多使用 1 次）：直接查询基准最短总课时 D_base 的值。
 
-3. **执行调换**：真实调换排期 i 和 j 的教学模块（会改变当前课表）
-   格式：<do_swap>i,j</do_swap>
-   示例：<do_swap>2,4</do_swap> 表示真实调换排期2和排期4的模块
+3. **提交答案**：对候选清单中的每门创新课程给出最终评估。
 
-4. **查看当前课表**：查看当前的教学模块序列
-   格式：<query_sequence></query_sequence>
+每次提问只能包含一个标签，使用以下 XML 格式：
 
-5. **宣告目标大纲**：当你确定最优大纲后，提交方案
-   格式：<answer>标签1,标签2,...,标签{n}</answer>
-   示例：<answer>{example_answer}</answer>
+- 探测查询（例如在知识点 {example_node1} 和 {example_node2} 之间开设课时为 3 小时的新课程）：
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## 成功条件
+- 基准查询：
+<query_base></query_base>
 
-- 正确识别最优教学大纲 R*
-- 使用的真实调换次数等于初始的最小调整次数（最优次数）
+- 提交最终答案（对每项候选课程按顺序给出判断）：
+<answer>
+1: shortened=是, new_dist=5
+2: shortened=否
+3: shortened=是, new_dist=7
+</answer>
 
-## 失败条件
+答案格式说明：
+- 每行对应一项候选课程（按给定顺序编号 1, 2, 3, ...）
+- shortened=是 表示该课程会缩短总学习课时，shortened=否 表示不会
+- 若 shortened=是，必须用 new_dist= 给出新的最短总课时整数值
+- 若 shortened=否，可省略 new_dist 或写为 new_dist={base_placeholder}
 
-- 宣告错误的目标大纲
-- 使用的真实调换次数超过初始最小调换次数
-- 格式错误
-
-注意：排期位置编号从 1 到 {n}。
+请仔细分析探测反馈，推断出每门创新课程的真实提效作用。祝你好运！
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-As a curriculum planning director, let's play a "Hidden Optimal Syllabus Identification and Schedule Adjustment" task. Rules:
+Welcome to the "Adaptive Learning Path Planning" system.
 
-This semester includes {n} core teaching modules, identified by labels: {labels}
+The system has configured an unknown subject knowledge graph G, where all transitional study hours required to master knowledge points are positive integers (in hours). The set of knowledge point modules is {nodes}, the starting point is zero-basis {start}, and the end point is mastering the core skill {end}. The existing standard curriculum and its hour consumption are unknown to you.
 
-Initial course sequence: {initial_sequence}
+Let D_base denote the baseline shortest total study hours, i.e., the minimum learning hours from {start} to achieve the goal {end} in the original graph G. This value is also unknown to you.
 
-The faculty committee has secretly established an optimal syllabus R* (chosen from {k} candidate syllabi, but you don't know which one). Your tasks are:
-1. Identify the true optimal syllabus R*
-2. Adjust the current schedule into the optimal syllabus using as few module swaps as possible
+Now you are given a list of proposed innovative bridge courses or direct bootcamps (candidates):
+{candidates}
 
-## Available Operations
+Your goal is: for each new course, assess whether adding it to the knowledge graph will shorten the shortest total study hours to reach the core skill goal; if yes, provide the exact integer value of the new fastest completion time.
 
-You can perform the following operations (one at a time):
+You can perform the following types of academic probes (probe counts are limited, please use as few as possible):
 
-1. **Query Adjustment Steps**: Get the minimum number of swaps needed from the current schedule to the target syllabus
-   Format: <query_distance></query_distance>
+1. **Probe Query**: Temporarily open a new course connecting two knowledge points (u, v) in the graph, with an estimated study time of positive integer w. The system returns:
+   - D_test: the shortest total study hours from the start to the core skill after introducing this course (integer)
+   - Whether these total hours are less than the baseline total hours D_base ("Yes" or "No")
+   Note: The temporary course is removed after feedback and does not affect the baseline graph.
 
-2. **Test Swap**: Hypothetically swap teaching modules at periods i and j, query the resulting steps (does not change current schedule)
-   Format: <test_swap>i,j</test_swap>
-   Example: <test_swap>1,3</test_swap> means test swapping modules at period 1 and period 3
+2. **Base Query** (use at most once): Directly query the value of baseline shortest total study hours D_base.
 
-3. **Execute Swap**: Actually swap teaching modules at periods i and j (changes current schedule)
-   Format: <do_swap>i,j</do_swap>
-   Example: <do_swap>2,4</do_swap> means actually swap modules at period 2 and period 4
+3. **Submit Answer**: Provide final assessment for each innovative course in the candidate list.
 
-4. **Query Current Schedule**: View the current teaching module sequence
-   Format: <query_sequence></query_sequence>
+Each query must contain only one tag, using the following XML format:
 
-5. **Declare Target Syllabus**: Submit your plan when you've identified the optimal syllabus
-   Format: <answer>label1,label2,...,label{n}</answer>
-   Example: <answer>{example_answer}</answer>
+- Probe Query (e.g., open a new course requiring 3 hours between knowledge points {example_node1} and {example_node2}):
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## Success Conditions
+- Base Query:
+<query_base></query_base>
 
-- Correctly identify the optimal syllabus R*
-- Number of actual swaps equals the initial minimum adjustment steps (optimal count)
+- Submit Final Answer (provide judgment for each candidate course in order):
+<answer>
+1: shortened=Yes, new_dist=5
+2: shortened=No
+3: shortened=Yes, new_dist=7
+</answer>
 
-## Failure Conditions
+Answer format explanation:
+- Each line corresponds to a candidate course (numbered 1, 2, 3, ... in given order)
+- shortened=Yes means the course will shorten the total study hours, shortened=No means it will not
+- If shortened=Yes, must provide new_dist= with the new shortest total hours integer value
+- If shortened=No, new_dist can be omitted or written as new_dist={base_placeholder}
 
-- Declare the wrong target syllabus
-- Number of actual swaps exceeds the initial minimum steps
-- Format error
-
-Note: Period indices range from 1 to {n}.
+Please carefully analyze the probe feedback to infer the true efficiency impact of each innovative course. Good luck!
 """
 
     contextualized_rule_zh_4 = """\
-作为智能制造工程师，我们来进行一场"隐藏最优蓝图识别与流水线重构"任务，规则如下：
+欢迎使用“柔性制造流水线仿真”系统。
 
-工厂当前分配了 {n} 个不同的加工工序，用标签 {labels} 区分。
+系统设定了一个未知的车间工序流转网络 G，所有工序间的物流传输或加工耗时均为正整数（分钟）。工序节点集合为 {nodes}，起点（原料入库）为 {start}，终点（成品下线）为 {end}。现有的加工线路及其流转耗时对你是未知的。
 
-初始流水线配置为：{initial_sequence}
+记当前生产线的基准最短生产周期为 D_base，即在原网络 G 中从原料入库 {start} 到成品下线 {end} 的最快耗时。这个值对你也是未知的。
 
-系统预设了一个最优的流水线蓝图 R*（从 {k} 个经验证的候选蓝图中选出，但你处于盲测状态）。你的任务是：
-1. 识别出真实的流水线蓝图 R*
-2. 通过尽可能少的机械臂工序对调操作将当前流水线重构为目标蓝图
+现在给定一组拟采购的自动化传输带或新工艺设备（候选清单）：
+{candidates}
 
-## 可用操作
+你的目标是：评估每项新设备投入网络后，是否会缩短总体的最短生产周期；若缩短，需要给出新的最短生产周期的精确整数值。
 
-你可以进行以下操作（每次只能执行一个）：
+你可以进行以下类型的仿真测试（探测次数有限，请尽可能少地使用）：
 
-1. **询问重构步数**：查询当前配置达到目标蓝图所需的最少对调次数
-   格式：<query_distance></query_distance>
+1. **探测查询**：临时在车间网络中架设一条新设备通道 (u, v)，预期加工流转耗时为正整数 w 分钟。系统会返回：
+   - 投入该设备后，从原料到成品的最短生产周期 D_test（整数）
+   - 该周期是否小于基准周期 D_base（"是"或"否"）
+   注意：该临时设备在反馈后会被移除，不影响基准车间网络。
 
-2. **试探对调**：在控制台中假设对调位置 i 和 j 的工序，查询重构步数（不改变真实流水线）
-   格式：<test_swap>i,j</test_swap>
-   示例：<test_swap>1,3</test_swap> 表示试探对调工位1和工位3的工序
+2. **基准查询**（至多使用 1 次）：直接查询基准最短生产周期 D_base 的值。
 
-3. **执行对调**：在车间真实对调位置 i 和 j 的工序（会改变当前流水线配置）
-   格式：<do_swap>i,j</do_swap>
-   示例：<do_swap>2,4</do_swap> 表示真实对调工位2和工位4的工序
+3. **提交答案**：对候选清单中的每项新工艺设备给出最终评估。
 
-4. **查看当前配置**：查看真实的流水线工序状态
-   格式：<query_sequence></query_sequence>
+每次提问只能包含一个标签，使用以下 XML 格式：
 
-5. **宣告目标配置**：当你确定目标蓝图后，提交最终配置方案
-   格式：<answer>标签1,标签2,...,标签{n}</answer>
-   示例：<answer>{example_answer}</answer>
+- 探测查询（例如在工序 {example_node1} 和 {example_node2} 之间架设耗时为 3 分钟的新通道）：
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## 成功条件
+- 基准查询：
+<query_base></query_base>
 
-- 正确识别目标蓝图 R*
-- 使用的真实对调次数等于初始的最小重构步数（最优次数）
+- 提交最终答案（对每项候选设备按顺序给出判断）：
+<answer>
+1: shortened=是, new_dist=5
+2: shortened=否
+3: shortened=是, new_dist=7
+</answer>
 
-## 失败条件
+答案格式说明：
+- 每行对应一项候选设备（按给定顺序编号 1, 2, 3, ...）
+- shortened=是 表示该设备会缩短生产周期，shortened=否 表示不会
+- 若 shortened=是，必须用 new_dist= 给出新的最短生产周期整数值
+- 若 shortened=否，可省略 new_dist 或写为 new_dist={base_placeholder}
 
-- 宣告错误的目标配置
-- 使用的真实对调次数超过初始最少重构步数
-- 格式错误
-
-注意：工位编号从 1 到 {n}。
+请仔细分析探测反馈，推断出每项新工艺设备的真实产能优化效果。祝你好运！
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-As a smart manufacturing engineer, let's play a "Hidden Optimal Blueprint Identification and Pipeline Reconfiguration" task. Rules:
+[Manufacturing / Industry Scenario]
+Welcome to the "Flexible Manufacturing Assembly Line Simulation" system.
 
-The factory currently has {n} distinct manufacturing processes, identified by labels: {labels}
+The system has configured an unknown workshop process workflow network G, where all logistics transfers or processing times between processes are positive integers (in minutes). The set of process nodes is {nodes}, the starting point (raw material storage) is {start}, and the end point (finished product off-line) is {end}. The existing processing routes and their transfer times are unknown to you.
 
-Initial pipeline configuration: {initial_sequence}
+Let D_base denote the baseline shortest production cycle, i.e., the fastest time from raw material storage {start} to finished product off-line {end} in the original network G. This value is also unknown to you.
 
-The system has preset an optimal pipeline blueprint R* (chosen from {k} validated candidate blueprints, but you are in a blind test). Your tasks are:
-1. Identify the true optimal blueprint R*
-2. Reconfigure the current pipeline into the target blueprint using as few robotic arm process swaps as possible
+Now you are given a list of proposed automated conveyor belts or new process equipment to be procured (candidates):
+{candidates}
 
-## Available Operations
+Your goal is: for each new equipment item, assess whether integrating it into the network will shorten the overall shortest production cycle; if yes, provide the exact integer value of the new shortest production cycle.
 
-You can perform the following operations (one at a time):
+You can perform the following types of simulation tests (probe counts are limited, please use as few as possible):
 
-1. **Query Reconfiguration Steps**: Get the minimum number of swaps needed from the current configuration to the blueprint
-   Format: <query_distance></query_distance>
+1. **Probe Query**: Temporarily set up a new equipment channel (u, v) in the workshop network, with an expected processing/transfer time of positive integer w minutes. The system returns:
+   - D_test: the shortest production cycle from raw materials to finished products after integrating this equipment (integer)
+   - Whether this cycle is less than the baseline cycle D_base ("Yes" or "No")
+   Note: The temporary equipment channel is removed after feedback and does not affect the baseline workshop network.
 
-2. **Test Swap**: Hypothetically swap processes at stations i and j in the console, query the resulting steps (does not change real pipeline)
-   Format: <test_swap>i,j</test_swap>
-   Example: <test_swap>1,3</test_swap> means test swapping processes at station 1 and station 3
+2. **Base Query** (use at most once): Directly query the value of baseline shortest production cycle D_base.
 
-3. **Execute Swap**: Actually swap processes at stations i and j on the shop floor (changes current configuration)
-   Format: <do_swap>i,j</do_swap>
-   Example: <do_swap>2,4</do_swap> means actually swap processes at station 2 and station 4
+3. **Submit Answer**: Provide final assessment for each new process equipment item in the candidate list.
 
-4. **Query Current Configuration**: View the real pipeline process state
-   Format: <query_sequence></query_sequence>
+Each query must contain only one tag, using the following XML format:
 
-5. **Declare Target Configuration**: Submit your final plan when you've identified the optimal blueprint
-   Format: <answer>label1,label2,...,label{n}</answer>
-   Example: <answer>{example_answer}</answer>
+- Probe Query (e.g., set up a new channel taking 3 minutes between processes {example_node1} and {example_node2}):
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## Success Conditions
+- Base Query:
+<query_base></query_base>
 
-- Correctly identify the optimal blueprint R*
-- Number of actual swaps equals the initial minimum reconfiguration steps (optimal count)
+- Submit Final Answer (provide judgment for each candidate equipment item in order):
+<answer>
+1: shortened=Yes, new_dist=5
+2: shortened=No
+3: shortened=Yes, new_dist=7
+</answer>
 
-## Failure Conditions
+Answer format explanation:
+- Each line corresponds to a candidate equipment item (numbered 1, 2, 3, ... in given order)
+- shortened=Yes means the equipment will shorten the production cycle, shortened=No means it will not
+- If shortened=Yes, must provide new_dist= with the new shortest production cycle integer value
+- If shortened=No, new_dist can be omitted or written as new_dist={base_placeholder}
 
-- Declare the wrong target configuration
-- Number of actual swaps exceeds the initial minimum steps
-- Format error
-
-Note: Station indices range from 1 to {n}.
+Please carefully analyze the probe feedback to infer the true capacity optimization effect of each new equipment item. Good luck!
 """
 
     contextualized_rule_zh_5 = """\
-作为首席庭审调查员，我们来进行一场"隐藏证据链重构与最优梳理"任务，规则如下：
+欢迎使用“司法诉讼程序沙盘推演”系统。
 
-案件目前收集了 {n} 份关键证据卷宗，用标签 {labels} 标示。
+系统设定了一个未知的法定程序流转图谱 G，所有程序间的法定等待期或处理耗时均为正整数（工作日）。诉讼阶段节点集合为 {nodes}，起点（立案阶段）为 {start}，终点（终审执行阶段）为 {end}。现有的常规流转路线及其处理期对你是未知的。
 
-初始卷宗提交顺序为：{initial_sequence}
+记当前程序的基准最短流转周期为 D_base，即在原图谱 G 中从立案 {start} 到终审执行 {end} 的最快结案天数。这个值对你也是未知的。
 
-检方已推导出一个最符合逻辑的真实事件时间线 R*（从 {k} 个可能的时间线假设中选出，但尚未向你公开）。你的任务是：
-1. 识别出真实的事件时间线 R*
-2. 通过尽可能少的卷宗位置对调操作将当前卷宗顺序重组为真实时间线
+现在给定一组拟推行的司法改革措施，如简易程序绿色通道等（候选清单）：
+{candidates}
 
-## 可用操作
+你的目标是：评估每项改革措施落地后，是否会缩短总体的最短结案周期；若缩短，需要给出新的最短结案周期的精确整数值。
 
-你可以进行以下操作（每次只能执行一个）：
+你可以进行以下类型的沙盘推演（探测次数有限，请尽可能少地使用）：
 
-1. **询问重组步数**：查询当前卷宗达到真实时间线所需的最少对调次数
-   格式：<query_distance></query_distance>
+1. **探测查询**：临时在程序流转中开辟一条新通道 (u, v)，预期法定处理期为正整数 w 个工作日。系统会返回：
+   - 落地该措施后，从立案到执行的最短结案周期 D_test（整数）
+   - 该周期是否小于基准周期 D_base（"是"或"否"）
+   注意：该临时措施在反馈后会被还原，不影响基准图谱。
 
-2. **试探对调**：在案情板上假设对调位置 i 和 j 的卷宗，查询重组后的步数（不改变实际卷宗顺序）
-   格式：<test_swap>i,j</test_swap>
-   示例：<test_swap>1,3</test_swap> 表示试探对调位置1和位置3的证据卷宗
+2. **基准查询**（至多使用 1 次）：直接查询基准最短结案周期 D_base 的值。
 
-3. **执行对调**：在档案库中真实对调位置 i 和 j 的卷宗（会改变当前提交顺序）
-   格式：<do_swap>i,j</do_swap>
-   示例：<do_swap>2,4</do_swap> 表示真实对调位置2和位置4的证据卷宗
+3. **提交答案**：对候选清单中的每项司法改革措施给出最终评估。
 
-4. **查看当前证据链**：查看当前卷宗的排列顺序
-   格式：<query_sequence></query_sequence>
+每次提问只能包含一个标签，使用以下 XML 格式：
 
-5. **宣告目标顺序**：当你确定真实的时间线后，提交最终卷宗顺序
-   格式：<answer>标签1,标签2,...,标签{n}</answer>
-   示例：<answer>{example_answer}</answer>
+- 探测查询（例如在诉讼阶段 {example_node1} 和 {example_node2} 之间开通处理期为 3 个工作日的新通道）：
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## 成功条件
+- 基准查询：
+<query_base></query_base>
 
-- 正确识别真实的事件时间线 R*
-- 使用的真实对调次数等于初始的最小重组步数（最优次数）
+- 提交最终答案（对每项候选措施按顺序给出判断）：
+<answer>
+1: shortened=是, new_dist=5
+2: shortened=否
+3: shortened=是, new_dist=7
+</answer>
 
-## 失败条件
+答案格式说明：
+- 每行对应一项候选措施（按给定顺序编号 1, 2, 3, ...）
+- shortened=是 表示该措施会缩短结案周期，shortened=否 表示不会
+- 若 shortened=是，必须用 new_dist= 给出新的最短结案周期整数值
+- 若 shortened=否，可省略 new_dist 或写为 new_dist={base_placeholder}
 
-- 宣告错误的时间线顺序
-- 使用的真实对调次数超过初始最少重组步数
-- 格式错误
-
-注意：卷宗位置编号从 1 到 {n}。
+请仔细分析探测反馈，推断出每项改革措施的真实提效成果。祝你好运！
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-As a chief trial investigator, let's play a "Hidden Evidence Chain Reconstruction and Optimal Sorting" task. Rules:
+Welcome to the "Judicial Litigation Procedure Simulation" system.
 
-The case currently has {n} key evidence files, indicated by labels: {labels}
+The system has configured an unknown statutory procedure workflow graph G, where all statutory waiting periods or processing times between procedures are positive integers (in working days). The set of litigation stage nodes is {nodes}, the starting point (case filing stage) is {start}, and the end point (final execution stage) is {end}. The existing routine routing and its processing periods are unknown to you.
 
-Initial file presentation sequence: {initial_sequence}
+Let D_base denote the baseline shortest workflow cycle, i.e., the fastest case closure days from case filing {start} to final execution {end} in the original graph G. This value is also unknown to you.
 
-The prosecution has derived the most logical true chronological timeline R* (chosen from {k} possible timeline hypotheses, but it is not yet disclosed to you). Your tasks are:
-1. Identify the true chronological timeline R*
-2. Reorder the current files into the true timeline using as few file position swaps as possible
+Now you are given a list of proposed judicial reform measures to be implemented, such as summary procedure green channels (candidates):
+{candidates}
 
-## Available Operations
+Your goal is: for each reform measure, assess whether its implementation will shorten the overall shortest case closure cycle; if yes, provide the exact integer value of the new shortest case closure cycle.
 
-You can perform the following operations (one at a time):
+You can perform the following types of simulation probes (probe counts are limited, please use as few as possible):
 
-1. **Query Restructuring Steps**: Get the minimum number of swaps needed from the current sequence to the true timeline
-   Format: <query_distance></query_distance>
+1. **Probe Query**: Temporarily open a new channel (u, v) in the procedural workflow, with an expected statutory processing period of positive integer w working days. The system returns:
+   - D_test: the shortest case closure cycle from case filing to execution after implementing this measure (integer)
+   - Whether this cycle is less than the baseline cycle D_base ("Yes" or "No")
+   Note: The temporary measure is restored after feedback and does not affect the baseline graph.
 
-2. **Test Swap**: Hypothetically swap files at positions i and j on the case board, query the resulting steps (does not change actual file sequence)
-   Format: <test_swap>i,j</test_swap>
-   Example: <test_swap>1,3</test_swap> means test swapping evidence files at position 1 and position 3
+2. **Base Query** (use at most once): Directly query the value of baseline shortest case closure cycle D_base.
 
-3. **Execute Swap**: Actually swap files at positions i and j in the archives (changes current presentation sequence)
-   Format: <do_swap>i,j</do_swap>
-   Example: <do_swap>2,4</do_swap> means actually swap evidence files at position 2 and position 4
+3. **Submit Answer**: Provide final assessment for each judicial reform measure in the candidate list.
 
-4. **Query Current Evidence Chain**: View the current file arrangement sequence
-   Format: <query_sequence></query_sequence>
+Each query must contain only one tag, using the following XML format:
 
-5. **Declare Target Timeline**: Submit your final file sequence when you've identified the true timeline
-   Format: <answer>label1,label2,...,label{n}</answer>
-   Example: <answer>{example_answer}</answer>
+- Probe Query (e.g., open a new channel with a 3-working-day processing period between litigation stages {example_node1} and {example_node2}):
+<query_probe>{example_node1},{example_node2},3</query_probe>
 
-## Success Conditions
+- Base Query:
+<query_base></query_base>
 
-- Correctly identify the true chronological timeline R*
-- Number of actual swaps equals the initial minimum restructuring steps (optimal count)
+- Submit Final Answer (provide judgment for each candidate measure in order):
+<answer>
+1: shortened=Yes, new_dist=5
+2: shortened=No
+3: shortened=Yes, new_dist=7
+</answer>
 
-## Failure Conditions
+Answer format explanation:
+- Each line corresponds to a candidate measure (numbered 1, 2, 3, ... in given order)
+- shortened=Yes means the measure will shorten the case closure cycle, shortened=No means it will not
+- If shortened=Yes, must provide new_dist= with the new shortest case closure cycle integer value
+- If shortened=No, new_dist can be omitted or written as new_dist={base_placeholder}
 
-- Declare the wrong timeline sequence
-- Number of actual swaps exceeds the initial minimum steps
-- Format error
-
-Note: File position indices range from 1 to {n}.
+Please carefully analyze the probe feedback to infer the true efficiency outcome of each reform measure. Good luck!
 """
 
-    tags = ["answer", "query_distance", "test_swap", "do_swap", "query_sequence"]
+    tags = ["answer", "query_probe", "query_base"]
+
+    reasoning_type = "归纳推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 4,
-                "labels": ["A", "B", "C", "D"],
-                "initial": ["D", "B", "C", "A"],
+                "nodes": ["A", "B", "C", "D"],
+                "start": "A",
+                "end": "D",
+                "edges": [("A", "B", 2), ("B", "C", 3), ("C", "D", 2), ("A", "C", 6)],
                 "candidates": [
-                    ["A", "B", "C", "D"],
-                    ["B", "A", "D", "C"],
-                    ["C", "D", "A", "B"],
-                ],
-                "target_index": 0,
+                    ("A", "D", 8),
+                    ("B", "D", 4),
+                    ("A", "C", 4),
+                ]
             },
             2: {
-                "n": 5,
-                "labels": ["A", "B", "C", "D", "E"],
-                "initial": ["E", "D", "C", "B", "A"],
+                "nodes": ["A", "B", "C", "D", "E"],
+                "start": "A",
+                "end": "E",
+                "edges": [("A", "B", 3), ("B", "C", 2), ("C", "E", 4), ("A", "D", 5), ("D", "E", 3)],
                 "candidates": [
-                    ["A", "B", "C", "D", "E"],
-                    ["C", "B", "A", "E", "D"],
-                    ["B", "D", "C", "A", "E"],
-                    ["A", "E", "C", "D", "B"],
-                ],
-                "target_index": 3,
+                    ("A", "E", 10),
+                    ("B", "E", 5),
+                    ("C", "D", 2),
+                    ("A", "C", 7),
+                ]
             },
             3: {
-                "n": 5,
-                "labels": ["P", "Q", "R", "S", "T"],
-                "initial": ["S", "R", "Q", "P", "T"],
+                "nodes": ["A", "B", "C", "D", "E", "F"],
+                "start": "A",
+                "end": "F",
+                "edges": [("A", "B", 2), ("B", "C", 3), ("C", "F", 4), 
+                         ("A", "D", 4), ("D", "E", 2), ("E", "F", 3)],
                 "candidates": [
-                    ["P", "Q", "R", "S", "T"],
-                    ["Q", "P", "S", "R", "T"],
-                    ["T", "R", "Q", "S", "P"],
-                    ["P", "R", "Q", "T", "S"],
-                ],
-                "target_index": 0,
+                    ("B", "F", 6),
+                    ("D", "F", 5),
+                    ("A", "F", 8),
+                    ("C", "E", 3),
+                    ("B", "D", 4),
+                ]
             },
             4: {
-                "n": 6,
-                "labels": ["X", "Y", "Z", "U", "V", "W"],
-                "initial": ["W", "V", "U", "Z", "Y", "X"],
+                "nodes": ["A", "B", "C", "D", "E", "F", "G"],
+                "start": "A",
+                "end": "G",
+                "edges": [("A", "B", 3), ("B", "C", 2), ("C", "D", 4), ("D", "G", 3),
+                         ("A", "E", 5), ("E", "F", 2), ("F", "G", 4), ("B", "E", 4)],
                 "candidates": [
-                    ["X", "Y", "Z", "U", "V", "W"],
-                    ["Y", "X", "U", "Z", "W", "V"],
-                    ["Z", "Y", "X", "W", "V", "U"],
-                    ["X", "Z", "Y", "V", "U", "W"],
-                    ["U", "V", "W", "X", "Y", "Z"],
-                ],
-                "target_index": 1,
+                    ("A", "G", 12),
+                    ("C", "G", 6),
+                    ("B", "G", 8),
+                    ("E", "G", 5),
+                    ("C", "F", 3),
+                    ("A", "D", 9),
+                ]
             },
             5: {
-                "n": 6,
-                "labels": ["M", "N", "O", "P", "Q", "R"],
-                "initial": ["R", "Q", "P", "O", "N", "M"],
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                "start": "A",
+                "end": "H",
+                "edges": [("A", "B", 2), ("B", "C", 3), ("C", "D", 2), ("D", "H", 5),
+                         ("A", "E", 4), ("E", "F", 3), ("F", "G", 2), ("G", "H", 3),
+                         ("B", "E", 3), ("C", "F", 4), ("D", "G", 3)],
                 "candidates": [
-                    ["M", "N", "O", "P", "Q", "R"],
-                    ["N", "M", "P", "O", "R", "Q"],
-                    ["O", "P", "M", "N", "R", "Q"],
-                    ["M", "P", "O", "R", "N", "Q"],
-                    ["P", "O", "N", "M", "Q", "R"],
-                ],
-                "target_index": 2,
+                    ("A", "H", 13),
+                    ("B", "H", 8),
+                    ("E", "H", 6),
+                    ("C", "H", 6),
+                    ("A", "F", 6),
+                    ("B", "G", 5),
+                    ("C", "G", 4),
+                    ("A", "C", 4),
+                ]
             },
         },
         "en": {
             1: {
-                "n": 4,
-                "labels": ["A", "B", "C", "D"],
-                "initial": ["D", "B", "C", "A"],
+                "nodes": ["A", "B", "C", "D"],
+                "start": "A",
+                "end": "D",
+                "edges": [("A", "B", 2), ("B", "C", 3), ("C", "D", 2), ("A", "C", 6)],
                 "candidates": [
-                    ["A", "B", "C", "D"],
-                    ["B", "A", "D", "C"],
-                    ["C", "D", "A", "B"],
-                ],
-                "target_index": 0,
+                    ("A", "D", 8),
+                    ("B", "D", 4),
+                    ("A", "C", 4),
+                ]
             },
             2: {
-                "n": 5,
-                "labels": ["A", "B", "C", "D", "E"],
-                "initial": ["E", "D", "C", "B", "A"],
+                "nodes": ["A", "B", "C", "D", "E"],
+                "start": "A",
+                "end": "E",
+                "edges": [("A", "B", 3), ("B", "C", 2), ("C", "E", 4), ("A", "D", 5), ("D", "E", 3)],
                 "candidates": [
-                    ["A", "B", "C", "D", "E"],
-                    ["C", "B", "A", "E", "D"],
-                    ["B", "D", "C", "A", "E"],
-                    ["A", "E", "C", "D", "B"],
-                ],
-                "target_index": 3,
+                    ("A", "E", 10),
+                    ("B", "E", 5),
+                    ("C", "D", 2),
+                    ("A", "C", 7),
+                ]
             },
             3: {
-                "n": 5,
-                "labels": ["P", "Q", "R", "S", "T"],
-                "initial": ["S", "R", "Q", "P", "T"],
+                "nodes": ["A", "B", "C", "D", "E", "F"],
+                "start": "A",
+                "end": "F",
+                "edges": [("A", "B", 2), ("B", "C", 3), ("C", "F", 4), 
+                         ("A", "D", 4), ("D", "E", 2), ("E", "F", 3)],
                 "candidates": [
-                    ["P", "Q", "R", "S", "T"],
-                    ["Q", "P", "S", "R", "T"],
-                    ["T", "R", "Q", "S", "P"],
-                    ["P", "R", "Q", "T", "S"],
-                ],
-                "target_index": 0,
+                    ("B", "F", 6),
+                    ("D", "F", 5),
+                    ("A", "F", 8),
+                    ("C", "E", 3),
+                    ("B", "D", 4),
+                ]
             },
             4: {
-                "n": 6,
-                "labels": ["X", "Y", "Z", "U", "V", "W"],
-                "initial": ["W", "V", "U", "Z", "Y", "X"],
+                "nodes": ["A", "B", "C", "D", "E", "F", "G"],
+                "start": "A",
+                "end": "G",
+                "edges": [("A", "B", 3), ("B", "C", 2), ("C", "D", 4), ("D", "G", 3),
+                         ("A", "E", 5), ("E", "F", 2), ("F", "G", 4), ("B", "E", 4)],
                 "candidates": [
-                    ["X", "Y", "Z", "U", "V", "W"],
-                    ["Y", "X", "U", "Z", "W", "V"],
-                    ["Z", "Y", "X", "W", "V", "U"],
-                    ["X", "Z", "Y", "V", "U", "W"],
-                    ["U", "V", "W", "X", "Y", "Z"],
-                ],
-                "target_index": 1,
+                    ("A", "G", 12),
+                    ("C", "G", 6),
+                    ("B", "G", 8),
+                    ("E", "G", 5),
+                    ("C", "F", 3),
+                    ("A", "D", 9),
+                ]
             },
             5: {
-                "n": 6,
-                "labels": ["M", "N", "O", "P", "Q", "R"],
-                "initial": ["R", "Q", "P", "O", "N", "M"],
+                "nodes": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                "start": "A",
+                "end": "H",
+                "edges": [("A", "B", 2), ("B", "C", 3), ("C", "D", 2), ("D", "H", 5),
+                         ("A", "E", 4), ("E", "F", 3), ("F", "G", 2), ("G", "H", 3),
+                         ("B", "E", 3), ("C", "F", 4), ("D", "G", 3)],
                 "candidates": [
-                    ["M", "N", "O", "P", "Q", "R"],
-                    ["N", "M", "P", "O", "R", "Q"],
-                    ["O", "P", "M", "N", "R", "Q"],
-                    ["M", "P", "O", "R", "N", "Q"],
-                    ["P", "O", "N", "M", "Q", "R"],
-                ],
-                "target_index": 2,
+                    ("A", "H", 13),
+                    ("B", "H", 8),
+                    ("E", "H", 6),
+                    ("C", "H", 6),
+                    ("A", "F", 6),
+                    ("B", "G", 5),
+                    ("C", "G", 4),
+                    ("A", "C", 4),
+                ]
             },
-        },
+        }
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏状态"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -726,279 +739,249 @@ Note: File position indices range from 1 to {n}.
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 基本参数
-        self._game_info["n"] = cfg["n"]
-        self._game_info["labels"] = ", ".join(cfg["labels"])
-        self._game_info["k"] = len(cfg["candidates"])
-        self._game_info["initial_sequence"] = ", ".join(cfg["initial"])
-        self._game_info["example_answer"] = ",".join(cfg["initial"][:cfg["n"]])
+        self.nodes = cfg["nodes"]
+        self.start = cfg["start"]
+        self.end = cfg["end"]
+        self.edges = cfg["edges"]
+        self.candidates = cfg["candidates"]
         
-        # 游戏状态
-        self.labels = cfg["labels"]
-        self.current_sequence = cfg["initial"][:]  # 当前序列
-        self.target_sequence = cfg["candidates"][cfg["target_index"]]  # 目标序列
-        self.candidates = cfg["candidates"]  # 候选集合
+        self.graph = {}
+        for node in self.nodes:
+            self.graph[node] = []
+        for u, v, w in self.edges:
+            self.graph[u].append((v, w))
+            self.graph[v].append((u, w))
         
-        # 统计信息 — 在初始化时就计算初始距离
-        self.initial_distance = self._compute_swap_distance(cfg["initial"], self.target_sequence)
-        self.swap_count = 0  # 真实对调次数
-        self.has_queried_initial_distance = False
+        self.d_base = self._dijkstra(self.start, self.end, self.graph)
+        
+        self.dist_from_start = self._dijkstra_all(self.start, self.graph)
+        self.dist_to_end = self._dijkstra_all(self.end, self.graph)
+        
+        self.candidate_effects = []
+        for u, v, w in self.candidates:
+            new_dist = self._compute_new_distance(u, v, w)
+            shortened = new_dist < self.d_base
+            self.candidate_effects.append({
+                "shortened": shortened,
+                "new_dist": new_dist
+            })
+        
+        self._game_info["nodes"] = ", ".join(self.nodes)
+        self._game_info["start"] = self.start
+        self._game_info["end"] = self.end
+        self._game_info["example_node1"] = self.nodes[0] if len(self.nodes) > 0 else "X"
+        self._game_info["example_node2"] = self.nodes[1] if len(self.nodes) > 1 else "Y"
+        self._game_info["base_placeholder"] = "D_base"
+        
+        candidates_str = []
+        for i, (u, v, w) in enumerate(self.candidates, 1):
+            candidates_str.append(f"{i}. ({u}, {v}, {w})")
+        self._game_info["candidates"] = "\n".join(candidates_str)
 
-    def _compute_swap_distance(self, seq1, seq2):
-        """
-        计算从 seq1 到 seq2 的最少转置次数
-        使用循环分解算法：距离 = n - (循环个数)
-        """
-        if len(seq1) != len(seq2):
-            return -1
+    def _dijkstra(self, start: str, end: str, graph: Dict) -> int:
+        import heapq
         
-        n = len(seq1)
-        # 构建位置映射
-        pos_in_target = {label: i for i, label in enumerate(seq2)}
+        dist = {node: float('inf') for node in self.nodes}
+        dist[start] = 0
+        pq = [(0, start)]
         
-        # 转换为置换表示
-        perm = []
-        for label in seq1:
-            if label not in pos_in_target:
-                return -1  # 元素不匹配
-            perm.append(pos_in_target[label])
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist[u]:
+                continue
+            if u == end:
+                return int(dist[end])
+            for v, w in graph.get(u, []):
+                if dist[u] + w < dist[v]:
+                    dist[v] = dist[u] + w
+                    heapq.heappush(pq, (dist[v], v))
         
-        # 计算循环个数
-        visited = [False] * n
-        cycle_count = 0
+        if dist[end] == float('inf'):
+            raise ValueError(f"No path from {start} to {end}")
+        return int(dist[end])
+
+    def _dijkstra_all(self, start: str, graph: Dict) -> Dict[str, int]:
+        import heapq
         
-        for i in range(n):
-            if not visited[i]:
-                # 开始一个新循环
-                cycle_count += 1
-                j = i
-                while not visited[j]:
-                    visited[j] = True
-                    j = perm[j]
+        dist = {node: float('inf') for node in self.nodes}
+        dist[start] = 0
+        pq = [(0, start)]
         
-        return n - cycle_count
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist[u]:
+                continue
+            for v, w in graph.get(u, []):
+                if dist[u] + w < dist[v]:
+                    dist[v] = dist[u] + w
+                    heapq.heappush(pq, (dist[v], v))
+        
+        return dist
+
+    def _compute_new_distance(self, u: str, v: str, w: int) -> int:
+        path1 = self.d_base
+        path2 = self.dist_from_start[u] + w + self.dist_to_end[v]
+        path3 = self.dist_from_start[v] + w + self.dist_to_end[u]
+        
+        return min(path1, path2, path3)
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
         raw_ans = parsed_info["answer"].strip()
         
-        # 解析答案：应该是逗号分隔的标签列表
-        try:
-            model_sequence = [x.strip() for x in raw_ans.split(",")]
-        except:
+        lines = [line.strip() for line in raw_ans.split('\n') if line.strip()]
+        
+        if len(lines) != len(self.candidates):
             return False
         
-        # 检查答案是否正确（识别目标排列）
-        if model_sequence != self.target_sequence:
-            return False
+        yes_word = "是" if self.config.language == "zh" else "Yes"
+        no_word = "否" if self.config.language == "zh" else "No"
         
-        # 检查对调次数是否等于初始距离（最优操作）
-        if self.swap_count != self.initial_distance:
-            return False
-        
-        # 检查当前序列是否已达到目标（确认 swap 操作正确执行了）
-        if self.current_sequence != self.target_sequence:
-            return False
+        for i, line in enumerate(lines):
+            if not line.startswith(f"{i+1}:"):
+                return False
+            
+            content = line[len(f"{i+1}:"):].strip()
+            
+            shortened_match = re.search(r'shortened\s*=\s*([^,\s]+)', content, re.IGNORECASE)
+            new_dist_match = re.search(r'new_dist\s*=\s*(\d+)', content, re.IGNORECASE)
+            
+            if not shortened_match:
+                return False
+            
+            shortened_str = shortened_match.group(1).strip()
+            
+            if shortened_str == yes_word:
+                player_shortened = True
+            elif shortened_str == no_word:
+                player_shortened = False
+            else:
+                return False
+            
+            ground_truth = self.candidate_effects[i]
+            
+            if player_shortened != ground_truth["shortened"]:
+                return False
+            
+            if player_shortened:
+                if not new_dist_match:
+                    return False
+                player_new_dist = int(new_dist_match.group(1))
+                if player_new_dist != ground_truth["new_dist"]:
+                    return False
         
         return True
 
+    def get_all_possible_queries(self) -> List[Dict]:
+        queries = []
+        yes_word = "是" if self.config.language == "zh" else "Yes"
+        no_word = "否" if self.config.language == "zh" else "No"
+        
+        base_xml = "<query_base></query_base>"
+        base_ans = str(self.d_base)
+        queries.append({
+            "query": base_xml,
+            "answer": base_ans
+        })
+        
+        for u, v, w in self.candidates:
+            probe_xml = f"<query_probe>{u},{v},{w}</query_probe>"
+            
+            d_test = self._compute_new_distance(u, v, w)
+            is_shortened = d_test < self.d_base
+            shortened_str = yes_word if is_shortened else no_word
+            
+            if self.config.language == "zh":
+                ans_str = f"D_test = {d_test}，是否缩短：{shortened_str}"
+            else:
+                ans_str = f"D_test = {d_test}, Shortened: {shortened_str}"
+            
+            queries.append({
+                "query": probe_xml,
+                "answer": ans_str
+            })
+            
+        return queries
+
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑"""
-        if self.config.language == "zh":
-            lang = "zh"
-        else:
-            lang = "en"
+        yes_word = "是" if self.config.language == "zh" else "Yes"
+        no_word = "否" if self.config.language == "zh" else "No"
         
-        # 1. 询问距离
-        if "query_distance" in parsed_info:
-            distance = self._compute_swap_distance(self.current_sequence, self.target_sequence)
+        if "query_base" in parsed_info:
+            count = 0
+            if hasattr(self, 'state') and hasattr(self.state, 'messages'):
+                for msg in self.state.messages:
+                    if msg.get('role') == 'assistant' and 'query_base' in msg.get('content', ''):
+                        count += 1
             
-            # 如果是第一次询问且没有进行过对调，记录初始距离
-            if not self.has_queried_initial_distance and self.swap_count == 0:
-                self.initial_distance = distance
-                self.has_queried_initial_distance = True
-            
-            if lang == "zh":
-                return f"距离 = {distance}"
-            else:
-                return f"Distance = {distance}"
-        
-        # 2. 试探对调
-        elif "test_swap" in parsed_info:
-            try:
-                raw = parsed_info["test_swap"].strip()
-                parts = raw.split(",")
-                if len(parts) != 2:
-                    raise ValueError
-                i, j = int(parts[0].strip()), int(parts[1].strip())
-                
-                # 自动规范化顺序
-                if i > j:
-                    i, j = j, i
-                
-                if i < 1 or j > self._game_info["n"] or i == j:
-                    raise ValueError
-                
-                # 模拟对调
-                temp_seq = self.current_sequence[:]
-                temp_seq[i-1], temp_seq[j-1] = temp_seq[j-1], temp_seq[i-1]
-                
-                test_distance = self._compute_swap_distance(temp_seq, self.target_sequence)
-                
-                if lang == "zh":
-                    return f"若对调({i},{j})，距离 = {test_distance}"
+            if count > 1:
+                if self.config.language == "zh":
+                    return "无效：基准查询次数已用尽"
                 else:
-                    return f"If swap({i},{j}), distance = {test_distance}"
-                
-            except:
-                if lang == "zh":
-                    return "错误：格式无效或位置编号错误。"
-                else:
-                    return "Error: Invalid format or position index."
+                    return "Invalid: Base query already used"
+            return str(self.d_base)
         
-        # 3. 执行对调
-        elif "do_swap" in parsed_info:
+        elif "query_probe" in parsed_info:
             try:
-                raw = parsed_info["do_swap"].strip()
-                parts = raw.split(",")
-                if len(parts) != 2:
+                raw = parsed_info["query_probe"].strip()
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 3:
                     raise ValueError
-                i, j = int(parts[0].strip()), int(parts[1].strip())
+                u, v, w = parts[0], parts[1], int(parts[2])
                 
-                # 自动规范化顺序
-                if i > j:
-                    i, j = j, i
-                
-                if i < 1 or j > self._game_info["n"] or i == j:
-                    raise ValueError
-                
-                # 执行对调
-                self.current_sequence[i-1], self.current_sequence[j-1] = \
-                    self.current_sequence[j-1], self.current_sequence[i-1]
-                self.swap_count += 1
-                
-                # 计算新距离
-                new_distance = self._compute_swap_distance(self.current_sequence, self.target_sequence)
-                
-                # 检查是否超出初始距离
-                if self.initial_distance is not None and self.swap_count > self.initial_distance:
-                    if lang == "zh":
-                        return f"已对调({i},{j})。新距离 = {new_distance}。当前序列 = {self.current_sequence}。警告：对调次数已超过初始距离！"
+                if u not in self.nodes or v not in self.nodes:
+                    if self.config.language == "zh":
+                        return "错误：节点不存在"
                     else:
-                        return f"Swapped({i},{j}). New distance = {new_distance}. Current sequence = {self.current_sequence}. Warning: Swap count exceeded initial distance!"
+                        return "Error: Node does not exist"
                 
-                if lang == "zh":
-                    return f"已对调({i},{j})。新距离 = {new_distance}。当前序列 = {self.current_sequence}"
-                else:
-                    return f"Swapped({i},{j}). New distance = {new_distance}. Current sequence = {self.current_sequence}"
+                if w <= 0:
+                    if self.config.language == "zh":
+                        return "错误：权重必须为正整数"
+                    else:
+                        return "Error: Weight must be positive integer"
                 
-            except:
-                if lang == "zh":
-                    return "错误：格式无效或位置编号错误。"
+                d_test = self._compute_new_distance(u, v, w)
+                shortened = yes_word if d_test < self.d_base else no_word
+                
+                if self.config.language == "zh":
+                    return f"D_test = {d_test}，是否缩短：{shortened}"
                 else:
-                    return "Error: Invalid format or position index."
-        
-        # 4. 查看当前序列
-        elif "query_sequence" in parsed_info:
-            if lang == "zh":
-                return f"当前序列 = {self.current_sequence}"
-            else:
-                return f"Current sequence = {self.current_sequence}"
+                    return f"D_test = {d_test}, Shortened: {shortened}"
+                
+            except Exception as e:
+                if self.config.language == "zh":
+                    return f"错误：格式无效或参数错误"
+                else:
+                    return f"Error: Invalid format or parameters"
         
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个明显不同的错误答案"""
-        import re as _re
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        # 尝试找到答案中的数字并修改
-        def _replace_number(match):
-            num = int(match.group(0))
-            # 将数字加1（或若为0则改为1）
-            return str(num + 1)
-        
-        # 检查是否包含数字
-        if _re.search(r'\d+', correct):
-            wrong = _re.sub(r'\d+', _replace_number, correct, count=1)
-            if wrong != correct:
+        if self.config.language == "zh":
+            d_match = re.search(r'D_test\s*=\s*(\d+)', correct)
+            if d_match:
+                old_val = int(d_match.group(1))
+                new_val = old_val + 3
+                wrong = correct[:d_match.start(1)] + str(new_val) + correct[d_match.end(1):]
+                if wrong.endswith("是"):
+                    wrong = wrong[:-1] + "否"
+                elif wrong.endswith("否"):
+                    wrong = wrong[:-1] + "是"
+                return wrong
+        else:
+            d_match = re.search(r'D_test\s*=\s*(\d+)', correct)
+            if d_match:
+                old_val = int(d_match.group(1))
+                new_val = old_val + 3
+                wrong = correct[:d_match.start(1)] + str(new_val) + correct[d_match.end(1):]
+                if 'Yes' in wrong:
+                    wrong = wrong.replace('Yes', 'No', 1)
+                elif 'No' in wrong:
+                    wrong = wrong.replace('No', 'Yes', 1)
                 return wrong
         
-        # 如果没有数字，尝试替换序列中的元素
-        if "sequence" in correct.lower() or "序列" in correct:
-            list_match = _re.search(r"\[([^\]]+)\]", correct)
-            if list_match:
-                items = [x.strip().strip("'\"") for x in list_match.group(1).split(",")]
-                if len(items) >= 2:
-                    items[0], items[1] = items[1], items[0]
-                    new_list = "[" + ", ".join(f"'{x}'" for x in items) + "]"
-                    return correct[:list_match.start()] + new_list + correct[list_match.end():]
-        
-        # 兜底
         return correct + "_WRONG"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """枚举所有合法查询并返回对应的正确答案"""
-        results = []
-        n = self._game_info["n"]
-        lang = self.config.language
-        
-        # 1. query_distance
-        dist = self._compute_swap_distance(self.current_sequence, self.target_sequence)
-        if lang == "zh":
-            ans_dist = f"距离 = {dist}"
-        else:
-            ans_dist = f"Distance = {dist}"
-        results.append({
-            "query": "<query_distance></query_distance>",
-            "answer": ans_dist
-        })
-        
-        # 2. query_sequence
-        seq_str = str(self.current_sequence)
-        if lang == "zh":
-            ans_seq = f"当前序列 = {seq_str}"
-        else:
-            ans_seq = f"Current sequence = {seq_str}"
-        results.append({
-            "query": "<query_sequence></query_sequence>",
-            "answer": ans_seq
-        })
-        
-        # 枚举对调操作 i, j (1 <= i < j <= n)
-        for i in range(1, n + 1):
-            for j in range(i + 1, n + 1):
-                # 3. test_swap
-                # 模拟对调，计算距离
-                temp_seq = self.current_sequence[:]
-                temp_seq[i-1], temp_seq[j-1] = temp_seq[j-1], temp_seq[i-1]
-                test_dist = self._compute_swap_distance(temp_seq, self.target_sequence)
-                
-                if lang == "zh":
-                    ans_test = f"若对调({i},{j})，距离 = {test_dist}"
-                else:
-                    ans_test = f"If swap({i},{j}), distance = {test_dist}"
-                
-                results.append({
-                    "query": f"<test_swap>{i},{j}</test_swap>",
-                    "answer": ans_test
-                })
-        
-        # 4. 生成最优的 do_swap 序列并实际执行，使当前实例达到目标状态
-        target = self.target_sequence
-        pos_in_target = {label: idx for idx, label in enumerate(target)}
-        
-        for i in range(n):
-            while self.current_sequence[i] != target[i]:
-                correct_pos = pos_in_target[self.current_sequence[i]]
-                idx1, idx2 = i + 1, correct_pos + 1
-                if idx1 > idx2:
-                    idx1, idx2 = idx2, idx1
-                
-                ans_do = self._cf_core_produce({"do_swap": f"{idx1},{idx2}"})
-                results.append({
-                    "query": f"<do_swap>{idx1},{idx2}</do_swap>",
-                    "answer": ans_do
-                })
-        
-        return results

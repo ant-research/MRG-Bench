@@ -1,497 +1,599 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   元素存在性：某个特定元素是否存在于集合中
-# ============================================================
-
 from .base import Game
 import random
-import itertools
 
+class HiddenTreeLCAGame(Game):
 
-class LabelSubsetQueryGame(Game):
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们现在来玩一个"标签子集推理"游戏，规则如下：
+我们来玩一个"隐藏树结构推理"游戏，规则如下：
 
-游戏设定了一个标签宇宙 U = {{Z, A, B, C, D, E, F}}。存在一个固定但未知的子集 S（S 是 U 的子集），你的任务是判断标签 Z 是否在 S 中。
+游戏设定了一棵有根树，节点编号为 1 到 {n}，其中节点 1 是根。这棵树遵循一个固定但未知的参数 k（k 大于等于 2）的规则：
+- 树是按层序编号的 k 叉树在前 {n} 个节点上的截断。
+- 对于编号 i 大于 1 的节点，其父节点编号可由一个确定的公式计算得出（但公式中的 k 未知）。
+- 第 p 个节点的子节点（若存在）在某个连续的编号区间内。
 
-系统使用一个固定但未知的反馈函数 f 来响应你的查询。该函数属于以下四种方案之一：
-- 方案A：对查询子集 H，若 Z 在 H 与 S 的交集中，返回 1；否则返回 0。
-- 方案B：对查询子集 H，若 Z 不在 H 与 S 的交集中，返回 1；否则返回 0。
-- 方案C：无论查询什么子集 H，若 Z 在 S 中，返回 1；否则返回 0。
-- 方案D：无论查询什么子集 H，若 Z 不在 S 中，返回 1；否则返回 0。
+你的目标是通过有限次数的查询，推断出这棵树的隐藏结构规律，并最终正确回答 {m} 对节点的最近公共祖先（LCA）。
 
-注意：当你查询子集 H，只有 H 与 S 的交集部分参与判定；不在 S 中的标签会被忽略。
+你可以使用以下四种查询（每次只能进行一个查询）：
 
-你可以进行多轮查询，每次查询提交一个子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明反馈函数的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
+1. **深度查询**：询问节点 x 到根的距离（根的深度为 0）。
+2. **祖先判定**：询问节点 u 是否为节点 v 的祖先（u 等于 v 时返回"是"）。
+3. **向上爬升**：询问从节点 x 沿父链向上 t 步后到达的节点编号（若越过根则返回"无"）。
+4. **深度比较**：询问节点 u 和 v 谁的深度更小（或相同）。
 
-你的目标是用尽可能少的查询次数推断出正确答案。
+所有查询的回答均由隐藏的树结构唯一确定。你应该尽可能少地使用查询次数来推断出树的规律。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次查询只能包含一个标签：
 
-每次查询时，提交一个标签子集（可以为空），使用以下 XML 格式：
+- 深度查询（例如查询节点 5 的深度）：
+<query_depth>5</query_depth>
 
-- 查询子集（例如查询 {{A, B, Z}}）：
-<query>A,B,Z</query>
+- 祖先判定（例如查询节点 2 是否为节点 8 的祖先）：
+<query_ancestor>2,8</query_ancestor>
 
-- 查询空集：
-<query></query>
+- 向上爬升（例如从节点 7 向上移动 2 步）：
+<query_climb>7,2</query_climb>
 
-提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
+- 深度比较（例如比较节点 3 和节点 5 谁更接近根）：
+<query_compare_depth>3,5</query_compare_depth>
 
-<answer>scheme=A, Z_in_S=是</answer>
+当你准备好回答所有节点对的 LCA 时，请按以下格式提交：
 
-或
+<answer>1:3, 2:1, 3:5</answer>
 
-<answer>scheme=C, Z_in_S=否</answer>
+其中数字对应第 1 到第 {m} 对节点的 LCA 编号，用逗号分隔。答案顺序必须与题目给出的节点对顺序一致。
+
+{pairs_description}
+
+请开始你的查询。
 """
 
     game_rule_en = """\
-Let's play a "Label Subset Query" deduction game. Here are the rules:
+Let's play a "Hidden Tree Structure Deduction" game. Here are the rules:
 
-There is a label universe U = {{Z, A, B, C, D, E, F}}. There exists a fixed but unknown subset S (S is a subset of U), and your task is to determine whether label Z is in S.
+The game has a rooted tree with nodes numbered from 1 to {n}, where node 1 is the root. This tree follows a fixed but unknown parameter k (k greater than or equal to 2):
+- The tree is a k-ary tree numbered in level order, truncated at the first {n} nodes.
+- For nodes with ID i greater than 1, the parent node ID can be computed by a deterministic formula (but k in the formula is unknown).
+- The children of node p (if they exist) lie in a certain contiguous range of IDs.
 
-The system uses a fixed but unknown feedback function f to respond to your queries. This function is one of the following four schemes:
-- Scheme A: For query subset H, return 1 if Z is in the intersection of H and S; otherwise return 0.
-- Scheme B: For query subset H, return 1 if Z is not in the intersection of H and S; otherwise return 0.
-- Scheme C: Regardless of query subset H, return 1 if Z is in S; otherwise return 0.
-- Scheme D: Regardless of query subset H, return 1 if Z is not in S; otherwise return 0.
+Your goal is to infer the hidden tree structure through a limited number of queries, and ultimately correctly answer the Lowest Common Ancestor (LCA) for {m} pairs of nodes.
 
-Note: When you query subset H, only the intersection of H and S participates in the determination; labels not in S are ignored.
+You can use the following four types of queries (one query per turn):
 
-You can perform multiple rounds of queries. Each query submits a subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
+1. **Depth Query**: Ask for the distance from node x to the root (root has depth 0).
+2. **Ancestor Query**: Ask whether node u is an ancestor of node v (returns "Yes" when u equals v).
+3. **Climb Query**: Ask for the node ID reached by climbing t steps upward from node x along the parent chain (returns "None" if it goes beyond the root).
+4. **Depth Comparison Query**: Ask which of nodes u and v is closer to the root (or if they have the same depth).
 
-Your goal is to infer the correct answer with as few queries as possible.
+All query answers are uniquely determined by the hidden tree structure. You should use as few queries as possible to deduce the tree pattern.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag:
 
-When querying, submit a label subset (can be empty) using the following XML format:
+- Depth Query (e.g., querying depth of node 5):
+<query_depth>5</query_depth>
 
-- Query subset (e.g., querying {{A, B, Z}}):
-<query>A,B,Z</query>
+- Ancestor Query (e.g., asking if node 2 is an ancestor of node 8):
+<query_ancestor>2,8</query_ancestor>
 
-- Query empty set:
-<query></query>
+- Climb Query (e.g., climbing 2 steps up from node 7):
+<query_climb>7,2</query_climb>
 
-When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
+- Depth Comparison Query (e.g., comparing which of nodes 3 and 5 is closer to root):
+<query_compare_depth>3,5</query_compare_depth>
 
-<answer>scheme=A, Z_in_S=yes</answer>
+When you are ready to answer the LCA for all node pairs, submit in the following format:
 
-or
+<answer>1:3, 2:1, 3:5</answer>
 
-<answer>scheme=C, Z_in_S=no</answer>
+Where the numbers correspond to the LCA IDs for pairs 1 to {m}, separated by commas. The answer order must match the order of the given node pairs.
+
+{pairs_description}
+
+You may start your queries now.
 """
 
     contextualized_rule_zh_1 = """\
-智慧交通调度中心正在排查路网异常。
-系统涉及一个关键路口宇宙 U = {{Z, A, B, C, D, E, F}}。目前存在一个未知发生拥堵的路口子集 S（S 是 U 的子集），你的任务是判断核心枢纽 Z 是否在拥堵子集 S 中。
+欢迎使用智能交通路网层级结构分析系统。本系统记录了一个以总枢纽（编号 1）为核心的辐射状交通路网，包含 {n} 个枢纽节点。
+该路网规划遵循一个严格但未知的参数 k（k 大于等于 2）进行层级建设：
+- 它是按规划批次（层序）编号的 k 叉干线网络在前 {n} 个节点上的截断。
+- 对于编号 i 大于 1 的枢纽，其上级干线枢纽（父节点）的编号可通过统一公式计算得出（但公式中的 k 未知）。
+- 任何枢纽的下级分支枢纽均在一个连续的编号区间内。
 
-监控系统使用一个固定但未知的探测函数 f 来响应你的车队调度查询。该函数属于以下四种方案之一：
-- 方案A：对派遣车队的路口子集 H，若 Z 既在被探测的 H 中又确实发生了拥堵（即 Z 在 H 与 S 的交集中），系统触发特定警报返回 1；否则返回 0。
-- 方案B：对派遣车队的路口子集 H，若 Z 不在 H 与 S 的交集中，系统触发安全信号返回 1；否则返回 0。
-- 方案C：由于探针故障，无论探测什么子集 H，只要枢纽 Z 实际拥堵（Z 在 S 中），系统始终返回 1；否则返回 0。
-- 方案D：由于探针故障，无论探测什么子集 H，只要枢纽 Z 实际通畅（Z 不在 S 中），系统始终返回 1；否则返回 0。
+你的任务是通过最少次数的查询，推断出该路网的隐藏层级规律，并找出 {m} 对枢纽的“最近共同中转枢纽”（即最近公共祖先，LCA）。
 
-注意：当你查询子集 H，只有 H 与 S 的交集部分（即被探测且确有拥堵的路口）参与判定；未拥堵的路口会被忽略。
+每次查询仅可使用以下四种指令之一：
 
-你可以进行多轮查询，每次提交一个路口子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明反馈函数的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
+1. **层级深度查询**：查询枢纽 x 距离总枢纽的层级步数（总枢纽深度为 0）。
+2. **干线判定**：查询枢纽 u 是否在枢纽 v 到总枢纽的干线上（u 等于 v 时返回"是"）。
+3. **干线溯源**：从枢纽 x 沿干线向总枢纽移动 t 步，查询到达的上级枢纽编号（若超出总枢纽则返回"无"）。
+4. **层级比较**：比较枢纽 u 和 v 谁距离总枢纽更近（或深度相同）。
 
-## 查询与提交答案的格式（必须严格遵守）
+所有查询的回答均由隐藏的路网结构唯一确定。
 
-每次查询时，提交一个路口子集（可以为空），使用以下 XML 格式：
+每次查询只能包含一个标签：
 
-- 查询子集（例如探测 {{A, B, Z}}）：
-<query>A,B,Z</query>
+- 层级深度查询（例如查询枢纽 5 的深度）：
+<query_depth>5</query_depth>
 
-- 查询空集：
-<query></query>
+- 干线判定（例如查枢纽 2 是否为枢纽 8 的干线上级）：
+<query_ancestor>2,8</query_ancestor>
 
-提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
+- 干线溯源（例如从枢纽 7 向上级移动 2 步）：
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=是</answer>
+- 层级比较（例如比较枢纽 3 和枢纽 5）：
+<query_compare_depth>3,5</query_compare_depth>
 
-或
+当你准备好回答所有枢纽对的最近共同中转枢纽时，请按以下格式提交：
 
-<answer>scheme=C, Z_in_S=否</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+其中数字对应第 1 到第 {m} 对的共同中转枢纽编号，用逗号分隔。答案顺序必须与题目给出的枢纽对顺序一致。
+
+{pairs_description}
+
+请开始你的查询。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-The smart traffic dispatch center is troubleshooting network anomalies.
-The system involves a universe of key intersections U = {{Z, A, B, C, D, E, F}}. There is an unknown subset S of congested intersections (S is a subset of U), and your task is to determine whether the core hub Z is in the congested subset S.
+Welcome to the Intelligent Transportation Network Hierarchical Analysis System. This system records a radial traffic network centered at the main hub (ID 1), containing {n} hub nodes.
+The network construction follows a strict but unknown parameter k (k greater than or equal to 2):
+- It is a truncated k-ary arterial network numbered in planning order (level order) up to {n} nodes.
+- For hub i greater than 1, its upstream arterial hub (parent node) ID can be calculated by a uniform formula (but k is unknown).
+- The downstream branch hubs of any hub lie in a contiguous range of IDs.
 
-The monitoring system uses a fixed but unknown detection function f to respond to your fleet dispatch queries. This function is one of the following four schemes:
-- Scheme A: For the dispatched intersection subset H, return 1 if Z is both probed in H and actually congested (i.e., Z is in the intersection of H and S); otherwise return 0.
-- Scheme B: For the dispatched intersection subset H, return 1 if Z is not in the intersection of H and S; otherwise return 0.
-- Scheme C: Due to probe hardware faults, regardless of the queried subset H, return 1 if hub Z is actually congested (Z is in S); otherwise return 0.
-- Scheme D: Due to probe hardware faults, regardless of the queried subset H, return 1 if hub Z is not congested (Z is not in S); otherwise return 0.
+Your task is to infer the hidden hierarchical pattern with minimal queries and find the "lowest common transfer hub" (Lowest Common Ancestor, LCA) for {m} pairs of hubs.
 
-Note: When you query subset H, only the intersection of H and S (probed and actually congested intersections) participates in the determination; uncongested intersections are ignored.
+You can use the following four types of queries (one query per turn):
 
-You can perform multiple rounds of queries. Each query submits a subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
+1. **Hierarchy Depth Query**: Ask for the number of hierarchy steps from hub x to the main hub (main hub has depth 0).
+2. **Arterial Query**: Ask whether hub u is on the arterial route from hub v to the main hub (returns "Yes" when u equals v).
+3. **Arterial Trace Query**: Ask for the hub ID reached by moving t steps toward the main hub along the arterial route from hub x (returns "None" if it goes beyond the main hub).
+4. **Hierarchy Comparison Query**: Ask which of hubs u and v is closer to the main hub (or if they are at the same depth).
 
-## Query and Answer Format (strictly required)
+All query answers are uniquely determined by the hidden network structure.
 
-When querying, submit an intersection subset (can be empty) using the following XML format:
+Each query must contain only one tag:
 
-- Query subset (e.g., probing {{A, B, Z}}):
-<query>A,B,Z</query>
+- Hierarchy Depth Query (e.g., querying depth of hub 5):
+<query_depth>5</query_depth>
 
-- Query empty set:
-<query></query>
+- Arterial Query (e.g., asking if hub 2 is an upstream arterial of hub 8):
+<query_ancestor>2,8</query_ancestor>
 
-When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
+- Arterial Trace Query (e.g., moving 2 steps upstream from hub 7):
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=yes</answer>
+- Hierarchy Comparison Query (e.g., comparing which of hubs 3 and 5 is closer to main hub):
+<query_compare_depth>3,5</query_compare_depth>
 
-or
+When you are ready to answer the lowest common transfer hub for all pairs, submit in the following format:
 
-<answer>scheme=C, Z_in_S=no</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+Where the numbers correspond to the common transfer hub IDs for pairs 1 to {m}, separated by commas. The answer order must match the order of the given hub pairs.
+
+{pairs_description}
+
+You may start your queries now.
 """
 
     contextualized_rule_zh_2 = """\
-临床实验室正在进行靶向抗原分析。
-生化指标宇宙 U = {{Z, A, B, C, D, E, F}}。患者血液中存在一个固定但未知的阳性抗原子集 S（S 是 U 的子集），你的任务是判断关键病原体抗原 Z 是否呈阳性（即 Z 是否在 S 中）。
+欢迎进入病毒变异溯源分析系统。当前数据库记录了一棵病毒演化树，包含 {n} 种变异毒株，编号 1 为零号原始株。
+该演化树遵循一种固定但未知的变异参数 k（k 大于等于 2）：
+- 毒株是按发现顺序（层序）编号的 k 叉变异树在前 {n} 个节点上的截断。
+- 对于编号 i 大于 1 的毒株，其直接变异来源（父节点）的编号由确定公式计算得出（但公式中的 k 未知）。
+- 某毒株的直接衍生子代毒株均位于一个连续的编号区间内。
 
-分析仪使用一种未知反应模式 f 来响应你的试剂盒查询。该模式属于以下四种方案之一：
-- 方案A：对检测试剂中的抗体子集 H，若 Z 发生特异性结合反应（即 Z 在 H 与 S 的交集中），引发显色并返回 1；否则返回 0。
-- 方案B：对检测试剂中的抗体子集 H，若 Z 未发生特异性结合反应（即 Z 不在 H 与 S 的交集中），引发抑制显色并返回 1；否则返回 0。
-- 方案C：存在全局本底干扰，无论加入什么抗体子集 H，只要患者体内 Z 呈阳性（Z 在 S 中），始终返回 1；否则返回 0。
-- 方案D：存在全局本底干扰，无论加入什么抗体子集 H，只要患者体内 Z 呈阴性（Z 不在 S 中），始终返回 1；否则返回 0。
+你的任务是通过有限次数的检验查询，推断出变异规律，并准确找出 {m} 对毒株的“最近共同变异祖先”（LCA）。
 
-注意：当你查询子集 H，只有 H 与 S 的交集部分（即被试剂盒覆盖且在体内呈阳性的抗原）参与判定；阴性抗原会被忽略。
+每次查询仅可使用以下四种指令之一：
 
-你可以进行多轮查询，每次提交一个抗体子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明反应模式的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
+1. **变异代数查询**：查询毒株 x 距离零号原始株的变异代数（原始株深度为 0）。
+2. **溯源判定**：查询毒株 u 是否为毒株 v 的变异祖先（u 等于 v 时返回"是"）。
+3. **代系追溯**：从毒株 x 向上追溯 t 代变异祖先，查询该祖先的编号（若越过原始株则返回"无"）。
+4. **代数比较**：比较毒株 u 和 v 谁距离原始株的变异代数更少（或相同）。
 
-## 查询与提交答案的格式（必须严格遵守）
+所有查询的回答均由隐藏的病毒演化树唯一确定。
 
-每次查询时，提交一个抗原标签子集（可以为空），使用以下 XML 格式：
+每次查询只能包含一个标签：
 
-- 查询子集（例如检测 {{A, B, Z}}）：
-<query>A,B,Z</query>
+- 变异代数查询（例如查询毒株 5 的变异代数）：
+<query_depth>5</query_depth>
 
-- 查询空集：
-<query></query>
+- 溯源判定（例如查毒株 2 是否为毒株 8 的变异祖先）：
+<query_ancestor>2,8</query_ancestor>
 
-提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
+- 代系追溯（例如从毒株 7 向上追溯 2 代祖先）：
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=是</answer>
+- 代数比较（例如比较毒株 3 和毒株 5）：
+<query_compare_depth>3,5</query_compare_depth>
 
-或
+当你准备好回答所有毒株对的最近共同变异祖先时，请按以下格式提交：
 
-<answer>scheme=C, Z_in_S=否</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+其中数字对应第 1 到第 {m} 对的共同变异祖先毒株编号，用逗号分隔。答案顺序必须与题目给出的毒株对顺序一致。
+
+{pairs_description}
+
+请开始你的查询。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-The clinical laboratory is conducting targeted antigen analysis.
-There is a biochemical marker universe U = {{Z, A, B, C, D, E, F}}. A fixed but unknown subset S of positive antigens exists in the patient's blood (S is a subset of U), and your task is to determine whether the key pathogen antigen Z is positive (i.e., whether Z is in S).
+Welcome to the Virus Mutation Traceability Analysis System. The current database records a virus evolution tree containing {n} variants, with variant 1 being the patient zero strain.
+The evolution tree follows a fixed but unknown mutation parameter k (k greater than or equal to 2):
+- It is a truncated k-ary mutation tree numbered in discovery order (level order) up to {n} nodes.
+- For variant i greater than 1, its direct mutation source (parent node) ID can be computed by a deterministic formula (but k is unknown).
+- The direct derivative offspring of any variant lie in a contiguous range of IDs.
 
-The analyzer uses an unknown reaction mode f to respond to your reagent kit queries. This mode is one of the following four schemes:
-- Scheme A: For the antibody subset H in the test kit, return 1 (coloration) if Z undergoes a specific binding reaction (i.e., Z is in the intersection of H and S); otherwise return 0.
-- Scheme B: For the antibody subset H in the test kit, return 1 (inhibitory coloration) if Z does not undergo a specific binding reaction (i.e., Z is not in the intersection of H and S); otherwise return 0.
-- Scheme C: Due to global background interference, regardless of the added antibody subset H, return 1 if Z is positive in the patient (Z is in S); otherwise return 0.
-- Scheme D: Due to global background interference, regardless of the added antibody subset H, return 1 if Z is negative in the patient (Z is not in S); otherwise return 0.
+Your task is to infer the hidden mutation pattern through limited queries and accurately find the "lowest common mutation ancestor" (Lowest Common Ancestor, LCA) for {m} pairs of variants.
 
-Note: When you query subset H, only the intersection of H and S (antigens covered by the kit and positive in the body) participates in the determination; negative antigens are ignored.
+You can use the following four types of queries (one query per turn):
 
-You can perform multiple rounds of queries. Each query submits a subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
+1. **Mutation Generation Query**: Ask for the number of mutation generations from variant x to patient zero (patient zero has depth 0).
+2. **Traceability Query**: Ask whether variant u is a mutation ancestor of variant v (returns "Yes" when u equals v).
+3. **Lineage Trace Query**: Ask for the ancestor ID reached by tracing t generations back from variant x (returns "None" if it goes beyond patient zero).
+4. **Generation Comparison Query**: Ask which of variants u and v has fewer mutation generations from patient zero (or if they are the same).
 
-## Query and Answer Format (strictly required)
+All query answers are uniquely determined by the hidden evolution tree.
 
-When querying, submit an antigen label subset (can be empty) using the following XML format:
+Each query must contain only one tag:
 
-- Query subset (e.g., testing {{A, B, Z}}):
-<query>A,B,Z</query>
+- Mutation Generation Query (e.g., querying generations of variant 5):
+<query_depth>5</query_depth>
 
-- Query empty set:
-<query></query>
+- Traceability Query (e.g., asking if variant 2 is an ancestor of variant 8):
+<query_ancestor>2,8</query_ancestor>
 
-When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
+- Lineage Trace Query (e.g., tracing 2 generations back from variant 7):
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=yes</answer>
+- Generation Comparison Query (e.g., comparing which of variants 3 and 5 is closer to patient zero):
+<query_compare_depth>3,5</query_compare_depth>
 
-or
+When you are ready to answer the lowest common mutation ancestor for all pairs, submit in the following format:
 
-<answer>scheme=C, Z_in_S=no</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+Where the numbers correspond to the common ancestor IDs for pairs 1 to {m}, separated by commas. The answer order must match the order of the given variant pairs.
+
+{pairs_description}
+
+You may start your queries now.
 """
 
     contextualized_rule_zh_3 = """\
-自适应学习系统正在对学生的知识漏洞进行诊断。
-课程设有一个知识模块宇宙 U = {{Z, A, B, C, D, E, F}}。该学生存在一个固定但未知的薄弱模块子集 S（S 是 U 的子集），你的任务是判断核心素养模块 Z 是否在学生的薄弱子集 S 中。
+欢迎使用学科知识图谱分析系统。本系统内含一个学科知识前置依赖树，共 {n} 个知识点，其中知识点 1 是最核心的基础概念。
+该知识树遵循一个隐藏的衍生难度参数 k（k 大于等于 2）：
+- 它是一个按层级推进（层序）编号的 k 叉衍生结构，截断于前 {n} 个知识点。
+- 对于编号 i 大于 1 的知识点，其直接前置知识点（父节点）的编号由固定公式决定（但公式中的 k 未知）。
+- 任何知识点的直接后置衍生知识点在一段连续的编号区间内。
 
-系统使用一种隐蔽的评估函数 f 来响应你的测验生成请求。该函数属于以下四种方案之一：
-- 方案A：对包含知识模块子集 H 的测验卷，若 Z 被考察且学生在 Z 上表现薄弱（即 Z 在 H 与 S 的交集中），系统触发核心预警并返回 1；否则返回 0。
-- 方案B：对包含知识模块子集 H 的测验卷，若测验未暴露 Z 的薄弱点（即 Z 不在 H 与 S 的交集中），系统触发反向提醒并返回 1；否则返回 0。
-- 方案C：无论测验卷考察什么模块子集 H，只要学生确实在 Z 上存在薄弱点（Z 在 S 中），全局评估模块始终返回 1；否则返回 0。
-- 方案D：无论测验卷考察什么模块子集 H，只要学生在 Z 上没有薄弱点（Z 不在 S 中），全局评估模块始终返回 1；否则返回 0。
+你需要通过最少次数的查询，推导出这门学科的隐藏衍生规律，并计算出 {m} 对知识点的“最近共同前置基础”（LCA）。
 
-注意：当你查询测验子集 H，只有 H 与 S 的交集部分（即被考察且学生确实薄弱的模块）参与判定；学生已经掌握的模块会被忽略。
+每次查询仅可使用以下四种指令之一：
 
-你可以进行多轮查询，每次提交一个测验模块子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明评估函数的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
+1. **依赖层级查询**：查询知识点 x 距离核心基础概念的衍生层级（核心概念深度为 0）。
+2. **前置判定**：查询知识点 u 是否为知识点 v 的前置基础（u 等于 v 时返回"是"）。
+3. **前置溯源**：从知识点 x 向上追溯 t 层前置基础，查询其编号（若越过核心概念则返回"无"）。
+4. **层级比较**：比较知识点 u 和 v 谁在知识树中更偏向核心基础层（或层级相同）。
 
-## 查询与提交答案的格式（必须严格遵守）
+所有查询的回答均由隐藏的学科知识树唯一确定。
 
-每次查询时，提交一个模块子集（可以为空），使用以下 XML 格式：
+每次查询只能包含一个标签：
 
-- 查询子集（例如考察 {{A, B, Z}}）：
-<query>A,B,Z</query>
+- 依赖层级查询（例如查询知识点 5 的衍生层级）：
+<query_depth>5</query_depth>
 
-- 查询空集：
-<query></query>
+- 前置判定（例如查知识点 2 是否为知识点 8 的前置基础）：
+<query_ancestor>2,8</query_ancestor>
 
-提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
+- 前置溯源（例如从知识点 7 向上追溯 2 层基础）：
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=是</answer>
+- 层级比较（例如比较知识点 3 和知识点 5）：
+<query_compare_depth>3,5</query_compare_depth>
 
-或
+当你准备好回答所有知识点对的最近共同前置基础时，请按以下格式提交：
 
-<answer>scheme=C, Z_in_S=否</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+其中数字对应第 1 到第 {m} 对的共同前置基础知识点编号，用逗号分隔。答案顺序必须与题目给出的知识点对顺序一致。
+
+{pairs_description}
+
+请开始你的查询。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-The adaptive learning system is diagnosing a student's knowledge gaps.
-The curriculum has a knowledge module universe U = {{Z, A, B, C, D, E, F}}. The student has a fixed but unknown subset S of weak modules (S is a subset of U), and your task is to determine whether the core literacy module Z is in the weak subset S.
+Welcome to the Subject Knowledge Graph Analysis System. This system contains a knowledge prerequisite dependency tree with {n} knowledge nodes, where node 1 is the core foundational concept.
+The knowledge tree follows a hidden derivation difficulty parameter k (k greater than or equal to 2):
+- It is a truncated k-ary derivation structure numbered in progressive progression (level order) up to {n} nodes.
+- For node i greater than 1, its direct prerequisite knowledge node (parent node) ID is determined by a fixed formula (but k is unknown).
+- The direct subsequent derivative nodes of any knowledge node lie in a contiguous range of IDs.
 
-The system uses a covert evaluation function f to respond to your quiz generation requests. This function is one of the following four schemes:
-- Scheme A: For a quiz covering module subset H, return 1 (core alert) if Z is tested and the student is weak in it (i.e., Z is in the intersection of H and S); otherwise return 0.
-- Scheme B: For a quiz covering module subset H, return 1 (reverse reminder) if the quiz does not expose a weakness in Z (i.e., Z is not in the intersection of H and S); otherwise return 0.
-- Scheme C: Regardless of the tested module subset H, the global evaluation module always returns 1 if the student is indeed weak in Z (Z is in S); otherwise return 0.
-- Scheme D: Regardless of the tested module subset H, the global evaluation module always returns 1 if the student is not weak in Z (Z is not in S); otherwise return 0.
+You need to deduce the hidden derivation pattern of this subject through minimal queries and calculate the "lowest common prerequisite foundation" (Lowest Common Ancestor, LCA) for {m} pairs of knowledge nodes.
 
-Note: When you query subset H, only the intersection of H and S (tested modules where the student is actually weak) participates in the determination; mastered modules are ignored.
+You can use the following four types of queries (one query per turn):
 
-You can perform multiple rounds of queries. Each query submits a module subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
+1. **Dependency Level Query**: Ask for the derivation level from knowledge node x to the core concept (core concept has depth 0).
+2. **Prerequisite Query**: Ask whether node u is a prerequisite foundation of node v (returns "Yes" when u equals v).
+3. **Prerequisite Trace Query**: Ask for the node ID reached by tracing t prerequisite levels back from node x (returns "None" if it goes beyond the core concept).
+4. **Level Comparison Query**: Ask which of nodes u and v leans more towards the core foundation in the knowledge tree (or if they are at the same level).
 
-## Query and Answer Format (strictly required)
+All query answers are uniquely determined by the hidden knowledge tree.
 
-When querying, submit a module subset (can be empty) using the following XML format:
+Each query must contain only one tag:
 
-- Query subset (e.g., testing {{A, B, Z}}):
-<query>A,B,Z</query>
+- Dependency Level Query (e.g., querying level of node 5):
+<query_depth>5</query_depth>
 
-- Query empty set:
-<query></query>
+- Prerequisite Query (e.g., asking if node 2 is a prerequisite of node 8):
+<query_ancestor>2,8</query_ancestor>
 
-When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
+- Prerequisite Trace Query (e.g., tracing 2 prerequisite levels back from node 7):
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=yes</answer>
+- Level Comparison Query (e.g., comparing which of nodes 3 and 5 is closer to core concept):
+<query_compare_depth>3,5</query_compare_depth>
 
-or
+When you are ready to answer the lowest common prerequisite foundation for all pairs, submit in the following format:
 
-<answer>scheme=C, Z_in_S=no</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+Where the numbers correspond to the common prerequisite IDs for pairs 1 to {m}, separated by commas. The answer order must match the order of the given knowledge node pairs.
+
+{pairs_description}
+
+You may start your queries now.
 """
 
     contextualized_rule_zh_4 = """\
-智能制造控制室正在对流水线进行故障排查。
-工厂流水线设有一个关键工艺站宇宙 U = {{Z, A, B, C, D, E, F}}。目前存在一个固定但未知的发生故障的站点子集 S（S 是 U 的子集），你的任务是判断核心装配站 Z 是否发生故障（即 Z 是否在 S 中）。
+欢迎使用智能制造物料清单(BOM)分析系统。这里记录了一个产品的装配结构树，包含 {n} 个组件/零件，编号 1 代表最终完整产品（顶层总成）。
+该装配树遵循统一但未知的拆解参数 k（k 大于等于 2）：
+- 它是按装配拆解层级（层序）编号的 k 叉树在前 {n} 个节点上的截断。
+- 对于编号 i 大于 1 的零件，其直接所属上级组件（父节点）的编号由确定公式得出（但公式中的 k 未知）。
+- 某组件包含的下一级子零件在一个连续的编号区间内。
 
-工业传感网络使用一个固定但未知的诊断逻辑 f 来响应你的探针查询。该逻辑属于以下四种方案之一：
-- 方案A：对激活探针的站点子集 H，若 Z 被探测且确实存在故障（即 Z 在 H 与 S 的交集中），主控制台收到异常代码返回 1；否则返回 0。
-- 方案B：对激活探针的站点子集 H，若 Z 没有出现在探测出的故障名单中（即 Z 不在 H 与 S 的交集中），主控制台收到异常代码返回 1；否则返回 0。
-- 方案C：由于硬件串线，无论探测哪些站点子集 H，只要 Z 实际存在故障（Z 在 S 中），始终返回 1；否则返回 0。
-- 方案D：由于硬件串线，无论探测哪些站点子集 H，只要 Z 实际无故障（Z 不在 S 中），始终返回 1；否则返回 0。
+你的目标是利用有限的结构查询，推断出 BOM 表的拆解层级规律，并找出 {m} 对零件的“最近共同所属总成”（LCA）。
 
-注意：当你查询探测子集 H，只有 H 与 S 的交集部分（即被探测且存在故障的站点）参与判定；状态正常的站点会被忽略。
+每次查询仅可使用以下四种指令之一：
 
-你可以进行多轮查询，每次提交一个探测站点子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明诊断逻辑的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
+1. **拆解层级查询**：查询零件 x 距离最终完整产品的拆解深度（最终产品深度为 0）。
+2. **从属判定**：查询组件 u 是否包含零件 v，即 u 是否为 v 的上级总成（u 等于 v 时返回"是"）。
+3. **总成追溯**：从零件 x 向上级装配追溯 t 层，查询该上级组件的编号（若越过最终产品则返回"无"）。
+4. **层级比较**：比较组件/零件 u 和 v 谁在 BOM 树中更接近最终完整产品（或层级相同）。
 
-## 查询与提交答案的格式（必须严格遵守）
+所有查询的回答均由隐藏的装配结构树唯一确定。
 
-每次查询时，提交一个站点子集（可以为空），使用以下 XML 格式：
+每次查询只能包含一个标签：
 
-- 查询子集（例如探测 {{A, B, Z}}）：
-<query>A,B,Z</query>
+- 拆解层级查询（例如查询零件 5 的拆解层级）：
+<query_depth>5</query_depth>
 
-- 查询空集：
-<query></query>
+- 从属判定（例如查组件 2 是否为零件 8 的上级总成）：
+<query_ancestor>2,8</query_ancestor>
 
-提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
+- 总成追溯（例如从零件 7 向上级追溯 2 层组件）：
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=是</answer>
+- 层级比较（例如比较零件 3 和零件 5）：
+<query_compare_depth>3,5</query_compare_depth>
 
-或
+当你准备好回答所有零件对的最近共同所属总成时，请按以下格式提交：
 
-<answer>scheme=C, Z_in_S=否</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+其中数字对应第 1 到第 {m} 对的共同所属总成组件编号，用逗号分隔。答案顺序必须与题目给出的零件对顺序一致。
+
+{pairs_description}
+
+请开始你的查询。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-The smart manufacturing control room is troubleshooting an assembly line.
-The factory line has a key workstation universe U = {{Z, A, B, C, D, E, F}}. There is a fixed but unknown subset S of faulty stations (S is a subset of U), and your task is to determine whether the core assembly station Z has a fault (i.e., whether Z is in S).
+Welcome to the Smart Manufacturing Bill of Materials (BOM) Analysis System. Here is recorded an assembly structure tree of a product, containing {n} components/parts, where ID 1 represents the final assembled product (top-level assembly).
+The assembly tree follows a uniform but unknown disassembly parameter k (k greater than or equal to 2):
+- It is a truncated k-ary tree numbered in assembly disassembly level (level order) up to {n} nodes.
+- For part i greater than 1, its direct parent component (parent node) ID is derived from a deterministic formula (but k is unknown).
+- The direct sub-parts contained within a certain component lie in a contiguous range of IDs.
 
-The industrial sensor network uses a fixed but unknown diagnostic logic f to respond to your probe queries. This logic is one of the following four schemes:
-- Scheme A: For the probed station subset H, return 1 (exception code) if Z is probed and indeed faulty (i.e., Z is in the intersection of H and S); otherwise return 0.
-- Scheme B: For the probed station subset H, return 1 if Z does not appear in the probed faulty list (i.e., Z is not in the intersection of H and S); otherwise return 0.
-- Scheme C: Due to hardware crosstalk, regardless of the probed subset H, return 1 if Z is actually faulty (Z is in S); otherwise return 0.
-- Scheme D: Due to hardware crosstalk, regardless of the probed subset H, return 1 if Z is actually fault-free (Z is not in S); otherwise return 0.
+Your goal is to infer the disassembly level pattern of the BOM with limited structural queries and find the "lowest common parent assembly" (Lowest Common Ancestor, LCA) for {m} pairs of parts.
 
-Note: When you query subset H, only the intersection of H and S (probed and actually faulty stations) participates in the determination; normal stations are ignored.
+You can use the following four types of queries (one query per turn):
 
-You can perform multiple rounds of queries. Each query submits a station subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
+1. **Disassembly Level Query**: Ask for the disassembly depth of part x from the final product (final product has depth 0).
+2. **Subordination Query**: Ask whether component u contains part v, i.e., whether u is a parent assembly of v (returns "Yes" when u equals v).
+3. **Assembly Trace Query**: Ask for the parent component ID reached by tracing t assembly levels up from part x (returns "None" if it goes beyond the final product).
+4. **Level Comparison Query**: Ask which of components/parts u and v is closer to the final assembled product in the BOM tree (or if they are at the same level).
 
-## Query and Answer Format (strictly required)
+All query answers are uniquely determined by the hidden assembly tree.
 
-When querying, submit a station subset (can be empty) using the following XML format:
+Each query must contain only one tag:
 
-- Query subset (e.g., probing {{A, B, Z}}):
-<query>A,B,Z</query>
+- Disassembly Level Query (e.g., querying disassembly level of part 5):
+<query_depth>5</query_depth>
 
-- Query empty set:
-<query></query>
+- Subordination Query (e.g., asking if component 2 contains part 8):
+<query_ancestor>2,8</query_ancestor>
 
-When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
+- Assembly Trace Query (e.g., tracing 2 levels up from part 7):
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=yes</answer>
+- Level Comparison Query (e.g., comparing which of parts 3 and 5 is closer to final product):
+<query_compare_depth>3,5</query_compare_depth>
 
-or
+When you are ready to answer the lowest common parent assembly for all pairs, submit in the following format:
 
-<answer>scheme=C, Z_in_S=no</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+Where the numbers correspond to the common parent assembly IDs for pairs 1 to {m}, separated by commas. The answer order must match the order of the given part pairs.
+
+{pairs_description}
+
+You may start your queries now.
 """
 
     contextualized_rule_zh_5 = """\
-法庭审理阶段正在对关键物证进行交叉比对。
-本案存在一个关键证据链环节宇宙 U = {{Z, A, B, C, D, E, F}}。目前案卷中存在一个固定但未知的失效或伪造证据子集 S（S 是 U 的子集），你的任务是判断决定性的“核心证据” Z 是否失效（即 Z 是否在 S 中）。
+欢迎使用法律法规效力渊源分析系统。本系统包含一棵法律效力衍生树，收录 {n} 条法律规范，条款 1 代表根本大法（如宪法或基本法）。
+该法律树根据立法权限遵循一个隐藏参数 k（k 大于等于 2）：
+- 它是按效力层级和颁布顺序（层序）编号的 k 叉衍生树在前 {n} 个节点上的截断。
+- 对于编号 i 大于 1 的条款，其直接上位法渊源（父节点）的编号由严密公式推算（但公式中的 k 未知）。
+- 任何条款的直接下位实施细则或衍生条款均在一个连续的编号区间内。
 
-交叉质证系统使用一种固定的验证逻辑 f 来响应你的质证查询。该逻辑属于以下四种方案之一：
-- 方案A：对提交法庭比对的证据子集 H，若 Z 被提交且被证实失效（即 Z 在 H 与 S 的交集中），系统抛出驳回标志并返回 1；否则返回 0。
-- 方案B：对提交法庭比对的证据子集 H，若 Z 并未作为失效证据暴露（即 Z 不在 H 与 S 的交集中），系统抛出驳回标志并返回 1；否则返回 0。
-- 方案C：在系统预判模式下，无论提交比对什么证据子集 H，只要 Z 实际上已失效（Z 在 S 中），始终返回 1；否则返回 0。
-- 方案D：在系统预判模式下，无论提交比对什么证据子集 H，只要 Z 实际上未失效（Z 不在 S 中），始终返回 1；否则返回 0。
+请通过最少次数的法理查询，掌握该法律体系的衍生规律，并裁定出 {m} 对细则/条款的“最近共同上位法渊源”（LCA）。
 
-注意：当你查询证据子集 H，只有 H 与 S 的交集部分（即被提交且确属失效的证据）参与判定；合法有效的证据会被忽略。
+每次查询仅可使用以下四种指令之一：
 
-你可以进行多轮查询，每次提交一个证据子集 H（可以是空集），系统会返回 0 或 1。当你完成至少两次查询后，可以提交最终答案，指明验证逻辑的方案类型（A、B、C 或 D）以及 Z 是否在 S 中（是或否）。
+1. **效力层级查询**：查询条款 x 距离根本大法的衍生层级（根本大法深度为 0）。
+2. **渊源判定**：查询条款 u 是否为条款 v 的上位法渊源（u 等于 v 时返回"是"）。
+3. **渊源溯源**：从条款 x 向上位法方向追溯 t 个层级，查询其渊源条款编号（若越过根本大法则返回"无"）。
+4. **层级比较**：比较条款 u 和 v 谁的法律效力层级更高，即更接近根本大法（或层级相同）。
 
-## 查询与提交答案的格式（必须严格遵守）
+所有查询的回答均由隐藏的法律效力树唯一确定。
 
-每次查询时，提交一个证据子集（可以为空），使用以下 XML 格式：
+每次查询只能包含一个标签：
 
-- 查询子集（例如提交 {{A, B, Z}}）：
-<query>A,B,Z</query>
+- 效力层级查询（例如查询条款 5 的层级）：
+<query_depth>5</query_depth>
 
-- 查询空集：
-<query></query>
+- 渊源判定（例如查条款 2 是否为条款 8 的上位法渊源）：
+<query_ancestor>2,8</query_ancestor>
 
-提交最终答案时，必须指明方案类型（A、B、C 或 D）和 Z 是否在 S 中（是或否），格式如下：
+- 渊源溯源（例如从条款 7 向上位法追溯 2 层）：
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=是</answer>
+- 层级比较（例如比较条款 3 和条款 5）：
+<query_compare_depth>3,5</query_compare_depth>
 
-或
+当你准备好回答所有条款对的最近共同上位法渊源时，请按以下格式提交：
 
-<answer>scheme=C, Z_in_S=否</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+其中数字对应第 1 到第 {m} 对的共同上位法条款编号，用逗号分隔。答案顺序必须与题目给出的条款对顺序一致。
+
+{pairs_description}
+
+请开始你的查询。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-The court trial is conducting cross-examination on key material evidence.
-There is a universe of key evidence links U = {{Z, A, B, C, D, E, F}} for this case. In the case file, there exists a fixed but unknown subset S of invalid or forged evidence (S is a subset of U), and your task is to determine whether the crucial "core evidence" Z is invalid (i.e., whether Z is in S).
+Welcome to the Legal Source and Efficacy Analysis System. This system contains a legal efficacy derivation tree encompassing {n} legal norms, where clause 1 represents the fundamental law (e.g., Constitution or Basic Law).
+The legal tree follows a hidden legislative parameter k (k greater than or equal to 2):
+- It is a truncated k-ary derivation tree numbered by efficacy level and promulgation order (level order) up to {n} nodes.
+- For clause i greater than 1, its direct higher-level legal source (parent node) ID is calculated by a strict formula (but k is unknown).
+- The direct lower-level implementation rules or derivative clauses of any norm lie in a contiguous range of IDs.
 
-The cross-examination system uses a fixed validation logic f to respond to your queries. This logic is one of the following four schemes:
-- Scheme A: For the evidence subset H submitted for comparison, return 1 (rejection flag) if Z is submitted and proven invalid (i.e., Z is in the intersection of H and S); otherwise return 0.
-- Scheme B: For the evidence subset H submitted for comparison, return 1 if Z is not exposed as invalid evidence (i.e., Z is not in the intersection of H and S); otherwise return 0.
-- Scheme C: In the system's pre-judgment mode, regardless of the submitted subset H, return 1 if Z is actually invalid (Z is in S); otherwise return 0.
-- Scheme D: In the system's pre-judgment mode, regardless of the submitted subset H, return 1 if Z is actually valid (Z is not in S); otherwise return 0.
+Please master the derivation pattern of this legal system through minimal jurisprudential queries, and adjudicate the "lowest common higher-level legal source" (Lowest Common Ancestor, LCA) for {m} pairs of clauses.
 
-Note: When you query subset H, only the intersection of H and S (submitted and actually invalid evidence) participates in the determination; legally valid evidence is ignored.
+You can use the following four types of queries (one query per turn):
 
-You can perform multiple rounds of queries. Each query submits an evidence subset H (which can be empty), and the system returns 0 or 1. After completing at least two queries, you can submit your final answer, specifying the scheme type (A, B, C, or D) and whether Z is in S (yes or no).
+1. **Efficacy Level Query**: Ask for the derivation level of clause x from the fundamental law (fundamental law has depth 0).
+2. **Legal Source Query**: Ask whether clause u is a higher-level legal source of clause v (returns "Yes" when u equals v).
+3. **Source Trace Query**: Ask for the source clause ID reached by tracing t levels upward to higher-level laws from clause x (returns "None" if it goes beyond the fundamental law).
+4. **Level Comparison Query**: Ask which of clauses u and v has higher legal efficacy, i.e., is closer to the fundamental law (or if they are at the same level).
 
-## Query and Answer Format (strictly required)
+All query answers are uniquely determined by the hidden legal efficacy tree.
 
-When querying, submit an evidence subset (can be empty) using the following XML format:
+Each query must contain only one tag:
 
-- Query subset (e.g., submitting {{A, B, Z}}):
-<query>A,B,Z</query>
+- Efficacy Level Query (e.g., querying level of clause 5):
+<query_depth>5</query_depth>
 
-- Query empty set:
-<query></query>
+- Legal Source Query (e.g., asking if clause 2 is a higher-level source of clause 8):
+<query_ancestor>2,8</query_ancestor>
 
-When submitting the final answer, you must specify the scheme type (A, B, C, or D) and whether Z is in S (yes or no), using this format:
+- Source Trace Query (e.g., tracing 2 levels upward from clause 7):
+<query_climb>7,2</query_climb>
 
-<answer>scheme=A, Z_in_S=yes</answer>
+- Level Comparison Query (e.g., comparing which of clauses 3 and 5 is closer to fundamental law):
+<query_compare_depth>3,5</query_compare_depth>
 
-or
+When you are ready to answer the lowest common higher-level legal source for all pairs, submit in the following format:
 
-<answer>scheme=C, Z_in_S=no</answer>
+<answer>1:3, 2:1, 3:5</answer>
+
+Where the numbers correspond to the common source clause IDs for pairs 1 to {m}, separated by commas. The answer order must match the order of the given clause pairs.
+
+{pairs_description}
+
+You may start your queries now.
 """
 
-    tags = ["answer", "query"]
-    
-    reasoning_type = "溯因推理"
-    data_structure = "集合"
+    tags = ["answer", "query_depth", "query_ancestor", "query_climb", "query_compare_depth"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "S": ["Z", "A", "B"],  # Z 在 S 中
-                "scheme": "C",          # 全局正向
-                "Z_in_S_answer": "是",
+                "n": 7,
+                "k": 2,
+                "pairs": [(3, 5), (2, 7), (4, 6)],
             },
             2: {
-                "S": ["A", "C", "E"],  # Z 不在 S 中
-                "scheme": "A",          # 子集敏感正向
-                "Z_in_S_answer": "否",
+                "n": 15,
+                "k": 3,
+                "pairs": [(5, 9), (8, 14), (3, 11), (6, 7)],
             },
             3: {
-                "S": ["Z", "B", "D", "F"],  # Z 在 S 中
-                "scheme": "B",              # 子集敏感反向
-                "Z_in_S_answer": "是",
+                "n": 22,
+                "k": 4,
+                "pairs": [(6, 14), (10, 18), (3, 21), (9, 13), (2, 22)],
             },
             4: {
-                "S": ["A", "C", "E", "F"],  # Z 不在 S 中
-                "scheme": "D",              # 全局反向
-                "Z_in_S_answer": "否",
+                "n": 26,
+                "k": 5,
+                "pairs": [(8, 15), (12, 22), (4, 19), (7, 26), (11, 13), (3, 20)],
             },
             5: {
-                "S": ["Z", "A", "C", "D", "F"],  # Z 在 S 中
-                "scheme": "A",                    # 子集敏感正向
-                "Z_in_S_answer": "是",
+                "n": 31,
+                "k": 6,
+                "pairs": [(9, 18), (14, 25), (5, 28), (11, 21), (8, 30), (3, 19), (7, 24)],
             },
         },
         "en": {
             1: {
-                "S": ["Z", "A", "B"],
-                "scheme": "C",
-                "Z_in_S_answer": "yes",
+                "n": 7,
+                "k": 2,
+                "pairs": [(3, 5), (2, 7), (4, 6)],
             },
             2: {
-                "S": ["A", "C", "E"],
-                "scheme": "A",
-                "Z_in_S_answer": "no",
+                "n": 15,
+                "k": 3,
+                "pairs": [(5, 9), (8, 14), (3, 11), (6, 7)],
             },
             3: {
-                "S": ["Z", "B", "D", "F"],
-                "scheme": "B",
-                "Z_in_S_answer": "yes",
+                "n": 22,
+                "k": 4,
+                "pairs": [(6, 14), (10, 18), (3, 21), (9, 13), (2, 22)],
             },
             4: {
-                "S": ["A", "C", "E", "F"],
-                "scheme": "D",
-                "Z_in_S_answer": "no",
+                "n": 26,
+                "k": 5,
+                "pairs": [(8, 15), (12, 22), (4, 19), (7, 26), (11, 13), (3, 20)],
             },
             5: {
-                "S": ["Z", "A", "C", "D", "F"],
-                "scheme": "A",
-                "Z_in_S_answer": "yes",
+                "n": 31,
+                "k": 6,
+                "pairs": [(9, 18), (14, 25), (5, 28), (11, 21), (8, 30), (3, 19), (7, 24)],
             },
         },
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 记录查询次数
         super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
         diff = self.config.difficulty
-
-        # 确保 difficulty 为整数，兼容字符串输入
-        if isinstance(diff, str):
-            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -499,171 +601,248 @@ or
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.n = cfg["n"]
+        self.k = cfg["k"]
+        self.pairs = cfg["pairs"]
         
-        # 设置游戏参数
-        self.S = set(cfg["S"])  # 固定子集 S
-        self.scheme = cfg["scheme"]  # 反馈函数方案
-        self.Z_in_S = "Z" in self.S  # Z 是否在 S 中的真值
-        self.Z_in_S_answer = cfg["Z_in_S_answer"]  # 期望的答案文本
+        self._game_info["n"] = self.n
+        self._game_info["m"] = len(self.pairs)
         
-        # 标签宇宙
-        self.universe = {"Z", "A", "B", "C", "D", "E", "F"}
+        self._build_tree()
         
-        self._game_info["S_size"] = len(self.S)
+        self._compute_ground_truth()
+        
+        self._generate_pairs_description()
+        
+        self.query_count = 0
 
-    def _feedback_function(self, H):
-        """
-        根据方案类型和查询子集 H 计算反馈值
-        H: 查询的子集（集合）
-        返回: 0 或 1
-        """
-        # 计算 H 与 S 的交集
-        H_intersect_S = H & self.S
+    def _build_tree(self):
+        self.parent = {1: 0}
+        self.depth = {1: 0}
         
-        if self.scheme == "A":
-            # 方案A：Z 在 H∩S 中返回 1，否则返回 0
-            return 1 if "Z" in H_intersect_S else 0
-        elif self.scheme == "B":
-            # 方案B：Z 不在 H∩S 中返回 1，否则返回 0
-            return 1 if "Z" not in H_intersect_S else 0
-        elif self.scheme == "C":
-            # 方案C：Z 在 S 中返回 1，否则返回 0（与 H 无关）
-            return 1 if self.Z_in_S else 0
-        elif self.scheme == "D":
-            # 方案D：Z 不在 S 中返回 1，否则返回 0（与 H 无关）
-            return 1 if not self.Z_in_S else 0
+        for i in range(2, self.n + 1):
+            p = (i - 2) // self.k + 1
+            self.parent[i] = p
+            self.depth[i] = self.depth[p] + 1
+
+    def _compute_ground_truth(self):
+        self.ground_truth_lcas = []
+        
+        for a, b in self.pairs:
+            lca = self._compute_lca(a, b)
+            self.ground_truth_lcas.append(lca)
+
+    def _compute_lca(self, u, v):
+        while self.depth[u] > self.depth[v]:
+            u = self.parent[u]
+        while self.depth[v] > self.depth[u]:
+            v = self.parent[v]
+        
+        while u != v:
+            u = self.parent[u]
+            v = self.parent[v]
+        
+        return u
+
+    def _generate_pairs_description(self):
+        if self.config.language == "zh":
+            lines = []
+            for idx, (a, b) in enumerate(self.pairs, 1):
+                lines.append(f"第 {idx} 对：节点 {a} 和节点 {b}")
+            self._game_info["pairs_description"] = "\n".join(lines)
         else:
-            raise ValueError(f"Unknown scheme: {self.scheme}")
+            lines = []
+            for idx, (a, b) in enumerate(self.pairs, 1):
+                lines.append(f"Pair {idx}: node {a} and node {b}")
+            self._game_info["pairs_description"] = "\n".join(lines)
+
+    def _is_ancestor(self, u, v):
+        current = v
+        while current != 0:
+            if current == u:
+                return True
+            if current == 1:
+                break
+            current = self.parent[current]
+        return False
+
+    def _climb_up(self, x, t):
+        current = x
+        for _ in range(t):
+            if current == 1:
+                return None
+            if current == 0:
+                return None
+            current = self.parent[current]
+        return current
 
     def evaluate(self, parsed_info):
-        """
-        评估最终答案是否正确
-        答案格式: scheme=X, Z_in_S=是/否 (或 yes/no)
-        """
-        # 注意：移除 query_count 检查，避免在冗余性评估等场景中
-        # 因为新建 game 实例的 query_count 为 0 导致永远失败。
-        # 规则中的"至少两次查询"由游戏交互流程自然保证。
+        raw_ans = parsed_info["answer"].strip()
         
-        raw_ans = parsed_info["answer"]
-        
-        # 解析答案
-        kv_pairs = [x.strip() for x in raw_ans.split(",")]
-        ans_dict = {}
-        for kv in kv_pairs:
-            if "=" in kv:
-                k, v = kv.split("=", 1)
-                ans_dict[k.strip().lower()] = v.strip()
-        
-        if "scheme" not in ans_dict or "z_in_s" not in ans_dict:
+        try:
+            parts = [x.strip() for x in raw_ans.split(",")]
+            if len(parts) != len(self.pairs):
+                return False
+            
+            model_lcas = []
+            for part in parts:
+                if ":" not in part:
+                    return False
+                idx_str, lca_str = part.split(":", 1)
+                idx = int(idx_str.strip())
+                lca = int(lca_str.strip())
+                model_lcas.append((idx, lca))
+            
+            model_lcas.sort(key=lambda x: x[0])
+            for i, (idx, lca) in enumerate(model_lcas, 1):
+                if idx != i:
+                    return False
+                if lca != self.ground_truth_lcas[i - 1]:
+                    return False
+            
+            return True
+            
+        except:
             return False
-        
-        # 检查方案是否正确（大小写不敏感）
-        if ans_dict["scheme"].upper() != self.scheme.upper():
-            return False
-        
-        # 检查 Z 是否在 S 中的判断是否正确（大小写不敏感）
-        if ans_dict["z_in_s"].lower() != self.Z_in_S_answer.lower():
-            return False
-        
-        return True
 
     def _cf_core_produce(self, parsed_info):
-        """
-        核心业务逻辑：处理查询并返回反馈（原 produce_response 的逻辑）
-        """
-        if "query" in parsed_info:
-            query_str = parsed_info["query"].strip()
-            
-            # 解析查询的子集
-            if query_str == "":
-                # 空集查询
-                H = set()
-            else:
-                # 解析标签列表，并归一化为大写以匹配 self.universe
-                labels = [x.strip().upper() for x in query_str.split(",") if x.strip()]
-                # 验证标签是否在宇宙中
-                for label in labels:
-                    if label not in self.universe:
-                        if self.config.language == "zh":
-                            return f"错误：标签 {label} 不在标签宇宙中。"
-                        else:
-                            return f"Error: Label {label} is not in the universe."
-                H = set(labels)
-            
-            # 计算反馈
-            feedback = self._feedback_function(H)
-            
-            # 增加查询计数
-            self.query_count += 1
-            
-            return str(feedback)
+        self.query_count += 1
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            none_res = "无"
+            same_res = "相同"
+            error_res = "错误：无效的查询格式或节点编号超出范围。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            none_res = "None"
+            same_res = "Same"
+            error_res = "Error: Invalid query format or node ID out of range."
+
+        if "query_depth" in parsed_info:
+            try:
+                x = int(parsed_info["query_depth"].strip())
+                if x < 1 or x > self.n:
+                    return error_res
+                return str(self.depth[x])
+            except:
+                return error_res
+
+        elif "query_ancestor" in parsed_info:
+            try:
+                raw = parsed_info["query_ancestor"]
+                u, v = [int(x.strip()) for x in raw.split(",")]
+                if u < 1 or u > self.n or v < 1 or v > self.n:
+                    return error_res
+                return yes_res if self._is_ancestor(u, v) else no_res
+            except:
+                return error_res
+
+        elif "query_climb" in parsed_info:
+            try:
+                raw = parsed_info["query_climb"]
+                x, t = [int(x.strip()) for x in raw.split(",")]
+                if x < 1 or x > self.n or t < 0:
+                    return error_res
+                result = self._climb_up(x, t)
+                return none_res if result is None else str(result)
+            except:
+                return error_res
+
+        elif "query_compare_depth" in parsed_info:
+            try:
+                raw = parsed_info["query_compare_depth"]
+                u, v = [int(x.strip()) for x in raw.split(",")]
+                if u < 1 or u > self.n or v < 1 or v > self.n:
+                    return error_res
+                
+                if self.depth[u] < self.depth[v]:
+                    return "u"
+                elif self.depth[u] > self.depth[v]:
+                    return "v"
+                else:
+                    return same_res
+            except:
+                return error_res
+
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        # 反馈值只有 "0" 和 "1"，直接翻转
-        if correct == "0":
-            return "1"
-        if correct == "1":
-            return "0"
-        
-        # 若 correct 是其他纯整数字符串：返回 str(int(correct) + 1)
-        if correct.lstrip('-').isdigit():
+        if correct.isdigit():
             return str(int(correct) + 1)
-
-        # 区分语言替换关键词
-        if "是" in correct:
-            return correct.replace("是", "否")
-        if "否" in correct:
-            return correct.replace("否", "是")
         
-        lower_correct = correct.lower()
-        if "yes" in lower_correct:
-            if "Yes" in correct: return correct.replace("Yes", "No")
-            if "YES" in correct: return correct.replace("YES", "NO")
-            if "yes" in correct: return correct.replace("yes", "no")
-            return correct.replace("Yes", "No").replace("yes", "no")
+        val_lower = correct.lower()
+        if self.config.language == "zh":
+            if correct == "是":
+                return "否"
+            elif correct == "否":
+                return "是"
+            elif correct == "相同":
+                return "u"
+        else:
+            if val_lower == "yes":
+                return "No"
+            elif val_lower == "no":
+                return "Yes"
+            elif val_lower == "same":
+                return "u"
+                
+        if correct == "u":
+            return "v"
+        if correct == "v":
+            return "u"
         
-        if "no" in lower_correct:
-            if "No" in correct: return correct.replace("No", "Yes")
-            if "NO" in correct: return correct.replace("NO", "YES")
-            if "no" in correct: return correct.replace("no", "yes")
-            return correct.replace("No", "Yes").replace("no", "yes")
-
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
+        results = []
         
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串
-                "answer": str,   # 正确答案字符串
-            }
-        """
-        queries = []
-        # 为了保证列表顺序的一致性，先对宇宙元素进行排序
-        sorted_universe = sorted(list(self.universe))
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            none_res = "无"
+            same_res = "相同"
+        else:
+            yes_res, no_res = "Yes", "No"
+            none_res = "None"
+            same_res = "Same"
+
+        for x in range(1, self.n + 1):
+            query_str = f"<query_depth>{x}</query_depth>"
+            answer_str = str(self.depth[x])
+            results.append({"query": query_str, "answer": answer_str})
         
-        # 遍历所有可能的子集大小 (0 到 7)
-        for r in range(len(sorted_universe) + 1):
-            # 生成指定长度的所有组合
-            for subset_tuple in itertools.combinations(sorted_universe, r):
-                # 构造集合 H
-                H = set(subset_tuple)
-                
-                # 构造查询字符串
-                # 使用逗号连接，空集则为空字符串
-                query_content = ",".join(subset_tuple)
-                
-                # 直接调用内部反馈计算逻辑，不触发 query_count 增加或反事实逻辑
-                feedback_val = self._feedback_function(H)
-                
-                queries.append({
-                    "query": f"<query>{query_content}</query>",
-                    "answer": str(feedback_val)
-                })
+        for u in range(1, self.n + 1):
+            for v in range(1, self.n + 1):
+                query_str = f"<query_ancestor>{u},{v}</query_ancestor>"
+                is_anc = self._is_ancestor(u, v)
+                answer_str = yes_res if is_anc else no_res
+                results.append({"query": query_str, "answer": answer_str})
+
+        for x in range(1, self.n + 1):
+            max_climb = self.depth[x] + 1
+            for t in range(1, max_climb + 2):
+                query_str = f"<query_climb>{x},{t}</query_climb>"
+                result_node = self._climb_up(x, t)
+                if result_node is None:
+                    answer_str = none_res
+                else:
+                    answer_str = str(result_node)
+                results.append({"query": query_str, "answer": answer_str})
+
+        for u in range(1, self.n + 1):
+            for v in range(1, self.n + 1):
+                if u == v:
+                    continue
+                query_str = f"<query_compare_depth>{u},{v}</query_compare_depth>"
+                d_u = self.depth[u]
+                d_v = self.depth[v]
+                if d_u < d_v:
+                    answer_str = "u"
+                elif d_u > d_v:
+                    answer_str = "v"
+                else:
+                    answer_str = same_res
+                results.append({"query": query_str, "answer": answer_str})
         
-        return queries
+        return results

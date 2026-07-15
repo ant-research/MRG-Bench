@@ -1,690 +1,652 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。
-# 数据结构: 序列
-# 知识点:   子串定位
-# ============================================================
-
 from .base import Game
 import random
+import re
 
+class HiddenTreeCycleGame(Game):
 
-class PatternMatchingGame(Game):
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们来玩一个"隐藏序列模式匹配"的推理游戏，规则如下：
+我们来玩一个"隐藏树结构推理"游戏，规则如下：
 
-游戏设定了一个隐藏序列 S，长度为 {n}，序列中的每个位置都是一个字母，字母来自已知字母表 {alphabet}。
+游戏设定了一棵有限的有根树，根节点的深度为 0，总节点数未知。存在一个未知的周期 m（m 可能是 3、4、5 或 6），以及一个长度为 m 的标签循环 C[0..m-1]。每个节点 v 的标签为 C[depth(v) mod m]，其中 depth(v) 表示节点 v 的深度。循环中的标签两两不同，取自公开的标签集合 {label_set}（实际使用的标签种类与顺序未知）。
 
-同时，给定一个已知模式 T = "{pattern}"，长度为 {pattern_length}。
+在循环 C 中有且仅有一个"特殊标签" S，其在 C 中的下标 p 未知。你的目标是推断出目标节点 T 的精确深度。
 
-你的目标是找出模式 T 在隐藏序列 S 中**首次出现的位置**（即最小的起始位置 j，使得从位置 j 开始的连续 {pattern_length} 个字母与 T 完全匹配）。如果模式 T 在序列 S 中不存在，则需要宣布"无"。
+游戏预先固定了一条从根出发的路径 P（长度至少为 13），你只能沿这条路径逐步前进并获取沿途节点信息。
 
-注意：序列索引从 1 开始，有效的起始位置范围是 1 到 {max_start_pos}。
+你可以反复使用以下查询（每次仅限一个查询）：
 
-你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据隐藏序列如实回答：
+1. RESET：将探测指针重置到根节点。
+2. STEP：沿固定路径前进 1 步，到达下一个节点。返回该节点的标签和句柄 E[k]（k 为步序号，从 0 开始；E[0] 为根节点）。如果已到路径末端则返回提示。
+3. LABEL(X)：查询节点 X 的标签值。X 可以是 Root（根节点）、T（目标节点）或已获取的任一 E[k]。
+4. COUNT(X)：查询从根节点到节点 X 的唯一路径（包含 X）中，特殊标签 S 出现的确切次数。
 
-1. **前缀出现判断查询**：询问在序列的前 k 个位置（即 S[1..k]）中，是否存在模式 T 的完整匹配。
-   - 输入：整数 k（1 到 {n}）
-   - 输出："真"或"假"
-   - 当 k 小于 {pattern_length} 时必然返回"假"
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-2. **窗口精确匹配查询**：询问从位置 i 开始的长度为 {pattern_length} 的窗口是否与模式 T 完全匹配。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出："真"或"假"
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. **窗口匹配计数查询**：询问从位置 i 开始的长度为 {pattern_length} 的窗口中，有多少个位置的字母与模式 T 对应位置的字母相同。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出：一个整数（0 到 {pattern_length}）
+- RESET 查询（内容为空）：
+<query_reset></query_reset>
 
-当你收集到足够信息后，请提交最终答案。若答案错误，游戏失败。
+- STEP 查询（内容为空）：
+<query_step></query_step>
 
-## 查询与提交答案的格式（必须严格遵守）
+- LABEL 查询（例如查询根节点）：
+<query_label>Root</query_label>
 
-每次只能包含一个查询或答案标签。请使用以下 XML 格式：
+- LABEL 查询（例如查询节点 E[5]）：
+<query_label>E[5]</query_label>
 
-- 前缀出现判断查询（例如查询前 10 个位置）：
-<query_prefix>10</query_prefix>
+- LABEL 查询（例如查询目标节点）：
+<query_label>T</query_label>
 
-- 窗口精确匹配查询（例如查询位置 5）：
-<query_exact>5</query_exact>
+- COUNT 查询（例如查询根节点）：
+<query_count>Root</query_count>
 
-- 窗口匹配计数查询（例如查询位置 3）：
-<query_count>3</query_count>
+- COUNT 查询（例如查询节点 E[3]）：
+<query_count>E[3]</query_count>
 
-提交最终答案时，如果找到了首次出现位置，请提交该位置编号；如果不存在，请提交"无"。格式如下：
+提交最终答案时，必须给出目标节点 T 的深度 d（非负整数），格式如下：
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-或
-
-<answer>无</answer>
+例如：
+<answer>d=7</answer>
 """
 
     game_rule_en = """\
-Let's play a "Hidden Sequence Pattern Matching" deduction game. Here are the rules:
+Let's play a "Hidden Tree Structure Reasoning" game. Here are the rules:
 
-A hidden sequence S of length {n} has been set up. Each position in the sequence contains a letter from the known alphabet {alphabet}.
+The game involves a finite rooted tree where the root has depth 0, and the total number of nodes is unknown. There exists an unknown period m (m can be 3, 4, 5, or 6) and a label cycle C[0..m-1] of length m. Each node v has a label C[depth(v) mod m], where depth(v) is the depth of node v. All labels in the cycle are distinct and come from the public label set {label_set} (the actual labels used and their order are unknown).
 
-Additionally, a known pattern T = "{pattern}" of length {pattern_length} is given.
+In cycle C, there is exactly one "special label" S, whose index p in C is unknown. Your goal is to infer the exact depth of the target node T.
 
-Your goal is to find the **first occurrence position** of pattern T in the hidden sequence S (i.e., the minimum starting position j such that the consecutive {pattern_length} letters starting from position j exactly match T). If pattern T does not exist in sequence S, you need to declare "none".
+The game has a pre-fixed path P from the root (with length at least 13), and you can only move along this path step by step to obtain information about nodes along the way.
 
-Note: Sequence indices start from 1, and valid starting positions range from 1 to {max_start_pos}.
+You can repeatedly use the following queries (one per turn):
 
-You can repeatedly ask me three types of queries (one per turn), and I will answer truthfully based on the hidden sequence:
+1. RESET: Reset the exploration pointer to the root node.
+2. STEP: Move forward 1 step along the fixed path to the next node. Returns the label and handle E[k] of that node (k is the step number starting from 0; E[0] is the root). If the end of the path is reached, a prompt is returned.
+3. LABEL(X): Query the label value of node X. X can be Root (root node), T (target node), or any obtained E[k].
+4. COUNT(X): Query the exact number of times the special label S appears on the unique path from the root to node X (including X).
 
-1. **Prefix Occurrence Query**: Ask whether there exists a complete match of pattern T within the first k positions of the sequence (i.e., S[1..k]).
-   - Input: integer k (1 to {n})
-   - Output: "true" or "false"
-   - When k is less than {pattern_length}, the result is always "false"
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-2. **Window Exact Match Query**: Ask whether the window of length {pattern_length} starting at position i exactly matches pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: "true" or "false"
+Each query must contain only one tag. Use the following XML format:
 
-3. **Window Match Count Query**: Ask how many positions in the window of length {pattern_length} starting at position i have letters matching the corresponding positions in pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: an integer (0 to {pattern_length})
+- RESET query (empty content):
+<query_reset></query_reset>
 
-When you have gathered enough information, submit your final answer. If the answer is incorrect, the game fails.
+- STEP query (empty content):
+<query_step></query_step>
 
-## Query and Answer Format (strictly required)
+- LABEL query (e.g., querying root node):
+<query_label>Root</query_label>
 
-Each turn must contain only one query or answer tag. Use the following XML format:
+- LABEL query (e.g., querying node E[5]):
+<query_label>E[5]</query_label>
 
-- Prefix Occurrence Query (e.g., querying the first 10 positions):
-<query_prefix>10</query_prefix>
+- LABEL query (e.g., querying target node):
+<query_label>T</query_label>
 
-- Window Exact Match Query (e.g., querying position 5):
-<query_exact>5</query_exact>
+- COUNT query (e.g., querying root node):
+<query_count>Root</query_count>
 
-- Window Match Count Query (e.g., querying position 3):
-<query_count>3</query_count>
+- COUNT query (e.g., querying node E[3]):
+<query_count>E[3]</query_count>
 
-When submitting the final answer, if you found the first occurrence position, submit that position number; if it doesn't exist, submit "none". Format as follows:
+When submitting the final answer, you must provide the depth d of target node T (a non-negative integer) in the following format:
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-or
-
-<answer>none</answer>
+For example:
+<answer>d=7</answer>
 """
 
     contextualized_rule_zh_1 = """\
-我们来执行一次"交通信号控制序列异常排查"任务，规则如下：
+[交通场景]
+欢迎使用【城市轨道交通枢纽规划系统】。我们来推演一个复杂的轨道交通网络，规则如下：
 
-系统记录了一段连续的交通信号灯状态序列 S，长度为 {n}，序列中的每个时间片状态代号来自已知字母表 {alphabet}。
+交通网络是一棵有限的树形线路图，中心枢纽站（根节点）的深度为 0，总站点数未知。线路上存在一个未知的信号调度周期 m（m 可能是 3、4、5 或 6），以及一个长度为 m 的信号标签循环 C[0..m-1]。每个站点 v 的信号标签为 C[depth(v) mod m]，其中 depth(v) 表示站点 v 距离枢纽的深度。循环中的标签两两不同，取自公开的信号集 {label_set}（实际使用的信号种类与顺序未知）。
 
-同时，交通控制中心下发了一个已知的危险故障模式 T = "{pattern}"，长度为 {pattern_length}。
+在信号循环 C 中有且仅有一个"限制通行信号" S，其在 C 中的下标 p 未知。你的目标是推导出一个待建目标站点 T 的精确深度。
 
-你的目标是找出故障模式 T 在记录序列 S 中**首次出现的起始时间片**（即最小的起始位置 j，使得从位置 j 开始的连续 {pattern_length} 个状态与 T 完全匹配）。如果故障模式 T 在序列 S 中不存在，则需要宣布"无"。
+系统预先固定了一条从枢纽出发的单向勘测线路 P（长度至少为 13），你只能沿这条线路逐步推进勘测并获取沿途站点信息。
 
-注意：时间片索引从 1 开始，有效的起始时间片范围是 1 到 {max_start_pos}。
+你可以反复使用以下查询（每次仅限一个查询）：
 
-你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据隐藏的日志序列如实回答：
+1. RESET：将勘测指针重置到中心枢纽站（Root）。
+2. STEP：沿固定线路前进 1 步，到达下一个站点。返回该站点的信号标签和句柄 E[k]（k 为步序号，从 0 开始；E[0] 为枢纽站）。如果已到线路末端则返回提示。
+3. LABEL(X)：查询站点 X 的信号标签值。X 可以是 Root（枢纽站）、T（目标站点）或已获取的任一 E[k]。
+4. COUNT(X)：查询从枢纽站到站点 X 的唯一线路（包含 X）中，限制通行信号 S 出现的确切次数。
 
-1. **前置截断排查查询**：询问在序列的前 k 个时间片（即 S[1..k]）中，是否已发生完整的故障模式 T。
-   - 输入：整数 k（1 到 {n}）
-   - 输出："真"或"假"
-   - 当 k 小于 {pattern_length} 时必然返回"假"
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，勘测失败。
 
-2. **精确时间片核对查询**：询问从时间片 i 开始的长度为 {pattern_length} 的窗口是否与故障模式 T 完全匹配。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出："真"或"假"
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. **相似度分析查询**：询问从时间片 i 开始的长度为 {pattern_length} 的窗口中，有多少个时间片的状态与故障模式 T 对应位置的状态相同。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出：一个整数（0 到 {pattern_length}）
+- RESET 查询（内容为空）：
+<query_reset></query_reset>
 
-当你收集到足够信息后，请提交最终排查结果。若结果错误，任务失败。
+- STEP 查询（内容为空）：
+<query_step></query_step>
 
-## 查询与提交答案的格式（必须严格遵守）
+- LABEL 查询（例如查询枢纽站）：
+<query_label>Root</query_label>
 
-每次只能包含一个查询或答案标签。请使用以下 XML 格式：
+- LABEL 查询（例如查询站点 E[5]）：
+<query_label>E[5]</query_label>
 
-- 前置截断排查查询（例如查询前 10 个时间片）：
-<query_prefix>10</query_prefix>
+- LABEL 查询（例如查询目标站点）：
+<query_label>T</query_label>
 
-- 精确时间片核对查询（例如查询时间片 5）：
-<query_exact>5</query_exact>
+- COUNT 查询（例如查询枢纽站）：
+<query_count>Root</query_count>
 
-- 相似度分析查询（例如查询时间片 3）：
-<query_count>3</query_count>
+- COUNT 查询（例如查询站点 E[3]）：
+<query_count>E[3]</query_count>
 
-提交最终答案时，如果找到了首次出现时间片，请提交该时间片编号；如果不存在，请提交"无"。格式如下：
+提交最终答案时，必须给出目标站点 T 的深度 d（非负整数），格式如下：
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-或
-
-<answer>无</answer>
+例如：
+<answer>d=7</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Let's execute a "Traffic Signal Control Sequence Anomaly Detection" task. Here are the rules:
+[Transportation Scenario]
+Welcome to the "Urban Rail Transit Hub Planning System". Let's deduce the layout of a complex transit network. Here are the rules:
 
-The system has recorded a continuous traffic signal state sequence S of length {n}. Each time slot's state code in the sequence comes from the known alphabet {alphabet}.
+The transportation network is structured as a finite rooted tree. The central hub station (root node) has a depth of 0, and the total number of stations is unknown. There exists an unknown signal scheduling period m (m can be 3, 4, 5, or 6) and a signal label cycle C[0..m-1] of length m. Each station v has a signal label C[depth(v) mod m], where depth(v) is the depth (distance) of station v from the hub. All labels in the cycle are distinct and come from the public signal set {label_set} (the actual signals used and their order are unknown).
 
-Additionally, the traffic control center has issued a known dangerous failure pattern T = "{pattern}" of length {pattern_length}.
+In cycle C, there is exactly one "restricted signal" S, whose index p in C is unknown. Your goal is to infer the exact depth of the target station T to be built.
 
-Your goal is to find the **first occurrence starting time slot** of the failure pattern T in the recorded sequence S (i.e., the minimum starting position j such that the consecutive {pattern_length} states starting from position j exactly match T). If pattern T does not exist in sequence S, you need to declare "none".
+The system has a pre-fixed transit line P from the hub (with length at least 13), and you can only move along this line step by step to survey and obtain information about stations along the way.
 
-Note: Time slot indices start from 1, and valid starting time slots range from 1 to {max_start_pos}.
+You can repeatedly use the following queries (one per turn):
 
-You can repeatedly ask me three types of queries (one per turn), and I will answer truthfully based on the hidden log sequence:
+1. RESET: Reset the exploration pointer to the central hub station (Root).
+2. STEP: Move forward 1 step along the fixed line to the next station. Returns the signal label and handle E[k] of that station (k is the step number starting from 0; E[0] is the hub station). If the end of the line is reached, a prompt is returned.
+3. LABEL(X): Query the signal label value of station X. X can be Root (hub station), T (target station), or any obtained E[k].
+4. COUNT(X): Query the exact number of times the restricted signal S appears on the unique line from the hub to station X (including X).
 
-1. **Prefix Truncation Detection Query**: Ask whether a complete failure pattern T has occurred within the first k time slots of the sequence (i.e., S[1..k]).
-   - Input: integer k (1 to {n})
-   - Output: "true" or "false"
-   - When k is less than {pattern_length}, the result is always "false"
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the survey fails.
 
-2. **Exact Time Slot Verification Query**: Ask whether the window of length {pattern_length} starting at time slot i exactly matches the failure pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: "true" or "false"
+Each query must contain only one tag. Use the following XML format:
 
-3. **Similarity Analysis Query**: Ask how many states in the window of length {pattern_length} starting at time slot i match the corresponding states in the failure pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: an integer (0 to {pattern_length})
+- RESET query (empty content):
+<query_reset></query_reset>
 
-When you have gathered enough information, submit your final answer. If the answer is incorrect, the task fails.
+- STEP query (empty content):
+<query_step></query_step>
 
-## Query and Answer Format (strictly required)
+- LABEL query (e.g., querying central hub station):
+<query_label>Root</query_label>
 
-Each turn must contain only one query or answer tag. Use the following XML format:
+- LABEL query (e.g., querying station E[5]):
+<query_label>E[5]</query_label>
 
-- Prefix Truncation Detection Query (e.g., querying the first 10 time slots):
-<query_prefix>10</query_prefix>
+- LABEL query (e.g., querying target station):
+<query_label>T</query_label>
 
-- Exact Time Slot Verification Query (e.g., querying time slot 5):
-<query_exact>5</query_exact>
+- COUNT query (e.g., querying central hub station):
+<query_count>Root</query_count>
 
-- Similarity Analysis Query (e.g., querying time slot 3):
-<query_count>3</query_count>
+- COUNT query (e.g., querying station E[3]):
+<query_count>E[3]</query_count>
 
-When submitting the final answer, if you found the first occurrence time slot, submit that time slot number; if it doesn't exist, submit "none". Format as follows:
+When submitting the final answer, you must provide the depth d of target station T (a non-negative integer) in the following format:
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-or
-
-<answer>none</answer>
+For example:
+<answer>d=7</answer>
 """
 
     contextualized_rule_zh_2 = """\
-我们来进行一项"致病基因片段精准比对"分析，规则如下：
+[医疗场景]
+欢迎使用【病毒变异溯源分析系统】。我们来分析一个病毒突变株的演化树谱，规则如下：
 
-实验室测定了一位患者的未知序列片段 S，长度为 {n}，序列中的每个碱基/特征选自已知字母表 {alphabet}。
+病毒演化过程构成了一棵有限的有根谱系树，初始毒株（根节点）的突变深度为 0，总突变节点数未知。存在一个未知的蛋白质表达周期 m（m 可能是 3、4、5 或 6），以及一个长度为 m 的蛋白标签循环 C[0..m-1]。每个变异株 v 的蛋白标签为 C[depth(v) mod m]，其中 depth(v) 表示变异株 v 的突变深度。循环中的标签两两不同，取自公开的靶点集合 {label_set}（实际使用的蛋白种类与顺序未知）。
 
-同时，医学数据库提供了一个已知的致病突变模式 T = "{pattern}"，长度为 {pattern_length}。
+在循环 C 中有且仅有一个"致病性靶点" S，其在 C 中的下标 p 未知。你的目标是推断出关键目标变异株 T 的精确突变深度。
 
-你的目标是找出该突变模式 T 在患者序列 S 中**首次出现的起始位点**（即最小的起始位置 j，使得从位置 j 开始的连续 {pattern_length} 个特征与 T 完全匹配）。如果致病模式 T 在序列 S 中不存在，则需要宣布"无"。
+系统预先固定了一条从初始毒株出发的连续演化路径 P（长度至少为 13），你只能沿这条路径逐步追踪并获取沿途变异株信息。
 
-注意：序列位点索引从 1 开始，有效的起始位点范围是 1 到 {max_start_pos}。
+你可以反复使用以下查询（每次仅限一个查询）：
 
-你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据患者的真实序列如实回答：
+1. RESET：将追踪指针重置到初始毒株（Root）。
+2. STEP：沿固定演化路径前进 1 步，测序下一个变异株。返回该变异株的蛋白标签和句柄 E[k]（k 为步序号，从 0 开始；E[0] 为初始毒株）。如果已到路径末端则返回提示。
+3. LABEL(X)：查询变异株 X 的蛋白标签值。X 可以是 Root（初始毒株）、T（目标变异株）或已获取的任一 E[k]。
+4. COUNT(X)：查询从初始毒株到变异株 X 的唯一路径（包含 X）中，致病性靶点 S 出现的确切次数。
 
-1. **前缀片段筛查查询**：询问在序列的前 k 个位点（即 S[1..k]）中，是否存在致病模式 T 的完整匹配。
-   - 输入：整数 k（1 到 {n}）
-   - 输出："真"或"假"
-   - 当 k 小于 {pattern_length} 时必然返回"假"
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，溯源失败。
 
-2. **靶向位点精准检测查询**：询问从位点 i 开始的长度为 {pattern_length} 的窗口是否与致病模式 T 完全匹配。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出："真"或"假"
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. **同源性计数查询**：询问从位点 i 开始的长度为 {pattern_length} 的窗口中，有多少个特征与致病模式 T 对应位置的特征相同。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出：一个整数（0 到 {pattern_length}）
+- RESET 查询（内容为空）：
+<query_reset></query_reset>
 
-当你收集到足够信息后，请提交最终诊断结论。若结论错误，分析失败。
+- STEP 查询（内容为空）：
+<query_step></query_step>
 
-## 查询与提交答案的格式（必须严格遵守）
+- LABEL 查询（例如查询初始毒株）：
+<query_label>Root</query_label>
 
-每次只能包含一个查询或答案标签。请使用以下 XML 格式：
+- LABEL 查询（例如查询变异株 E[5]）：
+<query_label>E[5]</query_label>
 
-- 前缀片段筛查查询（例如查询前 10 个位点）：
-<query_prefix>10</query_prefix>
+- LABEL 查询（例如查询目标变异株）：
+<query_label>T</query_label>
 
-- 靶向位点精准检测查询（例如查询位点 5）：
-<query_exact>5</query_exact>
+- COUNT 查询（例如查询初始毒株）：
+<query_count>Root</query_count>
 
-- 同源性计数查询（例如查询位点 3）：
-<query_count>3</query_count>
+- COUNT 查询（例如查询变异株 E[3]）：
+<query_count>E[3]</query_count>
 
-提交最终答案时，如果找到了首次出现位点，请提交该位点编号；如果不存在，请提交"无"。格式如下：
+提交最终答案时，必须给出目标变异株 T 的深度 d（非负整数），格式如下：
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-或
-
-<answer>无</answer>
+例如：
+<answer>d=7</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Let's conduct a "Pathogenic Gene Segment Precision Alignment" analysis. Here are the rules:
+[Healthcare Scenario]
+Welcome to the "Viral Mutation Lineage Analysis System". Let's analyze the evolutionary tree of a viral strain. Here are the rules:
 
-The laboratory has sequenced an unknown segment sequence S of a patient, with a length of {n}. Each base/feature in the sequence comes from the known alphabet {alphabet}.
+The viral evolution forms a finite rooted lineage tree. Patient Zero strain (root node) has a mutation depth of 0, and the total number of variants is unknown. There exists an unknown protein expression period m (m can be 3, 4, 5, or 6) and a protein label cycle C[0..m-1] of length m. Each variant v has a protein label C[depth(v) mod m], where depth(v) is the mutation depth of variant v. All labels in the cycle are distinct and come from the public target set {label_set} (the actual proteins used and their order are unknown).
 
-Simultaneously, the medical database provides a known pathogenic mutation pattern T = "{pattern}" of length {pattern_length}.
+In cycle C, there is exactly one "pathogenic marker" S, whose index p in C is unknown. Your goal is to infer the exact mutation depth of the key target variant T.
 
-Your goal is to find the **first occurrence starting locus** of this mutation pattern T in the patient's sequence S (i.e., the minimum starting position j such that the consecutive {pattern_length} features starting from position j exactly match T). If the pathogenic pattern T does not exist in sequence S, you need to declare "none".
+The system has a pre-fixed evolution lineage P originating from Patient Zero (with length at least 13), and you can only move along this lineage step by step to trace and obtain information about variants along the way.
 
-Note: Locus indices start from 1, and valid starting loci range from 1 to {max_start_pos}.
+You can repeatedly use the following queries (one per turn):
 
-You can repeatedly ask me three types of queries (one per turn), and I will answer truthfully based on the patient's actual sequence:
+1. RESET: Reset the tracing pointer to the Patient Zero strain (Root).
+2. STEP: Move forward 1 step along the fixed lineage to sequence the next variant. Returns the protein label and handle E[k] of that variant (k is the step number starting from 0; E[0] is Patient Zero). If the end of the lineage is reached, a prompt is returned.
+3. LABEL(X): Query the protein label value of variant X. X can be Root (Patient Zero), T (target variant), or any obtained E[k].
+4. COUNT(X): Query the exact number of times the pathogenic marker S appears on the unique lineage from Patient Zero to variant X (including X).
 
-1. **Prefix Segment Screening Query**: Ask whether there exists a complete match of the pathogenic pattern T within the first k loci of the sequence (i.e., S[1..k]).
-   - Input: integer k (1 to {n})
-   - Output: "true" or "false"
-   - When k is less than {pattern_length}, the result is always "false"
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracing fails.
 
-2. **Targeted Locus Exact Detection Query**: Ask whether the window of length {pattern_length} starting at locus i exactly matches the pathogenic pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: "true" or "false"
+Each query must contain only one tag. Use the following XML format:
 
-3. **Homology Count Query**: Ask how many features in the window of length {pattern_length} starting at locus i match the corresponding features in the pathogenic pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: an integer (0 to {pattern_length})
+- RESET query (empty content):
+<query_reset></query_reset>
 
-When you have gathered enough information, submit your final diagnostic conclusion. If the conclusion is incorrect, the analysis fails.
+- STEP query (empty content):
+<query_step></query_step>
 
-## Query and Answer Format (strictly required)
+- LABEL query (e.g., querying Patient Zero):
+<query_label>Root</query_label>
 
-Each turn must contain only one query or answer tag. Use the following XML format:
+- LABEL query (e.g., querying variant E[5]):
+<query_label>E[5]</query_label>
 
-- Prefix Segment Screening Query (e.g., querying the first 10 loci):
-<query_prefix>10</query_prefix>
+- LABEL query (e.g., querying target variant):
+<query_label>T</query_label>
 
-- Targeted Locus Exact Detection Query (e.g., querying locus 5):
-<query_exact>5</query_exact>
+- COUNT query (e.g., querying Patient Zero):
+<query_count>Root</query_count>
 
-- Homology Count Query (e.g., querying locus 3):
-<query_count>3</query_count>
+- COUNT query (e.g., querying variant E[3]):
+<query_count>E[3]</query_count>
 
-When submitting the final answer, if you found the first occurrence locus, submit that locus number; if it doesn't exist, submit "none". Format as follows:
+When submitting the final answer, you must provide the depth d of target variant T (a non-negative integer) in the following format:
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-or
-
-<answer>none</answer>
+For example:
+<answer>d=7</answer>
 """
 
     contextualized_rule_zh_3 = """\
-我们来执行一次"在线考试异常行为溯源"任务，规则如下：
+[教育场景]
+欢迎使用【认知知识图谱自适应学习系统】。我们来解析一棵学科先决条件知识树，规则如下：
 
-教务系统记录了某位学生在考试中的连续操作行为序列 S，长度为 {n}，序列中的每步操作代号来自已知字母表 {alphabet}。
+知识体系设定了一棵有限的树状结构，核心基础概念（根节点）的深度为 0，总知识节点数未知。存在一个未知的教学法周期 m（m 可能是 3、4、5 或 6），以及一个长度为 m 的模块标签循环 C[0..m-1]。每个知识节点 v 的属性标签为 C[depth(v) mod m]，其中 depth(v) 表示节点 v 的层级深度。循环中的标签两两不同，取自公开的教学模块集合 {label_set}（实际使用的模块种类与顺序未知）。
 
-同时，监考系统提取了一种典型的疑似抄袭行为模式 T = "{pattern}"，长度为 {pattern_length}。
+在循环 C 中有且仅有一个"里程碑考核模块" S，其在 C 中的下标 p 未知。你的目标是推断出终极目标课题 T 的精确深度。
 
-你的目标是追踪该作弊模式 T 在行为序列 S 中**首次出现的起始步骤**（即最小的起始位置 j，使得从位置 j 开始的连续 {pattern_length} 步操作与 T 完全匹配）。如果该模式 T 在序列 S 中不存在，则需要宣布"无"。
+课程预先固定了一条从基础概念出发的学习路径 P（长度至少为 13），你只能沿这条路径逐步解锁并获取沿途知识节点信息。
 
-注意：操作步骤索引从 1 开始，有效的起始步骤范围是 1 到 {max_start_pos}。
+你可以反复使用以下查询（每次仅限一个查询）：
 
-你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据隐藏的行为日志如实回答：
+1. RESET：将学习指针重置到核心基础概念（Root）。
+2. STEP：沿固定学习路径前进 1 步，解锁下一个知识节点。返回该节点的属性标签和句柄 E[k]（k 为步序号，从 0 开始；E[0] 为基础概念）。如果已到路径末端则返回提示。
+3. LABEL(X)：查询知识节点 X 的属性标签值。X 可以是 Root（核心概念）、T（终极课题）或已获取的任一 E[k]。
+4. COUNT(X)：查询从基础概念到知识节点 X 的唯一路径（包含 X）中，里程碑考核模块 S 出现的确切次数。
 
-1. **早期行为审查查询**：询问在序列的前 k 步操作（即 S[1..k]）中，是否已经包含了完整的疑似抄袭模式 T。
-   - 输入：整数 k（1 到 {n}）
-   - 输出："真"或"假"
-   - 当 k 小于 {pattern_length} 时必然返回"假"
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，解析失败。
 
-2. **特定阶段行为核查查询**：询问从步骤 i 开始的长度为 {pattern_length} 的窗口是否与疑似抄袭模式 T 完全一致。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出："真"或"假"
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. **行为重合度评估查询**：询问从步骤 i 开始的长度为 {pattern_length} 的窗口中，有多少步操作与疑似抄袭模式 T 对应位置的操作相同。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出：一个整数（0 到 {pattern_length}）
+- RESET 查询（内容为空）：
+<query_reset></query_reset>
 
-当你收集到足够信息后，请提交最终调查结果。若结果错误，任务失败。
+- STEP 查询（内容为空）：
+<query_step></query_step>
 
-## 查询与提交答案的格式（必须严格遵守）
+- LABEL 查询（例如查询核心概念）：
+<query_label>Root</query_label>
 
-每次只能包含一个查询或答案标签。请使用以下 XML 格式：
+- LABEL 查询（例如查询知识节点 E[5]）：
+<query_label>E[5]</query_label>
 
-- 早期行为审查查询（例如查询前 10 步）：
-<query_prefix>10</query_prefix>
+- LABEL 查询（例如查询终极课题）：
+<query_label>T</query_label>
 
-- 特定阶段行为核查查询（例如查询步骤 5）：
-<query_exact>5</query_exact>
+- COUNT 查询（例如查询核心概念）：
+<query_count>Root</query_count>
 
-- 行为重合度评估查询（例如查询步骤 3）：
-<query_count>3</query_count>
+- COUNT 查询（例如查询知识节点 E[3]）：
+<query_count>E[3]</query_count>
 
-提交最终答案时，如果找到了首次出现步骤，请提交该步骤编号；如果不存在，请提交"无"。格式如下：
+提交最终答案时，必须给出目标课题 T 的深度 d（非负整数），格式如下：
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-或
-
-<answer>无</answer>
+例如：
+<answer>d=7</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's execute an "Online Exam Abnormal Behavior Traceback" task. Here are the rules:
+Welcome to the "Cognitive Knowledge Graph Adaptive Learning System". Let's parse a prerequisite knowledge tree. Here are the rules:
 
-The educational system has recorded a student's continuous operational behavior sequence S during an exam, of length {n}. Each operation code in the sequence comes from the known alphabet {alphabet}.
+The knowledge framework is set up as a finite tree structure. The core foundational concept (root node) has a depth of 0, and the total number of knowledge nodes is unknown. There exists an unknown pedagogical period m (m can be 3, 4, 5, or 6) and a module label cycle C[0..m-1] of length m. Each knowledge node v has a property label C[depth(v) mod m], where depth(v) is the hierarchical depth of node v. All labels in the cycle are distinct and come from the public module set {label_set} (the actual modules used and their order are unknown).
 
-Meanwhile, the proctoring system has extracted a typical suspected plagiarism behavior pattern T = "{pattern}" of length {pattern_length}.
+In cycle C, there is exactly one "milestone assessment" S, whose index p in C is unknown. Your goal is to infer the exact depth of the ultimate target topic T.
 
-Your goal is to trace the **first occurrence starting step** of this cheating pattern T in the behavior sequence S (i.e., the minimum starting position j such that the consecutive {pattern_length} operations starting from position j exactly match T). If pattern T does not exist in sequence S, you need to declare "none".
+The curriculum has a pre-fixed learning track P originating from the foundational concept (with length at least 13), and you can only move along this track step by step to unlock and obtain information about knowledge nodes along the way.
 
-Note: Operation step indices start from 1, and valid starting steps range from 1 to {max_start_pos}.
+You can repeatedly use the following queries (one per turn):
 
-You can repeatedly ask me three types of queries (one per turn), and I will answer truthfully based on the hidden behavior log:
+1. RESET: Reset the learning pointer to the core foundational concept (Root).
+2. STEP: Move forward 1 step along the fixed learning track to unlock the next knowledge node. Returns the property label and handle E[k] of that node (k is the step number starting from 0; E[0] is the foundational concept). If the end of the track is reached, a prompt is returned.
+3. LABEL(X): Query the property label value of knowledge node X. X can be Root (core concept), T (target topic), or any obtained E[k].
+4. COUNT(X): Query the exact number of times the milestone assessment S appears on the unique track from the core concept to node X (including X).
 
-1. **Early Behavior Review Query**: Ask whether the complete suspected plagiarism pattern T is already included within the first k operations of the sequence (i.e., S[1..k]).
-   - Input: integer k (1 to {n})
-   - Output: "true" or "false"
-   - When k is less than {pattern_length}, the result is always "false"
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the parsing fails.
 
-2. **Specific Phase Behavior Verification Query**: Ask whether the window of length {pattern_length} starting at step i exactly matches the suspected plagiarism pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: "true" or "false"
+Each query must contain only one tag. Use the following XML format:
 
-3. **Behavior Overlap Assessment Query**: Ask how many operations in the window of length {pattern_length} starting at step i match the corresponding operations in the suspected plagiarism pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: an integer (0 to {pattern_length})
+- RESET query (empty content):
+<query_reset></query_reset>
 
-When you have gathered enough information, submit your final investigation result. If the result is incorrect, the task fails.
+- STEP query (empty content):
+<query_step></query_step>
 
-## Query and Answer Format (strictly required)
+- LABEL query (e.g., querying core concept):
+<query_label>Root</query_label>
 
-Each turn must contain only one query or answer tag. Use the following XML format:
+- LABEL query (e.g., querying knowledge node E[5]):
+<query_label>E[5]</query_label>
 
-- Early Behavior Review Query (e.g., querying the first 10 steps):
-<query_prefix>10</query_prefix>
+- LABEL query (e.g., querying target topic):
+<query_label>T</query_label>
 
-- Specific Phase Behavior Verification Query (e.g., querying step 5):
-<query_exact>5</query_exact>
+- COUNT query (e.g., querying core concept):
+<query_count>Root</query_count>
 
-- Behavior Overlap Assessment Query (e.g., querying step 3):
-<query_count>3</query_count>
+- COUNT query (e.g., querying knowledge node E[3]):
+<query_count>E[3]</query_count>
 
-When submitting the final answer, if you found the first occurrence step, submit that step number; if it doesn't exist, submit "none". Format as follows:
+When submitting the final answer, you must provide the depth d of target topic T (a non-negative integer) in the following format:
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-or
-
-<answer>none</answer>
+For example:
+<answer>d=7</answer>
 """
 
     contextualized_rule_zh_4 = """\
-我们来进行一次"工业设备疲劳停机预警"分析，规则如下：
+[制造业/工业场景]
+欢迎使用【工业装配线质量控制系统】。我们来分析一条复杂的装配工艺依赖树，规则如下：
 
-控制系统收集了生产线上某设备连续输出的传感器状态序列 S，长度为 {n}，序列中的每个读数代号来自已知字母表 {alphabet}。
+工艺流程构成了一棵有限的有根树，原料处理中心（根节点）的加工深度为 0，总工序节点数未知。存在一个未知的质检协议周期 m（m 可能是 3、4、5 或 6），以及一个长度为 m 的质检标签循环 C[0..m-1]。每个工序节点 v 的质检标签为 C[depth(v) mod m]，其中 depth(v) 表示节点 v 的加工深度。循环中的标签两两不同，取自公开的质检标准集合 {label_set}（实际使用的标准种类与顺序未知）。
 
-同时，工程师提供了一个已知的设备疲劳停机预兆模式 T = "{pattern}"，长度为 {pattern_length}。
+在循环 C 中有且仅有一个"深度校准测试" S，其在 C 中的下标 p 未知。你的目标是推断出最终成品节点 T 的精确加工深度。
 
-你的目标是找出该预兆模式 T 在传感器序列 S 中**首次发生的起始周期**（即最小的起始位置 j，使得从位置 j 开始的连续 {pattern_length} 个读数与 T 完全匹配）。如果预兆模式 T 在序列 S 中不存在，则需要宣布"无"。
+产线预先固定了一条从原料中心出发的流水线路径 P（长度至少为 13），你只能沿这条路径逐步推进并获取沿途工序信息。
 
-注意：运行周期索引从 1 开始，有效的起始周期范围是 1 到 {max_start_pos}。
+你可以反复使用以下查询（每次仅限一个查询）：
 
-你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据隐藏的传感器日志如实回答：
+1. RESET：将质检指针重置到原料处理中心（Root）。
+2. STEP：沿固定流水线前进 1 步，推进到下一个工序节点。返回该工序的质检标签和句柄 E[k]（k 为步序号，从 0 开始；E[0] 为原料中心）。如果已到流水线末端则返回提示。
+3. LABEL(X)：查询工序节点 X 的质检标签值。X 可以是 Root（原料中心）、T（成品节点）或已获取的任一 E[k]。
+4. COUNT(X)：查询从原料中心到工序节点 X 的唯一路径（包含 X）中，深度校准测试 S 出现的确切次数。
 
-1. **生产前段快速质检查询**：询问在序列的前 k 个周期（即 S[1..k]）内，是否已经出现了完整的预兆模式 T。
-   - 输入：整数 k（1 到 {n}）
-   - 输出："真"或"假"
-   - 当 k 小于 {pattern_length} 时必然返回"假"
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，质检分析失败。
 
-2. **特定窗口精密诊断查询**：询问从周期 i 开始的长度为 {pattern_length} 的窗口读数是否与预兆模式 T 分毫不差。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出："真"或"假"
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. **特征吻合度检测查询**：询问从周期 i 开始的长度为 {pattern_length} 的窗口中，有多少个读数与预兆模式 T 对应位置的读数一致。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出：一个整数（0 到 {pattern_length}）
+- RESET 查询（内容为空）：
+<query_reset></query_reset>
 
-当你收集到足够信息后，请提交最终预警报告。若报告错误，分析失败。
+- STEP 查询（内容为空）：
+<query_step></query_step>
 
-## 查询与提交答案的格式（必须严格遵守）
+- LABEL 查询（例如查询原料中心）：
+<query_label>Root</query_label>
 
-每次只能包含一个查询或答案标签。请使用以下 XML 格式：
+- LABEL 查询（例如查询工序节点 E[5]）：
+<query_label>E[5]</query_label>
 
-- 生产前段快速质检查询（例如查询前 10 个周期）：
-<query_prefix>10</query_prefix>
+- LABEL 查询（例如查询成品节点）：
+<query_label>T</query_label>
 
-- 特定窗口精密诊断查询（例如查询周期 5）：
-<query_exact>5</query_exact>
+- COUNT 查询（例如查询原料中心）：
+<query_count>Root</query_count>
 
-- 特征吻合度检测查询（例如查询周期 3）：
-<query_count>3</query_count>
+- COUNT 查询（例如查询工序节点 E[3]）：
+<query_count>E[3]</query_count>
 
-提交最终答案时，如果找到了首次出现周期，请提交该周期编号；如果不存在，请提交"无"。格式如下：
+提交最终答案时，必须给出目标成品节点 T 的深度 d（非负整数），格式如下：
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-或
-
-<answer>无</answer>
+例如：
+<answer>d=7</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Let's conduct an "Industrial Equipment Fatigue Shutdown Warning" analysis. Here are the rules:
+[Manufacturing Scenario]
+Welcome to the "Industrial Assembly Line Quality Control System". Let's analyze a complex assembly process dependency tree. Here are the rules:
 
-The control system has collected a continuous sensor state sequence S output by a device on the production line, with a length of {n}. Each reading code in the sequence comes from the known alphabet {alphabet}.
+The assembly process forms a finite rooted dependency tree. The raw material processing center (root node) has a processing depth of 0, and the total number of processing stages is unknown. There exists an unknown QC protocol period m (m can be 3, 4, 5, or 6) and a QC label cycle C[0..m-1] of length m. Each processing stage v has a QC label C[depth(v) mod m], where depth(v) is the processing depth of stage v. All labels in the cycle are distinct and come from the public standard set {label_set} (the actual standards used and their order are unknown).
 
-Simultaneously, engineers have provided a known equipment fatigue shutdown presage pattern T = "{pattern}" of length {pattern_length}.
+In cycle C, there is exactly one "deep calibration test" S, whose index p in C is unknown. Your goal is to infer the exact depth of the final product stage T.
 
-Your goal is to find the **first occurrence starting cycle** of this presage pattern T in the sensor sequence S (i.e., the minimum starting position j such that the consecutive {pattern_length} readings starting from position j exactly match T). If presage pattern T does not exist in sequence S, you need to declare "none".
+The production line has a pre-fixed assembly pipeline P originating from the raw material center (with length at least 13), and you can only move along this pipeline step by step to verify and obtain information about stages along the way.
 
-Note: Operating cycle indices start from 1, and valid starting cycles range from 1 to {max_start_pos}.
+You can repeatedly use the following queries (one per turn):
 
-You can repeatedly ask me three types of queries (one per turn), and I will answer truthfully based on the hidden sensor log:
+1. RESET: Reset the inspection pointer to the raw material processing center (Root).
+2. STEP: Move forward 1 step along the fixed pipeline to the next processing stage. Returns the QC label and handle E[k] of that stage (k is the step number starting from 0; E[0] is the raw material center). If the end of the pipeline is reached, a prompt is returned.
+3. LABEL(X): Query the QC label value of processing stage X. X can be Root (raw material center), T (final product stage), or any obtained E[k].
+4. COUNT(X): Query the exact number of times the deep calibration test S appears on the unique pipeline from the raw material center to stage X (including X).
 
-1. **Early Production Rapid Inspection Query**: Ask whether the complete presage pattern T has already appeared within the first k cycles of the sequence (i.e., S[1..k]).
-   - Input: integer k (1 to {n})
-   - Output: "true" or "false"
-   - When k is less than {pattern_length}, the result is always "false"
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the quality analysis fails.
 
-2. **Specific Window Precision Diagnosis Query**: Ask whether the window of length {pattern_length} starting at cycle i exactly matches the presage pattern T without any deviation.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: "true" or "false"
+Each query must contain only one tag. Use the following XML format:
 
-3. **Feature Conformity Detection Query**: Ask how many readings in the window of length {pattern_length} starting at cycle i match the corresponding readings in the presage pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: an integer (0 to {pattern_length})
+- RESET query (empty content):
+<query_reset></query_reset>
 
-When you have gathered enough information, submit your final warning report. If the report is incorrect, the analysis fails.
+- STEP query (empty content):
+<query_step></query_step>
 
-## Query and Answer Format (strictly required)
+- LABEL query (e.g., querying raw material center):
+<query_label>Root</query_label>
 
-Each turn must contain only one query or answer tag. Use the following XML format:
+- LABEL query (e.g., querying processing stage E[5]):
+<query_label>E[5]</query_label>
 
-- Early Production Rapid Inspection Query (e.g., querying the first 10 cycles):
-<query_prefix>10</query_prefix>
+- LABEL query (e.g., querying final product stage):
+<query_label>T</query_label>
 
-- Specific Window Precision Diagnosis Query (e.g., querying cycle 5):
-<query_exact>5</query_exact>
+- COUNT query (e.g., querying raw material center):
+<query_count>Root</query_count>
 
-- Feature Conformity Detection Query (e.g., querying cycle 3):
-<query_count>3</query_count>
+- COUNT query (e.g., querying processing stage E[3]):
+<query_count>E[3]</query_count>
 
-When submitting the final answer, if you found the first occurrence cycle, submit that cycle number; if it doesn't exist, submit "none". Format as follows:
+When submitting the final answer, you must provide the depth d of target final product T (a non-negative integer) in the following format:
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-or
-
-<answer>none</answer>
+For example:
+<answer>d=7</answer>
 """
 
     contextualized_rule_zh_5 = """\
-我们来推进一项"金融犯罪资金流转链路穿透"调查，规则如下：
+[法律场景]
+欢迎使用【司法判例溯源检索系统】。我们来梳理一个复杂的案件上诉法理树，规则如下：
 
-经侦部门调取了嫌疑人的连续资金流转行为序列 S，长度为 {n}，序列中的每个交易行为代号来自已知字母表 {alphabet}。
+判例链条设定了一棵有限的有根树，初审宪法原则（根节点）的引用深度为 0，总判例节点数未知。存在一个未知的司法审查周期 m（m 可能是 3、4、5 或 6），以及一个长度为 m 的审查标准循环 C[0..m-1]。每个判例节点 v 的审查标准为 C[depth(v) mod m]，其中 depth(v) 表示节点 v 的引用深度。循环中的标准两两不同，取自公开的法理标准集合 {label_set}（实际使用的标准种类与顺序未知）。
 
-同时，专案组总结了一个经典的洗钱犯罪行为模式 T = "{pattern}"，长度为 {pattern_length}。
+在审查循环 C 中有且仅有一个"违宪严格审查" S，其在 C 中的下标 p 未知。你的目标是推断出目标待决案件 T 的精确引用深度。
 
-你的目标是识别该犯罪模式 T 在行为序列 S 中**首次显露的起始记录序号**（即最小的起始位置 j，使得从位置 j 开始的连续 {pattern_length} 步行为与 T 完全匹配）。如果犯罪模式 T 在序列 S 中不存在，则需要宣布"无"。
+系统预先固定了一条从初审出发的既判上诉路径 P（长度至少为 13），你只能沿这条路径逐步查阅并获取沿途判例信息。
 
-注意：记录序号从 1 开始，有效的起始记录序号范围是 1 到 {max_start_pos}。
+你可以反复使用以下查询（每次仅限一个查询）：
 
-你可以反复向我提出以下三类查询（每次仅限一个查询），我会根据隐匿的交易台账如实回答：
+1. RESET：将查阅指针重置到初审宪法原则（Root）。
+2. STEP：沿固定上诉路径前进 1 步，查阅下一个判例。返回该判例的审查标准和句柄 E[k]（k 为步序号，从 0 开始；E[0] 为初审原则）。如果已到路径末端则返回提示。
+3. LABEL(X)：查询判例节点 X 的审查标准值。X 可以是 Root（初审原则）、T（待决案件）或已获取的任一 E[k]。
+4. COUNT(X)：查询从初审原则到判例节点 X 的唯一路径（包含 X）中，违宪严格审查 S 出现的确切次数。
 
-1. **初期证据链检索查询**：询问在序列的前 k 条记录（即 S[1..k]）中，是否已经构成了完整的犯罪模式 T。
-   - 输入：整数 k（1 到 {n}）
-   - 输出："真"或"假"
-   - 当 k 小于 {pattern_length} 时必然返回"假"
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，溯源检索失败。
 
-2. **定点交易穿透核验查询**：询问从记录 i 开始的长度为 {pattern_length} 的窗口是否与犯罪模式 T 完全相符。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出："真"或"假"
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-3. **行为特征重合度比对查询**：询问从记录 i 开始的长度为 {pattern_length} 的窗口中，有多少个交易行为与犯罪模式 T 对应位置的行为相同。
-   - 输入：整数 i（1 到 {max_start_pos}）
-   - 输出：一个整数（0 到 {pattern_length}）
+- RESET 查询（内容为空）：
+<query_reset></query_reset>
 
-当你收集到足够证据后，请提交最终锁定位置。若结论错误，调查将受到误导。
+- STEP 查询（内容为空）：
+<query_step></query_step>
 
-## 查询与提交答案的格式（必须严格遵守）
+- LABEL 查询（例如查询初审原则）：
+<query_label>Root</query_label>
 
-每次只能包含一个查询或答案标签。请使用以下 XML 格式：
+- LABEL 查询（例如查询判例节点 E[5]）：
+<query_label>E[5]</query_label>
 
-- 初期证据链检索查询（例如查询前 10 条记录）：
-<query_prefix>10</query_prefix>
+- LABEL 查询（例如查询待决案件）：
+<query_label>T</query_label>
 
-- 定点交易穿透核验查询（例如查询记录 5）：
-<query_exact>5</query_exact>
+- COUNT 查询（例如查询初审原则）：
+<query_count>Root</query_count>
 
-- 行为特征重合度比对查询（例如查询记录 3）：
-<query_count>3</query_count>
+- COUNT 查询（例如查询判例节点 E[3]）：
+<query_count>E[3]</query_count>
 
-提交最终答案时，如果找到了首次显露序号，请提交该记录序号；如果不存在，请提交"无"。格式如下：
+提交最终答案时，必须给出目标案件 T 的深度 d（非负整数），格式如下：
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-或
-
-<answer>无</answer>
+例如：
+<answer>d=7</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Let's advance a "Financial Crime Fund Transfer Chain Penetration" investigation. Here are the rules:
+[Law Scenario]
+Welcome to the "Judicial Precedent Tracing System". Let's untangle a complex appellate jurisprudence tree. Here are the rules:
 
-The economic crimes investigation department has obtained a suspect's continuous fund transfer behavior sequence S of length {n}. Each transaction behavior code in the sequence comes from the known alphabet {alphabet}.
+The chain of precedents is structured as a finite rooted tree. The original constitutional statute (root node) has a citation depth of 0, and the total number of precedent rulings is unknown. There exists an unknown judicial review period m (m can be 3, 4, 5, or 6) and a review standard cycle C[0..m-1] of length m. Each precedent ruling v has a review standard C[depth(v) mod m], where depth(v) is the citation depth of ruling v. All standards in the cycle are distinct and come from the public jurisprudence set {label_set} (the actual standards used and their order are unknown).
 
-Meanwhile, the task force has summarized a classic money laundering crime behavior pattern T = "{pattern}" of length {pattern_length}.
+In cycle C, there is exactly one "constitutional scrutiny" S, whose index p in C is unknown. Your goal is to infer the exact citation depth of the pending target case T.
 
-Your goal is to identify the **first occurrence starting record sequence number** of this crime pattern T in the behavior sequence S (i.e., the minimum starting position j such that the consecutive {pattern_length} behaviors starting from position j exactly match T). If the crime pattern T does not exist in sequence S, you need to declare "none".
+The system has a pre-fixed appellate history P originating from the original statute (with length at least 13), and you can only move along this history step by step to examine and obtain information about precedent rulings along the way.
 
-Note: Record sequence numbers start from 1, and valid starting record numbers range from 1 to {max_start_pos}.
+You can repeatedly use the following queries (one per turn):
 
-You can repeatedly ask me three types of queries (one per turn), and I will answer truthfully based on the hidden transaction ledger:
+1. RESET: Reset the review pointer to the original constitutional statute (Root).
+2. STEP: Move forward 1 step along the fixed appellate history to examine the next precedent ruling. Returns the review standard and handle E[k] of that ruling (k is the step number starting from 0; E[0] is the original statute). If the end of the history is reached, a prompt is returned.
+3. LABEL(X): Query the review standard value of precedent ruling X. X can be Root (original statute), T (pending target case), or any obtained E[k].
+4. COUNT(X): Query the exact number of times the constitutional scrutiny S appears on the unique history from the original statute to ruling X (including X).
 
-1. **Initial Evidence Chain Retrieval Query**: Ask whether the complete crime pattern T is already constituted within the first k records of the sequence (i.e., S[1..k]).
-   - Input: integer k (1 to {n})
-   - Output: "true" or "false"
-   - When k is less than {pattern_length}, the result is always "false"
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the tracing fails.
 
-2. **Targeted Transaction Penetration Verification Query**: Ask whether the window of length {pattern_length} starting at record i exactly matches the crime pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: "true" or "false"
+Each query must contain only one tag. Use the following XML format:
 
-3. **Behavior Feature Overlap Comparison Query**: Ask how many transaction behaviors in the window of length {pattern_length} starting at record i match the corresponding behaviors in the crime pattern T.
-   - Input: integer i (1 to {max_start_pos})
-   - Output: an integer (0 to {pattern_length})
+- RESET query (empty content):
+<query_reset></query_reset>
 
-When you have gathered enough evidence, submit your final lock-in position. If the conclusion is incorrect, the investigation will be misled.
+- STEP query (empty content):
+<query_step></query_step>
 
-## Query and Answer Format (strictly required)
+- LABEL query (e.g., querying original statute):
+<query_label>Root</query_label>
 
-Each turn must contain only one query or answer tag. Use the following XML format:
+- LABEL query (e.g., querying precedent ruling E[5]):
+<query_label>E[5]</query_label>
 
-- Initial Evidence Chain Retrieval Query (e.g., querying the first 10 records):
-<query_prefix>10</query_prefix>
+- LABEL query (e.g., querying pending target case):
+<query_label>T</query_label>
 
-- Targeted Transaction Penetration Verification Query (e.g., querying record 5):
-<query_exact>5</query_exact>
+- COUNT query (e.g., querying original statute):
+<query_count>Root</query_count>
 
-- Behavior Feature Overlap Comparison Query (e.g., querying record 3):
-<query_count>3</query_count>
+- COUNT query (e.g., querying precedent ruling E[3]):
+<query_count>E[3]</query_count>
 
-When submitting the final answer, if you found the first occurrence record, submit that record number; if it doesn't exist, submit "none". Format as follows:
+When submitting the final answer, you must provide the depth d of target case T (a non-negative integer) in the following format:
 
-<answer>5</answer>
+<answer>d={depth}</answer>
 
-or
-
-<answer>none</answer>
+For example:
+<answer>d=7</answer>
 """
 
-    tags = ["answer", "query_prefix", "query_exact", "query_count"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
+    tags = ["answer", "query_reset", "query_step", "query_label", "query_count"]
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 8,
-                "alphabet": "{A, B}",
-                "pattern": "AB",
-                "sequence": "BBAABBAA",
-            },
-            2: {
-                "n": 12,
-                "alphabet": "{A, B, C}",
-                "pattern": "ABC",
-                "sequence": "CBAAABCBACAB",
-            },
-            3: {
-                "n": 15,
-                "alphabet": "{A, B, C, D}",
-                "pattern": "ABCD",
-                "sequence": "DACBDABCDACABCD",
-            },
-            4: {
-                "n": 20,
-                "alphabet": "{A, B, C, D}",
-                "pattern": "DABC",
-                "sequence": "ABCDDABCACDABCDABCDA",
-            },
-            5: {
-                "n": 20,
-                "alphabet": "{A, B, C, D, E}",
-                "pattern": "EABCD",
-                "sequence": "ABCDEDABCEABDCEABDCA",
-            },
+        1: {
+            "m": 3,
+            "p": 1,
+            "T_depth": 5,
+            "path_length": 13,
+            "labels": ["Alpha", "Beta", "Gamma"],
+            "cycle": [0, 1, 2],
         },
-        "en": {
-            1: {
-                "n": 8,
-                "alphabet": "{A, B}",
-                "pattern": "AB",
-                "sequence": "BBAABBAA",
-            },
-            2: {
-                "n": 12,
-                "alphabet": "{A, B, C}",
-                "pattern": "ABC",
-                "sequence": "CBAAABCBACAB",
-            },
-            3: {
-                "n": 15,
-                "alphabet": "{A, B, C, D}",
-                "pattern": "ABCD",
-                "sequence": "DACBDABCDACABCD",
-            },
-            4: {
-                "n": 20,
-                "alphabet": "{A, B, C, D}",
-                "pattern": "DABC",
-                "sequence": "ABCDDABCACDABCDABCDA",
-            },
-            5: {
-                "n": 20,
-                "alphabet": "{A, B, C, D, E}",
-                "pattern": "EABCD",
-                "sequence": "ABCDEDABCEABDCEABDCA",
-            },
+        2: {
+            "m": 4,
+            "p": 2,
+            "T_depth": 10,
+            "path_length": 14,
+            "labels": ["Red", "Blue", "Green", "Yellow"],
+            "cycle": [0, 1, 2, 3],
+        },
+        3: {
+            "m": 5,
+            "p": 3,
+            "T_depth": 18,
+            "path_length": 15,
+            "labels": ["Star", "Moon", "Sun", "Cloud", "Wind"],
+            "cycle": [0, 1, 2, 3, 4],
+        },
+        4: {
+            "m": 5,
+            "p": 0,
+            "T_depth": 23,
+            "path_length": 16,
+            "labels": ["Apple", "Banana", "Cherry", "Date", "Elderberry"],
+            "cycle": [0, 1, 2, 3, 4],
+        },
+        5: {
+            "m": 6,
+            "p": 4,
+            "T_depth": 31,
+            "path_length": 17,
+            "labels": ["Circle", "Square", "Triangle", "Pentagon", "Hexagon", "Octagon"],
+            "cycle": [0, 1, 2, 3, 4, 5],
         },
     }
 
@@ -692,208 +654,182 @@ or
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，设置隐藏序列和模式"""
-        lang = self.config.language
         diff = int(self.config.difficulty)
 
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        cfg = self.DIFFICULTY_CONFIG[diff]
         
-        # 设置游戏参数
-        self._game_info["n"] = cfg["n"]
-        self._game_info["alphabet"] = cfg["alphabet"]
-        self._game_info["pattern"] = cfg["pattern"]
-        self._game_info["pattern_length"] = len(cfg["pattern"])
-        self._game_info["max_start_pos"] = cfg["n"] - len(cfg["pattern"]) + 1
+        self.m = cfg["m"]
+        self.p = cfg["p"]
+        self.T_depth = cfg["T_depth"]
+        self.path_length = cfg["path_length"]
+        self.labels = cfg["labels"]
+        self.cycle_indices = cfg["cycle"]
         
-        # 隐藏序列和模式
-        self.sequence = cfg["sequence"]
-        self.pattern = cfg["pattern"]
-        self.pattern_length = len(self.pattern)
-        self.n = cfg["n"]
+        rng = random.Random(diff * 100 + diff)
+        shuffled_cycle = self.cycle_indices.copy()
+        rng.shuffle(shuffled_cycle)
         
-        # 计算首次出现位置（Ground Truth）
-        # 索引从1开始
-        self.first_occurrence = None
-        for i in range(1, self.n - self.pattern_length + 2):
-            # 检查从位置i开始是否匹配
-            window = self.sequence[i-1:i-1+self.pattern_length]
-            if window == self.pattern:
-                self.first_occurrence = i
-                break
-
-    def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        self.cycle = [self.labels[i] for i in shuffled_cycle]
+        self.special_label = self.cycle[self.p]
         
-        # 处理"无"或"none"的情况
-        if self.config.language == "zh":
-            none_keyword = "无"
-        else:
-            none_keyword = "none"
+        self.path = {}
+        for k in range(self.path_length + 1):
+            self.path[k] = {
+                "depth": k,
+                "label": self.cycle[k % self.m],
+                "handle": f"E[{k}]" if k > 0 else "Root"
+            }
         
-        if raw_ans.lower() == none_keyword.lower():
-            # 玩家宣布不存在
-            return self.first_occurrence is None
+        self.target = {
+            "depth": self.T_depth,
+            "label": self.cycle[self.T_depth % self.m],
+            "handle": "T"
+        }
         
-        # 尝试解析为整数
-        try:
-            answer_pos = int(raw_ans)
-            # 检查答案是否正确
-            return answer_pos == self.first_occurrence
-        except ValueError:
-            return False
+        self.current_pos = 0
+        
+        self._game_info["label_set"] = ", ".join(self.labels)
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成一个与正确答案不同的错误响应，用于反事实干预。"""
-        if self.config.language == "zh":
-            true_res, false_res = "真", "假"
+        is_zh = self.config.language == "zh"
+        
+        num_match = re.search(r'\d+', correct)
+        if num_match:
+            original_num = int(num_match.group())
+            wrong_num = original_num + random.choice([1, 2, -1])
+            if wrong_num < 0:
+                wrong_num = original_num + 2
+            return correct.replace(str(original_num), str(wrong_num), 1)
+        
+        for label in self.labels:
+            if label in correct:
+                wrong_labels = [l for l in self.labels if l != label]
+                if wrong_labels:
+                    return correct.replace(label, random.choice(wrong_labels), 1)
+        
+        if is_zh:
+            return correct + "（注意：此信息可能有误。）"
         else:
-            true_res, false_res = "true", "false"
+            return correct + " (Note: this information may be inaccurate.)"
 
-        # 如果正确答案是布尔型，翻转之
-        if correct == true_res:
-            return false_res
-        if correct == false_res:
-            return true_res
+    def _get_node_by_handle(self, handle):
+        handle = handle.strip()
+        
+        if handle == "Root":
+            return self.path[0]
+        elif handle == "T":
+            return self.target
+        elif handle.startswith("E[") and handle.endswith("]"):
+            try:
+                idx = int(handle[2:-1])
+                if idx in self.path:
+                    return self.path[idx]
+            except:
+                pass
+        
+        return None
 
-        # 如果正确答案是数字（匹配计数），偏移之
+    def _count_special_label(self, depth):
+        count = 0
+        for d in range(depth + 1):
+            if self.cycle[d % self.m] == self.special_label:
+                count += 1
+        return count
+
+    def evaluate(self, parsed_info):
+        raw_ans = parsed_info["answer"].strip()
+        
+        if not raw_ans.startswith("d="):
+            return False
+        
         try:
-            val = int(correct)
-            wrong_val = val + 1 if val < self.pattern_length else val - 1
-            return str(wrong_val)
-        except ValueError:
-            pass
-
-        # 其他情况（如错误消息），返回一个修改后的值
-        return correct + " [error]"
-
-    def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑：根据查询类型生成响应"""
-        if self.config.language == "zh":
-            true_res, false_res = "真", "假"
-            error_range = "错误：位置超出有效范围。"
-            error_format = "错误：格式无效。"
-        else:
-            true_res, false_res = "true", "false"
-            error_range = "Error: Position out of valid range."
-            error_format = "Error: Invalid format."
-
-        # 处理前缀出现判断查询
-        if "query_prefix" in parsed_info:
-            try:
-                k = int(parsed_info["query_prefix"].strip())
-                if k < 1 or k > self.n:
-                    return error_range
-                
-                # 检查在前k个位置中是否存在模式T的完整匹配
-                # 当k < pattern_length时必然为假
-                if k < self.pattern_length:
-                    return false_res
-                
-                # 检查所有可能的起始位置 1 到 k-L+1
-                for i in range(1, k - self.pattern_length + 2):
-                    window = self.sequence[i-1:i-1+self.pattern_length]
-                    if window == self.pattern:
-                        return true_res
-                return false_res
-                
-            except ValueError:
-                return error_format
-
-        # 处理窗口精确匹配查询
-        elif "query_exact" in parsed_info:
-            try:
-                i = int(parsed_info["query_exact"].strip())
-                max_start = self.n - self.pattern_length + 1
-                if i < 1 or i > max_start:
-                    return error_range
-                
-                # 检查从位置i开始的窗口是否与模式T完全匹配
-                window = self.sequence[i-1:i-1+self.pattern_length]
-                return true_res if window == self.pattern else false_res
-                
-            except ValueError:
-                return error_format
-
-        # 处理窗口匹配计数查询
-        elif "query_count" in parsed_info:
-            try:
-                i = int(parsed_info["query_count"].strip())
-                max_start = self.n - self.pattern_length + 1
-                if i < 1 or i > max_start:
-                    return error_range
-                
-                # 计算从位置i开始的窗口中有多少位置与模式T匹配
-                window = self.sequence[i-1:i-1+self.pattern_length]
-                match_count = sum(1 for j in range(self.pattern_length) 
-                                if window[j] == self.pattern[j])
-                return str(match_count)
-                
-            except ValueError:
-                return error_format
-
-        else:
-            raise ValueError("No valid query tag found.")
+            submitted_depth = int(raw_ans[2:].strip())
+        except:
+            return False
+        
+        return submitted_depth == self.T_depth
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
+        results = []
+
+        handles = ["Root", "T"]
+        for k in range(1, self.path_length + 1):
+            handles.append(f"E[{k}]")
+
+        for h in handles:
+            parsed_label = {"query_label": h}
+            ans_label = self._cf_core_produce(parsed_label)
+            results.append({
+                "query": f"<query_label>{h}</query_label>",
+                "answer": ans_label
+            })
+            
+            parsed_count = {"query_count": h}
+            ans_count = self._cf_core_produce(parsed_count)
+            results.append({
+                "query": f"<query_count>{h}</query_count>",
+                "answer": ans_count
+            })
+
+        return results
+
+    def _cf_core_produce(self, parsed_info):
+        is_zh = self.config.language == "zh"
         
-        if self.config.language == "zh":
-            true_res, false_res = "真", "假"
-        else:
-            true_res, false_res = "true", "false"
-
-        # 1. 前缀出现判断查询：k 从 1 到 n
-        for k in range(1, self.n + 1):
-            query = f"<query_prefix>{k}</query_prefix>"
-            
-            # 计算答案
-            if k < self.pattern_length:
-                ans = false_res
+        if "query_reset" in parsed_info:
+            self.current_pos = 0
+            if is_zh:
+                return "指针已重置到根节点 Root（E[0]）。"
             else:
-                found = False
-                # 检查前 k 个位置中是否存在完整匹配
-                # 窗口起始位置范围: 1 到 k - pattern_length + 1
-                for i in range(1, k - self.pattern_length + 2):
-                    window = self.sequence[i-1 : i-1+self.pattern_length]
-                    if window == self.pattern:
-                        found = True
-                        break
-                ans = true_res if found else false_res
+                return "Pointer reset to root node Root (E[0])."
+        
+        elif "query_step" in parsed_info:
+            if self.current_pos >= self.path_length:
+                if is_zh:
+                    return "已到路径尽头，无法继续前进。"
+                else:
+                    return "Reached the end of the path, cannot proceed further."
             
-            queries.append({"query": query, "answer": ans})
-
-        # 计算窗口查询的最大有效起始位置
-        max_start = self.n - self.pattern_length + 1
-
-        # 2. 窗口精确匹配查询：i 从 1 到 max_start
-        for i in range(1, max_start + 1):
-            query = f"<query_exact>{i}</query_exact>"
+            self.current_pos += 1
+            node = self.path[self.current_pos]
+            if is_zh:
+                return f"到达节点 {node['handle']}，标签为 {node['label']}。"
+            else:
+                return f"Reached node {node['handle']}, label is {node['label']}."
+        
+        elif "query_label" in parsed_info:
+            handle = parsed_info["query_label"]
+            node = self._get_node_by_handle(handle)
             
-            # 计算答案
-            window = self.sequence[i-1 : i-1+self.pattern_length]
-            ans = true_res if window == self.pattern else false_res
+            if node is None:
+                if is_zh:
+                    return "错误：无效的节点句柄。"
+                else:
+                    return "Error: Invalid node handle."
             
-            queries.append({"query": query, "answer": ans})
-
-        # 3. 窗口匹配计数查询：i 从 1 到 max_start
-        for i in range(1, max_start + 1):
-            query = f"<query_count>{i}</query_count>"
+            if is_zh:
+                return f"节点 {handle} 的标签为 {node['label']}。"
+            else:
+                return f"Node {handle} has label {node['label']}."
+        
+        elif "query_count" in parsed_info:
+            handle = parsed_info["query_count"]
+            node = self._get_node_by_handle(handle)
             
-            # 计算答案
-            window = self.sequence[i-1 : i-1+self.pattern_length]
-            match_count = sum(1 for j in range(self.pattern_length) 
-                              if window[j] == self.pattern[j])
-            ans = str(match_count)
+            if node is None:
+                if is_zh:
+                    return "错误：无效的节点句柄。"
+                else:
+                    return "Error: Invalid node handle."
             
-            queries.append({"query": query, "answer": ans})
-
-        return queries
+            count = self._count_special_label(node["depth"])
+            if is_zh:
+                return f"从根节点到 {handle} 的路径上，特殊标签出现了 {count} 次。"
+            else:
+                return f"The special label appears {count} times on the path from root to {handle}."
+        
+        else:
+            raise ValueError("No valid query tag found.")

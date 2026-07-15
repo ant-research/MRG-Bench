@@ -2,686 +2,745 @@ from .base import Game
 import random
 import re
 
-
-class SequenceOrderVerificationGame(Game):
+class GraphEdgePatternGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"序列顺序验证"的推理游戏，规则如下：
+我们现在来玩一个"图边模式推理"游戏，规则如下：
 
-游戏设定了一个可见的序列 s = (s1, s2, ..., sN)，其中 N = {n}，每个符号 si 属于符号集合 {symbol_set}。我已经秘密为所有符号定义了一个严格的全序关系（每两个不同符号都有严格的先后关系，这个顺序在本局游戏中固定不变）。
+游戏设定了一个无向加权图，节点为 A、B、C、D、E、F，共 6 个。所有边及其整数权重如下：
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-定义非严格关系：符号 x "不晚于" 符号 y，当且仅当 x 等于 y，或 x 严格早于 y。
+边是否"满足条件"由一个未知的判定模式决定。该模式从以下四个候选中随机选定，且在整个游戏中保持不变：
+- 模式 Alpha：边权为偶数
+- 模式 Beta：边权为素数（大于 1 且仅能被 1 和自身整除）
+- 模式 Gamma：边权大于等于 9
+- 模式 Delta：边权能被 3 整除
 
-序列"合规"的定义：对于所有相邻位置 i 和 i+1（1 <= i < N），都满足 si "不晚于" si+1。
+你的目标是通过提问推断出真实模式，并计算全图中满足该模式的边总数。
 
-你的序列是：{sequence}
+每回合可选择以下一种类型的提问：
 
-你的目标是：
-1. 判断该序列是否合规
-2. 提交判断结果并给出形式化的证明
-3. 如果判断为合规，还需要给出本局出现过的所有不同符号的相对次序
+1. 节点扫描：询问某节点的满足条件的邻接边条数。
+   格式：<query_node>X</query_node>
+   其中 X 为节点名称（如 A）
 
-你可以向我提出以下两类问题（每次仅限一个问题），我会根据隐藏的符号顺序如实回答：
+2. 三点组扫描：选择三个不同节点，询问它们诱导子图中满足条件的边数量。
+   格式：<query_triangle>X,Y,Z</query_triangle>
+   其中 X、Y、Z 为三个不同节点（如 A,B,C）
 
-1. 比较查询：询问两个不同符号 a 和 b 的先后关系（a 和 b 必须是序列中出现过的符号，且 a 不等于 b）。我会回答"a 早于 b"或"b 早于 a"。
+3. 路径扫描：选择三个节点 X-Y-Z，询问边 X-Y 与 Y-Z 中有几条满足条件（若某边不存在则不计）。
+   格式：<query_path>X,Y,Z</query_path>
+   其中 X、Y、Z 为三个节点（如 A,B,C）
 
-2. 相邻检查：询问序列中某个相邻位置对（位置 i 和 i+1，其中 1 <= i < N）是否满足"不晚于"关系。我会回答"就位"（表示 si 不晚于 si+1）或"错位"（表示 si 严格晚于 si+1）。
+4. 单边问询：询问某一特定边是否满足条件。
+   格式：<query_edge>X,Y</query_edge>
+   其中 X、Y 为边的两个端点（如 A,B）
 
-## 询问与提交答案的格式
+当你收集足够信息后，请提交最终答案，格式如下：
 
-每次询问只能包含一个标签，使用以下 XML 格式：
+<answer>pattern=Alpha, count=5</answer>
 
-- 比较查询（例如询问符号 A 和 B 的先后关系）：
-<query_compare>A,B</query_compare>
-
-- 相邻检查（例如检查位置 1 和 2，即索引为 1）：
-<query_adjacent>1</query_adjacent>
-
-提交最终答案时，必须说明判断结果（合规或不合规）并提供证明，格式如下：
-
-- 若判断为合规，必须给出所有出现符号的完整先后链（用逗号隔开，从早到晚）：
-<answer>status=合规, order=A,B,C</answer>
-
-- 若判断为不合规，必须给出一个证据位置对 i,j（i < j）或单个相邻位置 i，证明存在逆序：
-<answer>status=不合规, evidence=2,5</answer>
-或
-<answer>status=不合规, evidence=3</answer>
+其中 pattern 为推断的模式名称（Alpha/Beta/Gamma/Delta），count 为全图中满足该模式的边总数。
 
 注意：
-- 如果你声明"合规"，我会检查你提供的符号顺序是否与我的隐藏顺序一致，以及序列是否真的合规
-- 如果你声明"不合规"，我会检查你提供的证据位置是否真的存在逆序
-- 答案错误或格式不符，游戏失败
+- 不存在的边将返回错误提示
+- 必须同时正确推断模式和边数才能通过游戏
+- 请尽可能少的提问次数完成推理
 """
 
     game_rule_en = """\
-Let's play a "Sequence Order Verification" deduction game. Here are the rules:
+Let's play a "Graph Edge Pattern Deduction" game. Here are the rules:
 
-A visible sequence s = (s1, s2, ..., sN) is given, where N = {n}, and each symbol si belongs to the symbol set {symbol_set}. I have secretly defined a strict total order over all symbols (every two different symbols have a strict precedence relation, which remains fixed throughout this game).
+The game has an undirected weighted graph with 6 nodes: A, B, C, D, E, F. All edges and their integer weights are:
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-Define the non-strict relation: symbol x is "no later than" symbol y if and only if x equals y, or x is strictly earlier than y.
+Whether an edge "satisfies the condition" is determined by an unknown pattern. The pattern is randomly selected from these four candidates and remains fixed throughout the game:
+- Pattern Alpha: edge weight is even
+- Pattern Beta: edge weight is prime (greater than 1 and only divisible by 1 and itself)
+- Pattern Gamma: edge weight is greater than or equal to 9
+- Pattern Delta: edge weight is divisible by 3
 
-A sequence is "compliant" if: for all adjacent positions i and i+1 (1 <= i < N), si is "no later than" si+1.
+Your goal is to infer the true pattern through queries and calculate the total number of edges satisfying that pattern in the entire graph.
 
-Your sequence is: {sequence}
+Each turn you can choose one of the following query types:
 
-Your goals are:
-1. Determine whether the sequence is compliant
-2. Submit your judgment with formal justification
-3. If judged compliant, also provide the relative order of all distinct symbols appearing in this game
+1. Node Scan: Ask for the count of adjacent edges of a node that satisfy the condition.
+   Format: <query_node>X</query_node>
+   Where X is the node name (e.g., A)
 
-You can ask me the following two types of questions (one per turn), and I will answer truthfully based on the hidden symbol order:
+2. Triangle Scan: Select three different nodes and ask for the count of edges satisfying the condition in their induced subgraph.
+   Format: <query_triangle>X,Y,Z</query_triangle>
+   Where X, Y, Z are three different nodes (e.g., A,B,C)
 
-1. Comparison Query: Ask about the precedence relation between two different symbols a and b (a and b must appear in the sequence, and a ≠ b). I will answer "a before b" or "b before a".
+3. Path Scan: Select three nodes X-Y-Z and ask how many of the edges X-Y and Y-Z satisfy the condition (non-existent edges are not counted).
+   Format: <query_path>X,Y,Z</query_path>
+   Where X, Y, Z are three nodes (e.g., A,B,C)
 
-2. Adjacency Check: Ask whether a specific adjacent position pair in the sequence (position i and i+1, where 1 <= i < N) satisfies the "no later than" relation. I will answer "in-place" (meaning si is no later than si+1) or "out-of-place" (meaning si is strictly later than si+1).
+4. Edge Query: Ask whether a specific edge satisfies the condition.
+   Format: <query_edge>X,Y</query_edge>
+   Where X, Y are the two endpoints of the edge (e.g., A,B)
 
-## Query and Answer Format
+When you have gathered enough information, submit your final answer in this format:
 
-Each query must contain only one tag. Use the following XML format:
+<answer>pattern=Alpha, count=5</answer>
 
-- Comparison Query (e.g., asking about symbols A and B):
-<query_compare>A,B</query_compare>
-
-- Adjacency Check (e.g., checking positions 1 and 2, with index 1):
-<query_adjacent>1</query_adjacent>
-
-When submitting the final answer, specify the judgment result (compliant or non-compliant) and provide justification in the following format:
-
-- If judged compliant, provide the complete precedence chain of all appearing symbols (comma-separated, from earliest to latest):
-<answer>status=compliant, order=A,B,C</answer>
-
-- If judged non-compliant, provide evidence as a position pair i,j (i < j) or a single adjacent position i, proving an inversion exists:
-<answer>status=non-compliant, evidence=2,5</answer>
-or
-<answer>status=non-compliant, evidence=3</answer>
+Where pattern is the inferred pattern name (Alpha/Beta/Gamma/Delta), and count is the total number of edges satisfying that pattern in the entire graph.
 
 Note:
-- If you claim "compliant", I will verify whether your provided symbol order matches my hidden order and whether the sequence is truly compliant
-- If you claim "non-compliant", I will verify whether your provided evidence position truly has an inversion
-- Incorrect answers or invalid formats will result in game failure
+- Non-existent edges will return an error message
+- You must correctly infer both the pattern and the count to pass the game
+- Try to complete the deduction with as few queries as possible
 """
 
     contextualized_rule_zh_1 = """\
-[交通场景] 智能交通调度系统控制台。你需要验证列车发车序列的优先级合规性。
+这是专为城市交通管理系统设计的异常路况排查推演模块。
+我们现在来进行"路网模式推理"，规则如下：
 
-我们来玩一个"发车序列顺序验证"的推理游戏，规则如下：
+系统设定了一个城市交通路网无向图，包含 6 个交通枢纽节点：A、B、C、D、E、F。枢纽之间的连接路段及其拥堵指数（整数）如下：
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-记录显示了一个可见的发车序列 s = (s1, s2, ..., sN)，其中 N = {n}，每个车型代号 si 属于集合 {symbol_set}。我已经秘密为所有车型定义了一个严格的全序关系（每两个不同车型都有严格的调度先后关系，这个顺序在本局固定不变）。
+系统将根据一个未知的管控模式来判断某条路段是否"需要特殊交通管制"。该模式从以下四个候选中随机选定，并在排查期间保持不变：
+- 模式 Alpha：拥堵指数为偶数
+- 模式 Beta：拥堵指数为素数（大于 1 且仅能被 1 和自身整除）
+- 模式 Gamma：拥堵指数大于等于 9
+- 模式 Delta：拥堵指数能被 3 整除
 
-定义非严格关系：车型 x "不晚于" 车型 y，当且仅当 x 等于 y，或 x 严格早于 y。
+你的目标是通过调用指令推断出真实的管控模式，并计算路网中满足该模式、需要管制的总路段数。
 
-序列"合规"的定义：对于所有相邻位置 i 和 i+1（1 <= i < N），都满足 si "不晚于" si+1。
+每回合可选择以下一种类型的提问：
 
-你的发车序列是：{sequence}
+1. 节点扫描：询问连接某交通枢纽的受管制路段数量。
+   格式：<query_node>X</query_node>
+   其中 X 为枢纽名称（如 A）
 
-你的目标是：
-1. 判断该序列是否合规
-2. 提交判断结果并给出形式化的证明
-3. 如果判断为合规，还需要给出本局出现过的所有不同车型的相对调度次序
+2. 三点组扫描：选择三个不同枢纽，询问它们形成的闭环子网中受管制的路线数量。
+   格式：<query_triangle>X,Y,Z</query_triangle>
+   其中 X、Y、Z 为三个不同枢纽（如 A,B,C）
 
-你可以向我提出以下两类问题（每次仅限一个问题），我会根据隐藏的车型顺序如实回答：
+3. 路径扫描：选择三个枢纽 X-Y-Z，询问依次连接的 X-Y 与 Y-Z 两段路中有几条受管制（若某路段不存在则不计）。
+   格式：<query_path>X,Y,Z</query_path>
+   其中 X、Y、Z 为三个枢纽（如 A,B,C）
 
-1. 比较查询：询问两个不同车型 a 和 b 的先后关系（a 和 b 必须是序列中出现过的车型，且 a 不等于 b）。我会回答"a 早于 b"或"b 早于 a"。
+4. 单边问询：询问某一特定路段是否受管制。
+   格式：<query_edge>X,Y</query_edge>
+   其中 X、Y 为路段的两个端点（如 A,B）
 
-2. 相邻检查：询问序列中某个相邻位置对（位置 i 和 i+1，其中 1 <= i < N）是否满足"不晚于"关系。我会回答"就位"（表示 si 不晚于 si+1）或"错位"（表示 si 严格晚于 si+1）。
+当你收集足够信息后，请提交最终排查结果，格式如下：
 
-## 询问与提交答案的格式
+<answer>pattern=Alpha, count=5</answer>
 
-每次询问只能包含一个标签，使用以下 XML 格式：
-
-- 比较查询（例如询问车型 A 和 B 的先后关系）：
-<query_compare>A,B</query_compare>
-
-- 相邻检查（例如检查位置 1 和 2，即索引为 1）：
-<query_adjacent>1</query_adjacent>
-
-提交最终答案时，必须说明判断结果（合规或不合规）并提供证明，格式如下：
-
-- 若判断为合规，必须给出所有出现车型的完整先后链（用逗号隔开，从早到晚）：
-<answer>status=合规, order=A,B,C</answer>
-
-- 若判断为不合规，必须给出一个证据位置对 i,j（i < j）或单个相邻位置 i，证明存在逆序：
-<answer>status=不合规, evidence=2,5</answer>
-或
-<answer>status=不合规, evidence=3</answer>
+其中 pattern 为推断的管控模式名称（Alpha/Beta/Gamma/Delta），count 为全路网中满足该模式的总路段数。
 
 注意：
-- 如果你声明"合规"，我会检查你提供的车型顺序是否与我的隐藏顺序一致，以及序列是否真的合规
-- 如果你声明"不合规"，我会检查你提供的证据位置是否真的存在逆序
-- 答案错误或格式不符，游戏失败
+- 不存在的路段将返回错误提示
+- 必须同时正确推断模式和受管制路段总数才能通过系统考核
+- 请尽可能少的指令调用次数完成推演
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario] Intelligent Traffic Dispatch System Console. You need to verify the priority compliance of a train dispatch sequence.
+[Traffic Scenario]
+This is an anomaly traffic condition investigation and deduction module designed for the urban traffic management system.
+Let's conduct a "Road Network Pattern Deduction". Here are the rules:
 
-Let's play a "Dispatch Sequence Order Verification" deduction game. Here are the rules:
+The system defines an undirected graph of an urban traffic network with 6 traffic hub nodes: A, B, C, D, E, F. The connecting road segments and their congestion indices (integers) are as follows:
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-A visible dispatch sequence s = (s1, s2, ..., sN) is logged, where N = {n}, and each train model si belongs to the set {symbol_set}. I have secretly defined a strict total order over all train models (a hidden dispatch priority order where every two different models have a strict precedence relation, fixed throughout this game).
+Whether a road segment "requires special traffic control" is determined by an unknown control pattern. The pattern is randomly selected from these four candidates and remains fixed throughout the investigation:
+- Pattern Alpha: congestion index is even
+- Pattern Beta: congestion index is prime (greater than 1 and only divisible by 1 and itself)
+- Pattern Gamma: congestion index is greater than or equal to 9
+- Pattern Delta: congestion index is divisible by 3
 
-Define the non-strict relation: model x is "no later than" model y if and only if x equals y, or x is strictly earlier in priority than y.
+Your goal is to infer the true control pattern through queries and calculate the total number of segments requiring control in the entire network.
 
-A sequence is "compliant" if: for all adjacent positions i and i+1 (1 <= i < N), si is "no later than" si+1.
+Each turn you can choose one of the following query types:
 
-Your dispatch sequence is: {sequence}
+1. Node Scan: Ask for the count of controlled road segments connected to a specific hub.
+   Format: <query_node>X</query_node>
+   Where X is the hub name (e.g., A)
 
-Your goals are:
-1. Determine whether the sequence is compliant
-2. Submit your judgment with formal justification
-3. If judged compliant, also provide the relative order of all distinct models appearing in this game
+2. Triangle Scan: Select three different hubs and ask for the count of controlled segments in their induced closed-loop subnetwork.
+   Format: <query_triangle>X,Y,Z</query_triangle>
+   Where X, Y, Z are three different hubs (e.g., A,B,C)
 
-You can ask me the following two types of questions (one per turn), and I will answer truthfully based on the hidden model order:
+3. Path Scan: Select three hubs X-Y-Z and ask how many of the segments X-Y and Y-Z require control (non-existent segments are not counted).
+   Format: <query_path>X,Y,Z</query_path>
+   Where X, Y, Z are three hubs (e.g., A,B,C)
 
-1. Comparison Query: Ask about the precedence relation between two different models a and b (a and b must appear in the sequence, and a ≠ b). I will answer "a before b" or "b before a".
+4. Edge Query: Ask whether a specific road segment requires control.
+   Format: <query_edge>X,Y</query_edge>
+   Where X, Y are the two endpoints of the segment (e.g., A,B)
 
-2. Adjacency Check: Ask whether a specific adjacent position pair in the sequence (position i and i+1, where 1 <= i < N) satisfies the "no later than" relation. I will answer "in-place" (meaning si is no later than si+1) or "out-of-place" (meaning si is strictly later than si+1).
+When you have gathered enough information, submit your final investigation result in this format:
 
-## Query and Answer Format
+<answer>pattern=Alpha, count=5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Comparison Query (e.g., asking about models A and B):
-<query_compare>A,B</query_compare>
-
-- Adjacency Check (e.g., checking positions 1 and 2, with index 1):
-<query_adjacent>1</query_adjacent>
-
-When submitting the final answer, specify the judgment result (compliant or non-compliant) and provide justification in the following format:
-
-- If judged compliant, provide the complete precedence chain of all appearing models (comma-separated, from earliest to latest):
-<answer>status=compliant, order=A,B,C</answer>
-
-- If judged non-compliant, provide evidence as a position pair i,j (i < j) or a single adjacent position i, proving an inversion exists:
-<answer>status=non-compliant, evidence=2,5</answer>
-or
-<answer>status=non-compliant, evidence=3</answer>
+Where pattern is the inferred control pattern name (Alpha/Beta/Gamma/Delta), and count is the total number of segments requiring control in the entire network.
 
 Note:
-- If you claim "compliant", I will verify whether your provided order matches my hidden order and whether the sequence is truly compliant
-- If you claim "non-compliant", I will verify whether your provided evidence position truly has an inversion
-- Incorrect answers or invalid formats will result in game failure
+- Non-existent segments will return an error message
+- You must correctly infer both the pattern and the count to pass the system assessment
+- Try to complete the deduction with as few query calls as possible
 """
 
     contextualized_rule_zh_2 = """\
-[医疗场景] 临床诊疗路径审核系统。你需要验证患者治疗步骤的临床阶段合规性。
+这是专为重症监护室数据流监控设计的异常诊断推演模块。
+我们现在来进行"传输链路模式推演"，规则如下：
 
-我们来玩一个"诊疗序列顺序验证"的推理游戏，规则如下：
+设定了一个医疗设备网络无向图，包含 6 个设备监控点：A、B、C、D、E、F。监控点之间的数据传输通道及其延迟毫秒数（整数）如下：
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-系统记录了一个可见的诊疗序列 s = (s1, s2, ..., sN)，其中 N = {n}，每个治疗步骤 si 属于集合 {symbol_set}。我已经秘密为所有步骤定义了一个严格的全序关系（即隐藏的临床阶段标准顺序，每两个不同步骤都有严格的先后关系，本局固定不变）。
+系统将根据一个未知的诊断模式来判断某条数据通道是否存在"传输异常"。该模式从以下四个候选中随机选定，并在诊断期间保持不变：
+- 模式 Alpha：延迟毫秒数为偶数
+- 模式 Beta：延迟毫秒数为素数（大于 1 且仅能被 1 和自身整除）
+- 模式 Gamma：延迟毫秒数大于等于 9
+- 模式 Delta：延迟毫秒数能被 3 整除
 
-定义非严格关系：步骤 x "不晚于" 步骤 y，当且仅当 x 等于 y，或 x 的标准阶段严格早于 y。
+你的目标是通过调用监控指令推断出真实的诊断模式，并计算设备网络中存在异常的总通道数。
 
-序列"合规"的定义：对于所有相邻的步骤位置 i 和 i+1（1 <= i < N），都满足 si 的阶段"不晚于" si+1。
+每回合可选择以下一种类型的提问：
 
-你的诊疗序列是：{sequence}
+1. 节点扫描：询问连接某设备监控点的异常通道数量。
+   格式：<query_node>X</query_node>
+   其中 X 为监控点名称（如 A）
 
-你的目标是：
-1. 判断该序列是否合规
-2. 提交判断结果并给出形式化的证明
-3. 如果判断为合规，还需要给出本局出现过的所有不同步骤的相对临床次序
+2. 三点组扫描：选择三个不同监控点，询问它们诱导的子网中异常通道的数量。
+   格式：<query_triangle>X,Y,Z</query_triangle>
+   其中 X、Y、Z 为三个不同监控点（如 A,B,C）
 
-你可以向我提出以下两类问题（每次仅限一个问题），我会根据隐藏的阶段顺序如实回答：
+3. 路径扫描：选择三个监控点 X-Y-Z，询问依次连接的 X-Y 与 Y-Z 两条通道中有几条存在异常（若某通道不存在则不计）。
+   格式：<query_path>X,Y,Z</query_path>
+   其中 X、Y、Z 为三个监控点（如 A,B,C）
 
-1. 比较查询：询问两个不同步骤 a 和 b 的先后关系（a 和 b 必须是序列中出现过的步骤，且 a 不等于 b）。我会回答"a 早于 b"或"b 早于 a"。
+4. 单边问询：询问某一特定通道是否存在异常。
+   格式：<query_edge>X,Y</query_edge>
+   其中 X、Y 为通道的两个端点（如 A,B）
 
-2. 相邻检查：询问序列中某个相邻位置对（位置 i 和 i+1，其中 1 <= i < N）是否满足"不晚于"关系。我会回答"就位"（表示 si 不晚于 si+1）或"错位"（表示 si 严格晚于 si+1）。
+当你收集足够信息后，请提交最终诊断结果，格式如下：
 
-## 询问与提交答案的格式
+<answer>pattern=Alpha, count=5</answer>
 
-每次询问只能包含一个标签，使用以下 XML 格式：
-
-- 比较查询（例如询问步骤 A 和 B 的先后关系）：
-<query_compare>A,B</query_compare>
-
-- 相邻检查（例如检查位置 1 和 2，即索引为 1）：
-<query_adjacent>1</query_adjacent>
-
-提交最终答案时，必须说明判断结果（合规或不合规）并提供证明，格式如下：
-
-- 若判断为合规，必须给出所有出现步骤的完整先后链（用逗号隔开，从早到晚）：
-<answer>status=合规, order=A,B,C</answer>
-
-- 若判断为不合规，必须给出一个证据位置对 i,j（i < j）或单个相邻位置 i，证明存在逆序：
-<answer>status=不合规, evidence=2,5</answer>
-或
-<answer>status=不合规, evidence=3</answer>
+其中 pattern 为推断的诊断模式名称（Alpha/Beta/Gamma/Delta），count 为全网络中存在异常的总通道数。
 
 注意：
-- 如果你声明"合规"，我会检查你提供的步骤顺序是否与我的隐藏顺序一致，以及序列是否真的合规
-- 如果你声明"不合规"，我会检查你提供的证据位置是否真的存在逆序
-- 答案错误或格式不符，游戏失败
+- 不存在的通道将返回错误提示
+- 必须同时正确推断模式和异常通道总数才能得出有效诊断
+- 请尽可能少的指令调用次数完成推演
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario] Clinical Pathway Audit System. You need to verify the clinical phase compliance of a patient's treatment step sequence.
+[Medical Scenario]
+This is an anomaly diagnosis deduction module designed for data flow monitoring in intensive care units.
+Let's conduct a "Transmission Link Pattern Deduction". Here are the rules:
 
-Let's play a "Treatment Sequence Order Verification" deduction game. Here are the rules:
+The system defines an undirected graph of a medical device network with 6 monitoring nodes: A, B, C, D, E, F. The data transmission channels between nodes and their latency in milliseconds (integers) are as follows:
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-A visible treatment sequence s = (s1, s2, ..., sN) is given, where N = {n}, and each treatment step si belongs to the set {symbol_set}. I have secretly defined a strict total order over all steps (every two different steps have a strict precedence relation representing standard clinical phases, which remains fixed throughout this game).
+Whether a transmission channel has a "transmission anomaly" is determined by an unknown diagnostic pattern. The pattern is randomly selected from these four candidates and remains fixed throughout the diagnosis:
+- Pattern Alpha: latency in milliseconds is even
+- Pattern Beta: latency in milliseconds is prime (greater than 1 and only divisible by 1 and itself)
+- Pattern Gamma: latency in milliseconds is greater than or equal to 9
+- Pattern Delta: latency in milliseconds is divisible by 3
 
-Define the non-strict relation: step x is "no later than" step y if and only if x equals y, or x is strictly earlier in the clinical pathway than y.
+Your goal is to infer the true diagnostic pattern through monitor queries and calculate the total number of anomalous channels in the entire network.
 
-A sequence is "compliant" if: for all adjacent positions i and i+1 (1 <= i < N), si is "no later than" si+1.
+Each turn you can choose one of the following query types:
 
-Your treatment sequence is: {sequence}
+1. Node Scan: Ask for the count of anomalous channels connected to a specific monitoring node.
+   Format: <query_node>X</query_node>
+   Where X is the node name (e.g., A)
 
-Your goals are:
-1. Determine whether the sequence is compliant
-2. Submit your judgment with formal justification
-3. If judged compliant, also provide the relative order of all distinct steps appearing in this game
+2. Triangle Scan: Select three different monitoring nodes and ask for the count of anomalous channels in their induced subnetwork.
+   Format: <query_triangle>X,Y,Z</query_triangle>
+   Where X, Y, Z are three different nodes (e.g., A,B,C)
 
-You can ask me the following two types of questions (one per turn), and I will answer truthfully based on the hidden clinical order:
+3. Path Scan: Select three nodes X-Y-Z and ask how many of the channels X-Y and Y-Z are anomalous (non-existent channels are not counted).
+   Format: <query_path>X,Y,Z</query_path>
+   Where X, Y, Z are three nodes (e.g., A,B,C)
 
-1. Comparison Query: Ask about the precedence relation between two different steps a and b (a and b must appear in the sequence, and a ≠ b). I will answer "a before b" or "b before a".
+4. Edge Query: Ask whether a specific channel has an anomaly.
+   Format: <query_edge>X,Y</query_edge>
+   Where X, Y are the two endpoints of the channel (e.g., A,B)
 
-2. Adjacency Check: Ask whether a specific adjacent position pair in the sequence (position i and i+1, where 1 <= i < N) satisfies the "no later than" relation. I will answer "in-place" (meaning si is no later than si+1) or "out-of-place" (meaning si is strictly later than si+1).
+When you have gathered enough information, submit your final diagnosis result in this format:
 
-## Query and Answer Format
+<answer>pattern=Alpha, count=5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Comparison Query (e.g., asking about steps A and B):
-<query_compare>A,B</query_compare>
-
-- Adjacency Check (e.g., checking positions 1 and 2, with index 1):
-<query_adjacent>1</query_adjacent>
-
-When submitting the final answer, specify the judgment result (compliant or non-compliant) and provide justification in the following format:
-
-- If judged compliant, provide the complete precedence chain of all appearing steps (comma-separated, from earliest to latest):
-<answer>status=compliant, order=A,B,C</answer>
-
-- If judged non-compliant, provide evidence as a position pair i,j (i < j) or a single adjacent position i, proving an inversion exists:
-<answer>status=non-compliant, evidence=2,5</answer>
-or
-<answer>status=non-compliant, evidence=3</answer>
+Where pattern is the inferred diagnostic pattern name (Alpha/Beta/Gamma/Delta), and count is the total number of anomalous channels in the entire network.
 
 Note:
-- If you claim "compliant", I will verify whether your provided step order matches my hidden order and whether the sequence is truly compliant
-- If you claim "non-compliant", I will verify whether your provided evidence position truly has an inversion
-- Incorrect answers or invalid formats will result in game failure
+- Non-existent channels will return an error message
+- You must correctly infer both the pattern and the count to achieve a valid diagnosis
+- Try to complete the deduction with as few query calls as possible
 """
 
     contextualized_rule_zh_3 = """\
-[教育场景] 智能教学大纲评估系统。你需要验证教学模块序列的先修依赖合规性。
+这是专为自适应学习平台设计的知识图谱关联度推演模块。
+我们现在来进行"认知路径模式推演"，规则如下：
 
-我们来玩一个"教学序列顺序验证"的推理游戏，规则如下：
+设定了一个知识点结构无向图，包含 6 个核心知识点：A、B、C、D、E、F。知识点之间的学习路径及其难度系数（整数）如下：
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-系统排布了一个可见的教学序列 s = (s1, s2, ..., sN)，其中 N = {n}，每个教学模块 si 属于集合 {symbol_set}。我已经秘密为所有模块定义了一个严格的全序关系（即隐藏的先修依赖顺序，每两个不同模块都有严格的先后关系，本局固定不变）。
+系统将根据一个未知的评估模式来判断某条学习路径是否被纳入"重点考察范围"。该模式从以下四个候选中随机选定，并在推演期间保持不变：
+- 模式 Alpha：难度系数为偶数
+- 模式 Beta：难度系数为素数（大于 1 且仅能被 1 和自身整除）
+- 模式 Gamma：难度系数大于等于 9
+- 模式 Delta：难度系数能被 3 整除
 
-定义非严格关系：模块 x "不晚于" 模块 y，当且仅当 x 等于 y，或 x 的依赖层级严格早于 y。
+你的目标是通过探测查询推断出真实的评估模式，并计算图谱中属于重点考察范围的总学习路径数。
 
-序列"合规"的定义：对于所有相邻的教学位置 i 和 i+1（1 <= i < N），都满足 si 的层级"不晚于" si+1。
+每回合可选择以下一种类型的提问：
 
-你的教学序列是：{sequence}
+1. 节点扫描：询问与某核心知识点相连的重点考察路径数量。
+   格式：<query_node>X</query_node>
+   其中 X 为核心知识点名称（如 A）
 
-你的目标是：
-1. 判断该序列是否合规
-2. 提交判断结果并给出形式化的证明
-3. 如果判断为合规，还需要给出本局出现过的所有不同模块的相对先修次序
+2. 三点组扫描：选择三个不同知识点，询问它们构成的知识群落中重点考察路径的数量。
+   格式：<query_triangle>X,Y,Z</query_triangle>
+   其中 X、Y、Z 为三个不同知识点（如 A,B,C）
 
-你可以向我提出以下两类问题（每次仅限一个问题），我会根据隐藏的依赖顺序如实回答：
+3. 路径扫描：选择三个知识点 X-Y-Z，询问 X-Y 与 Y-Z 两段学习路径中有几条属于重点考察范围（若某路径不存在则不计）。
+   格式：<query_path>X,Y,Z</query_path>
+   其中 X、Y、Z 为三个知识点（如 A,B,C）
 
-1. 比较查询：询问两个不同模块 a 和 b 的先后关系（a 和 b 必须是序列中出现过的模块，且 a 不等于 b）。我会回答"a 早于 b"或"b 早于 a"。
+4. 单边问询：询问某一特定学习路径是否被纳入重点考察范围。
+   格式：<query_edge>X,Y</query_edge>
+   其中 X、Y 为路径的两个端点（如 A,B）
 
-2. 相邻检查：询问序列中某个相邻位置对（位置 i 和 i+1，其中 1 <= i < N）是否满足"不晚于"关系。我会回答"就位"（表示 si 不晚于 si+1）或"错位"（表示 si 严格晚于 si+1）。
+当你收集足够信息后，请提交最终图谱分析结果，格式如下：
 
-## 询问与提交答案的格式
+<answer>pattern=Alpha, count=5</answer>
 
-每次询问只能包含一个标签，使用以下 XML 格式：
-
-- 比较查询（例如询问模块 A 和 B 的先后关系）：
-<query_compare>A,B</query_compare>
-
-- 相邻检查（例如检查位置 1 和 2，即索引为 1）：
-<query_adjacent>1</query_adjacent>
-
-提交最终答案时，必须说明判断结果（合规或不合规）并提供证明，格式如下：
-
-- 若判断为合规，必须给出所有出现模块的完整先后链（用逗号隔开，从早到晚）：
-<answer>status=合规, order=A,B,C</answer>
-
-- 若判断为不合规，必须给出一个证据位置对 i,j（i < j）或单个相邻位置 i，证明存在逆序：
-<answer>status=不合规, evidence=2,5</answer>
-或
-<answer>status=不合规, evidence=3</answer>
+其中 pattern 为推断的评估模式名称（Alpha/Beta/Gamma/Delta），count 为全图谱中属于重点考察范围的总路径数。
 
 注意：
-- 如果你声明"合规"，我会检查你提供的模块顺序是否与我的隐藏顺序一致，以及序列是否真的合规
-- 如果你声明"不合规"，我会检查你提供的证据位置是否真的存在逆序
-- 答案错误或格式不符，游戏失败
+- 不存在的学习路径将返回错误提示
+- 必须同时正确推断模式和重点考察路径总数才能输出准确的教学大纲
+- 请尽可能少的指令调用次数完成推演
 """
 
     contextualized_rule_en_3 = """\
-[Education Scenario] Intelligent Syllabus Evaluation System. You need to verify the prerequisite compliance of a teaching module sequence.
+[Education Scenario]
+This is a knowledge graph relevance deduction module designed for an adaptive learning platform.
+Let's conduct a "Cognitive Path Pattern Deduction". Here are the rules:
 
-Let's play a "Syllabus Sequence Order Verification" deduction game. Here are the rules:
+The system defines an undirected graph of a knowledge structure with 6 core concepts: A, B, C, D, E, F. The learning paths between concepts and their difficulty coefficients (integers) are as follows:
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-A visible teaching sequence s = (s1, s2, ..., sN) is given, where N = {n}, and each teaching module si belongs to the set {symbol_set}. I have secretly defined a strict total order over all modules (every two different modules have a strict prerequisite precedence relation, which remains fixed throughout this game).
+Whether a learning path is included in the "key examination scope" is determined by an unknown evaluation pattern. The pattern is randomly selected from these four candidates and remains fixed throughout the deduction:
+- Pattern Alpha: difficulty coefficient is even
+- Pattern Beta: difficulty coefficient is prime (greater than 1 and only divisible by 1 and itself)
+- Pattern Gamma: difficulty coefficient is greater than or equal to 9
+- Pattern Delta: difficulty coefficient is divisible by 3
 
-Define the non-strict relation: module x is "no later than" module y if and only if x equals y, or x is strictly earlier in the prerequisite hierarchy than y.
+Your goal is to infer the true evaluation pattern through queries and calculate the total number of learning paths falling into the key examination scope in the entire graph.
 
-A sequence is "compliant" if: for all adjacent positions i and i+1 (1 <= i < N), si is "no later than" si+1.
+Each turn you can choose one of the following query types:
 
-Your teaching sequence is: {sequence}
+1. Node Scan: Ask for the count of key examination paths connected to a specific concept.
+   Format: <query_node>X</query_node>
+   Where X is the concept name (e.g., A)
 
-Your goals are:
-1. Determine whether the sequence is compliant
-2. Submit your judgment with formal justification
-3. If judged compliant, also provide the relative order of all distinct modules appearing in this game
+2. Triangle Scan: Select three different concepts and ask for the count of key examination paths in their formed concept cluster.
+   Format: <query_triangle>X,Y,Z</query_triangle>
+   Where X, Y, Z are three different concepts (e.g., A,B,C)
 
-You can ask me the following two types of questions (one per turn), and I will answer truthfully based on the hidden prerequisite order:
+3. Path Scan: Select three concepts X-Y-Z and ask how many of the paths X-Y and Y-Z fall into the key examination scope (non-existent paths are not counted).
+   Format: <query_path>X,Y,Z</query_path>
+   Where X, Y, Z are three concepts (e.g., A,B,C)
 
-1. Comparison Query: Ask about the precedence relation between two different modules a and b (a and b must appear in the sequence, and a ≠ b). I will answer "a before b" or "b before a".
+4. Edge Query: Ask whether a specific learning path is included in the key examination scope.
+   Format: <query_edge>X,Y</query_edge>
+   Where X, Y are the two endpoints of the path (e.g., A,B)
 
-2. Adjacency Check: Ask whether a specific adjacent position pair in the sequence (position i and i+1, where 1 <= i < N) satisfies the "no later than" relation. I will answer "in-place" (meaning si is no later than si+1) or "out-of-place" (meaning si is strictly later than si+1).
+When you have gathered enough information, submit your final graph analysis result in this format:
 
-## Query and Answer Format
+<answer>pattern=Alpha, count=5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Comparison Query (e.g., asking about modules A and B):
-<query_compare>A,B</query_compare>
-
-- Adjacency Check (e.g., checking positions 1 and 2, with index 1):
-<query_adjacent>1</query_adjacent>
-
-When submitting the final answer, specify the judgment result (compliant or non-compliant) and provide justification in the following format:
-
-- If judged compliant, provide the complete precedence chain of all appearing modules (comma-separated, from earliest to latest):
-<answer>status=compliant, order=A,B,C</answer>
-
-- If judged non-compliant, provide evidence as a position pair i,j (i < j) or a single adjacent position i, proving an inversion exists:
-<answer>status=non-compliant, evidence=2,5</answer>
-or
-<answer>status=non-compliant, evidence=3</answer>
+Where pattern is the inferred evaluation pattern name (Alpha/Beta/Gamma/Delta), and count is the total number of key examination paths in the entire graph.
 
 Note:
-- If you claim "compliant", I will verify whether your provided module order matches my hidden order and whether the sequence is truly compliant
-- If you claim "non-compliant", I will verify whether your provided evidence position truly has an inversion
-- Incorrect answers or invalid formats will result in game failure
+- Non-existent paths will return an error message
+- You must correctly infer both the pattern and the count to output an accurate teaching syllabus
+- Try to complete the deduction with as few query calls as possible
 """
 
     contextualized_rule_zh_4 = """\
-[工业制造场景] 自动化流水线工艺校验系统。你需要验证生产加工工序序列的依赖合规性。
+这是专为智能工厂流水线设计的设备维护调度推演模块。
+我们现在来进行"输送网络模式推演"，规则如下：
 
-我们来玩一个"工序序列顺序验证"的推理游戏，规则如下：
+设定了一个车间网络无向图，包含 6 个关键工作站：A、B、C、D、E、F。工作站之间的物料输送带及其运行负载指数（整数）如下：
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-系统生成了一个可见的加工序列 s = (s1, s2, ..., sN)，其中 N = {n}，每道工序 si 属于集合 {symbol_set}。我已经秘密为所有工序定义了一个严格的全序关系（即隐藏的工艺约束顺序，每两个不同工序都有严格的先后关系，本局固定不变）。
+系统将根据一个未知的诊断模式来判断某条物料输送带是否需要"预防性维护"。该模式从以下四个候选中随机选定，并在诊断期间保持不变：
+- 模式 Alpha：运行负载指数为偶数
+- 模式 Beta：运行负载指数为素数（大于 1 且仅能被 1 和自身整除）
+- 模式 Gamma：运行负载指数大于等于 9
+- 模式 Delta：运行负载指数能被 3 整除
 
-定义非严格关系：工序 x "不晚于" 工序 y，当且仅当 x 等于 y，或 x 的工艺约束严格早于 y。
+你的目标是通过调用测试指令推断出真实的诊断模式，并计算车间网络中需要维护的总输送带数量。
 
-序列"合规"的定义：对于所有相邻的加工位置 i 和 i+1（1 <= i < N），都满足 si 的工艺"不晚于" si+1。
+每回合可选择以下一种类型的提问：
 
-你的加工序列是：{sequence}
+1. 节点扫描：询问与某关键工作站相连的需要维护的输送带数量。
+   格式：<query_node>X</query_node>
+   其中 X 为工作站名称（如 A）
 
-你的目标是：
-1. 判断该序列是否合规
-2. 提交判断结果并给出形式化的证明
-3. 如果判断为合规，还需要给出本局出现过的所有不同工序的相对约束次序
+2. 三点组扫描：选择三个不同工作站，询问它们组成的协同区内需要维护的输送带数量。
+   格式：<query_triangle>X,Y,Z</query_triangle>
+   其中 X、Y、Z 为三个不同工作站（如 A,B,C）
 
-你可以向我提出以下两类问题（每次仅限一个问题），我会根据隐藏的工艺顺序如实回答：
+3. 路径扫描：选择三个工作站 X-Y-Z，询问 X-Y 与 Y-Z 两段输送带中有几条需要预防性维护（若某输送带不存在则不计）。
+   格式：<query_path>X,Y,Z</query_path>
+   其中 X、Y、Z 为三个工作站（如 A,B,C）
 
-1. 比较查询：询问两个不同工序 a 和 b 的先后关系（a 和 b 必须是序列中出现过的工序，且 a 不等于 b）。我会回答"a 早于 b"或"b 早于 a"。
+4. 单边问询：询问某一特定物料输送带是否需要维护。
+   格式：<query_edge>X,Y</query_edge>
+   其中 X、Y 为输送带的两个端点（如 A,B）
 
-2. 相邻检查：询问序列中某个相邻位置对（位置 i 和 i+1，其中 1 <= i < N）是否满足"不晚于"关系。我会回答"就位"（表示 si 不晚于 si+1）或"错位"（表示 si 严格晚于 si+1）。
+当你收集足够信息后，请提交最终调度规划，格式如下：
 
-## 询问与提交答案的格式
+<answer>pattern=Alpha, count=5</answer>
 
-每次询问只能包含一个标签，使用以下 XML 格式：
-
-- 比较查询（例如询问工序 A 和 B 的先后关系）：
-<query_compare>A,B</query_compare>
-
-- 相邻检查（例如检查位置 1 和 2，即索引为 1）：
-<query_adjacent>1</query_adjacent>
-
-提交最终答案时，必须说明判断结果（合规或不合规）并提供证明，格式如下：
-
-- 若判断为合规，必须给出所有出现工序的完整先后链（用逗号隔开，从早到晚）：
-<answer>status=合规, order=A,B,C</answer>
-
-- 若判断为不合规，必须给出一个证据位置对 i,j（i < j）或单个相邻位置 i，证明存在逆序：
-<answer>status=不合规, evidence=2,5</answer>
-或
-<answer>status=不合规, evidence=3</answer>
+其中 pattern 为推断的诊断模式名称（Alpha/Beta/Gamma/Delta），count 为全车间网络中需要预防性维护的总输送带数量。
 
 注意：
-- 如果你声明"合规"，我会检查你提供的工序顺序是否与我的隐藏顺序一致，以及序列是否真的合规
-- 如果你声明"不合规"，我会检查你提供的证据位置是否真的存在逆序
-- 答案错误或格式不符，游戏失败
+- 不存在的输送带将返回错误提示
+- 必须同时正确推断模式和需维护的输送带总数才能生成有效的调度工单
+- 请尽可能少的指令调用次数完成推演
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario] Automated Assembly Line Audit System. You need to verify the dependency compliance of a production process sequence.
+[Manufacturing/Industrial Scenario]
+This is an equipment maintenance scheduling deduction module designed for smart factory assembly lines.
+Let's conduct a "Conveyor Network Pattern Deduction". Here are the rules:
 
-Let's play a "Production Sequence Order Verification" deduction game. Here are the rules:
+The system defines an undirected graph of a workshop network with 6 key workstations: A, B, C, D, E, F. The material conveyor belts between workstations and their operational load indices (integers) are as follows:
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-A visible production sequence s = (s1, s2, ..., sN) is given, where N = {n}, and each process step si belongs to the set {symbol_set}. I have secretly defined a strict total order over all steps (every two different steps have a strict operational precedence relation, which remains fixed throughout this game).
+Whether a conveyor belt requires "preventive maintenance" is determined by an unknown diagnostic pattern. The pattern is randomly selected from these four candidates and remains fixed throughout the diagnosis:
+- Pattern Alpha: operational load index is even
+- Pattern Beta: operational load index is prime (greater than 1 and only divisible by 1 and itself)
+- Pattern Gamma: operational load index is greater than or equal to 9
+- Pattern Delta: operational load index is divisible by 3
 
-Define the non-strict relation: step x is "no later than" step y if and only if x equals y, or x is strictly earlier in process dependency than y.
+Your goal is to infer the true diagnostic pattern through test queries and calculate the total number of conveyor belts requiring maintenance in the entire workshop network.
 
-A sequence is "compliant" if: for all adjacent positions i and i+1 (1 <= i < N), si is "no later than" si+1.
+Each turn you can choose one of the following query types:
 
-Your production sequence is: {sequence}
+1. Node Scan: Ask for the count of conveyor belts requiring maintenance connected to a specific workstation.
+   Format: <query_node>X</query_node>
+   Where X is the workstation name (e.g., A)
 
-Your goals are:
-1. Determine whether the sequence is compliant
-2. Submit your judgment with formal justification
-3. If judged compliant, also provide the relative order of all distinct steps appearing in this game
+2. Triangle Scan: Select three different workstations and ask for the count of conveyor belts requiring maintenance in their collaborative zone.
+   Format: <query_triangle>X,Y,Z</query_triangle>
+   Where X, Y, Z are three different workstations (e.g., A,B,C)
 
-You can ask me the following two types of questions (one per turn), and I will answer truthfully based on the hidden process order:
+3. Path Scan: Select three workstations X-Y-Z and ask how many of the belts X-Y and Y-Z require preventive maintenance (non-existent belts are not counted).
+   Format: <query_path>X,Y,Z</query_path>
+   Where X, Y, Z are three workstations (e.g., A,B,C)
 
-1. Comparison Query: Ask about the precedence relation between two different steps a and b (a and b must appear in the sequence, and a ≠ b). I will answer "a before b" or "b before a".
+4. Edge Query: Ask whether a specific conveyor belt requires maintenance.
+   Format: <query_edge>X,Y</query_edge>
+   Where X, Y are the two endpoints of the conveyor belt (e.g., A,B)
 
-2. Adjacency Check: Ask whether a specific adjacent position pair in the sequence (position i and i+1, where 1 <= i < N) satisfies the "no later than" relation. I will answer "in-place" (meaning si is no later than si+1) or "out-of-place" (meaning si is strictly later than si+1).
+When you have gathered enough information, submit your final scheduling plan in this format:
 
-## Query and Answer Format
+<answer>pattern=Alpha, count=5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Comparison Query (e.g., asking about steps A and B):
-<query_compare>A,B</query_compare>
-
-- Adjacency Check (e.g., checking positions 1 and 2, with index 1):
-<query_adjacent>1</query_adjacent>
-
-When submitting the final answer, specify the judgment result (compliant or non-compliant) and provide justification in the following format:
-
-- If judged compliant, provide the complete precedence chain of all appearing steps (comma-separated, from earliest to latest):
-<answer>status=compliant, order=A,B,C</answer>
-
-- If judged non-compliant, provide evidence as a position pair i,j (i < j) or a single adjacent position i, proving an inversion exists:
-<answer>status=non-compliant, evidence=2,5</answer>
-or
-<answer>status=non-compliant, evidence=3</answer>
+Where pattern is the inferred diagnostic pattern name (Alpha/Beta/Gamma/Delta), and count is the total number of conveyor belts requiring maintenance in the entire network.
 
 Note:
-- If you claim "compliant", I will verify whether your provided step order matches my hidden order and whether the sequence is truly compliant
-- If you claim "non-compliant", I will verify whether your provided evidence position truly has an inversion
-- Incorrect answers or invalid formats will result in game failure
+- Non-existent conveyor belts will return an error message
+- You must correctly infer both the pattern and the count to generate a valid maintenance work order
+- Try to complete the deduction with as few query calls as possible
 """
 
     contextualized_rule_zh_5 = """\
-[法律场景] 司法程序合规性审查系统。你需要验证案件诉讼流程的法定程序合规性。
+这是专为反洗钱调查网络设计的资金流向穿透推演模块。
+我们现在来进行"涉案关系模式推演"，规则如下：
 
-我们来玩一个"诉讼序列顺序验证"的推理游戏，规则如下：
+设定了一个涉案实体关系无向图，包含 6 个关键嫌疑实体：A、B、C、D、E、F。实体之间的资金流转联系及其风险评级分数（整数）如下：
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-卷宗记录了一个可见的诉讼序列 s = (s1, s2, ..., sN)，其中 N = {n}，每个程序动作 si 属于集合 {symbol_set}。我已经秘密为所有动作定义了一个严格的全序关系（即隐藏的法定程序顺序，每两个不同动作都有严格的先后关系，本案固定不变）。
+系统将根据一个未知的审查模式来判断某条资金流转联系是否构成"非法利益输送"。该模式从以下四个候选中随机选定，并在推演期间保持不变：
+- 模式 Alpha：风险评级分数为偶数
+- 模式 Beta：风险评级分数为素数（大于 1 且仅能被 1 和自身整除）
+- 模式 Gamma：风险评级分数大于等于 9
+- 模式 Delta：风险评级分数能被 3 整除
 
-定义非严格关系：动作 x "不晚于" 动作 y，当且仅当 x 等于 y，或 x 的法定顺位严格早于 y。
+你的目标是通过调用侦查指令推断出真实的审查模式，并计算关系网中构成非法利益输送的总联系数。
 
-序列"合规"的定义：对于所有相邻的动作位置 i 和 i+1（1 <= i < N），都满足 si 的法定顺位"不晚于" si+1。
+每回合可选择以下一种类型的提问：
 
-你的诉讼序列是：{sequence}
+1. 节点扫描：询问与某嫌疑实体相关的非法利益输送联系数量。
+   格式：<query_node>X</query_node>
+   其中 X 为实体名称（如 A）
 
-你的目标是：
-1. 判断该序列是否合规
-2. 提交判断结果并给出形式化的证明
-3. 如果判断为合规，还需要给出本局出现过的所有不同动作的相对法定次序
+2. 三点组扫描：选择三个不同实体，询问它们形成的三角作案网络中非法联系的数量。
+   格式：<query_triangle>X,Y,Z</query_triangle>
+   其中 X、Y、Z 为三个不同实体（如 A,B,C）
 
-你可以向我提出以下两类问题（每次仅限一个问题），我会根据隐藏的程序顺序如实回答：
+3. 路径扫描：选择三个实体 X-Y-Z，询问 X-Y 与 Y-Z 两次资金流转中有几次构成非法利益输送（若某流转联系不存在则不计）。
+   格式：<query_path>X,Y,Z</query_path>
+   其中 X、Y、Z 为三个实体（如 A,B,C）
 
-1. 比较查询：询问两个不同动作 a 和 b 的先后关系（a 和 b 必须是序列中出现过的动作，且 a 不等于 b）。我会回答"a 早于 b"或"b 早于 a"。
+4. 单边问询：询问某一特定资金流转联系是否构成非法利益输送。
+   格式：<query_edge>X,Y</query_edge>
+   其中 X、Y 为流转联系的两个端点（如 A,B）
 
-2. 相邻检查：询问序列中某个相邻位置对（位置 i 和 i+1，其中 1 <= i < N）是否满足"不晚于"关系。我会回答"就位"（表示 si 不晚于 si+1）或"错位"（表示 si 严格晚于 si+1）。
+当你收集足够侦查信息后，请提交最终审查定论，格式如下：
 
-## 询问与提交答案的格式
+<answer>pattern=Alpha, count=5</answer>
 
-每次询问只能包含一个标签，使用以下 XML 格式：
-
-- 比较查询（例如询问动作 A 和 B 的先后关系）：
-<query_compare>A,B</query_compare>
-
-- 相邻检查（例如检查位置 1 和 2，即索引为 1）：
-<query_adjacent>1</query_adjacent>
-
-提交最终答案时，必须说明判断结果（合规或不合规）并提供证明，格式如下：
-
-- 若判断为合规，必须给出所有出现动作的完整先后链（用逗号隔开，从早到晚）：
-<answer>status=合规, order=A,B,C</answer>
-
-- 若判断为不合规，必须给出一个证据位置对 i,j（i < j）或单个相邻位置 i，证明存在逆序：
-<answer>status=不合规, evidence=2,5</answer>
-或
-<answer>status=不合规, evidence=3</answer>
+其中 pattern 为推断的审查模式名称（Alpha/Beta/Gamma/Delta），count 为全案关系网中构成非法利益输送的总联系数。
 
 注意：
-- 如果你声明"合规"，我会检查你提供的动作顺序是否与我的隐藏顺序一致，以及序列是否真的合规
-- 如果你声明"不合规"，我会检查你提供的证据位置是否真的存在逆序
-- 答案错误或格式不符，游戏失败
+- 不存在的资金流转联系将返回错误提示
+- 必须同时正确推断模式和非法联系总数才能形成有效的证据链
+- 请尽可能少的指令调用次数完成推演
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario] Judicial Procedural Compliance Review System. You need to verify the statutory procedural compliance of a litigation sequence.
+[Legal Scenario]
+This is a fund flow penetration deduction module designed for an anti-money laundering investigation network.
+Let's conduct an "Entity Relationship Pattern Deduction". Here are the rules:
 
-Let's play a "Litigation Sequence Order Verification" deduction game. Here are the rules:
+The system defines an undirected graph of case entities with 6 key suspect entities: A, B, C, D, E, F. The fund transfer connections between entities and their risk rating scores (integers) are as follows:
+- A-B: 2
+- A-C: 7
+- A-D: 5
+- A-E: 9
+- B-C: 3
+- B-D: 8
+- B-E: 11
+- C-D: 6
+- C-E: 4
+- C-F: 12
+- D-E: 10
+- D-F: 1
+- E-F: 5
 
-A visible litigation sequence s = (s1, s2, ..., sN) is given, where N = {n}, and each procedural action si belongs to the set {symbol_set}. I have secretly defined a strict total order over all actions (every two different actions have a strict statutory precedence relation, which remains fixed throughout this game).
+Whether a fund transfer connection constitutes "illegal benefit tunneling" is determined by an unknown review pattern. The pattern is randomly selected from these four candidates and remains fixed throughout the deduction:
+- Pattern Alpha: risk rating score is even
+- Pattern Beta: risk rating score is prime (greater than 1 and only divisible by 1 and itself)
+- Pattern Gamma: risk rating score is greater than or equal to 9
+- Pattern Delta: risk rating score is divisible by 3
 
-Define the non-strict relation: action x is "no later than" action y if and only if x equals y, or x is strictly earlier in the statutory timeline than y.
+Your goal is to infer the true review pattern through investigation queries and calculate the total number of connections constituting illegal benefit tunneling in the entire network.
 
-A sequence is "compliant" if: for all adjacent positions i and i+1 (1 <= i < N), si is "no later than" si+1.
+Each turn you can choose one of the following query types:
 
-Your litigation sequence is: {sequence}
+1. Node Scan: Ask for the count of connections constituting illegal benefit tunneling related to a specific suspect entity.
+   Format: <query_node>X</query_node>
+   Where X is the entity name (e.g., A)
 
-Your goals are:
-1. Determine whether the sequence is compliant
-2. Submit your judgment with formal justification
-3. If judged compliant, also provide the relative order of all distinct actions appearing in this game
+2. Triangle Scan: Select three different entities and ask for the count of illegal connections in their formed triangular criminal network.
+   Format: <query_triangle>X,Y,Z</query_triangle>
+   Where X, Y, Z are three different entities (e.g., A,B,C)
 
-You can ask me the following two types of questions (one per turn), and I will answer truthfully based on the hidden statutory order:
+3. Path Scan: Select three entities X-Y-Z and ask how many of the transfers X-Y and Y-Z constitute illegal benefit tunneling (non-existent connections are not counted).
+   Format: <query_path>X,Y,Z</query_path>
+   Where X, Y, Z are three entities (e.g., A,B,C)
 
-1. Comparison Query: Ask about the precedence relation between two different actions a and b (a and b must appear in the sequence, and a ≠ b). I will answer "a before b" or "b before a".
+4. Edge Query: Ask whether a specific fund transfer connection constitutes illegal benefit tunneling.
+   Format: <query_edge>X,Y</query_edge>
+   Where X, Y are the two endpoints of the connection (e.g., A,B)
 
-2. Adjacency Check: Ask whether a specific adjacent position pair in the sequence (position i and i+1, where 1 <= i < N) satisfies the "no later than" relation. I will answer "in-place" (meaning si is no later than si+1) or "out-of-place" (meaning si is strictly later than si+1).
+When you have gathered enough intelligence, submit your final review conclusion in this format:
 
-## Query and Answer Format
+<answer>pattern=Alpha, count=5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Comparison Query (e.g., asking about actions A and B):
-<query_compare>A,B</query_compare>
-
-- Adjacency Check (e.g., checking positions 1 and 2, with index 1):
-<query_adjacent>1</query_adjacent>
-
-When submitting the final answer, specify the judgment result (compliant or non-compliant) and provide justification in the following format:
-
-- If judged compliant, provide the complete precedence chain of all appearing actions (comma-separated, from earliest to latest):
-<answer>status=compliant, order=A,B,C</answer>
-
-- If judged non-compliant, provide evidence as a position pair i,j (i < j) or a single adjacent position i, proving an inversion exists:
-<answer>status=non-compliant, evidence=2,5</answer>
-or
-<answer>status=non-compliant, evidence=3</answer>
+Where pattern is the inferred review pattern name (Alpha/Beta/Gamma/Delta), and count is the total number of illegal connections in the entire network.
 
 Note:
-- If you claim "compliant", I will verify whether your provided action order matches my hidden order and whether the sequence is truly compliant
-- If you claim "non-compliant", I will verify whether your provided evidence position truly has an inversion
-- Incorrect answers or invalid formats will result in game failure
+- Non-existent fund transfer connections will return an error message
+- You must correctly infer both the pattern and the count to form a valid chain of evidence
+- Try to complete the deduction with as few query calls as possible
 """
 
-    tags = ["answer", "query_compare", "query_adjacent"]
-    
-    # 元数据
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
+    tags = ["answer", "query_node", "query_triangle", "query_path", "query_edge"]
 
-    # 难度配置：
-    # 1 (简单)       - N=3, 3个符号, 合规序列
-    # 2 (中等偏下)   - N=4, 4个符号, 不合规序列，有明显逆序
-    # 3 (中等偏上)   - N=5, 4个符号(有重复), 合规序列
-    # 4 (较难)       - N=6, 5个符号(有重复), 不合规序列，逆序不明显
-    # 5 (难)         - N=7, 5个符号(有重复), 合规序列，需要更多推理
+    reasoning_type = "溯因推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "n": 3,
-                "sequence": ["A", "B", "C"],
-                "hidden_order": ["A", "B", "C"],  # A < B < C
-                "is_compliant": True,
-            },
-            2: {
-                "n": 4,
-                "sequence": ["A", "C", "B", "D"],
-                "hidden_order": ["A", "B", "C", "D"],  # A < B < C < D，位置2-3逆序
-                "is_compliant": False,
-            },
-            3: {
-                "n": 5,
-                "sequence": ["A", "A", "B", "C", "C"],
-                "hidden_order": ["A", "B", "C", "D"],  # A < B < C < D
-                "is_compliant": True,
-            },
-            4: {
-                "n": 6,
-                "sequence": ["A", "B", "C", "D", "C", "E"],
-                "hidden_order": ["A", "B", "C", "D", "E"],  # A < B < C < D < E，位置4-5逆序
-                "is_compliant": False,
-            },
-            5: {
-                "n": 7,
-                "sequence": ["A", "A", "B", "C", "C", "D", "E"],
-                "hidden_order": ["A", "B", "C", "D", "E"],  # A < B < C < D < E
-                "is_compliant": True,
-            },
+            1: {"pattern": "Alpha"},
+            2: {"pattern": "Delta"},
+            3: {"pattern": "Gamma"},
+            4: {"pattern": "Beta"},
+            5: {"pattern": "Random"},
         },
         "en": {
-            1: {
-                "n": 3,
-                "sequence": ["A", "B", "C"],
-                "hidden_order": ["A", "B", "C"],
-                "is_compliant": True,
-            },
-            2: {
-                "n": 4,
-                "sequence": ["A", "C", "B", "D"],
-                "hidden_order": ["A", "B", "C", "D"],
-                "is_compliant": False,
-            },
-            3: {
-                "n": 5,
-                "sequence": ["A", "A", "B", "C", "C"],
-                "hidden_order": ["A", "B", "C", "D"],
-                "is_compliant": True,
-            },
-            4: {
-                "n": 6,
-                "sequence": ["A", "B", "C", "D", "C", "E"],
-                "hidden_order": ["A", "B", "C", "D", "E"],
-                "is_compliant": False,
-            },
-            5: {
-                "n": 7,
-                "sequence": ["A", "A", "B", "C", "C", "D", "E"],
-                "hidden_order": ["A", "B", "C", "D", "E"],
-                "is_compliant": True,
-            },
+            1: {"pattern": "Alpha"},
+            2: {"pattern": "Delta"},
+            3: {"pattern": "Gamma"},
+            4: {"pattern": "Beta"},
+            5: {"pattern": "Random"},
         },
     }
 
     def __init__(self, config):
+        self.edges = {
+            ("A", "B"): 2,
+            ("A", "C"): 7,
+            ("A", "D"): 5,
+            ("A", "E"): 9,
+            ("B", "C"): 3,
+            ("B", "D"): 8,
+            ("B", "E"): 11,
+            ("C", "D"): 6,
+            ("C", "E"): 4,
+            ("C", "F"): 12,
+            ("D", "E"): 10,
+            ("D", "F"): 1,
+            ("E", "F"): 5,
+        }
+        
+        self.adj = {}
+        for (u, v), w in self.edges.items():
+            if u not in self.adj:
+                self.adj[u] = []
+            if v not in self.adj:
+                self.adj[v] = []
+            self.adj[u].append((v, w))
+            self.adj[v].append((u, w))
+        
+        self.query_count = 0
+        
         super().__init__(config)
 
     def _initialize_game(self):
@@ -694,314 +753,232 @@ Note:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        pattern = cfg["pattern"]
         
-        # 设置游戏信息
-        self._game_info["n"] = cfg["n"]
-        self.sequence = cfg["sequence"]
-        self.hidden_order = cfg["hidden_order"]
-        self.is_compliant = cfg["is_compliant"]
+        if pattern == "Random":
+            rng = random.Random(42)
+            self.pattern = rng.choice(["Alpha", "Beta", "Gamma", "Delta"])
+        else:
+            self.pattern = pattern
         
-        # 构建隐藏顺序的映射（用于快速比较）
-        self.order_map = {symbol: idx for idx, symbol in enumerate(self.hidden_order)}
+        self.satisfying_edges = set()
+        for edge, weight in self.edges.items():
+            if self._check_pattern(weight, self.pattern):
+                self.satisfying_edges.add(edge)
         
-        # 获取序列中出现的所有不同符号（排序以保证确定性）
-        self.appearing_symbols = sorted(set(self.sequence))
-        
-        # 设置游戏规则中的占位符
-        self._game_info["sequence"] = ", ".join(self.sequence)
-        self._game_info["symbol_set"] = "{" + ", ".join(sorted(set(self.sequence))) + "}"
+        self._game_info["n"] = 6
 
+    def _check_pattern(self, weight, pattern):
+        if pattern == "Alpha":
+            return weight % 2 == 0
+        elif pattern == "Beta":
+            return self._is_prime(weight)
+        elif pattern == "Gamma":
+            return weight >= 9
+        elif pattern == "Delta":
+            return weight % 3 == 0
+        return False
+
+    def _is_prime(self, n):
+        if n < 2:
+            return False
+        if n == 2:
+            return True
+        if n % 2 == 0:
+            return False
+        for i in range(3, int(n ** 0.5) + 1, 2):
+            if n % i == 0:
+                return False
+        return True
+
+    def _normalize_edge(self, u, v):
+        if u > v:
+            u, v = v, u
+        return (u, v)
+
+    def _edge_exists(self, u, v):
+        edge = self._normalize_edge(u, v)
+        return edge in self.edges
+
+    def _is_satisfying(self, u, v):
+        edge = self._normalize_edge(u, v)
+        return edge in self.satisfying_edges
+
+    def evaluate(self, parsed_info):
+        raw_ans = parsed_info["answer"]
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
+        
+        if "pattern" not in ans_dict or "count" not in ans_dict:
+            return False
+        
+        if ans_dict["pattern"] != self.pattern:
+            return False
+        
+        try:
+            count = int(ans_dict["count"])
+        except:
+            return False
+        
+        return count == len(self.satisfying_edges)
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 包含XML标签的完整查询字符串
-                "answer": str,   # 正确答案
-            }
-        """
+        import itertools
         results = []
-        
-        # 根据语言设定回答模板
-        if self.config.language == "zh":
-            before_text = "{} 早于 {}"
-            in_place_text = "就位"
-            out_of_place_text = "错位"
-        else:
-            before_text = "{} before {}"
-            in_place_text = "in-place"
-            out_of_place_text = "out-of-place"
+        is_zh = self.config.language == "zh"
+        nodes = ["A", "B", "C", "D", "E", "F"]
 
-        # 1. 比较查询 (query_compare)
-        # 枚举所有不同的符号对 (a, b)，a != b
-        for i in range(len(self.appearing_symbols)):
-            for j in range(i + 1, len(self.appearing_symbols)):
-                sym_a = self.appearing_symbols[i]
-                sym_b = self.appearing_symbols[j]
-                
-                query_str = f"<query_compare>{sym_a},{sym_b}</query_compare>"
-                
-                # 计算逻辑
-                if self.order_map[sym_a] < self.order_map[sym_b]:
-                    ans = before_text.format(sym_a, sym_b)
-                else:
-                    ans = before_text.format(sym_b, sym_a)
-                
-                results.append({
-                    "query": query_str,
-                    "answer": ans
-                })
-
-        # 2. 相邻检查 (query_adjacent)
-        # 枚举所有有效的相邻索引 1 到 N-1
-        # self.sequence 是 0-based 列表，查询索引是 1-based
-        N = len(self.sequence)
-        for idx in range(1, N):
-            query_str = f"<query_adjacent>{idx}</query_adjacent>"
-            
-            # 转为0-based索引
-            internal_idx = idx - 1
-            sym_i = self.sequence[internal_idx]
-            sym_j = self.sequence[internal_idx + 1]
-            
-            # 计算逻辑 (不晚于：相等 或 <)
-            if sym_i == sym_j:
-                ans = in_place_text
-            elif self.order_map[sym_i] < self.order_map[sym_j]:
-                ans = in_place_text
-            else:
-                ans = out_of_place_text
-            
+        for node in nodes:
+            count = sum(1 for neighbor, weight in self.adj[node] 
+                       if self._is_satisfying(node, neighbor))
+            ans = f"有 {count} 条" if is_zh else f"{count} edge(s)"
             results.append({
-                "query": query_str,
+                "query": f"<query_node>{node}</query_node>",
+                "answer": ans
+            })
+        
+        for tri in itertools.combinations(nodes, 3):
+            count = 0
+            for i in range(3):
+                for j in range(i + 1, 3):
+                    u, v = tri[i], tri[j]
+                    if self._edge_exists(u, v) and self._is_satisfying(u, v):
+                        count += 1
+            ans = f"有 {count} 条" if is_zh else f"{count} edge(s)"
+            results.append({
+                "query": f"<query_triangle>{','.join(tri)}</query_triangle>",
+                "answer": ans
+            })
+
+        for path in itertools.permutations(nodes, 3):
+            u, v, w = path
+            count = 0
+            if self._edge_exists(u, v) and self._is_satisfying(u, v):
+                count += 1
+            if self._edge_exists(v, w) and self._is_satisfying(v, w):
+                count += 1
+            ans = f"有 {count} 条" if is_zh else f"{count} edge(s)"
+            results.append({
+                "query": f"<query_path>{','.join(path)}</query_path>",
+                "answer": ans
+            })
+            
+        for (u, v) in self.edges:
+            satisfied = self._is_satisfying(u, v)
+            if is_zh:
+                ans = "是" if satisfied else "否"
+            else:
+                ans = "Yes" if satisfied else "No"
+            results.append({
+                "query": f"<query_edge>{u},{v}</query_edge>",
                 "answer": ans
             })
             
         return results
 
-    def evaluate(self, parsed_info):
-        """
-        评估最终答案是否正确
-        """
-        raw_ans = parsed_info["answer"]
-        
-        ans_dict = {}
-        
-        # 提取 status
-        status_match = re.search(r'status\s*=\s*([^,]+?)(?:\s*,\s*(?:order|evidence)\s*=|$)', raw_ans)
-        if status_match:
-            ans_dict["status"] = status_match.group(1).strip()
-        
-        # 提取 order（order= 后面的所有内容）
-        order_match = re.search(r'order\s*=\s*(.+)$', raw_ans)
-        if order_match:
-            ans_dict["order"] = order_match.group(1).strip()
-        
-        # 提取 evidence（evidence= 后面的所有内容）
-        evidence_match = re.search(r'evidence\s*=\s*(.+)$', raw_ans)
-        if evidence_match:
-            ans_dict["evidence"] = evidence_match.group(1).strip()
-        
-        if "status" not in ans_dict:
-            return False
-        
-        status = ans_dict["status"]
-        
-        # 判断语言
-        if self.config.language == "zh":
-            compliant_keywords = ["合规"]
-            non_compliant_keywords = ["不合规"]
-        else:
-            compliant_keywords = ["compliant"]
-            non_compliant_keywords = ["non-compliant", "non_compliant", "noncompliant"]
-        
-        is_claim_compliant = any(kw in status for kw in compliant_keywords) and \
-                            not any(kw in status for kw in non_compliant_keywords)
-        
-        if is_claim_compliant:
-            # 声明合规的情况
-            if not self.is_compliant:
-                return False  # 实际不合规但声明合规
-            
-            # 检查提供的顺序
-            if "order" not in ans_dict:
-                return False
-            
-            try:
-                provided_order = [s.strip() for s in ans_dict["order"].split(",")]
-            except:
-                return False
-            
-            # 检查是否包含所有出现的符号
-            provided_set = set(provided_order)
-            appearing_set = set(self.appearing_symbols)
-            
-            if provided_set != appearing_set:
-                return False
-            
-            # 检查顺序是否与隐藏顺序一致
-            for i in range(len(provided_order)):
-                for j in range(i + 1, len(provided_order)):
-                    sym_i, sym_j = provided_order[i], provided_order[j]
-                    if sym_i in self.order_map and sym_j in self.order_map:
-                        if self.order_map[sym_i] >= self.order_map[sym_j]:
-                            return False  # 顺序错误
-            
-            return True
-        
-        else:
-            # 声明不合规的情况
-            if self.is_compliant:
-                return False  # 实际合规但声明不合规
-            
-            # 检查证据
-            if "evidence" not in ans_dict:
-                return False
-            
-            try:
-                evidence_parts = [s.strip() for s in ans_dict["evidence"].split(",")]
-                
-                if len(evidence_parts) == 1:
-                    # 单个相邻位置索引
-                    idx = int(evidence_parts[0]) - 1  # 转为0-based索引
-                    if idx < 0 or idx >= len(self.sequence) - 1:
-                        return False
-                    
-                    # 检查该位置是否确实逆序
-                    sym_i = self.sequence[idx]
-                    sym_j = self.sequence[idx + 1]
-                    
-                    if sym_i == sym_j:
-                        return False  # 相同符号不算逆序
-                    
-                    return self.order_map[sym_i] > self.order_map[sym_j]
-                
-                elif len(evidence_parts) == 2:
-                    # 两个位置索引
-                    pos_i = int(evidence_parts[0]) - 1
-                    pos_j = int(evidence_parts[1]) - 1
-                    
-                    if pos_i < 0 or pos_j < 0 or pos_i >= len(self.sequence) or pos_j >= len(self.sequence):
-                        return False
-                    
-                    if pos_i >= pos_j:
-                        return False  # 要求 i < j
-                    
-                    sym_i = self.sequence[pos_i]
-                    sym_j = self.sequence[pos_j]
-                    
-                    if sym_i == sym_j:
-                        return False
-                    
-                    return self.order_map[sym_i] > self.order_map[sym_j]
-                
-                else:
-                    return False
-                    
-            except:
-                return False
-
     def _cf_core_produce(self, parsed_info):
-        if self.config.language == "zh":
-            before_text = "{} 早于 {}"
-            in_place_text = "就位"
-            out_of_place_text = "错位"
-            invalid_text = "无效问题"
-        else:
-            before_text = "{} before {}"
-            in_place_text = "in-place"
-            out_of_place_text = "out-of-place"
-            invalid_text = "invalid query"
+        is_zh = self.config.language == "zh"
         
-        # 优先处理比较查询
-        if "query_compare" in parsed_info:
-            try:
-                raw = parsed_info["query_compare"]
-                parts = [x.strip() for x in raw.split(",")]
-                
-                if len(parts) != 2:
-                    return invalid_text
-                
-                sym_a, sym_b = parts[0], parts[1]
-                
-                # 检查符号是否相同
-                if sym_a == sym_b:
-                    return invalid_text
-                
-                # 检查符号是否在序列中出现
-                if sym_a not in self.appearing_symbols or sym_b not in self.appearing_symbols:
-                    return invalid_text
-                
-                # 检查符号是否在隐藏顺序中
-                if sym_a not in self.order_map or sym_b not in self.order_map:
-                    return invalid_text
-                
-                # 比较顺序
-                if self.order_map[sym_a] < self.order_map[sym_b]:
-                    return before_text.format(sym_a, sym_b)
-                else:
-                    return before_text.format(sym_b, sym_a)
-                    
-            except:
-                return invalid_text
+        if "query_node" in parsed_info:
+            node = parsed_info["query_node"].strip().upper()
+            if node not in self.adj:
+                return "错误：节点不存在。" if is_zh else "Error: Node does not exist."
+            
+            count = sum(1 for neighbor, weight in self.adj[node] 
+                       if self._is_satisfying(node, neighbor))
+            self.query_count += 1
+            
+            return f"有 {count} 条" if is_zh else f"{count} edge(s)"
         
-        # 处理相邻检查
-        elif "query_adjacent" in parsed_info:
+        elif "query_triangle" in parsed_info:
             try:
-                idx_str = parsed_info["query_adjacent"].strip()
-                idx = int(idx_str) - 1  # 转为0-based索引
+                nodes = [x.strip().upper() for x in parsed_info["query_triangle"].split(",")]
+                if len(nodes) != 3 or len(set(nodes)) != 3:
+                    raise ValueError
                 
-                # 检查索引范围
-                if idx < 0 or idx >= len(self.sequence) - 1:
-                    return invalid_text
+                for node in nodes:
+                    if node not in self.adj:
+                        return "错误：节点不存在。" if is_zh else "Error: Node does not exist."
                 
-                sym_i = self.sequence[idx]
-                sym_j = self.sequence[idx + 1]
+                count = 0
+                for i in range(3):
+                    for j in range(i + 1, 3):
+                        if self._edge_exists(nodes[i], nodes[j]) and self._is_satisfying(nodes[i], nodes[j]):
+                            count += 1
                 
-                # 检查是否"不晚于"（sym_i <= sym_j）
-                if sym_i == sym_j:
-                    return in_place_text
-                
-                if self.order_map[sym_i] < self.order_map[sym_j]:
-                    return in_place_text
-                else:
-                    return out_of_place_text
-                    
+                self.query_count += 1
+                return f"有 {count} 条" if is_zh else f"{count} edge(s)"
             except:
-                return invalid_text
+                return "错误：格式无效。" if is_zh else "Error: Invalid format."
+        
+        elif "query_path" in parsed_info:
+            try:
+                nodes = [x.strip().upper() for x in parsed_info["query_path"].split(",")]
+                if len(nodes) != 3:
+                    raise ValueError
+                
+                for node in nodes:
+                    if node not in self.adj:
+                        return "错误：节点不存在。" if is_zh else "Error: Node does not exist."
+                
+                count = 0
+                if self._edge_exists(nodes[0], nodes[1]) and self._is_satisfying(nodes[0], nodes[1]):
+                    count += 1
+                if self._edge_exists(nodes[1], nodes[2]) and self._is_satisfying(nodes[1], nodes[2]):
+                    count += 1
+                
+                self.query_count += 1
+                return f"有 {count} 条" if is_zh else f"{count} edge(s)"
+            except:
+                return "错误：格式无效。" if is_zh else "Error: Invalid format."
+        
+        elif "query_edge" in parsed_info:
+            try:
+                nodes = [x.strip().upper() for x in parsed_info["query_edge"].split(",")]
+                if len(nodes) != 2:
+                    raise ValueError
+                
+                u, v = nodes[0], nodes[1]
+                
+                if not self._edge_exists(u, v):
+                    return "该边不存在" if is_zh else "Edge does not exist"
+                
+                self.query_count += 1
+                
+                if self._is_satisfying(u, v):
+                    return "是" if is_zh else "Yes"
+                else:
+                    return "否" if is_zh else "No"
+            except:
+                return "错误：格式无效。" if is_zh else "Error: Invalid format."
         
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        # 若 correct 是纯整数字符串（如 "0", "1", "2"）：返回 str(int(correct) + 1)
-        if correct.isdigit():
-            return str(int(correct) + 1)
+    def _cf_make_wrong(self, correct):
+        import re
         
-        if self.config.language == "zh":
-            if "错位" in correct:
-                return correct.replace("错位", "就位")
-            if "就位" in correct:
-                return correct.replace("就位", "错位")
-            if "早于" in correct:
-                # "A 早于 B" -> "B 早于 A"
-                match = re.match(r'(.+?)\s*早于\s*(.+)', correct)
-                if match:
-                    return f"{match.group(2).strip()} 早于 {match.group(1).strip()}"
-        else:
-            # 先检查更长的子串，避免 "in-place" 匹配到 "out-of-place" 中
-            if "out-of-place" in correct:
-                return correct.replace("out-of-place", "in-place")
-            if "in-place" in correct:
-                return correct.replace("in-place", "out-of-place")
-            if " before " in correct:
-                # "A before B" -> "B before A"
-                match = re.match(r'(.+?)\s+before\s+(.+)', correct)
-                if match:
-                    return f"{match.group(2).strip()} before {match.group(1).strip()}"
-
-        # fallback
+        if "是" in correct and "否" not in correct:
+            return correct.replace("是", "否")
+        if "否" in correct and "是" not in correct:
+            return correct.replace("否", "是")
+            
+        if re.search(r'\bYes\b', correct):
+            return re.sub(r'\bYes\b', "No", correct)
+        if re.search(r'\bNo\b', correct) and not re.search(r'\bYes\b', correct):
+            return re.sub(r'\bNo\b', "Yes", correct)
+        if re.search(r'\byes\b', correct):
+            return re.sub(r'\byes\b', "no", correct)
+        if re.search(r'\bno\b', correct) and not re.search(r'\byes\b', correct):
+            return re.sub(r'\bno\b', "yes", correct)
+        
+        match = re.search(r'\d+', correct)
+        if match:
+            num = int(match.group())
+            wrong_num = num + 1
+            return correct[:match.start()] + str(wrong_num) + correct[match.end():]
+        
         return correct + "_WRONG"

@@ -1,667 +1,819 @@
-from .base import Game
-import random
 import re
-from collections import deque
+from .base import Game
 
-class DirectedGraphReachabilityGame(Game):
-
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+class TreeRelationGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"有向图可达性推断"游戏，规则如下：
+我们来玩一个"树上关系推理与路径规划"游戏，规则如下：
 
-游戏设定了一个固定的有向简单图 G，包含 {n} 个节点，编号从 1 到 {n}。图中没有自环和重边。已知源节点为 {source}。
+游戏设定了一棵有根树，根节点为 A。树的结构如下：
+- 节点：A, B, C, D, E, F, G, H, I
+- 边（无向）：{edges}
 
-图的边集合是未公开的，你的任务是通过查询来推断：源节点 {source} 是否能到达除自身外的所有其他节点。
+在这棵树上，我已秘密选择了一个二元关系 R，它是以下四种关系之一：
+1. 祖先（包含自身）
+2. 严格祖先（不含自身）
+3. 子孙（包含自身）
+4. 严格子孙（不含自身）
 
-你可以反复向我提出以下两类查询（每次仅限一个查询），我会根据真实图结构如实回答：
+说明：
+- U 是 V 的祖先，当且仅当 U 位于从根 A 到 V 的唯一路径上。
+- V 是 U 的子孙，是祖先关系的逆关系。
+- "包含自身"表示节点与自己也满足该关系；"严格"表示不包含自身。
 
-1. 边查询：询问是否存在从节点 i 到节点 j 的有向边。回答"是"或"否"。
-2. 可达性查询：询问是否存在从节点 i 到节点 j 的有向路径（路径长度大于等于 1）。回答"是"或"否"。
+你的目标有两个：
+1. 通过提问确定隐藏的关系 R 是哪一种。
+2. 给出一条从起点 {start} 到终点 {end} 的路径，路径需满足：
+   - 每一步只能沿着树的边移动到相邻节点
+   - 对路径中每一步从节点 u 移动到节点 v，必须满足 R(v, u) 为真
 
-注意事项：
-- 每次只能查询一对有序节点 (i, j)，且 i 不能等于 j。
-- 禁止询问集合、计数或统计类问题。
-- 禁止询问全局性质。
+你可以反复提问"R(X, Y) 是否为真？"，我会如实回答"是"或"否"。请尽可能少地提问以完成任务。
 
-当你收集足够信息后，请提交最终答案：
-- 如果源节点 {source} 可以到达所有其他节点，输出"可达"。
-- 如果源节点 {source} 不能到达所有其他节点，输出"不可达"，并给出至少一个不可达的节点编号作为见证。
+每次提问使用以下 XML 格式（X 和 Y 为节点名称）：
 
-若答案错误或格式不符，游戏失败。
+<query>X,Y</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，需要同时指明关系类型和路径（或声明无法抵达）。关系类型使用以下代号：
+- ancestor_inclusive: 祖先（包含自身）
+- ancestor_strict: 严格祖先（不含自身）
+- descendant_inclusive: 子孙（包含自身）
+- descendant_strict: 严格子孙（不含自身）
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+答案格式如下：
 
-- 边查询（例如查询从节点 1 到节点 3 是否有边）：
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- 可达性查询（例如查询从节点 1 到节点 5 是否可达）：
-<query_path>1,5</query_path>
+或若无法抵达：
 
-提交最终答案时，使用以下格式：
-
-- 如果可达所有节点：
-<answer>reachable</answer>
-
-- 如果不可达所有节点（例如节点 4 不可达）：
-<answer>unreachable, witness=4</answer>
-
-你的目标是用尽可能少的查询次数完成推断。
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     game_rule_en = """\
-Let's play a "Directed Graph Reachability Inference" game. Here are the rules:
+Let's play a "Tree Relation Inference and Path Planning" game. Here are the rules:
 
-The game has set up a fixed directed simple graph G with {n} nodes, numbered from 1 to {n}. The graph has no self-loops or multiple edges. The source node is {source}.
+The game is set on a rooted tree with root node A. The tree structure is:
+- Nodes: A, B, C, D, E, F, G, H, I
+- Edges (undirected): {edges}
 
-The edge set of the graph is not disclosed. Your task is to infer through queries whether the source node {source} can reach all other nodes (excluding itself).
+On this tree, I have secretly chosen a binary relation R, which is one of the following four relations:
+1. Ancestor (including self)
+2. Strict Ancestor (excluding self)
+3. Descendant (including self)
+4. Strict Descendant (excluding self)
 
-You can repeatedly ask me the following two types of queries (one query per turn), and I will answer truthfully based on the real graph structure:
+Explanation:
+- U is an ancestor of V if and only if U is on the unique path from root A to V.
+- V is a descendant of U is the inverse of the ancestor relation.
+- "Including self" means a node satisfies the relation with itself; "strict" means excluding self.
 
-1. Edge Query: Ask if there is a directed edge from node i to node j. Answer "Yes" or "No".
-2. Reachability Query: Ask if there exists a directed path from node i to node j (path length greater than or equal to 1). Answer "Yes" or "No".
+Your goals are twofold:
+1. Determine which of the four relations is the hidden relation R through queries.
+2. Provide a path from start node {start} to end node {end}, where the path must satisfy:
+   - Each step can only move along a tree edge to an adjacent node
+   - For each step from node u to node v in the path, R(v, u) must be true
 
-Notes:
-- Each query can only involve one ordered pair of nodes (i, j), where i cannot equal j.
-- Set-based, counting, or statistical questions are prohibited.
-- Global property questions are prohibited.
+You can repeatedly ask "Is R(X, Y) true?" and I will answer "Yes" or "No" truthfully. Try to complete the task with as few queries as possible.
 
-When you have gathered enough information, submit your final answer:
-- If source node {source} can reach all other nodes, output "reachable".
-- If source node {source} cannot reach all other nodes, output "unreachable" and provide at least one unreachable node as a witness.
+Use the following XML format for queries (X and Y are node names):
 
-If the answer is incorrect or the format is invalid, the game fails.
+<query>X,Y</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, specify both the relation type and the path (or declare unreachable). Use these codes for relation types:
+- ancestor_inclusive: Ancestor (including self)
+- ancestor_strict: Strict Ancestor (excluding self)
+- descendant_inclusive: Descendant (including self)
+- descendant_strict: Strict Descendant (excluding self)
 
-Each query must contain only one tag. Use the following XML format:
+Answer format:
 
-- Edge Query (e.g., query if there is an edge from node 1 to node 3):
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- Reachability Query (e.g., query if node 5 is reachable from node 1):
-<query_path>1,5</query_path>
+Or if unreachable:
 
-When submitting the final answer, use the following format:
-
-- If all nodes are reachable:
-<answer>reachable</answer>
-
-- If not all nodes are reachable (e.g., node 4 is unreachable):
-<answer>unreachable, witness=4</answer>
-
-Your goal is to complete the inference with as few queries as possible.
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_zh_1 = """\
-作为一名城市交通规划师，你需要排查特定路网的连通性问题。
-我们来玩一个"单向路网可达性推断"游戏，规则如下：
+我们来玩一个"路网调度与物流路径规划"游戏，规则如下：
 
-系统设定了一个固定的单向路网 G，包含 {n} 个交通路口，编号从 1 到 {n}。路网中没有自环和重边。已知起点路口为 {source}。
+游戏设定了一个层级路网，调度中心为 A。路网的结构如下：
+- 站点：A, B, C, D, E, F, G, H, I
+- 道路（无向）：{edges}
 
-路网的具体道路分布是未公开的，你的任务是通过查询来推断：从起点路口 {source} 出发，是否能驾车到达除自身外的所有其他路口。
+在这个路网上，我已秘密选择了一个二元关系 R，它是以下四种关系之一：
+1. 供货上游（包含自身）
+2. 严格供货上游（不含自身）
+3. 接收下游（包含自身）
+4. 严格接收下游（不含自身）
 
-你可以反复向我提出以下两类查询（每次仅限一个查询），我会根据真实路网结构如实回答：
+说明：
+- 站点 U 是 V 的供货上游，当且仅当 U 位于从调度中心 A 到 V 的唯一主干线路上。
+- 接收下游是供货上游的逆关系。
+- "包含自身"表示站点与自己也满足该关系；"严格"表示不包含自身。
 
-1. 边查询：询问是否存在从路口 i 到路口 j 的直接单向道路。回答"是"或"否"。
-2. 可达性查询：询问是否存在从路口 i 到路口 j 的通行路线（经过一条或多条道路）。回答"是"或"否"。
+你的目标有两个：
+1. 通过提问确定隐藏的关系 R 是哪一种。
+2. 给出一条从起点 {start} 到终点 {end} 的物流路径，路径需满足：
+   - 每一步只能沿着道路移动到相邻站点
+   - 对路径中每一步从站点 u 移动到站点 v，必须满足 R(v, u) 为真
 
-注意事项：
-- 每次只能查询一对有序路口 (i, j)，且 i 不能等于 j。
-- 禁止询问集合、计数或统计类问题。
-- 禁止询问全局性质。
+你可以反复提问"R(X, Y) 是否为真？"，我会如实回答"是"或"否"。请尽可能少地提问以完成任务。
 
-当你收集足够信息后，请提交最终排查结论：
-- 如果起点路口 {source} 可以到达所有其他路口，输出"可达"。
-- 如果起点路口 {source} 不能到达所有其他路口，输出"不可达"，并给出至少一个无法到达的路口编号作为见证。
+每次提问使用以下 XML 格式（X 和 Y 为站点名称）：
 
-若结论错误或格式不符，排查失败。
+<query>X,Y</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，需要同时指明关系类型和路径（或声明无法抵达）。关系类型使用以下代号：
+- ancestor_inclusive: 供货上游（包含自身）
+- ancestor_strict: 严格供货上游（不含自身）
+- descendant_inclusive: 接收下游（包含自身）
+- descendant_strict: 严格接收下游（不含自身）
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+答案格式如下：
 
-- 边查询（例如查询从路口 1 到路口 3 是否有直接道路）：
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- 可达性查询（例如查询从路口 1 到路口 5 是否有路线可达）：
-<query_path>1,5</query_path>
+或若无法抵达：
 
-提交最终结论时，使用以下格式：
-
-- 如果可达所有路口：
-<answer>reachable</answer>
-
-- 如果不可达所有路口（例如路口 4 不可达）：
-<answer>unreachable, witness=4</answer>
-
-你的目标是用尽可能少的查询次数完成路网排查。
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-As an urban traffic planner, you need to investigate the connectivity of a specific road network.
-Let's play a "One-Way Road Network Reachability Inference" game. Here are the rules:
+Let's play a "Network Dispatch and Logistics Path Planning" game. Here are the rules:
 
-The system has set up a fixed one-way road network G with {n} intersections, numbered from 1 to {n}. There are no self-loops or multiple edges. The starting intersection is {source}.
+The game is set on a hierarchical road network with the dispatch center at A. The network structure is:
+- Stations: A, B, C, D, E, F, G, H, I
+- Roads (undirected): {edges}
 
-The exact road layout is not disclosed. Your task is to infer through queries whether a vehicle can reach all other intersections (excluding itself) starting from intersection {source}.
+On this network, I have secretly chosen a binary relation R, which is one of the following four relations:
+1. Supply Upstream (including self)
+2. Strict Supply Upstream (excluding self)
+3. Receiving Downstream (including self)
+4. Strict Receiving Downstream (excluding self)
 
-You can repeatedly ask me the following two types of queries (one query per turn), and I will answer truthfully based on the real network structure:
+Explanation:
+- Station U is a supply upstream of V if and only if U is on the unique main route from dispatch center A to V.
+- Receiving downstream is the inverse of the supply upstream relation.
+- "Including self" means a station satisfies the relation with itself; "strict" means excluding self.
 
-1. Edge Query: Ask if there is a direct one-way road from intersection i to intersection j. Answer "Yes" or "No".
-2. Reachability Query: Ask if there exists a valid route from intersection i to intersection j (via one or more roads). Answer "Yes" or "No".
+Your goals are twofold:
+1. Determine which of the four relations is the hidden relation R through queries.
+2. Provide a logistics path from start station {start} to end station {end}, where the path must satisfy:
+   - Each step can only move along a road to an adjacent station
+   - For each step from station u to station v in the path, R(v, u) must be true
 
-Notes:
-- Each query can only involve one ordered pair of intersections (i, j), where i cannot equal j.
-- Set-based, counting, or statistical questions are prohibited.
-- Global property questions are prohibited.
+You can repeatedly ask "Is R(X, Y) true?" and I will answer "Yes" or "No" truthfully. Try to complete the task with as few queries as possible.
 
-When you have gathered enough information, submit your final conclusion:
-- If starting intersection {source} can reach all other intersections, output "reachable".
-- If starting intersection {source} cannot reach all other intersections, output "unreachable" and provide at least one unreachable intersection as a witness.
+Use the following XML format for queries (X and Y are station names):
 
-If the conclusion is incorrect or the format is invalid, the investigation fails.
+<query>X,Y</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, specify both the relation type and the path (or declare unreachable). Use these codes for relation types:
+- ancestor_inclusive: Supply Upstream (including self)
+- ancestor_strict: Strict Supply Upstream (excluding self)
+- descendant_inclusive: Receiving Downstream (including self)
+- descendant_strict: Strict Receiving Downstream (excluding self)
 
-Each query must contain only one tag. Use the following XML format:
+Answer format:
 
-- Edge Query (e.g., query if there is a direct road from intersection 1 to intersection 3):
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- Reachability Query (e.g., query if intersection 5 is reachable from intersection 1):
-<query_path>1,5</query_path>
+Or if unreachable:
 
-When submitting the final conclusion, use the following format:
-
-- If all intersections are reachable:
-<answer>reachable</answer>
-
-- If not all intersections are reachable (e.g., intersection 4 is unreachable):
-<answer>unreachable, witness=4</answer>
-
-Your goal is to complete the investigation with as few queries as possible.
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_zh_2 = """\
-作为一名临床病理学家，你需要追踪某种未知病原体在人体内的传播路径。
-我们来玩一个"病原体扩散连通性推断"游戏，规则如下：
+我们来玩一个"传染病溯源与传播路径分析"游戏，规则如下：
 
-系统设定了一个固定的器官生理关联图 G，包含 {n} 个局部组织器官，编号从 1 到 {n}。不存在自反馈传染或重复感染路径。已知初始感染源为组织 {source}。
+游戏设定了一个感染传播树，零号病人（初始暴发点）所在的群组为 A。树的结构如下：
+- 群组：A, B, C, D, E, F, G, H, I
+- 传播链（无向）：{edges}
 
-病原体的具体扩散网络是未公开的，你的任务是通过查询来推断：病原体是否会从感染源 {source} 最终蔓延至除自身外的所有其他组织器官。
+在这棵树上，我已秘密选择了一个二元关系 R，它是以下四种关系之一：
+1. 传染源头（包含自身）
+2. 严格传染源头（不含自身）
+3. 衍生感染者（包含自身）
+4. 严格衍生感染者（不含自身）
 
-你可以反复向我提出以下两类查询（每次仅限一个查询），我会根据真实的生理关联结构如实回答：
+说明：
+- 群组 U 是 V 的传染源头，当且仅当 U 位于从初始群组 A 到 V 的唯一传播链条上。
+- 衍生感染者是传染源头的逆关系。
+- "包含自身"表示群组与自己也满足该关系；"严格"表示不包含自身。
 
-1. 边查询：询问病原体是否能从组织 i 直接扩散到组织 j。回答"是"或"否"。
-2. 可达性查询：询问是否存在病原体从组织 i 蔓延到组织 j 的感染路径（经过一次或多次扩散）。回答"是"或"否"。
+你的目标有两个：
+1. 通过提问确定隐藏的关系 R 是哪一种。
+2. 给出一条从起点 {start} 到终点 {end} 的病毒演化路径，路径需满足：
+   - 每一步只能沿着传播链移动到相邻群组
+   - 对路径中每一步从群组 u 移动到群组 v，必须满足 R(v, u) 为真
 
-注意事项：
-- 每次只能查询一对有序组织器官 (i, j)，且 i 不能等于 j。
-- 禁止询问集合、计数或统计类问题。
-- 禁止询问全局性质。
+你可以反复提问"R(X, Y) 是否为真？"，我会如实回答"是"或"否"。请尽可能少地提问以完成任务。
 
-当你收集足够信息后，请提交最终病理推断：
-- 如果初始感染源 {source} 会蔓延至所有其他组织，输出"可达"。
-- 如果不会蔓延至所有其他组织，输出"不可达"，并给出至少一个不会被感染的组织编号作为见证。
+每次提问使用以下 XML 格式（X 和 Y 为群组名称）：
 
-若推断错误或格式不符，病理分析失败。
+<query>X,Y</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，需要同时指明关系类型和路径（或声明无法抵达）。关系类型使用以下代号：
+- ancestor_inclusive: 传染源头（包含自身）
+- ancestor_strict: 严格传染源头（不含自身）
+- descendant_inclusive: 衍生感染者（包含自身）
+- descendant_strict: 严格衍生感染者（不含自身）
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+答案格式如下：
 
-- 边查询（例如查询病原体是否从组织 1 直接扩散到组织 3）：
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- 可达性查询（例如查询组织 5 是否会被组织 1 感染）：
-<query_path>1,5</query_path>
+或若无法抵达：
 
-提交最终结论时，使用以下格式：
-
-- 如果所有组织都会被感染：
-<answer>reachable</answer>
-
-- 如果并非所有组织都会被感染（例如组织 4 安全）：
-<answer>unreachable, witness=4</answer>
-
-你的目标是用尽可能少的查询次数完成病理追踪。
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-As a clinical pathologist, you need to track the spread pathway of an unknown pathogen within the human body.
-Let's play a "Pathogen Spread Connectivity Inference" game. Here are the rules:
+[Medical Scenario]
+Let's play an "Infectious Disease Tracing and Transmission Path Analysis" game. Here are the rules:
 
-The system has established a fixed physiological association graph G containing {n} localized tissues/organs, numbered from 1 to {n}. There are no self-infecting or duplicate spreading paths. The initial infection source is tissue {source}.
+The game is set on an infection transmission tree, with patient zero (the initial outbreak point) at group A. The tree structure is:
+- Groups: A, B, C, D, E, F, G, H, I
+- Transmission Chains (undirected): {edges}
 
-The exact spreading network of the pathogen is undisclosed. Your task is to infer through queries whether the pathogen will eventually spread from the source {source} to all other tissues/organs.
+On this tree, I have secretly chosen a binary relation R, which is one of the following four relations:
+1. Infection Source (including self)
+2. Strict Infection Source (excluding self)
+3. Derived Infected (including self)
+4. Strict Derived Infected (excluding self)
 
-You can repeatedly ask me the following two types of queries (one query per turn), and I will answer truthfully based on the real physiological associations:
+Explanation:
+- Group U is an infection source of V if and only if U is on the unique transmission chain from initial group A to V.
+- Derived infected is the inverse of the infection source relation.
+- "Including self" means a group satisfies the relation with itself; "strict" means excluding self.
 
-1. Edge Query: Ask if the pathogen can spread directly from tissue i to tissue j. Answer "Yes" or "No".
-2. Reachability Query: Ask if there exists an infection pathway from tissue i to tissue j (through one or multiple spreading steps). Answer "Yes" or "No".
+Your goals are twofold:
+1. Determine which of the four relations is the hidden relation R through queries.
+2. Provide a viral evolution path from start group {start} to end group {end}, where the path must satisfy:
+   - Each step can only move along a transmission chain to an adjacent group
+   - For each step from group u to group v in the path, R(v, u) must be true
 
-Notes:
-- Each query can only involve one ordered pair of tissues (i, j), where i cannot equal j.
-- Set-based, counting, or statistical questions are prohibited.
-- Global property questions are prohibited.
+You can repeatedly ask "Is R(X, Y) true?" and I will answer "Yes" or "No" truthfully. Try to complete the task with as few queries as possible.
 
-When you have gathered enough information, submit your final pathological inference:
-- If the initial source {source} will infect all other tissues, output "reachable".
-- If it will not infect all other tissues, output "unreachable" and provide at least one uninfected tissue number as a witness.
+Use the following XML format for queries (X and Y are group names):
 
-If the inference is incorrect or the format is invalid, the pathological analysis fails.
+<query>X,Y</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, specify both the relation type and the path (or declare unreachable). Use these codes for relation types:
+- ancestor_inclusive: Infection Source (including self)
+- ancestor_strict: Strict Infection Source (excluding self)
+- descendant_inclusive: Derived Infected (including self)
+- descendant_strict: Strict Derived Infected (excluding self)
 
-Each query must contain only one tag. Use the following XML format:
+Answer format:
 
-- Edge Query (e.g., query if the pathogen spreads directly from tissue 1 to tissue 3):
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- Reachability Query (e.g., query if tissue 5 will be infected by tissue 1):
-<query_path>1,5</query_path>
+Or if unreachable:
 
-When submitting the final conclusion, use the following format:
-
-- If all tissues will be infected:
-<answer>reachable</answer>
-
-- If not all tissues will be infected (e.g., tissue 4 remains safe):
-<answer>unreachable, witness=4</answer>
-
-Your goal is to complete the pathological tracking with as few queries as possible.
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_zh_3 = """\
-作为一名课程体系设计师，你需要验证一套全新在线课程的解锁逻辑是否连通。
-我们来玩一个"课程解锁可达性推断"游戏，规则如下：
+我们来玩一个"知识图谱先决条件与学习路径规划"游戏，规则如下：
 
-系统设定了一个固定的课程依赖网络 G，包含 {n} 个学习模块，编号从 1 到 {n}。图中不存在循环依赖或重复的前置条件。已知初始解锁的起点模块为 {source}。
+游戏设定了一个层级知识图谱，基础核心概念为 A。图谱结构如下：
+- 知识模块：A, B, C, D, E, F, G, H, I
+- 关联边（无向）：{edges}
 
-课程的具体依赖关系是未公开的，你的任务是通过查询来推断：从起点模块 {source} 开始学习，是否能逐步解锁除自身外的所有其他学习模块。
+在这个图谱上，我已秘密选择了一个二元关系 R，它是以下四种关系之一：
+1. 先决基础（包含自身）
+2. 严格先决基础（不含自身）
+3. 衍生进阶（包含自身）
+4. 严格衍生进阶（不含自身）
 
-你可以反复向我提出以下两类查询（每次仅限一个查询），我会根据真实的课程设置如实回答：
+说明：
+- 模块 U 是 V 的先决基础，当且仅当 U 位于从核心概念 A 到 V 的唯一学习路径上。
+- 衍生进阶是先决基础的逆关系。
+- "包含自身"表示模块与自己也满足该关系；"严格"表示不包含自身。
 
-1. 边查询：询问学习模块 i 是否能直接解锁学习模块 j。回答"是"或"否"。
-2. 可达性查询：询问是否存在从学习模块 i 到学习模块 j 的解锁路径（经过一次或多次前置学习）。回答"是"或"否"。
+你的目标有两个：
+1. 通过提问确定隐藏的关系 R 是哪一种。
+2. 给出一条从起点 {start} 到终点 {end} 的学习路径，路径需满足：
+   - 每一步只能沿着关联边移动到相邻模块
+   - 对路径中每一步从模块 u 移动到模块 v，必须满足 R(v, u) 为真
 
-注意事项：
-- 每次只能查询一对有序模块 (i, j)，且 i 不能等于 j。
-- 禁止询问集合、计数或统计类问题。
-- 禁止询问全局性质。
+你可以反复提问"R(X, Y) 是否为真？"，我会如实回答"是"或"否"。请尽可能少地提问以完成任务。
 
-当你收集足够信息后，请提交最终验证结论：
-- 如果起点模块 {source} 可以解锁所有其他模块，输出"可达"。
-- 如果起点模块 {source} 不能解锁所有其他模块，输出"不可达"，并给出至少一个无法解锁的模块编号作为见证。
+每次提问使用以下 XML 格式（X 和 Y 为模块名称）：
 
-若结论错误或格式不符，验证失败。
+<query>X,Y</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，需要同时指明关系类型和路径（或声明无法抵达）。关系类型使用以下代号：
+- ancestor_inclusive: 先决基础（包含自身）
+- ancestor_strict: 严格先决基础（不含自身）
+- descendant_inclusive: 衍生进阶（包含自身）
+- descendant_strict: 严格衍生进阶（不含自身）
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+答案格式如下：
 
-- 边查询（例如查询模块 1 是否直接解锁模块 3）：
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- 可达性查询（例如查询模块 1 是否最终能解锁模块 5）：
-<query_path>1,5</query_path>
+或若无法抵达：
 
-提交最终结论时，使用以下格式：
-
-- 如果可达所有模块：
-<answer>reachable</answer>
-
-- 如果不可达所有模块（例如模块 4 无法解锁）：
-<answer>unreachable, witness=4</answer>
-
-你的目标是用尽可能少的查询次数完成逻辑验证。
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-As a curriculum system designer, you need to verify the connectivity of the unlocking logic for a new online course.
-Let's play a "Course Unlocking Reachability Inference" game. Here are the rules:
+Let's play a "Knowledge Graph Prerequisites and Learning Path Planning" game. Here are the rules:
 
-The system has set up a fixed course dependency network G containing {n} learning modules, numbered from 1 to {n}. There are no circular dependencies or duplicate prerequisites. The initial unlocked starting module is {source}.
+The game is set on a hierarchical knowledge graph, with the core foundational concept at A. The graph structure is:
+- Knowledge Modules: A, B, C, D, E, F, G, H, I
+- Association Edges (undirected): {edges}
 
-The exact course dependencies are undisclosed. Your task is to infer through queries whether all other learning modules (excluding itself) can be eventually unlocked starting from the source module {source}.
+On this graph, I have secretly chosen a binary relation R, which is one of the following four relations:
+1. Prerequisite Foundation (including self)
+2. Strict Prerequisite Foundation (excluding self)
+3. Derived Advanced (including self)
+4. Strict Derived Advanced (excluding self)
 
-You can repeatedly ask me the following two types of queries (one query per turn), and I will answer truthfully based on the real curriculum setup:
+Explanation:
+- Module U is a prerequisite foundation of V if and only if U is on the unique learning path from core concept A to V.
+- Derived advanced is the inverse of the prerequisite foundation relation.
+- "Including self" means a module satisfies the relation with itself; "strict" means excluding self.
 
-1. Edge Query: Ask if learning module i can directly unlock learning module j. Answer "Yes" or "No".
-2. Reachability Query: Ask if there exists an unlocking path from module i to module j (through one or more prerequisite steps). Answer "Yes" or "No".
+Your goals are twofold:
+1. Determine which of the four relations is the hidden relation R through queries.
+2. Provide a learning path from start module {start} to end module {end}, where the path must satisfy:
+   - Each step can only move along an association edge to an adjacent module
+   - For each step from module u to module v in the path, R(v, u) must be true
 
-Notes:
-- Each query can only involve one ordered pair of modules (i, j), where i cannot equal j.
-- Set-based, counting, or statistical questions are prohibited.
-- Global property questions are prohibited.
+You can repeatedly ask "Is R(X, Y) true?" and I will answer "Yes" or "No" truthfully. Try to complete the task with as few queries as possible.
 
-When you have gathered enough information, submit your final verification conclusion:
-- If starting module {source} can unlock all other modules, output "reachable".
-- If it cannot unlock all other modules, output "unreachable" and provide at least one un-unlockable module number as a witness.
+Use the following XML format for queries (X and Y are module names):
 
-If the conclusion is incorrect or the format is invalid, the verification fails.
+<query>X,Y</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, specify both the relation type and the path (or declare unreachable). Use these codes for relation types:
+- ancestor_inclusive: Prerequisite Foundation (including self)
+- ancestor_strict: Strict Prerequisite Foundation (excluding self)
+- descendant_inclusive: Derived Advanced (including self)
+- descendant_strict: Strict Derived Advanced (excluding self)
 
-Each query must contain only one tag. Use the following XML format:
+Answer format:
 
-- Edge Query (e.g., query if module 1 directly unlocks module 3):
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- Reachability Query (e.g., query if module 5 can be eventually unlocked by module 1):
-<query_path>1,5</query_path>
+Or if unreachable:
 
-When submitting the final conclusion, use the following format:
-
-- If all modules can be unlocked:
-<answer>reachable</answer>
-
-- If not all modules can be unlocked (e.g., module 4 cannot be unlocked):
-<answer>unreachable, witness=4</answer>
-
-Your goal is to complete the verification with as few queries as possible.
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_zh_4 = """\
-作为一名精益生产工程师，你需要排查一条自动化流水线的物料流转是否顺畅。
-我们来玩一个"工业物料流转可达性推断"游戏，规则如下：
+我们来玩一个"产品BOM层级与装配路径追踪"游戏，规则如下：
 
-系统设定了一个固定的车间工序流转网络 G，包含 {n} 个加工工位，编号从 1 到 {n}。不存在工位自流转或重复的传输带。已知原料投放起点工位为 {source}。
+游戏设定了一个产品物料清单（BOM）树，最终成品为 A。树的结构如下：
+- 组件/零件：A, B, C, D, E, F, G, H, I
+- 装配边（无向）：{edges}
 
-流水线的具体传输带分布是未公开的，你的任务是通过查询来推断：物料从起点工位 {source} 投放后，是否能通过传输网络流转到除自身外的所有其他工位。
+在这棵树上，我已秘密选择了一个二元关系 R，它是以下四种关系之一：
+1. 所属总成（包含自身）
+2. 严格所属总成（不含自身）
+3. 组成部件（包含自身）
+4. 严格组成部件（不含自身）
 
-你可以反复向我提出以下两类查询（每次仅限一个查询），我会根据真实的流水线结构如实回答：
+说明：
+- 节点 U 是 V 的所属总成，当且仅当 U 位于从最终成品 A 到节点 V 的唯一拆解层级路径上。
+- 组成部件是所属总成的逆关系。
+- "包含自身"表示节点与自己也满足该关系；"严格"表示不包含自身。
 
-1. 边查询：询问物料是否能从工位 i 通过传输带直接运送到工位 j。回答"是"或"否"。
-2. 可达性查询：询问是否存在从工位 i 到工位 j 的物料流转路径（经过一条或多条传输带）。回答"是"或"否"。
+你的目标有两个：
+1. 通过提问确定隐藏的关系 R 是哪一种。
+2. 给出一条从起点 {start} 到终点 {end} 的追溯路径，路径需满足：
+   - 每一步只能沿着装配边移动到相邻节点
+   - 对路径中每一步从节点 u 移动到节点 v，必须满足 R(v, u) 为真
 
-注意事项：
-- 每次只能查询一对有序工位 (i, j)，且 i 不能等于 j。
-- 禁止询问集合、计数或统计类问题。
-- 禁止询问全局性质。
+你可以反复提问"R(X, Y) 是否为真？"，我会如实回答"是"或"否"。请尽可能少地提问以完成任务。
 
-当你收集足够信息后，请提交最终排查结论：
-- 如果起点工位 {source} 的物料可以流转到所有其他工位，输出"可达"。
-- 如果不能流转到所有其他工位，输出"不可达"，并给出至少一个无法接收物料的工位编号作为见证。
+每次提问使用以下 XML 格式（X 和 Y 为组件/零件名称）：
 
-若结论错误或格式不符，排查失败。
+<query>X,Y</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，需要同时指明关系类型和路径（或声明无法抵达）。关系类型使用以下代号：
+- ancestor_inclusive: 所属总成（包含自身）
+- ancestor_strict: 严格所属总成（不含自身）
+- descendant_inclusive: 组成部件（包含自身）
+- descendant_strict: 严格组成部件（不含自身）
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+答案格式如下：
 
-- 边查询（例如查询物料是否从工位 1 直接运送到工位 3）：
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- 可达性查询（例如查询工位 5 是否能接收到来自工位 1 的物料）：
-<query_path>1,5</query_path>
+或若无法抵达：
 
-提交最终结论时，使用以下格式：
-
-- 如果物料可达所有工位：
-<answer>reachable</answer>
-
-- 如果物料不可达所有工位（例如工位 4 无法接收）：
-<answer>unreachable, witness=4</answer>
-
-你的目标是用尽可能少的查询次数完成流转排查。
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-As a lean production engineer, you need to investigate whether the material flow of an automated assembly line is well-connected.
-Let's play an "Industrial Material Flow Reachability Inference" game. Here are the rules:
+[Manufacturing/Industrial Scenario]
+Let's play a "Product BOM Hierarchy and Assembly Path Tracing" game. Here are the rules:
 
-The system has set up a fixed workshop process flow network G containing {n} processing stations, numbered from 1 to {n}. There are no self-looping flows or duplicated conveyor belts. The raw material input station is {source}.
+The game is set on a product Bill of Materials (BOM) tree, with the final product at A. The tree structure is:
+- Components/Parts: A, B, C, D, E, F, G, H, I
+- Assembly Edges (undirected): {edges}
 
-The exact distribution of conveyor belts is undisclosed. Your task is to infer through queries whether materials inputted at the starting station {source} can reach all other stations (excluding itself) through the transmission network.
+On this tree, I have secretly chosen a binary relation R, which is one of the following four relations:
+1. Parent Assembly (including self)
+2. Strict Parent Assembly (excluding self)
+3. Constituent Part (including self)
+4. Strict Constituent Part (excluding self)
 
-You can repeatedly ask me the following two types of queries (one query per turn), and I will answer truthfully based on the real assembly line structure:
+Explanation:
+- Node U is a parent assembly of V if and only if U is on the unique disassembly hierarchical path from the final product A to node V.
+- Constituent part is the inverse of the parent assembly relation.
+- "Including self" means a node satisfies the relation with itself; "strict" means excluding self.
 
-1. Edge Query: Ask if materials can be transported directly from station i to station j via a conveyor belt. Answer "Yes" or "No".
-2. Reachability Query: Ask if there exists a material flow path from station i to station j (via one or more conveyor belts). Answer "Yes" or "No".
+Your goals are twofold:
+1. Determine which of the four relations is the hidden relation R through queries.
+2. Provide a tracing path from start node {start} to end node {end}, where the path must satisfy:
+   - Each step can only move along an assembly edge to an adjacent node
+   - For each step from node u to node v in the path, R(v, u) must be true
 
-Notes:
-- Each query can only involve one ordered pair of stations (i, j), where i cannot equal j.
-- Set-based, counting, or statistical questions are prohibited.
-- Global property questions are prohibited.
+You can repeatedly ask "Is R(X, Y) true?" and I will answer "Yes" or "No" truthfully. Try to complete the task with as few queries as possible.
 
-When you have gathered enough information, submit your final investigation conclusion:
-- If materials from starting station {source} can reach all other stations, output "reachable".
-- If they cannot reach all other stations, output "unreachable" and provide at least one station number that cannot receive materials as a witness.
+Use the following XML format for queries (X and Y are node names):
 
-If the conclusion is incorrect or the format is invalid, the investigation fails.
+<query>X,Y</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, specify both the relation type and the path (or declare unreachable). Use these codes for relation types:
+- ancestor_inclusive: Parent Assembly (including self)
+- ancestor_strict: Strict Parent Assembly (excluding self)
+- descendant_inclusive: Constituent Part (including self)
+- descendant_strict: Strict Constituent Part (excluding self)
 
-Each query must contain only one tag. Use the following XML format:
+Answer format:
 
-- Edge Query (e.g., query if materials go directly from station 1 to station 3):
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- Reachability Query (e.g., query if station 5 can receive materials from station 1):
-<query_path>1,5</query_path>
+Or if unreachable:
 
-When submitting the final conclusion, use the following format:
-
-- If materials can reach all stations:
-<answer>reachable</answer>
-
-- If materials cannot reach all stations (e.g., station 4 cannot receive):
-<answer>unreachable, witness=4</answer>
-
-Your goal is to complete the investigation with as few queries as possible.
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_zh_5 = """\
-作为一名金融犯罪调查员，你需要追踪一桩洗钱案的非法资金流向网络。
-我们来玩一个"非法资金流向可达性推断"游戏，规则如下：
+我们来玩一个"公司股权穿透与资金流向审查"游戏，规则如下：
 
-系统设定了一个固定的涉案账户交易网络 G，包含 {n} 个嫌疑银行账户，编号从 1 到 {n}。不存在账户内部转账或重复的交易记录。已知主犯的资金源头账户为 {source}。
+游戏设定了一个复杂的企业集团控制树，最终控股母公司为 A。树的结构如下：
+- 企业主体：A, B, C, D, E, F, G, H, I
+- 股权关联（无向）：{edges}
 
-具体的资金转账记录是未公开的，你的任务是通过查询来推断：非法资金从源头账户 {source} 汇出后，是否最终流向了除自身外的所有其他涉案账户。
+在这个集团树上，我已秘密选择了一个二元关系 R，它是以下四种关系之一：
+1. 控股母公司（包含自身）
+2. 严格控股母公司（不含自身）
+3. 附属子公司（包含自身）
+4. 严格附属子公司（不含自身）
 
-你可以反复向我提出以下两类查询（每次仅限一个查询），我会根据真实的交易记录如实回答：
+说明：
+- 主体 U 是 V 的控股母公司，当且仅当 U 位于从最终母公司 A 到 V 的唯一股权控制链条上。
+- 附属子公司是控股母公司的逆关系。
+- "包含自身"表示主体与自己也满足该关系；"严格"表示不包含自身。
 
-1. 边查询：询问是否存在从账户 i 到账户 j 的直接资金转账。回答"是"或"否"。
-2. 可达性查询：询问是否存在从账户 i 到账户 j 的资金洗白路径（经过一次或多次嵌套转账）。回答"是"或"否"。
+你的目标有两个：
+1. 通过提问确定隐藏的关系 R 是哪一种。
+2. 给出一条从起点 {start} 到终点 {end} 的资金审计路径，路径需满足：
+   - 每一步只能沿着股权关联移动到相邻企业主体
+   - 对路径中每一步从主体 u 移动到主体 v，必须满足 R(v, u) 为真
 
-注意事项：
-- 每次只能查询一对有序账户 (i, j)，且 i 不能等于 j。
-- 禁止询问集合、计数或统计类问题。
-- 禁止询问全局性质。
+你可以反复提问"R(X, Y) 是否为真？"，我会如实回答"是"或"否"。请尽可能少地提问以完成任务。
 
-当你收集足够信息后，请提交最终追踪结论：
-- 如果源头账户 {source} 的资金流向了所有其他账户，输出"可达"。
-- 如果资金没有流向所有其他账户，输出"不可达"，并给出至少一个未接收该笔资金的账户编号作为见证。
+每次提问使用以下 XML 格式（X 和 Y 为企业主体名称）：
 
-若结论错误或格式不符，追踪调查失败。
+<query>X,Y</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，需要同时指明关系类型和路径（或声明无法抵达）。关系类型使用以下代号：
+- ancestor_inclusive: 控股母公司（包含自身）
+- ancestor_strict: 严格控股母公司（不含自身）
+- descendant_inclusive: 附属子公司（包含自身）
+- descendant_strict: 严格附属子公司（不含自身）
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+答案格式如下：
 
-- 边查询（例如查询是否存在从账户 1 到账户 3 的直接转账）：
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- 可达性查询（例如查询账户 5 是否最终收到了来自账户 1 的资金）：
-<query_path>1,5</query_path>
+或若无法抵达：
 
-提交最终结论时，使用以下格式：
-
-- 如果资金流向了所有账户：
-<answer>reachable</answer>
-
-- 如果资金未流向所有账户（例如账户 4 未接收）：
-<answer>unreachable, witness=4</answer>
-
-你的目标是用尽可能少的查询次数完成资金流向追踪。
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-As a financial crime investigator, you need to track the illicit fund flow network of a money laundering case.
-Let's play an "Illicit Fund Flow Reachability Inference" game. Here are the rules:
+Let's play a "Corporate Equity Penetration and Fund Flow Audit" game. Here are the rules:
 
-The system has set up a fixed transaction network G of involved accounts containing {n} suspicious bank accounts, numbered from 1 to {n}. There are no internal transfers within the same account or duplicated transaction records. The primary culprit's source account is {source}.
+The game is set on a complex corporate group control tree, with the ultimate holding parent company at A. The tree structure is:
+- Corporate Entities: A, B, C, D, E, F, G, H, I
+- Equity Associations (undirected): {edges}
 
-The exact fund transfer records are undisclosed. Your task is to infer through queries whether the illicit funds remitted from the source account {source} eventually flowed to all other involved accounts (excluding itself).
+On this group tree, I have secretly chosen a binary relation R, which is one of the following four relations:
+1. Holding Parent Company (including self)
+2. Strict Holding Parent Company (excluding self)
+3. Subsidiary Company (including self)
+4. Strict Subsidiary Company (excluding self)
 
-You can repeatedly ask me the following two types of queries (one query per turn), and I will answer truthfully based on the real transaction records:
+Explanation:
+- Entity U is a holding parent company of V if and only if U is on the unique equity control chain from the ultimate parent company A to V.
+- Subsidiary company is the inverse of the holding parent company relation.
+- "Including self" means an entity satisfies the relation with itself; "strict" means excluding self.
 
-1. Edge Query: Ask if there is a direct fund transfer from account i to account j. Answer "Yes" or "No".
-2. Reachability Query: Ask if there exists a money laundering path from account i to account j (through one or multiple nested transfers). Answer "Yes" or "No".
+Your goals are twofold:
+1. Determine which of the four relations is the hidden relation R through queries.
+2. Provide a fund audit path from start entity {start} to end entity {end}, where the path must satisfy:
+   - Each step can only move along an equity association to an adjacent entity
+   - For each step from entity u to entity v in the path, R(v, u) must be true
 
-Notes:
-- Each query can only involve one ordered pair of accounts (i, j), where i cannot equal j.
-- Set-based, counting, or statistical questions are prohibited.
-- Global property questions are prohibited.
+You can repeatedly ask "Is R(X, Y) true?" and I will answer "Yes" or "No" truthfully. Try to complete the task with as few queries as possible.
 
-When you have gathered enough information, submit your final tracking conclusion:
-- If funds from source account {source} flowed to all other accounts, output "reachable".
-- If funds did not flow to all other accounts, output "unreachable" and provide at least one account number that did not receive the funds as a witness.
+Use the following XML format for queries (X and Y are entity names):
 
-If the conclusion is incorrect or the format is invalid, the investigation fails.
+<query>X,Y</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, specify both the relation type and the path (or declare unreachable). Use these codes for relation types:
+- ancestor_inclusive: Holding Parent Company (including self)
+- ancestor_strict: Strict Holding Parent Company (excluding self)
+- descendant_inclusive: Subsidiary Company (including self)
+- descendant_strict: Strict Subsidiary Company (excluding self)
 
-Each query must contain only one tag. Use the following XML format:
+Answer format:
 
-- Edge Query (e.g., query if there is a direct transfer from account 1 to account 3):
-<query_edge>1,3</query_edge>
+<answer>relation=ancestor_inclusive, path=I,H,E,B,A</answer>
 
-- Reachability Query (e.g., query if account 5 eventually received funds from account 1):
-<query_path>1,5</query_path>
+Or if unreachable:
 
-When submitting the final conclusion, use the following format:
-
-- If funds flowed to all accounts:
-<answer>reachable</answer>
-
-- If funds did not flow to all accounts (e.g., account 4 did not receive):
-<answer>unreachable, witness=4</answer>
-
-Your goal is to complete the fund tracking with as few queries as possible.
+<answer>relation=descendant_strict, path=unreachable</answer>
 """
 
-    def _initialize_game(self):
-        self.tags = ["query_edge", "query_path", "answer"]
-        
-        difficulty = int(self.config.difficulty) if hasattr(self.config, 'difficulty') else 1
-        
-        difficulty_settings = {
-            1: (5, 7, 0.45),
-            2: (6, 9, 0.35),
-            3: (8, 11, 0.30),
-            4: (10, 13, 0.25),
-            5: (12, 15, 0.20),
-        }
-        n_min, n_max, edge_prob = difficulty_settings.get(difficulty, (6, 12, 0.35))
-        
-        self.n = random.randint(n_min, n_max)
-        self.source = random.randint(1, self.n)
-        self._game_info = {"n": self.n, "source": self.source}
-        
-        self.graph = {i: [] for i in range(1, self.n + 1)}
-        for i in range(1, self.n + 1):
-            for j in range(1, self.n + 1):
-                if i != j and random.random() < edge_prob:
-                    self.graph[i].append(j)
-                    
-        self.reachable_nodes = self._get_reachable_nodes(self.source)
+    tags = ["answer", "query"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "树"
 
-    def _get_reachable_nodes(self, start):
-        visited = set()
-        queue = deque([start])
-        visited_or_start = {start}
+    TREE_EDGES = [
+        ("A", "B"), ("A", "C"), ("B", "D"), ("B", "E"),
+        ("C", "F"), ("E", "G"), ("E", "H"), ("H", "I")
+    ]
+
+    DIFFICULTY_CONFIG = {
+        "zh": {
+            1: {
+                "relation": "ancestor_inclusive",
+                "start": "I",
+                "end": "A",
+                "expected_path": ["I", "H", "E", "B", "A"]
+            },
+            2: {
+                "relation": "descendant_inclusive",
+                "start": "A",
+                "end": "I",
+                "expected_path": ["A", "B", "E", "H", "I"]
+            },
+            3: {
+                "relation": "ancestor_strict",
+                "start": "I",
+                "end": "A",
+                "expected_path": ["I", "H", "E", "B", "A"]
+            },
+            4: {
+                "relation": "descendant_strict",
+                "start": "I",
+                "end": "A",
+                "expected_path": None
+            },
+            5: {
+                "relation": "ancestor_inclusive",
+                "start": "D",
+                "end": "F",
+                "expected_path": None
+            }
+        },
+        "en": {
+            1: {
+                "relation": "ancestor_inclusive",
+                "start": "I",
+                "end": "A",
+                "expected_path": ["I", "H", "E", "B", "A"]
+            },
+            2: {
+                "relation": "descendant_inclusive",
+                "start": "A",
+                "end": "I",
+                "expected_path": ["A", "B", "E", "H", "I"]
+            },
+            3: {
+                "relation": "ancestor_strict",
+                "start": "I",
+                "end": "A",
+                "expected_path": ["I", "H", "E", "B", "A"]
+            },
+            4: {
+                "relation": "descendant_strict",
+                "start": "I",
+                "end": "A",
+                "expected_path": None
+            },
+            5: {
+                "relation": "ancestor_inclusive",
+                "start": "D",
+                "end": "F",
+                "expected_path": None
+            }
+        }
+    }
+
+    def __init__(self, config):
+        super().__init__(config)
+
+    def _initialize_game(self):
+        lang = self.config.language
+        diff = self.config.difficulty
+
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
+            raise KeyError(f"Unsupported difficulty: {diff}")
+
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        
+        self.adjacency = {}
+        for u, v in self.TREE_EDGES:
+            if u not in self.adjacency:
+                self.adjacency[u] = []
+            if v not in self.adjacency:
+                self.adjacency[v] = []
+            self.adjacency[u].append(v)
+            self.adjacency[v].append(u)
+        
+        self.parent = {}
+        self.ancestors = {}
+        
+        self._build_tree_structure()
+        
+        self.hidden_relation = cfg["relation"]
+        self.start_node = cfg["start"]
+        self.end_node = cfg["end"]
+        self.expected_path = cfg["expected_path"]
+        
+        edges_str = ", ".join([f"{u}-{v}" for u, v in self.TREE_EDGES])
+        self._game_info = {
+            "edges": edges_str,
+            "start": self.start_node,
+            "end": self.end_node
+        }
+
+    def _build_tree_structure(self):
+        from collections import deque
+        
+        root = "A"
+        visited = {root}
+        queue = deque([root])
+        self.parent[root] = None
+        self.ancestors[root] = {root}
+        
         while queue:
-            node = queue.popleft()
-            for neighbor in self.graph.get(node, []):
-                if neighbor not in visited_or_start:
-                    visited.add(neighbor)
-                    visited_or_start.add(neighbor)
-                    queue.append(neighbor)
-        return visited
+            u = queue.popleft()
+            for v in self.adjacency[u]:
+                if v not in visited:
+                    visited.add(v)
+                    self.parent[v] = u
+                    self.ancestors[v] = self.ancestors[u] | {v}
+                    queue.append(v)
+
+    def _check_relation(self, x, y):
+        if x == y:
+            return "inclusive" in self.hidden_relation
+        
+        is_x_ancestor_of_y = x in self.ancestors[y] and x != y
+        is_y_ancestor_of_x = y in self.ancestors[x] and y != x
+        
+        if self.hidden_relation == "ancestor_inclusive":
+            return is_x_ancestor_of_y or (x == y)
+        elif self.hidden_relation == "ancestor_strict":
+            return is_x_ancestor_of_y
+        elif self.hidden_relation == "descendant_inclusive":
+            return is_y_ancestor_of_x or (x == y)
+        elif self.hidden_relation == "descendant_strict":
+            return is_y_ancestor_of_x
+        
+        return False
 
     def evaluate(self, parsed_info):
-        if "answer" not in parsed_info:
+        raw_ans = parsed_info["answer"]
+        
+        rel_match = re.search(r"relation\s*=\s*([^,\s]+)", raw_ans)
+        path_match = re.search(r"path\s*=\s*(.*)", raw_ans)
+        
+        if not rel_match or not path_match:
             return False
             
-        answer = parsed_info["answer"].strip().lower()
-        is_all_reachable = len(self.reachable_nodes) == (self.n - 1)
+        model_relation = rel_match.group(1).strip()
+        path_str = path_match.group(1).strip()
         
-        if is_all_reachable:
-            return "unreachable" not in answer and "reachable" in answer and "witness" not in answer
-        else:
-            if "unreachable" in answer:
-                match = re.search(r'witness\s*=\s*(\d+)', answer)
-                if match:
-                    witness = int(match.group(1))
-                    if witness != self.source and witness not in self.reachable_nodes and 1 <= witness <= self.n:
-                        return True
+        if model_relation != self.hidden_relation:
             return False
+        
+        if path_str.lower() == "unreachable":
+            return self.expected_path is None
+        
+        if self.expected_path is None:
+            return False
+        
+        try:
+            model_path = [node.strip() for node in path_str.split(",") if node.strip()]
+        except:
+            return False
+            
+        all_nodes = set(self.adjacency.keys())
+        
+        for node in model_path:
+            if node not in all_nodes:
+                return False
+        
+        if len(model_path) < 2:
+            return False
+        if model_path[0] != self.start_node or model_path[-1] != self.end_node:
+            return False
+        
+        for i in range(len(model_path) - 1):
+            u = model_path[i]
+            v = model_path[i + 1]
+            
+            if v not in self.adjacency.get(u, []):
+                return False
+            
+            if not self._check_relation(v, u):
+                return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        yes = "是" if self.config.language == "zh" else "Yes"
-        no = "否" if self.config.language == "zh" else "No"
-        invalid = "无效的查询。" if self.config.language == "zh" else "Invalid query."
-
-        if "query_edge" in parsed_info:
-            try:
-                parts = parsed_info["query_edge"].split(',')
-                if len(parts) == 2:
-                    u, v = int(parts[0].strip()), int(parts[1].strip())
-                    if u != v and 1 <= u <= self.n and 1 <= v <= self.n:
-                        return yes if v in self.graph.get(u, []) else no
-            except ValueError:
-                pass
+        if "query" not in parsed_info:
+            raise ValueError("No query tag found.")
+        
+        query_str = parsed_info["query"].strip()
+        
+        try:
+            parts = [x.strip() for x in query_str.split(",")]
+            if len(parts) != 2:
+                raise ValueError("Query must contain exactly two nodes.")
+            
+            x, y = parts[0], parts[1]
+            
+            all_nodes = set(self.adjacency.keys())
+            if x not in all_nodes or y not in all_nodes:
+                if self.config.language == "zh":
+                    return "错误：无效的节点名称。"
+                else:
+                    return "Error: Invalid node name."
+            
+            result = self._check_relation(x, y)
+            
+            if self.config.language == "zh":
+                return "是" if result else "否"
+            else:
+                return "Yes" if result else "No"
                 
-        elif "query_path" in parsed_info:
-            try:
-                parts = parsed_info["query_path"].split(',')
-                if len(parts) == 2:
-                    u, v = int(parts[0].strip()), int(parts[1].strip())
-                    if u != v and 1 <= u <= self.n and 1 <= v <= self.n:
-                        reachable_from_u = self._get_reachable_nodes(u)
-                        return yes if v in reachable_from_u else no
-            except ValueError:
-                pass
-                
-        return invalid
+        except Exception as e:
+            if self.config.language == "zh":
+                return f"错误：查询格式无效。"
+            else:
+                return f"Error: Invalid query format."
 
-    def get_all_possible_queries(self):
+    def _cf_make_wrong(self, correct: str) -> str:
+        if str(correct).isdigit():
+            return str(int(correct) + 1)
+        
+        if self.config.language == "zh":
+            if correct == "是": return "否"
+            if correct == "否": return "是"
+            
+        if correct.lower() == "yes": return "No"
+        if correct.lower() == "no": return "Yes"
+        
+        return f"{correct}_WRONG"
+
+    def get_all_possible_queries(self) -> list[dict]:
         queries = []
-        yes = "是" if self.config.language == "zh" else "Yes"
-        no = "否" if self.config.language == "zh" else "No"
-        for i in range(1, self.n + 1):
-            for j in range(1, self.n + 1):
-                if i != j:
-                    edge_exists = j in self.graph.get(i, [])
-                    edge_answer = yes if edge_exists else no
-                    queries.append({
-                        "query": f"<query_edge>{i},{j}</query_edge>",
-                        "answer": edge_answer
-                    })
-                    
-                    reachable_from_i = self._get_reachable_nodes(i)
-                    path_exists = j in reachable_from_i
-                    path_answer = yes if path_exists else no
-                    queries.append({
-                        "query": f"<query_path>{i},{j}</query_path>",
-                        "answer": path_answer
-                    })
+        nodes = sorted(list(self.adjacency.keys()))
+        
+        for x in nodes:
+            for y in nodes:
+                query_str = f"<query>{x},{y}</query>"
+                
+                result = self._check_relation(x, y)
+                
+                if self.config.language == "zh":
+                    ans_str = "是" if result else "否"
+                else:
+                    ans_str = "Yes" if result else "No"
+                
+                queries.append({
+                    "query": query_str,
+                    "answer": ans_str
+                })
+        
         return queries
-
-    def _cf_make_wrong(self, correct):
-        if correct in ("是", "否"):
-            return "否" if correct == "是" else "是"
-        elif correct in ("Yes", "No"):
-            return "No" if correct == "Yes" else "Yes"
-        return correct

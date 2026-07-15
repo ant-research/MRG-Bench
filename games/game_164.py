@@ -1,689 +1,739 @@
-# -*- coding: utf-8 -*-
-
 from .base import Game
 import re
+import itertools
+from typing import List, Dict
 
-class InteractiveSuffixCountingGame(Game):
+class AttributeDeductionGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"交互式后缀计数同定问题"游戏，规则如下：
+我们现在来玩一个"属性推理"游戏，规则如下：
 
-游戏设定了一个字母表 Σ = {{a, b, c}}（三个符号）。我已秘密选择了两个隐藏参数：
-1. 目标符号 c*，它是 a、b、c 中的某一个；
-2. 窗口长度 K，它是一个固定的正整数。
+游戏设定了一个包含 {n} 个元素的集合 U，元素分别以 {elements} 标识。每个元素具有四个二元属性 α, β, γ, δ，每个属性的取值为 0 或 1，但具体取值是隐藏的。
 
-游戏维护一个有序序列 S，初始为空。你可以通过交互操作来推断这两个隐藏参数。
+你的目标是找出满足特定目标条件 T 的所有元素。目标条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
 
-## 交互操作
+你可以通过 COUNT 查询来获取信息，每次查询需要指定一个子集和一些条件，系统会告诉你该子集中有多少元素满足这些条件。当你收集足够信息后，请提交最终答案。
 
-你可以执行以下操作（每次只能执行一个操作）：
+每次 COUNT 查询需要指定：
+1. 一个子集 S，包含至少 3 个元素
+2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
 
-1. **追加操作**：在序列尾部追加一个符号（a、b 或 c），系统会返回当前后缀窗口中目标符号的出现次数。
-   - 后缀窗口定义：取序列 S 的最后 min(K, 当前序列长度) 个符号。
-   - 格式：
-   <append>a</append>
-   或
-   <append>b</append>
-   或
-   <append>c</append>
+查询格式如下：
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **查询长度**：查询当前序列的总长度。
-   - 格式：
-   <query_length></query_length>
+或者使用两个条件：
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **预测验证**：提交一个追加计划及其对应的计数预测，系统会逐步验证。若计划长度大于等于 6 且所有预测完全匹配，则游戏胜利。
-   - 格式：
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - 说明：竖线前为追加符号序列，竖线后为预测的计数序列。例如：
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+系统会返回一个非负整数，表示子集 S 中满足所有指定条件的元素数量。
 
-4. **最终宣告**：直接提交你推断的目标符号和窗口长度。若正确则游戏胜利。
-   - 格式：
-   <answer>c*=a, K=3</answer>
-   - 说明：c* 为目标符号（a、b 或 c），K 为窗口长度。
+注意事项：
+- 子集 S 必须包含至少 3 个元素
+- 条件集 L 最多包含 2 条原子条件
+- 属性名必须是 α, β, γ, δ 之一
+- 属性值必须是 0 或 1
 
-## 胜利与失败条件
+当你准备好提交答案时，请列出所有满足目标条件 T 的元素（用逗号分隔，顺序不限）：
 
-- **胜利条件 A**：提交最终宣告，且参数完全正确。
-- **胜利条件 B**：提交预测验证，计划长度大于等于 6，且所有计数预测完全匹配。
-- **失败条件**：
-  - 连续两次最终宣告均错误，或
-  - 总追加步数超过 30 步且未满足任一胜利条件。
+<answer>A,C,E</answer>
 
-## 注意事项
+如果你认为没有元素满足条件，请提交空集：
 
-- 每次只能提交一个操作标签。
-- 追加操作会改变序列状态并返回计数反馈。
-- 预测验证会实际执行追加操作，因此会改变序列状态。
-- 你的目标是通过尽可能少的交互次数同定隐藏参数。
+<answer></answer>
+
+请尽可能用最少的查询次数找到正确答案。
 """
 
     game_rule_en = """\
-Let's play an "Interactive Suffix Counting Identification" game. Here are the rules:
+Let's play an "Attribute Deduction" game. Here are the rules:
 
-The game uses an alphabet Σ = {{a, b, c}} (three symbols). I have secretly chosen two hidden parameters:
-1. Target symbol c*, which is one of a, b, or c;
-2. Window length K, which is a fixed positive integer.
+The game has a set U containing {n} elements, identified as {elements}. Each element has four binary attributes α, β, γ, δ, where each attribute takes value 0 or 1, but the specific values are hidden.
 
-The game maintains an ordered sequence S, initially empty. You can infer these two hidden parameters through interactive operations.
+Your goal is to find all elements that satisfy a specific target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
 
-## Interactive Operations
+You can obtain information through COUNT queries. Each query requires specifying a subset and some conditions, and the system will tell you how many elements in that subset satisfy those conditions. When you have collected enough information, submit your final answer.
 
-You can perform the following operations (one operation per turn):
+Each COUNT query needs to specify:
+1. A subset S containing at least 3 elements
+2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
 
-1. **Append Operation**: Append a symbol (a, b, or c) to the end of the sequence. The system returns the count of the target symbol in the current suffix window.
-   - Suffix window definition: Take the last min(K, current sequence length) symbols of sequence S.
-   - Format:
-   <append>a</append>
-   or
-   <append>b</append>
-   or
-   <append>c</append>
+Query format:
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **Length Query**: Query the total length of the current sequence.
-   - Format:
-   <query_length></query_length>
+Or using two conditions:
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **Prediction Verification**: Submit an append plan with corresponding count predictions. The system will verify step by step. If the plan length is at least 6 and all predictions match perfectly, you win.
-   - Format:
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - Note: Before the vertical bar is the append symbol sequence, after is the predicted count sequence. Example:
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+The system will return a non-negative integer indicating the number of elements in subset S that satisfy all specified conditions.
 
-4. **Final Declaration**: Directly submit your inferred target symbol and window length. If correct, you win.
-   - Format:
-   <answer>c*=a, K=3</answer>
-   - Note: c* is the target symbol (a, b, or c), K is the window length.
+Notes:
+- Subset S must contain at least 3 elements
+- Condition set L can contain at most 2 atomic conditions
+- Attribute names must be one of α, β, γ, δ
+- Attribute values must be 0 or 1
 
-## Victory and Failure Conditions
+When you are ready to submit your answer, list all elements that satisfy the target condition T (comma-separated, order does not matter):
 
-- **Victory Condition A**: Submit a final declaration with completely correct parameters.
-- **Victory Condition B**: Submit a prediction verification with plan length at least 6 and all count predictions matching perfectly.
-- **Failure Conditions**:
-  - Two consecutive incorrect final declarations, or
-  - Total append steps exceed 30 without meeting any victory condition.
+<answer>A,C,E</answer>
 
-## Important Notes
+If you believe no elements satisfy the condition, submit an empty set:
 
-- Only one operation tag can be submitted per turn.
-- Append operations change the sequence state and return count feedback.
-- Prediction verification actually executes append operations, thus changing the sequence state.
-- Your goal is to identify the hidden parameters with as few interactions as possible.
+<answer></answer>
+
+Please try to find the correct answer with the minimum number of queries.
 """
 
     contextualized_rule_zh_1 = """\
-【智慧交通监控系统场景】
-我们来执行"交通流量后缀计数监控"任务，规则如下：
+我们现在来进行一项"自动驾驶风险排查"任务，规则如下：
 
-系统监控了三种类型的车辆：轿车(a)、货车(b)、客车(c)。我已秘密选择了两个隐藏参数：
-1. 重点监测车型 c*，它是 a、b、c 中的某一个；
-2. 缓存容量 K，它是一个固定的正整数。
+系统记录了一个包含 {n} 辆自动驾驶测试车辆的集合 U，车辆分别以 {elements} 标识。每辆车具有四个二元配置属性 α, β, γ, δ，每个属性的状态为 0 或 1，具体状态被系统加密隐藏。
 
-系统维护一个有序的过车记录序列 S，初始为空。你可以通过交互操作来推断这两个隐藏参数。
+你的目标是找出满足高风险目标条件 T 的所有车辆。目标条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
 
-## 交互操作
+你可以通过 COUNT 查询来获取批量数据，每次查询需要指定一个车辆子集和一些条件，系统会告诉你该子集中有多少辆车满足这些条件。当你收集足够信息后，请提交最终的排查结果。
 
-你可以执行以下操作（每次只能执行一个操作）：
+每次 COUNT 查询需要指定：
+1. 一个车辆子集 S，包含至少 3 辆车
+2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
 
-1. **追加记录**：在序列尾部追加一条过车记录（a、b 或 c），系统会返回当前缓存窗口中重点监测车型的出现次数。
-   - 缓存窗口定义：取序列 S 的最后 min(K, 当前记录总数) 辆车。
-   - 格式：
-   <append>a</append>
-   或
-   <append>b</append>
-   或
-   <append>c</append>
+查询格式如下：
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **查询总数**：查询当前记录的总长度。
-   - 格式：
-   <query_length></query_length>
+或者使用两个条件：
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **预测验证**：提交一个连续过车计划及其对应的监控计数预测，系统会逐步验证。若计划长度大于等于 6 且所有预测完全匹配，则任务成功。
-   - 格式：
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - 说明：竖线前为车辆类型序列，竖线后为预测的计数序列。例如：
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+系统会返回一个非负整数，表示子集 S 中满足所有指定条件的车辆数量。
 
-4. **最终宣告**：直接提交你推断的重点监测车型和缓存容量。若正确则任务成功。
-   - 格式：
-   <answer>c*=a, K=3</answer>
-   - 说明：c* 为目标车型（a、b 或 c），K 为缓存容量。
+注意事项：
+- 车辆子集 S 必须包含至少 3 辆车
+- 条件集 L 最多包含 2 条原子条件
+- 属性名必须是 α, β, γ, δ 之一
+- 属性值必须是 0 或 1
 
-## 胜利与失败条件
+当你准备好提交排查结果时，请列出所有满足目标条件 T 的车辆（用逗号分隔，顺序不限）：
 
-- **胜利条件 A**：提交最终宣告，且参数完全正确。
-- **胜利条件 B**：提交预测验证，计划长度大于等于 6，且所有计数预测完全匹配。
-- **失败条件**：
-  - 连续两次最终宣告均错误，或
-  - 总追加步数超过 30 步且未满足任一胜利条件。
+<answer>A,C,E</answer>
 
-## 注意事项
+如果你认为没有任何车辆满足条件，请提交空集：
 
-- 每次只能提交一个操作标签。
-- 追加操作会改变序列状态并返回计数反馈。
-- 预测验证会实际执行追加操作，因此会改变序列状态。
-- 你的目标是通过尽可能少的交互次数同定隐藏参数。
+<answer></answer>
+
+请尽可能用最少的查询次数找到所有高风险车辆。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Let's execute a "Traffic Flow Suffix Counting Monitoring" task. Here are the rules:
+[Transportation Scenario]
+Let's perform an "Autonomous Driving Risk Assessment" task. Here are the rules:
 
-The system monitors three types of vehicles: Car (a), Truck (b), and Bus (c). I have secretly chosen two hidden parameters:
-1. Target vehicle type c*, which is one of a, b, or c;
-2. Cache window size K, which is a fixed positive integer.
+The system has logged a set U containing {n} autonomous test vehicles, identified as {elements}. Each vehicle has four binary configuration attributes α, β, γ, δ, where each attribute takes a state of 0 or 1, but the specific states are encrypted and hidden.
 
-The system maintains an ordered sequence of vehicle passing records S, initially empty. You can infer these two hidden parameters through interactive operations.
+Your goal is to find all vehicles that satisfy the high-risk target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
 
-## Interactive Operations
+You can obtain batch data through COUNT queries. Each query requires specifying a subset of vehicles and some conditions, and the system will tell you how many vehicles in that subset satisfy those conditions. When you have collected enough information, submit your final assessment result.
 
-You can perform the following operations (one operation per turn):
+Each COUNT query needs to specify:
+1. A vehicle subset S containing at least 3 vehicles
+2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
 
-1. **Append Record**: Append a vehicle passing record (a, b, or c) to the end of the sequence. The system returns the count of the target vehicle type in the current cache window.
-   - Cache window definition: Take the last min(K, current total records) vehicles of sequence S.
-   - Format:
-   <append>a</append>
-   or
-   <append>b</append>
-   or
-   <append>c</append>
+Query format:
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **Length Query**: Query the total length of the current sequence.
-   - Format:
-   <query_length></query_length>
+Or using two conditions:
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **Prediction Verification**: Submit a continuous vehicle passing plan with corresponding count predictions. The system will verify step by step. If the plan length is at least 6 and all predictions match perfectly, you win.
-   - Format:
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - Note: Before the vertical bar is the vehicle type sequence, after is the predicted count sequence. Example:
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+The system will return a non-negative integer indicating the number of vehicles in subset S that satisfy all specified conditions.
 
-4. **Final Declaration**: Directly submit your inferred target vehicle type and cache window size. If correct, you win.
-   - Format:
-   <answer>c*=a, K=3</answer>
-   - Note: c* is the target vehicle (a, b, or c), K is the cache window size.
+Notes:
+- Vehicle subset S must contain at least 3 vehicles
+- Condition set L can contain at most 2 atomic conditions
+- Attribute names must be one of α, β, γ, δ
+- Attribute values must be 0 or 1
 
-## Victory and Failure Conditions
+When you are ready to submit your assessment result, list all vehicles that satisfy the target condition T (comma-separated, order does not matter):
 
-- **Victory Condition A**: Submit a final declaration with completely correct parameters.
-- **Victory Condition B**: Submit a prediction verification with plan length at least 6 and all count predictions matching perfectly.
-- **Failure Conditions**:
-  - Two consecutive incorrect final declarations, or
-  - Total append steps exceed 30 without meeting any victory condition.
+<answer>A,C,E</answer>
 
-## Important Notes
+If you believe no vehicles satisfy the condition, submit an empty set:
 
-- Only one operation tag can be submitted per turn.
-- Append operations change the sequence state and return count feedback.
-- Prediction verification actually executes append operations, thus changing the sequence state.
-- Your goal is to identify the hidden parameters with as few interactions as possible.
+<answer></answer>
+
+Please try to find all high-risk vehicles with the minimum number of queries.
 """
 
     contextualized_rule_zh_2 = """\
-【流行病学监控系统场景】
-我们来执行"流行病学后缀计数监控"任务，规则如下：
+我们现在来进行一项"罕见综合征确诊"任务，规则如下：
 
-系统录入了三种典型症状病例：发热(a)、咳嗽(b)、乏力(c)。我已秘密选择了两个隐藏参数：
-1. 核心症状 c*，它是 a、b、c 中的某一个；
-2. 观察窗口 K，它是一个固定的正整数。
+医疗数据库中包含一个有 {n} 份患者病历的集合 U，病历分别以 {elements} 标识。每份病历记录了四个二元临床指标 α, β, γ, δ，每个指标的检验结果为 0 或 1，但具体结果目前被隐藏。
 
-系统维护一个有序的病例录入序列 S，初始为空。你可以通过交互操作来推断这两个隐藏参数。
+你的目标是找出满足确诊目标条件 T 的所有病历。确诊条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
 
-## 交互操作
+你可以通过 COUNT 抽查来获取统计信息，每次查询需要指定一个病历子集和一些指标条件，系统会告诉你该子集中有多少份病历满足这些条件。当你收集足够信息后，请提交最终的确诊名单。
 
-你可以执行以下操作（每次只能执行一个操作）：
+每次 COUNT 查询需要指定：
+1. 一个病历子集 S，包含至少 3 份病历
+2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
 
-1. **录入病例**：在序列尾部录入一个病例的症状（a、b 或 c），系统会返回当前观察窗口中表现出核心症状的病例数量。
-   - 观察窗口定义：取序列 S 的最后 min(K, 当前记录总数) 个病例。
-   - 格式：
-   <append>a</append>
-   或
-   <append>b</append>
-   或
-   <append>c</append>
+查询格式如下：
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **查询总数**：查询当前记录的总病例数。
-   - 格式：
-   <query_length></query_length>
+或者使用两个条件：
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **预测验证**：提交一个连续病例录入计划及其对应的核心症状计数预测，系统会逐步验证。若计划长度大于等于 6 且所有预测完全匹配，则任务成功。
-   - 格式：
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - 说明：竖线前为病例症状序列，竖线后为预测的计数序列。例如：
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+系统会返回一个非负整数，表示子集 S 中满足所有指定条件的病历数量。
 
-4. **最终宣告**：直接提交你推断的核心症状和观察窗口。若正确则任务成功。
-   - 格式：
-   <answer>c*=a, K=3</answer>
-   - 说明：c* 为核心症状（a、b 或 c），K 为观察窗口大小。
+注意事项：
+- 病历子集 S 必须包含至少 3 份病历
+- 条件集 L 最多包含 2 条原子条件
+- 属性名必须是 α, β, γ, δ 之一
+- 属性值必须是 0 或 1
 
-## 胜利与失败条件
+当你准备好提交确诊名单时，请列出所有满足目标条件 T 的病历（用逗号分隔，顺序不限）：
 
-- **胜利条件 A**：提交最终宣告，且参数完全正确。
-- **胜利条件 B**：提交预测验证，计划长度大于等于 6，且所有计数预测完全匹配。
-- **失败条件**：
-  - 连续两次最终宣告均错误，或
-  - 总追加步数超过 30 步且未满足任一胜利条件。
+<answer>A,C,E</answer>
 
-## 注意事项
+如果你认为没有任何病历满足条件，请提交空集：
 
-- 每次只能提交一个操作标签。
-- 追加操作会改变序列状态并返回计数反馈。
-- 预测验证会实际执行追加操作，因此会改变序列状态。
-- 你的目标是通过尽可能少的交互次数同定隐藏参数。
+<answer></answer>
+
+请尽可能用最少的查询次数找到所有确诊病历。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's execute an "Epidemiological Suffix Counting Identification" task. Here are the rules:
+Let's perform a "Rare Syndrome Diagnosis" task. Here are the rules:
 
-The system records three types of symptoms: Fever (a), Cough (b), and Fatigue (c). I have secretly chosen two hidden parameters:
-1. Primary symptom c*, which is one of a, b, or c;
-2. Observation window K, which is a fixed positive integer.
+The medical database has a set U containing {n} patient records, identified as {elements}. Each record has four binary clinical indicators α, β, γ, δ, where each indicator takes a result of 0 or 1, but the specific results are currently hidden.
 
-The system maintains an ordered sequence of case symptom records S, initially empty. You can infer these two hidden parameters through interactive operations.
+Your goal is to find all records that satisfy the diagnostic target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
 
-## Interactive Operations
+You can obtain statistical information through COUNT queries. Each query requires specifying a subset of medical records and some indicator conditions, and the system will tell you how many records in that subset satisfy those conditions. When you have collected enough information, submit your final diagnostic list.
 
-You can perform the following operations (one operation per turn):
+Each COUNT query needs to specify:
+1. A medical record subset S containing at least 3 records
+2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
 
-1. **Append Record**: Enter a new case symptom (a, b, or c) to the end of the sequence. The system returns the count of the primary symptom in the current observation window.
-   - Observation window definition: Take the last min(K, current total records) cases of sequence S.
-   - Format:
-   <append>a</append>
-   or
-   <append>b</append>
-   or
-   <append>c</append>
+Query format:
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **Length Query**: Query the total length of the current sequence.
-   - Format:
-   <query_length></query_length>
+Or using two conditions:
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **Prediction Verification**: Submit a continuous case entry plan with corresponding count predictions. The system will verify step by step. If the plan length is at least 6 and all predictions match perfectly, you win.
-   - Format:
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - Note: Before the vertical bar is the case symptom sequence, after is the predicted count sequence. Example:
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+The system will return a non-negative integer indicating the number of records in subset S that satisfy all specified conditions.
 
-4. **Final Declaration**: Directly submit your inferred primary symptom and observation window size. If correct, you win.
-   - Format:
-   <answer>c*=a, K=3</answer>
-   - Note: c* is the primary symptom (a, b, or c), K is the observation window size.
+Notes:
+- Medical record subset S must contain at least 3 records
+- Condition set L can contain at most 2 atomic conditions
+- Attribute names must be one of α, β, γ, δ
+- Attribute values must be 0 or 1
 
-## Victory and Failure Conditions
+When you are ready to submit your diagnostic list, list all records that satisfy the target condition T (comma-separated, order does not matter):
 
-- **Victory Condition A**: Submit a final declaration with completely correct parameters.
-- **Victory Condition B**: Submit a prediction verification with plan length at least 6 and all count predictions matching perfectly.
-- **Failure Conditions**:
-  - Two consecutive incorrect final declarations, or
-  - Total append steps exceed 30 without meeting any victory condition.
+<answer>A,C,E</answer>
 
-## Important Notes
+If you believe no records satisfy the condition, submit an empty set:
 
-- Only one operation tag can be submitted per turn.
-- Append operations change the sequence state and return count feedback.
-- Prediction verification actually executes append operations, thus changing the sequence state.
-- Your goal is to identify the hidden parameters with as few interactions as possible.
+<answer></answer>
+
+Please try to find all confirmed records with the minimum number of queries.
 """
 
     contextualized_rule_zh_3 = """\
-【自适应学习评估系统场景】
-我们来执行"学习行为后缀计数评估"任务，规则如下：
+我们现在来进行一项"创新潜能学生筛查"任务，规则如下：
 
-系统记录了学生的三种答题表现：优(a)、良(b)、待改进(c)。我已秘密选择了两个隐藏参数：
-1. 重点追踪行为 c*，它是 a、b、c 中的某一个；
-2. 滑动评估窗口 K，它是一个固定的正整数。
+教育系统中包含一个有 {n} 名学生档案的集合 U，学生分别以 {elements} 标识。每名学生拥有四个二元能力指标 α, β, γ, δ，每个指标的评估等级为 0 或 1，但具体评估结果处于保密状态。
 
-系统维护一个有序的答题表现序列 S，初始为空。你可以通过交互操作来推断这两个隐藏参数。
+你的目标是找出满足潜能开发目标条件 T 的所有学生。目标条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
 
-## 交互操作
+你可以通过 COUNT 评估来获取群体分析信息，每次查询需要指定一个学生子集和一些指标条件，系统会告诉你该子集中有多少名学生满足这些条件。当你收集足够信息后，请提交最终的入选名单。
 
-你可以执行以下操作（每次只能执行一个操作）：
+每次 COUNT 查询需要指定：
+1. 一个学生子集 S，包含至少 3 名学生
+2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
 
-1. **录入表现**：在序列尾部录入一次表现（a、b 或 c），系统会返回当前评估窗口中重点追踪行为的出现次数。
-   - 评估窗口定义：取序列 S 的最后 min(K, 当前记录总数) 次表现。
-   - 格式：
-   <append>a</append>
-   或
-   <append>b</append>
-   或
-   <append>c</append>
+查询格式如下：
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **查询总数**：查询当前记录的总长度。
-   - 格式：
-   <query_length></query_length>
+或者使用两个条件：
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **预测验证**：提交一个连续答题表现计划及其对应的追踪计数预测，系统会逐步验证。若计划长度大于等于 6 且所有预测完全匹配，则任务成功。
-   - 格式：
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - 说明：竖线前为表现类型序列，竖线后为预测的计数序列。例如：
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+系统会返回一个非负整数，表示子集 S 中满足所有指定条件的学生数量。
 
-4. **最终宣告**：直接提交你推断的重点追踪行为和评估窗口长度。若正确则任务成功。
-   - 格式：
-   <answer>c*=a, K=3</answer>
-   - 说明：c* 为目标表现行为（a、b 或 c），K 为评估窗口长度。
+注意事项：
+- 学生子集 S 必须包含至少 3 名学生
+- 条件集 L 最多包含 2 条原子条件
+- 属性名必须是 α, β, γ, δ 之一
+- 属性值必须是 0 或 1
 
-## 胜利与失败条件
+当你准备好提交入选名单时，请列出所有满足目标条件 T 的学生（用逗号分隔，顺序不限）：
 
-- **胜利条件 A**：提交最终宣告，且参数完全正确。
-- **胜利条件 B**：提交预测验证，计划长度大于等于 6，且所有计数预测完全匹配。
-- **失败条件**：
-  - 连续两次最终宣告均错误，或
-  - 总追加步数超过 30 步且未满足任一胜利条件。
+<answer>A,C,E</answer>
 
-## 注意事项
+如果你认为没有任何学生满足条件，请提交空集：
 
-- 每次只能提交一个操作标签。
-- 追加操作会改变序列状态并返回计数反馈。
-- 预测验证会实际执行追加操作，因此会改变序列状态。
-- 你的目标是通过尽可能少的交互次数同定隐藏参数。
+<answer></answer>
+
+请尽可能用最少的查询次数找到所有具备潜能的学生。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's execute a "Learning Behavior Suffix Counting Evaluation" task. Here are the rules:
+Let's perform an "Innovative Potential Student Screening" task. Here are the rules:
 
-The system evaluates three types of student performance: Excellent (a), Good (b), and Needs Improvement (c). I have secretly chosen two hidden parameters:
-1. Target behavior c*, which is one of a, b, or c;
-2. Evaluation window K, which is a fixed positive integer.
+The education system has a set U containing {n} student profiles, identified as {elements}. Each student has four binary ability indicators α, β, γ, δ, where each indicator takes an evaluation level of 0 or 1, but the specific evaluation results are classified.
 
-The system maintains an ordered sequence of answer performance records S, initially empty. You can infer these two hidden parameters through interactive operations.
+Your goal is to find all students that satisfy the potential development target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
 
-## Interactive Operations
+You can obtain cohort analysis information through COUNT queries. Each query requires specifying a subset of students and some indicator conditions, and the system will tell you how many students in that subset satisfy those conditions. When you have collected enough information, submit your final shortlist.
 
-You can perform the following operations (one operation per turn):
+Each COUNT query needs to specify:
+1. A student subset S containing at least 3 students
+2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
 
-1. **Append Record**: Enter a student's answer performance (a, b, or c) to the end of the sequence. The system returns the count of the target behavior in the current evaluation window.
-   - Evaluation window definition: Take the last min(K, current total records) performances of sequence S.
-   - Format:
-   <append>a</append>
-   or
-   <append>b</append>
-   or
-   <append>c</append>
+Query format:
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **Length Query**: Query the total length of the current sequence.
-   - Format:
-   <query_length></query_length>
+Or using two conditions:
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **Prediction Verification**: Submit a continuous performance entry plan with corresponding count predictions. The system will verify step by step. If the plan length is at least 6 and all predictions match perfectly, you win.
-   - Format:
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - Note: Before the vertical bar is the performance sequence, after is the predicted count sequence. Example:
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+The system will return a non-negative integer indicating the number of students in subset S that satisfy all specified conditions.
 
-4. **Final Declaration**: Directly submit your inferred target behavior and evaluation window size. If correct, you win.
-   - Format:
-   <answer>c*=a, K=3</answer>
-   - Note: c* is the target behavior (a, b, or c), K is the evaluation window size.
+Notes:
+- Student subset S must contain at least 3 students
+- Condition set L can contain at most 2 atomic conditions
+- Attribute names must be one of α, β, γ, δ
+- Attribute values must be 0 or 1
 
-## Victory and Failure Conditions
+When you are ready to submit your shortlist, list all students that satisfy the target condition T (comma-separated, order does not matter):
 
-- **Victory Condition A**: Submit a final declaration with completely correct parameters.
-- **Victory Condition B**: Submit a prediction verification with plan length at least 6 and all count predictions matching perfectly.
-- **Failure Conditions**:
-  - Two consecutive incorrect final declarations, or
-  - Total append steps exceed 30 without meeting any victory condition.
+<answer>A,C,E</answer>
 
-## Important Notes
+If you believe no students satisfy the condition, submit an empty set:
 
-- Only one operation tag can be submitted per turn.
-- Append operations change the sequence state and return count feedback.
-- Prediction verification actually executes append operations, thus changing the sequence state.
-- Your goal is to identify the hidden parameters with as few interactions as possible.
+<answer></answer>
+
+Please try to find all qualified students with the minimum number of queries.
 """
 
     contextualized_rule_zh_4 = """\
-【智能制造质检流水线场景】
-我们来执行"工业良率后缀计数抽检"任务，规则如下：
+我们现在来进行一项"装配线缺陷零件排查"任务，规则如下：
 
-流水线产出了三种品质级别的产品：一等品(a)、二等品(b)、三等品(c)。我已秘密选择了两个隐藏参数：
-1. 核心质检等级 c*，它是 a、b、c 中的某一个；
-2. 抽样批次容量 K，它是一个固定的正整数。
+质检系统锁定了一个包含 {n} 个关键零部件的集合 U，零部件分别以 {elements} 标识。每个零部件具有四个二元工艺属性 α, β, γ, δ，每个属性的检测值为 0 或 1，但具体检测结果尚未直接公开。
 
-系统维护一个有序的产出记录序列 S，初始为空。你可以通过交互操作来推断这两个隐藏参数。
+你的目标是找出满足特定缺陷目标条件 T 的所有零部件。缺陷条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
 
-## 交互操作
+你可以通过 COUNT 质检来获取抽样反馈，每次查询需要指定一个零部件子集和一些工艺条件，系统会告诉你该子集中有多少个零部件满足这些条件。当你收集足够信息后，请提交最终的缺陷零件清单。
 
-你可以执行以下操作（每次只能执行一个操作）：
+每次 COUNT 查询需要指定：
+1. 一个零部件子集 S，包含至少 3 个零部件
+2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
 
-1. **记录产品**：在序列尾部记录一件刚下线的产品等级（a、b 或 c），系统会返回当前抽样批次中属于核心质检等级的数量。
-   - 抽样批次定义：取序列 S 的最后 min(K, 当前记录总数) 件产品。
-   - 格式：
-   <append>a</append>
-   或
-   <append>b</append>
-   或
-   <append>c</append>
+查询格式如下：
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **查询总数**：查询当前记录的总产量。
-   - 格式：
-   <query_length></query_length>
+或者使用两个条件：
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **预测验证**：提交一个连续产线出货计划及其对应的抽检计数预测，系统会逐步验证。若计划长度大于等于 6 且所有预测完全匹配，则任务成功。
-   - 格式：
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - 说明：竖线前为产品等级序列，竖线后为预测的计数序列。例如：
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+系统会返回一个非负整数，表示子集 S 中满足所有指定条件的零部件数量。
 
-4. **最终宣告**：直接提交你推断的核心质检等级和抽样批次容量。若正确则任务成功。
-   - 格式：
-   <answer>c*=a, K=3</answer>
-   - 说明：c* 为目标品质等级（a、b 或 c），K 为抽样批次容量。
+注意事项：
+- 零部件子集 S 必须包含至少 3 个零部件
+- 条件集 L 最多包含 2 条原子条件
+- 属性名必须是 α, β, γ, δ 之一
+- 属性值必须是 0 或 1
 
-## 胜利与失败条件
+当你准备好提交清单时，请列出所有满足目标条件 T 的零部件（用逗号分隔，顺序不限）：
 
-- **胜利条件 A**：提交最终宣告，且参数完全正确。
-- **胜利条件 B**：提交预测验证，计划长度大于等于 6，且所有计数预测完全匹配。
-- **失败条件**：
-  - 连续两次最终宣告均错误，或
-  - 总追加步数超过 30 步且未满足任一胜利条件。
+<answer>A,C,E</answer>
 
-## 注意事项
+如果你认为没有任何零部件满足条件，请提交空集：
 
-- 每次只能提交一个操作标签。
-- 追加操作会改变序列状态并返回计数反馈。
-- 预测验证会实际执行追加操作，因此会改变序列状态。
-- 你的目标是通过尽可能少的交互次数同定隐藏参数。
+<answer></answer>
+
+请尽可能用最少的查询次数找到所有缺陷零部件。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Let's execute an "Industrial Quality Suffix Counting Inspection" task. Here are the rules:
+Let's perform an "Assembly Line Defective Parts Troubleshooting" task. Here are the rules:
 
-The assembly line produces three quality grades of products: First-class (a), Second-class (b), and Third-class (c). I have secretly chosen two hidden parameters:
-1. Key quality grade c*, which is one of a, b, or c;
-2. Sampling batch size K, which is a fixed positive integer.
+The quality control system has a set U containing {n} key components, identified as {elements}. Each component has four binary process attributes α, β, γ, δ, where each attribute takes a test value of 0 or 1, but the specific test results are not yet directly disclosed.
 
-The system maintains an ordered sequence of product output records S, initially empty. You can infer these two hidden parameters through interactive operations.
+Your goal is to find all components that satisfy the specific defect target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
 
-## Interactive Operations
+You can obtain sampling feedback through COUNT queries. Each query requires specifying a subset of components and some process conditions, and the system will tell you how many components in that subset satisfy those conditions. When you have collected enough information, submit your final defective parts list.
 
-You can perform the following operations (one operation per turn):
+Each COUNT query needs to specify:
+1. A component subset S containing at least 3 components
+2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
 
-1. **Append Record**: Output a product grade (a, b, or c) from the assembly line and record it. The system returns the count of the key quality grade in the current sampling batch.
-   - Sampling batch definition: Take the last min(K, current total output) products of sequence S.
-   - Format:
-   <append>a</append>
-   or
-   <append>b</append>
-   or
-   <append>c</append>
+Query format:
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **Length Query**: Query the total length of the current sequence.
-   - Format:
-   <query_length></query_length>
+Or using two conditions:
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **Prediction Verification**: Submit a continuous product output plan with corresponding count predictions. The system will verify step by step. If the plan length is at least 6 and all predictions match perfectly, you win.
-   - Format:
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - Note: Before the vertical bar is the product grade sequence, after is the predicted count sequence. Example:
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+The system will return a non-negative integer indicating the number of components in subset S that satisfy all specified conditions.
 
-4. **Final Declaration**: Directly submit your inferred key quality grade and sampling batch size. If correct, you win.
-   - Format:
-   <answer>c*=a, K=3</answer>
-   - Note: c* is the key quality grade (a, b, or c), K is the sampling batch size.
+Notes:
+- Component subset S must contain at least 3 components
+- Condition set L can contain at most 2 atomic conditions
+- Attribute names must be one of α, β, γ, δ
+- Attribute values must be 0 or 1
 
-## Victory and Failure Conditions
+When you are ready to submit your list, list all components that satisfy the target condition T (comma-separated, order does not matter):
 
-- **Victory Condition A**: Submit a final declaration with completely correct parameters.
-- **Victory Condition B**: Submit a prediction verification with plan length at least 6 and all count predictions matching perfectly.
-- **Failure Conditions**:
-  - Two consecutive incorrect final declarations, or
-  - Total append steps exceed 30 without meeting any victory condition.
+<answer>A,C,E</answer>
 
-## Important Notes
+If you believe no components satisfy the condition, submit an empty set:
 
-- Only one operation tag can be submitted per turn.
-- Append operations change the sequence state and return count feedback.
-- Prediction verification actually executes append operations, thus changing the sequence state.
-- Your goal is to identify the hidden parameters with as few interactions as possible.
+<answer></answer>
+
+Please try to find all defective components with the minimum number of queries.
 """
 
     contextualized_rule_zh_5 = """\
-【司法卷宗自动审查系统场景】
-我们来执行"司法督察后缀计数审阅"任务，规则如下：
+我们现在来进行一项"连环商业诈骗案嫌疑公司锁定"任务，规则如下：
 
-系统对归档的三类卷宗进行审查：民事(a)、刑事(b)、行政(c)。我已秘密选择了两个隐藏参数：
-1. 重点督察类型 c*，它是 a、b、c 中的某一个；
-2. 审阅队列容量 K，它是一个固定的正整数。
+工商稽查库中包含一个有 {n} 家嫌疑公司的集合 U，公司分别以 {elements} 标识。每家公司涉及四个二元工商财务特征 α, β, γ, δ，每个特征的判定值为 0 或 1，但具体档案处于封存状态。
 
-系统维护一个有序的案件归档序列 S，初始为空。你可以通过交互操作来推断这两个隐藏参数。
+你的目标是找出满足高嫌疑目标条件 T 的所有公司。高嫌疑条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
 
-## 交互操作
+你可以通过 COUNT 核查来获取协查通报，每次查询需要指定一个公司子集和一些特征条件，系统会告诉你该子集中有多少家公司满足这些条件。当你收集足够信息后，请提交最终的嫌疑公司名单。
 
-你可以执行以下操作（每次只能执行一个操作）：
+每次 COUNT 查询需要指定：
+1. 一个公司子集 S，包含至少 3 家公司
+2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
 
-1. **归档卷宗**：在序列尾部归档一份案件（a、b 或 c），系统会返回当前审阅队列中属于重点督察类型的卷宗数量。
-   - 审阅队列定义：取序列 S 的最后 min(K, 当前记录总数) 份归档卷宗。
-   - 格式：
-   <append>a</append>
-   或
-   <append>b</append>
-   或
-   <append>c</append>
+查询格式如下：
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **查询总数**：查询当前归档案件的总长度。
-   - 格式：
-   <query_length></query_length>
+或者使用两个条件：
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **预测验证**：提交一个连续归档计划及其对应的审阅计数预测，系统会逐步验证。若计划长度大于等于 6 且所有预测完全匹配，则任务成功。
-   - 格式：
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - 说明：竖线前为案件类型序列，竖线后为预测的计数序列。例如：
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+系统会返回一个非负整数，表示子集 S 中满足所有指定条件的公司数量。
 
-4. **最终宣告**：直接提交你推断的重点督察类型和审阅队列容量。若正确则任务成功。
-   - 格式：
-   <answer>c*=a, K=3</answer>
-   - 说明：c* 为目标卷宗类型（a、b 或 c），K 为审阅队列容量。
+注意事项：
+- 公司子集 S 必须包含至少 3 家公司
+- 条件集 L 最多包含 2 条原子条件
+- 属性名必须是 α, β, γ, δ 之一
+- 属性值必须是 0 或 1
 
-## 胜利与失败条件
+当你准备好提交名单时，请列出所有满足目标条件 T 的公司（用逗号分隔，顺序不限）：
 
-- **胜利条件 A**：提交最终宣告，且参数完全正确。
-- **胜利条件 B**：提交预测验证，计划长度大于等于 6，且所有计数预测完全匹配。
-- **失败条件**：
-  - 连续两次最终宣告均错误，或
-  - 总追加步数超过 30 步且未满足任一胜利条件。
+<answer>A,C,E</answer>
 
-## 注意事项
+如果你认为没有任何公司满足条件，请提交空集：
 
-- 每次只能提交一个操作标签。
-- 追加操作会改变序列状态并返回计数反馈。
-- 预测验证会实际执行追加操作，因此会改变序列状态。
-- 你的目标是通过尽可能少的交互次数同定隐藏参数。
+<answer></answer>
+
+请尽可能用最少的查询次数锁定所有嫌疑公司。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's execute a "Judicial Case Suffix Counting Review" task. Here are the rules:
+Let's perform a "Serial Commercial Fraud Suspect Company Targeting" task. Here are the rules:
 
-The system reviews three types of archived cases: Civil (a), Criminal (b), and Administrative (c). I have secretly chosen two hidden parameters:
-1. Target case type c*, which is one of a, b, or c;
-2. Review queue capacity K, which is a fixed positive integer.
+The business inspection database has a set U containing {n} suspect companies, identified as {elements}. Each company involves four binary business and financial features α, β, γ, δ, where each feature takes a judgment value of 0 or 1, but the specific files are sealed.
 
-The system maintains an ordered sequence of case archive records S, initially empty. You can infer these two hidden parameters through interactive operations.
+Your goal is to find all companies that satisfy the high-suspicion target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
 
-## Interactive Operations
+You can obtain inspection bulletins through COUNT queries. Each query requires specifying a subset of companies and some feature conditions, and the system will tell you how many companies in that subset satisfy those conditions. When you have collected enough information, submit your final suspect company list.
 
-You can perform the following operations (one operation per turn):
+Each COUNT query needs to specify:
+1. A company subset S containing at least 3 companies
+2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
 
-1. **Append Record**: Archive a case record (a, b, or c) to the end of the sequence. The system returns the count of the target case type in the current review queue.
-   - Review queue definition: Take the last min(K, current total records) archived cases of sequence S.
-   - Format:
-   <append>a</append>
-   or
-   <append>b</append>
-   or
-   <append>c</append>
+Query format:
+<query_count>
+S = A,B,C
+CONDITIONS = α=1
+</query_count>
 
-2. **Length Query**: Query the total length of the current sequence.
-   - Format:
-   <query_length></query_length>
+Or using two conditions:
+<query_count>
+S = A,B,C,D
+CONDITIONS = α=1,β=0
+</query_count>
 
-3. **Prediction Verification**: Submit a continuous case archiving plan with corresponding count predictions. The system will verify step by step. If the plan length is at least 6 and all predictions match perfectly, you win.
-   - Format:
-   <predict>s1,s2,...,sT|L1,L2,...,LT</predict>
-   - Note: Before the vertical bar is the case type sequence, after is the predicted count sequence. Example:
-   <predict>a,b,c,a,b,c|1,1,2,2,2,3</predict>
+The system will return a non-negative integer indicating the number of companies in subset S that satisfy all specified conditions.
 
-4. **Final Declaration**: Directly submit your inferred target case type and review queue capacity. If correct, you win.
-   - Format:
-   <answer>c*=a, K=3</answer>
-   - Note: c* is the target case type (a, b, or c), K is the review queue capacity.
+Notes:
+- Company subset S must contain at least 3 companies
+- Condition set L can contain at most 2 atomic conditions
+- Attribute names must be one of α, β, γ, δ
+- Attribute values must be 0 or 1
 
-## Victory and Failure Conditions
+When you are ready to submit your list, list all companies that satisfy the target condition T (comma-separated, order does not matter):
 
-- **Victory Condition A**: Submit a final declaration with completely correct parameters.
-- **Victory Condition B**: Submit a prediction verification with plan length at least 6 and all count predictions matching perfectly.
-- **Failure Conditions**:
-  - Two consecutive incorrect final declarations, or
-  - Total append steps exceed 30 without meeting any victory condition.
+<answer>A,C,E</answer>
 
-## Important Notes
+If you believe no companies satisfy the condition, submit an empty set:
 
-- Only one operation tag can be submitted per turn.
-- Append operations change the sequence state and return count feedback.
-- Prediction verification actually executes append operations, thus changing the sequence state.
-- Your goal is to identify the hidden parameters with as few interactions as possible.
+<answer></answer>
+
+Please try to find all suspect companies with the minimum number of queries.
 """
 
-    tags = ["answer", "append", "query_length", "predict"]
+    tags = ["answer", "query_count"]
     
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
+    reasoning_type = "演绎推理"
+    data_structure = "集合"
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {"K": 2, "c_star": "a"},
-            2: {"K": 3, "c_star": "b"},
-            3: {"K": 4, "c_star": "c"},
-            4: {"K": 5, "c_star": "a"},
-            5: {"K": 7, "c_star": "b"},
+            1: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "B": {"α": 0, "β": 0, "γ": 1, "δ": 0},
+                    "C": {"α": 1, "β": 1, "γ": 1, "δ": 0},
+                    "D": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "E": {"α": 1, "β": 0, "γ": 1, "δ": 1},
+                    "F": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "G": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "H": {"α": 1, "β": 1, "γ": 0, "δ": 0},
+                    "I": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                    "J": {"α": 1, "β": 0, "γ": 0, "δ": 1},
+                    "K": {"α": 0, "β": 1, "γ": 1, "δ": 0},
+                    "L": {"α": 1, "β": 1, "γ": 1, "δ": 1},
+                }
+            },
+            2: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "B": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "C": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "D": {"α": 1, "β": 1, "γ": 1, "δ": 0},
+                    "E": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                    "F": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "G": {"α": 0, "β": 1, "γ": 1, "δ": 1},
+                    "H": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "I": {"α": 1, "β": 1, "γ": 0, "δ": 0},
+                    "J": {"α": 0, "β": 0, "γ": 1, "δ": 1},
+                    "K": {"α": 1, "β": 0, "γ": 0, "δ": 1},
+                    "L": {"α": 0, "β": 1, "γ": 0, "δ": 0},
+                }
+            },
+            3: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "B": {"α": 1, "β": 1, "γ": 1, "δ": 0},
+                    "C": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                    "D": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "E": {"α": 0, "β": 1, "γ": 1, "δ": 1},
+                    "F": {"α": 1, "β": 0, "γ": 1, "δ": 1},
+                    "G": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "H": {"α": 0, "β": 1, "γ": 0, "δ": 0},
+                    "I": {"α": 1, "β": 1, "γ": 0, "δ": 1},
+                    "J": {"α": 0, "β": 0, "γ": 1, "δ": 0},
+                    "K": {"α": 1, "β": 1, "γ": 1, "δ": 1},
+                    "L": {"α": 0, "β": 0, "γ": 0, "δ": 0},
+                }
+            },
+            4: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "B": {"α": 1, "β": 1, "γ": 0, "δ": 1},
+                    "C": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "D": {"α": 0, "β": 1, "γ": 0, "δ": 0},
+                    "E": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "F": {"α": 0, "β": 0, "γ": 1, "δ": 1},
+                    "G": {"α": 1, "β": 1, "γ": 1, "δ": 1},
+                    "H": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "I": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "J": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "K": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                    "L": {"α": 1, "β": 1, "γ": 0, "δ": 0},
+                }
+            },
+            5: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "B": {"α": 1, "β": 1, "γ": 1, "δ": 1},
+                    "C": {"α": 0, "β": 0, "γ": 0, "δ": 0},
+                    "D": {"α": 1, "β": 1, "γ": 0, "δ": 0},
+                    "E": {"α": 0, "β": 1, "γ": 1, "δ": 1},
+                    "F": {"α": 1, "β": 0, "γ": 0, "δ": 1},
+                    "G": {"α": 0, "β": 0, "γ": 1, "δ": 1},
+                    "H": {"α": 1, "β": 1, "γ": 0, "δ": 1},
+                    "I": {"α": 0, "β": 1, "γ": 0, "δ": 0},
+                    "J": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "K": {"α": 1, "β": 1, "γ": 1, "δ": 0},
+                    "L": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                }
+            },
         },
         "en": {
-            1: {"K": 2, "c_star": "a"},
-            2: {"K": 3, "c_star": "b"},
-            3: {"K": 4, "c_star": "c"},
-            4: {"K": 5, "c_star": "a"},
-            5: {"K": 7, "c_star": "b"},
-        },
+            1: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "B": {"α": 0, "β": 0, "γ": 1, "δ": 0},
+                    "C": {"α": 1, "β": 1, "γ": 1, "δ": 0},
+                    "D": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "E": {"α": 1, "β": 0, "γ": 1, "δ": 1},
+                    "F": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "G": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "H": {"α": 1, "β": 1, "γ": 0, "δ": 0},
+                    "I": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                    "J": {"α": 1, "β": 0, "γ": 0, "δ": 1},
+                    "K": {"α": 0, "β": 1, "γ": 1, "δ": 0},
+                    "L": {"α": 1, "β": 1, "γ": 1, "δ": 1},
+                }
+            },
+            2: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "B": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "C": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "D": {"α": 1, "β": 1, "γ": 1, "δ": 0},
+                    "E": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                    "F": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "G": {"α": 0, "β": 1, "γ": 1, "δ": 1},
+                    "H": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "I": {"α": 1, "β": 1, "γ": 0, "δ": 0},
+                    "J": {"α": 0, "β": 0, "γ": 1, "δ": 1},
+                    "K": {"α": 1, "β": 0, "γ": 0, "δ": 1},
+                    "L": {"α": 0, "β": 1, "γ": 0, "δ": 0},
+                }
+            },
+            3: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "B": {"α": 1, "β": 1, "γ": 1, "δ": 0},
+                    "C": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                    "D": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "E": {"α": 0, "β": 1, "γ": 1, "δ": 1},
+                    "F": {"α": 1, "β": 0, "γ": 1, "δ": 1},
+                    "G": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "H": {"α": 0, "β": 1, "γ": 0, "δ": 0},
+                    "I": {"α": 1, "β": 1, "γ": 0, "δ": 1},
+                    "J": {"α": 0, "β": 0, "γ": 1, "δ": 0},
+                    "K": {"α": 1, "β": 1, "γ": 1, "δ": 1},
+                    "L": {"α": 0, "β": 0, "γ": 0, "δ": 0},
+                }
+            },
+            4: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "B": {"α": 1, "β": 1, "γ": 0, "δ": 1},
+                    "C": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "D": {"α": 0, "β": 1, "γ": 0, "δ": 0},
+                    "E": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "F": {"α": 0, "β": 0, "γ": 1, "δ": 1},
+                    "G": {"α": 1, "β": 1, "γ": 1, "δ": 1},
+                    "H": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "I": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "J": {"α": 1, "β": 0, "γ": 1, "δ": 0},
+                    "K": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                    "L": {"α": 1, "β": 1, "γ": 0, "δ": 0},
+                }
+            },
+            5: {
+                "n": 12,
+                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "attributes": {
+                    "A": {"α": 0, "β": 1, "γ": 0, "δ": 1},
+                    "B": {"α": 1, "β": 1, "γ": 1, "δ": 1},
+                    "C": {"α": 0, "β": 0, "γ": 0, "δ": 0},
+                    "D": {"α": 1, "β": 1, "γ": 0, "δ": 0},
+                    "E": {"α": 0, "β": 1, "γ": 1, "δ": 1},
+                    "F": {"α": 1, "β": 0, "γ": 0, "δ": 1},
+                    "G": {"α": 0, "β": 0, "γ": 1, "δ": 1},
+                    "H": {"α": 1, "β": 1, "γ": 0, "δ": 1},
+                    "I": {"α": 0, "β": 1, "γ": 0, "δ": 0},
+                    "J": {"α": 1, "β": 0, "γ": 0, "δ": 0},
+                    "K": {"α": 1, "β": 1, "γ": 1, "δ": 0},
+                    "L": {"α": 0, "β": 0, "γ": 0, "δ": 1},
+                }
+            },
+        }
     }
 
     def __init__(self, config):
-        # 游戏状态变量
-        self.sequence = []  # 当前序列
-        self.K = 0  # 窗口长度
-        self.c_star = ""  # 目标符号
-        self.append_count = 0  # 追加操作计数
-        self.wrong_answer_count = 0  # 错误宣告计数
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏参数"""
         lang = self.config.language
         diff = int(self.config.difficulty)
 
@@ -693,259 +743,209 @@ You can perform the following operations (one operation per turn):
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self.K = cfg["K"]
-        self.c_star = cfg["c_star"]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["elements"] = cfg["elements"]
         
-        # 初始化序列和计数
-        self.sequence = []
-        self.append_count = 0
-        self.wrong_answer_count = 0
+        self.attributes = cfg["attributes"]
         
-        # 用于规则格式化
-        self._game_info = {}
+        self.target_elements = set()
+        for elem, attrs in self.attributes.items():
+            if attrs["α"] == 1 and attrs["β"] == 0 and attrs["γ"] == 1 and attrs["δ"] == 0:
+                self.target_elements.add(elem)
 
-    def _compute_count(self):
-        """计算当前后缀窗口中目标符号的出现次数"""
-        window_size = min(self.K, len(self.sequence))
-        if window_size == 0:
-            return 0
-        suffix_window = self.sequence[-window_size:]
-        return suffix_window.count(self.c_star)
+    def _parse_query_count(self, query_str):
+        lines = [line.strip() for line in query_str.strip().split('\n') if line.strip()]
+        
+        subset = None
+        conditions = None
+        
+        for line in lines:
+            if line.startswith("S =") or line.startswith("S="):
+                subset_str = line.split('=', 1)[1].strip()
+                subset = set(e.strip() for e in subset_str.split(',') if e.strip())
+            elif line.startswith("CONDITIONS =") or line.startswith("CONDITIONS="):
+                cond_str = line.split('=', 1)[1].strip()
+                conditions = [c.strip() for c in cond_str.split(',') if c.strip()]
+        
+        if subset is None or conditions is None:
+            raise ValueError("Query format error: missing S or CONDITIONS")
+        
+        return subset, conditions
+
+    def _validate_and_count(self, subset, conditions):
+        if len(subset) < 3:
+            if self.config.language == "zh":
+                return "INVALID: 子集 S 必须包含至少 3 个元素"
+            else:
+                return "INVALID: Subset S must contain at least 3 elements"
+        
+        for elem in subset:
+            if elem not in self.attributes:
+                if self.config.language == "zh":
+                    return f"INVALID: 元素 {elem} 不在集合 U 中"
+                else:
+                    return f"INVALID: Element {elem} is not in set U"
+        
+        if len(conditions) == 0 or len(conditions) > 2:
+            if self.config.language == "zh":
+                return "INVALID: 条件数量必须为 1 或 2"
+            else:
+                return "INVALID: Number of conditions must be 1 or 2"
+        
+        ATTR_NORMALIZE = {
+            'α': 'α', 'alpha': 'α', 'ɑ': 'α',
+            'β': 'β', 'beta': 'β',
+            'γ': 'γ', 'gamma': 'γ',
+            'δ': 'δ', 'delta': 'δ',
+        }
+        
+        parsed_conditions = []
+        for cond in conditions:
+            match = re.match(r'^(\S+)\s*=\s*([01])$', cond.strip())
+            if not match:
+                if self.config.language == "zh":
+                    return f"INVALID: 条件格式错误: {cond}"
+                else:
+                    return f"INVALID: Invalid condition format: {cond}"
+            raw_attr, attr_value = match.groups()
+            normalized_attr = ATTR_NORMALIZE.get(raw_attr.lower(), raw_attr)
+            
+            if normalized_attr not in ['α', 'β', 'γ', 'δ']:
+                if self.config.language == "zh":
+                    return f"INVALID: 未知的属性名: {raw_attr}"
+                else:
+                    return f"INVALID: Unknown attribute name: {raw_attr}"
+            
+            parsed_conditions.append((normalized_attr, int(attr_value)))
+        
+        count = 0
+        for elem in subset:
+            elem_attrs = self.attributes[elem]
+            satisfies_all = True
+            for attr_name, attr_value in parsed_conditions:
+                if elem_attrs[attr_name] != attr_value:
+                    satisfies_all = False
+                    break
+            if satisfies_all:
+                count += 1
+        
+        return str(count)
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"]
+        raw_ans = parsed_info["answer"].strip()
         
-        # 解析答案: c*=x, K=y
-        kv_pairs = [x.strip() for x in raw_ans.split(",")]
-        ans_dict = {}
-        for kv in kv_pairs:
-            if "=" not in kv:
-                continue
-            k, v = kv.split("=", 1)
-            ans_dict[k.strip()] = v.strip()
+        if not raw_ans:
+            submitted_elements = set()
+        else:
+            submitted_elements = set(e.strip() for e in raw_ans.split(',') if e.strip())
         
-        # 检查必需字段
-        if "c*" not in ans_dict or "K" not in ans_dict:
-            return False
-        
-        # 验证答案
-        try:
-            submitted_c_star = ans_dict["c*"]
-            submitted_K = int(ans_dict["K"])
-            
-            if submitted_c_star == self.c_star and submitted_K == self.K:
-                return True
-            else:
-                self.wrong_answer_count += 1
+        for elem in submitted_elements:
+            if elem not in self.attributes:
                 return False
-        except:
-            self.wrong_answer_count += 1
-            return False
+        
+        return submitted_elements == self.target_elements
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑：根据玩家的操作生成系统响应"""
-        is_zh = self.config.language == "zh"
+        if "query_count" in parsed_info:
+            query_str = parsed_info["query_count"]
+            try:
+                subset, conditions = self._parse_query_count(query_str)
+                result = self._validate_and_count(subset, conditions)
+                return result
+            except Exception as e:
+                if self.config.language == "zh":
+                    return f"INVALID: 查询解析错误 - {str(e)}"
+                else:
+                    return f"INVALID: Query parsing error - {str(e)}"
+        else:
+            raise ValueError("No valid query tag found.")
+
+    def _cf_make_wrong(self, correct):
+        if correct.startswith("INVALID"):
+            return correct + "_WRONG"
+            
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        # 处理追加操作
-        if "append" in parsed_info:
-            symbol = parsed_info["append"].strip().lower()
-            
-            # 验证符号合法性
-            if symbol not in ['a', 'b', 'c']:
-                return "错误：符号必须是 a、b 或 c。" if is_zh else "Error: Symbol must be a, b, or c."
-            
-            # 追加符号到序列
-            self.sequence.append(symbol)
-            self.append_count += 1
-            
-            # 检查是否超过追加上限
-            if self.append_count > 30:
-                self.state.set_state("failed", "exceeded maximum append operations")
-                return "失败：追加操作超过 30 次。" if is_zh else "Failed: Append operations exceeded 30."
-            
-            # 计算并返回计数
-            count = self._compute_count()
-            return f"计数：{count}" if is_zh else f"Count: {count}"
+        if self.config.language == "zh":
+            if "是" in correct:
+                return correct.replace("是", "否")
+            elif "否" in correct:
+                return correct.replace("否", "是")
+        else:
+            if re.search(r'(?i)yes', correct):
+                return re.sub(r'(?i)yes', 'No', correct)
+            elif re.search(r'(?i)no', correct):
+                return re.sub(r'(?i)no', 'Yes', correct)
         
-        # 处理长度查询
-        elif "query_length" in parsed_info:
-            length = len(self.sequence)
-            return f"长度：{length}" if is_zh else f"Length: {length}"
+        return correct + "_WRONG"
+
+    def get_all_possible_queries(self) -> List[Dict]:
+        queries = []
         
-        # 处理预测验证
-        elif "predict" in parsed_info:
-            raw_predict = parsed_info["predict"].strip()
-            
-            saved_sequence = list(self.sequence)
-            saved_append_count = self.append_count
+        elements = [e.strip() for e in self._game_info["elements"].split(',')]
+        
+        attrs = ['α', 'β', 'γ', 'δ']
+        vals = [0, 1]
+        
+        subsets_to_query = []
+        n = len(elements)
+        for i in range(n - 2):
+            subsets_to_query.append(elements[i:i+3])
+        for i in range(0, n, 3):
+            end = min(i + 3, n)
+            if end - i >= 3:
+                subsets_to_query.append(elements[i:end])
+        seen = set()
+        unique_subsets = []
+        for s in subsets_to_query:
+            key = tuple(s)
+            if key not in seen:
+                seen.add(key)
+                unique_subsets.append(s)
+        
+        for subset_list in unique_subsets:
+            subset_set = set(subset_list)
+            subset_str = ",".join(subset_list)
+            for attr in attrs:
+                cond = f"{attr}=1"
+                query_text = f"S = {subset_str}\nCONDITIONS = {cond}"
+                full_query = f"<query_count>\n{query_text}\n</query_count>"
+                
+                try:
+                    ans = self._validate_and_count(subset_set, [cond])
+                except Exception:
+                    ans = "0"
+                
+                queries.append({
+                    "query": full_query,
+                    "answer": ans
+                })
+        
+        full_subset_set = set(elements)
+        full_subset_str = ",".join(elements)
+        target_conds = [
+            ["α=1", "β=0"],
+            ["α=1", "γ=1"],
+            ["α=1", "δ=0"],
+            ["β=0", "γ=1"],
+            ["β=0", "δ=0"],
+            ["γ=1", "δ=0"],
+        ]
+        for conds in target_conds:
+            cond_str = ",".join(conds)
+            query_text = f"S = {full_subset_str}\nCONDITIONS = {cond_str}"
+            full_query = f"<query_count>\n{query_text}\n</query_count>"
             
             try:
-                # 解析格式: s1,s2,...,sT|L1,L2,...,LT
-                if "|" not in raw_predict:
-                    raise ValueError("Invalid format")
-                
-                symbols_part, counts_part = raw_predict.split("|", 1)
-                symbols = [s.strip().lower() for s in symbols_part.split(",") if s.strip()]
-                counts = [int(c.strip()) for c in counts_part.split(",") if c.strip()]
-                
-                # 验证长度一致
-                if len(symbols) != len(counts):
-                    raise ValueError("Length mismatch")
-                
-                # 验证计划长度
-                if len(symbols) < 6:
-                    return "错误：预测序列长度必须大于等于 6。" if is_zh else "Error: Prediction sequence length must be at least 6."
-                
-                # 验证符号合法性
-                for sym in symbols:
-                    if sym not in ['a', 'b', 'c']:
-                        raise ValueError("Invalid symbol")
-                
-                # 逐步验证
-                response_parts = []
-                all_match = True
-                mismatch_step = -1
-                
-                for i, (sym, predicted_count) in enumerate(zip(symbols, counts)):
-                    self.sequence.append(sym)
-                    self.append_count += 1
-                    
-                    # 检查追加上限
-                    if self.append_count > 30:
-                        self.state.set_state("failed", "exceeded maximum append operations during prediction")
-                        return "失败：追加操作超过 30 次。" if is_zh else "Failed: Append operations exceeded 30."
-                    
-                    actual_count = self._compute_count()
-                    
-                    step_result = f"步骤 {i+1}：真实计数 = {actual_count}" if is_zh else f"Step {i+1}: Actual count = {actual_count}"
-                    response_parts.append(step_result)
-                    
-                    if actual_count != predicted_count:
-                        all_match = False
-                        mismatch_step = i + 1
-                        break
-                
-                # 生成最终判定
-                if all_match:
-                    self.state.set_state("success", "prediction verified")
-                    verdict = "预测判定：通过。游戏胜利！" if is_zh else "Prediction Verdict: Passed. You win!"
-                else:
-                    verdict = f"预测判定：未通过（第 {mismatch_step} 步不匹配）。" if is_zh else f"Prediction Verdict: Failed (mismatch at step {mismatch_step})."
-                
-                response_parts.append(verdict)
-                return "\n".join(response_parts)
-                
-            except Exception as e:
-                self.sequence = saved_sequence
-                self.append_count = saved_append_count
-                return "错误：预测格式无效。正确格式为 <predict>s1,s2,...|L1,L2,...</predict>" if is_zh else "Error: Invalid prediction format. Correct format: <predict>s1,s2,...|L1,L2,...</predict>"
-        
-        else:
-            raise ValueError("No valid operation tag found.")
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举一组可串行执行的查询序列，返回对应的正确答案。
-        先追加 K+2 个符号（覆盖窗口长度），再查询一次长度。
-        追加序列为循环的 a, b, c，保证每个符号都出现。
-        """
-        queries = []
-        is_zh = self.config.language == "zh"
-        
-        # 保存当前状态
-        saved_sequence = list(self.sequence)
-        saved_append_count = self.append_count
-        
-        # 生成追加序列：至少 K+2 个符号，循环 a,b,c
-        symbols_cycle = ['a', 'b', 'c']
-        num_appends = max(self.K + 2, 6)
-        
-        for i in range(num_appends):
-            sym = symbols_cycle[i % 3]
-            
-            # 真正追加以计算正确答案
-            self.sequence.append(sym)
-            count = self._compute_count()
-            ans_str = f"计数：{count}" if is_zh else f"Count: {count}"
+                ans = self._validate_and_count(full_subset_set, conds)
+            except Exception:
+                ans = "0"
             
             queries.append({
-                "query": f"<append>{sym}</append>",
-                "answer": ans_str
+                "query": full_query,
+                "answer": ans
             })
-        
-        # 长度查询
-        length = len(self.sequence)
-        len_str = f"长度：{length}" if is_zh else f"Length: {length}"
-        queries.append({
-            "query": "<query_length></query_length>",
-            "answer": len_str
-        })
-        
-        # 恢复原始状态
-        self.sequence = saved_sequence
-        self.append_count = saved_append_count
         
         return queries
 
-    def step(self, response: str):
-        """处理一轮交互"""
-        try:
-            parsed_info = self.parse(response)
-            
-            # 处理最终宣告
-            if "answer" in parsed_info:
-                is_success = self.evaluate(parsed_info)
-                is_zh = self.config.language == "zh"
-                
-                if is_success:
-                    res = "判定：正确。游戏胜利！" if is_zh else "Verdict: Correct. You win!"
-                    self.state.set_state("success", "correct answer")
-                    self.state.add_message("user", res)
-                else:
-                    # 检查是否连续两次错误
-                    if self.wrong_answer_count >= 2:
-                        res = "判定：错误。连续两次错误，游戏失败。" if is_zh else "Verdict: Incorrect. Two consecutive errors, game failed."
-                        self.state.set_state("failed", "two consecutive incorrect answers")
-                    else:
-                        res = f"判定：错误。这是第 {self.wrong_answer_count} 次错误宣告。" if is_zh else f"Verdict: Incorrect. This is error #{self.wrong_answer_count}."
-                    self.state.add_message("user", res)
-            
-            # 处理其他操作
-            else:
-                self.wrong_answer_count = 0
-                game_response = self.produce_response(parsed_info)
-                self.state.add_message("user", game_response)
-                
-        except Exception as e:
-            self.state.set_state("failed", str(e))
-        
-        return self.state
-
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        import re as _re
-        is_zh = self.config.language == "zh"
-
-        # append 操作返回：计数：N 或 Count: N
-        if is_zh:
-            m = _re.match(r'^计数：(\d+)$', correct)
-            if m:
-                wrong_val = int(m.group(1)) + 1
-                return f"计数：{wrong_val}"
-            # 长度查询返回：长度：N
-            m = _re.match(r'^长度：(\d+)$', correct)
-            if m:
-                wrong_val = int(m.group(1)) + 1
-                return f"长度：{wrong_val}"
-        else:
-            m = _re.match(r'^Count:\s*(\d+)$', correct)
-            if m:
-                wrong_val = int(m.group(1)) + 1
-                return f"Count: {wrong_val}"
-            m = _re.match(r'^Length:\s*(\d+)$', correct)
-            if m:
-                wrong_val = int(m.group(1)) + 1
-                return f"Length: {wrong_val}"
-
-        return correct

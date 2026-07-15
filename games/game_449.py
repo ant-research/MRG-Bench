@@ -1,954 +1,805 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   节点可匹配性：某给定节点在最大匹配中是否能被匹配到
-# ============================================================
-
-import random
 from .base import Game
+import re
 
+class TreePathAggregationGame(Game):
 
-class MaximumMatchingCoverageGame(Game):
+    reasoning_type = "溯因推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们来玩一个"最大匹配覆盖判定"的推理游戏，规则如下：
+我们来玩一个"树路径聚合规则识别"游戏，规则如下：
 
-游戏设定了一个有限简单无向图 G=(V,E)，其中顶点集合 V 包含 {n} 个顶点，标识为 {vertices}。图中存在若干条边，但边的具体连接关系对你不可见。我已选定一个目标顶点 s={target}。
+游戏设定了一棵带权树，节点编号为 1 到 {n}，以节点 1 为根。树的结构和每个节点的权重已经固定。我已秘密选择了一种路径聚合方案（共有四种候选方案），该方案在整个游戏中保持不变。
 
-你的目标是判定：目标顶点 s 是否能在某个最大匹配中被覆盖（即存在一个最大匹配，使得 s 与其某个邻点通过一条匹配边连接）。
+树的静态信息：
+- 节点集合：{{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- 边连接关系：1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- 节点权重：节点1的权重为4，节点2的权重为3，节点3的权重为5，节点4的权重为6，节点5的权重为2，节点6的权重为7，节点7的权重为1，节点8的权重为9，节点9的权重为8，节点10的权重为10
+- 节点深度（根节点深度为0）：
+  - 深度0：节点1
+  - 深度1：节点2、3、4
+  - 深度2：节点5、6、7、8、10
+  - 深度3：节点9
+- 叶子节点：{{5, 7, 8, 9, 10}}
 
-你可以反复向我提出以下类型的查询（每次仅限一个查询），我会根据真实的图结构如实回答：
+路径定义：树上任意两个节点 u 和 v 之间存在唯一的简单路径，路径包含 u 和 v 本身，允许 u 等于 v（单点路径）。
 
-1. 邻接查询：询问顶点 u 和顶点 v 之间是否存在边。回答"是"或"否"。
-2. 全局最大匹配规模查询：询问当前图的最大匹配规模是多少。回答一个整数。
-3. 强制包含边的最大匹配规模查询：询问在必须包含边 u-v 的约束下，最大匹配规模是多少。若 u=v 或 u-v 不在边集中，则回答"不可行"；否则回答一个整数。
-4. 禁用边的最大匹配规模查询：询问在禁止使用边 u-v 的约束下，最大匹配规模是多少。回答一个整数。
-5. 移除顶点的最大匹配规模查询：询问删除顶点 x 后，剩余图的最大匹配规模是多少。回答一个整数。
+四种候选聚合方案：
+- 方案A（普通加总）：路径上所有节点权重之和
+- 方案B（端点双倍）：路径上所有节点权重之和，再加上起点和终点的权重
+- 方案C（奇深度双倍）：路径上每个节点，若其深度为奇数则权重计算为原来的2倍，否则按原权重，最后求和
+- 方案D（叶子双倍）：路径上所有节点权重之和，再加上路径中所有叶子节点的权重
+
+你的目标是：
+1. 通过查询识别出我使用的是哪一种聚合方案（A、B、C 或 D）
+2. 计算目标路径 ({target_u}, {target_v}) 的聚合值
+
+你可以进行以下操作：
+
+1. 探测查询（Probe）：询问任意路径 (u, v) 的聚合值，我会返回一个整数。请尽可能少地使用探测查询。
+2. 剩余次数查询：询问还剩余多少次探测查询机会。
+3. 最终声明（Declare）：当你有足够信息时，提交你推断的方案类型（A、B、C 或 D）以及目标路径的聚合值。
+
+每次只能包含一个操作标签。请使用以下 XML 格式：
+
+- 探测查询（例如查询路径 (2, 5)）：
+<probe>2,5</probe>
+
+- 剩余次数查询（内容为空）：
+<remaining></remaining>
+
+- 最终声明（例如方案为 A，目标路径聚合值为 25）：
+<declare>scheme=A, value=25</declare>
 
 注意：
-- 所有查询都是基于同一个固定的隐藏图 G。
-- 所有约束性查询（强制包含、禁用、移除）都是假设性评估，不会改变后续查询所基于的图。
-- 你不能直接询问"s 是否能在某个最大匹配中被覆盖"。
-
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
-
-## 询问与提交答案的格式（必须严格遵守）
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 邻接查询（例如询问顶点 A 和 B 之间是否有边）：
-<query_edge>A,B</query_edge>
-
-- 全局最大匹配规模查询：
-<query_global_matching></query_global_matching>
-
-- 强制包含边的最大匹配规模查询（例如强制包含边 A-B）：
-<query_force_edge>A,B</query_force_edge>
-
-- 禁用边的最大匹配规模查询（例如禁用边 A-B）：
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- 移除顶点的最大匹配规模查询（例如移除顶点 A）：
-<query_remove_vertex>A</query_remove_vertex>
-
-提交最终答案时，请明确说明目标顶点 s 是否能在某个最大匹配中被覆盖，格式如下：
-
-<answer>是</answer>
-
-或
-
-<answer>否</answer>
+- 探测查询的次数有限，请谨慎使用
+- 最终声明必须同时给出方案类型和目标路径的聚合值
+- 若声明错误或超出查询次数限制，游戏失败
 """
 
     game_rule_en = """\
-Let's play a "Maximum Matching Coverage Determination" reasoning game. Here are the rules:
+Let's play a "Tree Path Aggregation Rule Identification" game. Here are the rules:
 
-The game involves a finite simple undirected graph G=(V,E), where the vertex set V contains {n} vertices, labeled as {vertices}. The graph has several edges, but the specific connections are hidden from you. I have selected a target vertex s={target}.
+The game involves a weighted tree with nodes numbered from 1 to {n}, rooted at node 1. The tree structure and node weights are fixed. I have secretly selected one path aggregation scheme (out of four candidates), which remains constant throughout the game.
 
-Your goal is to determine: whether the target vertex s can be covered in some maximum matching (i.e., there exists a maximum matching such that s is connected to one of its neighbors via a matching edge).
+Static tree information:
+- Node set: {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- Edges: 1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- Node weights: node 1 has weight 4, node 2 has weight 3, node 3 has weight 5, node 4 has weight 6, node 5 has weight 2, node 6 has weight 7, node 7 has weight 1, node 8 has weight 9, node 9 has weight 8, node 10 has weight 10
+- Node depth (root depth is 0):
+  - Depth 0: node 1
+  - Depth 1: nodes 2, 3, 4
+  - Depth 2: nodes 5, 6, 7, 8, 10
+  - Depth 3: node 9
+- Leaf nodes: {{5, 7, 8, 9, 10}}
 
-You can repeatedly ask me the following types of queries (one query at a time), and I will answer truthfully based on the actual graph structure:
+Path definition: For any two nodes u and v in the tree, there exists a unique simple path, including both u and v. Single-node paths (u equals v) are allowed.
 
-1. Edge Query: Ask whether there is an edge between vertex u and vertex v. Answer "Yes" or "No".
-2. Global Maximum Matching Size Query: Ask what the maximum matching size of the current graph is. Answer an integer.
-3. Forced Edge Maximum Matching Size Query: Ask what the maximum matching size is when edge u-v must be included. If u=v or u-v is not in the edge set, answer "Infeasible"; otherwise, answer an integer.
-4. Forbidden Edge Maximum Matching Size Query: Ask what the maximum matching size is when edge u-v is forbidden. Answer an integer.
-5. Vertex Removal Maximum Matching Size Query: Ask what the maximum matching size is after removing vertex x. Answer an integer.
+Four candidate aggregation schemes:
+- Scheme A (Simple Sum): Sum of all node weights on the path
+- Scheme B (Endpoint Double): Sum of all node weights on the path, plus the weights of both endpoints
+- Scheme C (Odd Depth Double): For each node on the path, if its depth is odd, count its weight twice; otherwise, count once. Then sum all values
+- Scheme D (Leaf Double): Sum of all node weights on the path, plus the weights of all leaf nodes on the path
+
+Your goals:
+1. Identify which aggregation scheme (A, B, C, or D) I am using through queries
+2. Calculate the aggregation value for the target path ({target_u}, {target_v})
+
+You can perform the following operations:
+
+1. Probe Query: Ask for the aggregation value of any path (u, v), and I will return an integer. Use probe queries as sparingly as possible.
+2. Remaining Query: Ask how many probe queries you have left.
+3. Declare: When you have enough information, submit your inferred scheme type (A, B, C, or D) and the aggregation value of the target path.
+
+Each turn must contain only one operation tag. Use the following XML format:
+
+- Probe Query (e.g., querying path (2, 5)):
+<probe>2,5</probe>
+
+- Remaining Query (empty content):
+<remaining></remaining>
+
+- Declare (e.g., scheme is A, target path value is 25):
+<declare>scheme=A, value=25</declare>
 
 Note:
-- All queries are based on the same fixed hidden graph G.
-- All constraint queries (forced, forbidden, removal) are hypothetical evaluations and do not change the graph for subsequent queries.
-- You cannot directly ask "Can s be covered in some maximum matching?".
-
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
-
-## Query and Answer Format (must strictly follow)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Edge Query (e.g., asking if there is an edge between A and B):
-<query_edge>A,B</query_edge>
-
-- Global Maximum Matching Size Query:
-<query_global_matching></query_global_matching>
-
-- Forced Edge Maximum Matching Size Query (e.g., forcing edge A-B):
-<query_force_edge>A,B</query_force_edge>
-
-- Forbidden Edge Maximum Matching Size Query (e.g., forbidding edge A-B):
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- Vertex Removal Maximum Matching Size Query (e.g., removing vertex A):
-<query_remove_vertex>A</query_remove_vertex>
-
-When submitting the final answer, clearly state whether the target vertex s can be covered in some maximum matching, using this format:
-
-<answer>Yes</answer>
-
-or
-
-<answer>No</answer>
+- The number of probe queries is limited, use them wisely
+- The declare operation must provide both the scheme type and the target path aggregation value
+- If the declaration is incorrect or query limit is exceeded, the game fails
 """
 
     contextualized_rule_zh_1 = """\
-交通运输网络规划场景下的“专线运力最大化覆盖判定”系统，规则如下：
+欢迎来到“物流网络计费规则识别”系统。
 
-系统设定了一个有限的交通网络图 G=(V,E)，其中顶点集合 V 包含 {n} 个交通枢纽，标识为 {vertices}。图中存在若干条可开通的直达专线（边），但具体的可通达情况对你不可见。我们已选定一个重点保障枢纽 s={target}。
+本系统设定了一个树形物流网络，包含编号为 1 到 {n} 的中转站，其中站点 1 为全国总枢纽。网络结构和各个站点的基础处理费用已固定。系统秘密采用了一种路线计费方案（共有四种候选），该方案在查询过程中保持不变。
 
-你的目标是判定：重点保障枢纽 s 是否能在全网运力最大化（即开启最多数量的互不干扰的独立双向直达专线，形成最大匹配）的方案中被启用（即 s 与某个相邻枢纽开通专线）。
+物流网络静态信息：
+- 站点集合：{{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- 路线连接：1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- 站点基础处理费（权重）：站点1为4，站点2为3，站点3为5，站点4为6，站点5为2，站点6为7，站点7为1，站点8为9，站点9为8，站点10为10
+- 站点层级（枢纽层级为0）：
+  - 层级0：站点1
+  - 层级1：站点2、3、4
+  - 层级2：站点5、6、7、8、10
+  - 层级3：站点9
+- 终端网点（叶子节点）：{{5, 7, 8, 9, 10}}
 
-你可以反复提交以下类型的查询（每次仅限一个查询）：
+路线定义：网络中任意两个站点 u 和 v 之间存在唯一的直达简单路线，路线包含 u 和 v 本身，允许 u 等于 v（同站处理）。
 
-1. 线路查询：询问枢纽 u 和枢纽 v 之间是否具备开通直达专线的条件。回答"是"或"否"。
-2. 全局最大专线规模查询：询问当前网络最多能同时开通多少条独立专线。回答一个整数。
-3. 强制开通线路的最大规模查询：询问在必须开通线路 u-v 的约束下，网络最多能开通多少条专线。若 u=v 或线路不可行，则回答"不可行"；否则回答一个整数。
-4. 禁用线路的最大规模查询：询问在禁止开通线路 u-v 的约束下，网络最多能开通多少条专线。回答一个整数。
-5. 停用枢纽的最大规模查询：询问在枢纽 x 停运后，剩余网络最多能开通多少条专线。回答一个整数。
+四种候选计费方案：
+- 方案A（基础计费）：路线上所有站点的基础处理费之和
+- 方案B（端点附加费）：路线上所有站点基础处理费之和，再加上起点和终点站点的基础处理费
+- 方案C（奇数层级加倍）：路线上每个站点，若其层级为奇数，则处理费按2倍计算，否则按原费用，最后求和
+- 方案D（终端附加费）：路线上所有站点基础处理费之和，再加上路线中所有终端网点（叶子节点）的处理费
+
+你的目标是：
+1. 通过探测查询，识别出系统当前使用的是哪一种计费方案（A、B、C 或 D）
+2. 计算目标路线 ({target_u}, {target_v}) 的总费用
+
+你可以进行以下操作：
+1. 探测查询（Probe）：询问任意路线 (u, v) 的总费用，系统会返回一个整数。请尽可能少地使用探测查询。
+2. 剩余次数查询：询问还剩余多少次探测查询机会。
+3. 最终声明（Declare）：当你有足够信息时，提交你推断的方案类型（A、B、C 或 D）以及目标路线的总费用。
+
+每次只能包含一个操作标签。请使用以下 XML 格式：
+- 探测查询（例如查询路线 (2, 5)）：
+<probe>2,5</probe>
+- 剩余次数查询（内容为空）：
+<remaining></remaining>
+- 最终声明（例如方案为 A，目标路线费用为 25）：
+<declare>scheme=A, value=25</declare>
 
 注意：
-- 所有查询基于同一个固定的交通网络图 G。
-- 约束性查询（强制、禁用、停用）仅用于方案预演，不改变网络的实际结构。
-- 你不能直接询问"枢纽 s 是否能在最大化方案中被启用"。
-
-当你收集足够信息后，请提交最终判定。若答案错误或格式不符，规划失败。
-
-## 询问与提交答案的格式（必须严格遵守）
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 线路查询：
-<query_edge>A,B</query_edge>
-
-- 全局最大专线规模查询：
-<query_global_matching></query_global_matching>
-
-- 强制开通线路的最大规模查询：
-<query_force_edge>A,B</query_force_edge>
-
-- 禁用线路的最大规模查询：
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- 停用枢纽的最大规模查询：
-<query_remove_vertex>A</query_remove_vertex>
-
-最终判定重点保障枢纽 s 是否能被启用：
-<answer>是</answer> 或 <answer>否</answer>
+- 探测查询的次数有限，请谨慎使用
+- 最终声明必须同时给出方案类型和目标路线的总费用
+- 若声明错误或超出查询次数限制，任务失败
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-Welcome to the "Maximum Dedicated Route Capacity Coverage Determination" system in the context of transport network planning. The rules are as follows:
+Welcome to the "Logistics Network Billing Rule Identification" system.
 
-The system defines a finite transport network graph G=(V,E), where the vertex set V contains {n} transport hubs, labeled as {vertices}. There are several feasible direct dedicated routes (edges) between them, but the specific feasible connections are hidden from you. We have selected a key guaranteed hub s={target}.
+The system features a tree-structured logistics network with transfer stations numbered 1 to {n}, where Station 1 is the national central hub. The network topology and base processing fees of each station are fixed. The system has secretly adopted a route billing scheme (out of four candidates), which remains constant during your queries.
 
-Your goal is to determine: whether the key guaranteed hub s can be activated (i.e., establish a route with an adjacent hub) in a scheme that maximizes the total network capacity (i.e., opening the maximum number of independent, non-interfering two-way dedicated routes, forming a maximum matching).
+Static logistics network information:
+- Station set: {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- Connections: 1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- Base processing fee (weights): Station 1 is 4, Station 2 is 3, Station 3 is 5, Station 4 is 6, Station 5 is 2, Station 6 is 7, Station 7 is 1, Station 8 is 9, Station 9 is 8, Station 10 is 10
+- Station tier (hub tier is 0):
+  - Tier 0: Station 1
+  - Tier 1: Stations 2, 3, 4
+  - Tier 2: Stations 5, 6, 7, 8, 10
+  - Tier 3: Station 9
+- Terminal stations (leaves): {{5, 7, 8, 9, 10}}
 
-You can repeatedly submit the following types of queries (one query at a time):
+Route definition: For any two stations u and v, there is a unique direct route including both u and v. Intra-station processing (u equals v) is allowed.
 
-1. Route Query: Ask whether it is feasible to open a direct route between hub u and hub v. Answer "Yes" or "No".
-2. Global Maximum Route Capacity Query: Ask for the maximum number of independent dedicated routes the current network can support simultaneously. Answer an integer.
-3. Forced Route Maximum Capacity Query: Ask for the maximum number of routes under the constraint that the route between u and v must be opened. If u=v or the route is infeasible, answer "Infeasible"; otherwise, answer an integer.
-4. Forbidden Route Maximum Capacity Query: Ask for the maximum number of routes under the constraint that the route between u and v is forbidden. Answer an integer.
-5. Hub Suspension Maximum Capacity Query: Ask for the maximum number of routes supported by the remaining network after hub x is suspended. Answer an integer.
+Four candidate billing schemes:
+- Scheme A (Base Billing): Sum of the base processing fees of all stations on the route
+- Scheme B (Endpoint Surcharge): Sum of fees of all stations on the route, plus the base fees of the origin and destination stations
+- Scheme C (Odd Tier Double): For each station on the route, if its tier is odd, its fee is doubled; otherwise, it remains the base fee. All are then summed
+- Scheme D (Terminal Surcharge): Sum of fees of all stations on the route, plus the fees of all terminal stations (leaves) on the route
+
+Your goals:
+1. Identify which billing scheme (A, B, C, or D) the system is currently using through probe queries.
+2. Calculate the total fee for the target route ({target_u}, {target_v}).
+
+You can perform the following operations:
+1. Probe Query: Ask for the total fee of any route (u, v), and the system returns an integer. Use probe queries as sparingly as possible.
+2. Remaining Query: Ask how many probe query opportunities are left.
+3. Declare: When you have enough information, submit your inferred scheme type (A, B, C, or D) and the total fee of the target route.
+
+Each turn must contain only one operation tag. Use the following XML format:
+- Probe Query (e.g., querying route (2, 5)):
+<probe>2,5</probe>
+- Remaining Query (empty content):
+<remaining></remaining>
+- Declare (e.g., scheme is A, target route fee is 25):
+<declare>scheme=A, value=25</declare>
 
 Note:
-- All queries are based on the same fixed transport network graph G.
-- Constraint queries (forced, forbidden, suspended) are only used for simulation and do not change the actual network structure.
-- You cannot directly ask "Can hub s be activated in the maximized scheme?".
-
-When you have collected enough information, please submit your final determination. If the answer is wrong or the format is invalid, the planning fails.
-
-## Query and Answer Format (must strictly follow)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Route Query:
-<query_edge>A,B</query_edge>
-
-- Global Maximum Route Capacity Query:
-<query_global_matching></query_global_matching>
-
-- Forced Route Maximum Capacity Query:
-<query_force_edge>A,B</query_force_edge>
-
-- Forbidden Route Maximum Capacity Query:
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- Hub Suspension Maximum Capacity Query:
-<query_remove_vertex>A</query_remove_vertex>
-
-Final determination on whether key hub s can be activated:
-<answer>Yes</answer> or <answer>No</answer>
+- The number of probe queries is limited, use them wisely.
+- The declare operation must provide both the scheme type and the target route fee.
+- If the declaration is incorrect or query limit is exceeded, the task fails.
 """
 
     contextualized_rule_zh_2 = """\
-医疗器官配型库中的“交叉捐献手术最大化覆盖判定”系统，规则如下：
+欢迎使用“医疗转诊路径费用评估”系统。
 
-系统设定了一个有限的患者-家属集合图 G=(V,E)，其中顶点集合 V 包含 {n} 个参与配对的家庭，标识为 {vertices}。图中存在若干可进行交叉捐献的配型成功可能（边），但具体的配型关系对你不可见。我们已选定一个重点关注家庭 s={target}。
+本系统设定了一个树形转诊网络，包含编号为 1 到 {n} 的科室，其中科室 1 为全科分诊中心。网络结构和各个科室的基础诊疗系数已固定。系统秘密采用了一种路径计费方案（共有四种候选），该方案在查询过程中保持不变。
 
-你的目标是判定：重点关注家庭 s 是否能在促成最大化交叉捐献手术对数（即形成最大匹配，每个家庭最多参与一次配对）的方案中成功匹配到器官。
+医疗网络静态信息：
+- 科室集合：{{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- 转诊连接：1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- 科室基础诊疗系数（权重）：科室1为4，科室2为3，科室3为5，科室4为6，科室5为2，科室6为7，科室7为1，科室8为9，科室9为8，科室10为10
+- 科室层级（分诊中心层级为0）：
+  - 层级0：科室1
+  - 层级1：科室2、3、4
+  - 层级2：科室5、6、7、8、10
+  - 层级3：科室9
+- 专科末端科室（叶子节点）：{{5, 7, 8, 9, 10}}
 
-你可以反复提交以下类型的查询（每次仅限一个查询）：
+转诊路径定义：网络中任意两个科室 u 和 v 之间存在唯一的直达转诊路径，路径包含 u 和 v 本身，允许 u 等于 v（本部门诊）。
 
-1. 配型查询：询问家庭 u 和家庭 v 之间是否具备交叉捐献配型成功的条件。回答"是"或"否"。
-2. 全局最大配对对数查询：询问当前配型库最多能同时促成多少对捐献手术。回答一个整数。
-3. 强制配对的最大对数查询：询问在必须让家庭 u 和 v 配对的约束下，最多能促成多少对捐献手术。若 u=v 或配型不可行，回答"不可行"；否则回答整数。
-4. 禁用配对的最大对数查询：询问在禁止家庭 u 和 v 配对的约束下，最多能促成多少对捐献手术。回答一个整数。
-5. 移除家庭的最大对数查询：询问在家庭 x 退出配型库后，剩余家庭最多能促成多少对捐献手术。回答一个整数。
+四种候选计费方案：
+- 方案A（标准计费）：路径上所有科室的基础诊疗系数之和
+- 方案B（首尾建档费）：路径上所有科室基础诊疗系数之和，再加上首诊和最终接诊科室的系数
+- 方案C（奇数层级重点强化）：路径上每个科室，若其层级为奇数，则诊疗系数按2倍计算，否则按原系数，最后求和
+- 方案D（专科末端附加费）：路径上所有科室基础诊疗系数之和，再加上路径中所有专科末端科室（叶子节点）的系数
+
+你的目标是：
+1. 通过探测查询，识别出系统当前使用的是哪一种计费方案（A、B、C 或 D）
+2. 计算目标转诊路径 ({target_u}, {target_v}) 的总费用评估值
+
+你可以进行以下操作：
+1. 探测查询（Probe）：询问任意转诊路径 (u, v) 的费用评估值，系统会返回一个整数。请尽可能少地使用探测查询。
+2. 剩余次数查询：询问还剩余多少次查询机会。
+3. 最终声明（Declare）：当你有足够信息时，提交你推断的方案类型（A、B、C 或 D）以及目标路径的费用评估值。
+
+每次只能包含一个操作标签。请使用以下 XML 格式：
+- 探测查询（例如查询路径 (2, 5)）：
+<probe>2,5</probe>
+- 剩余次数查询（内容为空）：
+<remaining></remaining>
+- 最终声明（例如方案为 A，目标路径评估值为 25）：
+<declare>scheme=A, value=25</declare>
 
 注意：
-- 所有查询基于同一个固定的配型库图 G。
-- 约束性查询仅用于医学预演，不改变配型库的实际状况。
-- 你不能直接询问"家庭 s 是否能在最大化方案中成功匹配"。
-
-当你收集足够信息后，请提交最终判定。若答案错误或格式不符，判定失败。
-
-## 询问与提交答案的格式（必须严格遵守）
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 配型查询：
-<query_edge>A,B</query_edge>
-
-- 全局最大配对对数查询：
-<query_global_matching></query_global_matching>
-
-- 强制配对的最大对数查询：
-<query_force_edge>A,B</query_force_edge>
-
-- 禁用配对的最大对数查询：
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- 移除家庭的最大对数查询：
-<query_remove_vertex>A</query_remove_vertex>
-
-最终判定重点关注家庭 s 是否能在最大化方案中匹配：
-<answer>是</answer> 或 <answer>否</answer>
+- 探测查询的次数有限，请谨慎使用
+- 最终声明必须同时给出方案类型和目标路径的费用评估值
+- 若声明错误或超出查询次数限制，评估失败
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the "Maximum Cross-Donation Surgery Coverage Determination" system in the medical organ matching database. The rules are as follows:
+[Healthcare Scenario]
+Welcome to the "Medical Referral Pathway Cost Assessment" system.
 
-The system defines a finite patient-family set graph G=(V,E), where the vertex set V contains {n} participating families, labeled as {vertices}. There are several potential successful cross-donation matches (edges) between them, but the specific matching relationships are hidden from you. We have selected a highly focused family s={target}.
+The system features a tree-structured referral network with departments numbered 1 to {n}, where Department 1 is the General Triage Center. The network topology and base treatment coefficients of each department are fixed. The system has secretly adopted a pathway billing scheme (out of four candidates), which remains constant during your assessment.
 
-Your goal is to determine: whether the focused family s can successfully receive a matched organ in a scheme that maximizes the total number of cross-donation pairs (i.e., forming a maximum matching, where each family participates in at most one pair).
+Static medical network information:
+- Department set: {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- Referral links: 1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- Base treatment coefficient (weights): Dept 1 is 4, Dept 2 is 3, Dept 3 is 5, Dept 4 is 6, Dept 5 is 2, Dept 6 is 7, Dept 7 is 1, Dept 8 is 9, Dept 9 is 8, Dept 10 is 10
+- Care level (Triage Center level is 0):
+  - Level 0: Dept 1
+  - Level 1: Depts 2, 3, 4
+  - Level 2: Depts 5, 6, 7, 8, 10
+  - Level 3: Dept 9
+- Specialized terminal departments (leaves): {{5, 7, 8, 9, 10}}
 
-You can repeatedly submit the following types of queries (one query at a time):
+Pathway definition: For any two departments u and v, there is a unique direct referral pathway including both u and v. Intra-department consultation (u equals v) is allowed.
 
-1. Match Query: Ask whether family u and family v have the medical conditions for a successful cross-donation. Answer "Yes" or "No".
-2. Global Maximum Pairs Query: Ask for the maximum number of cross-donation pairs the current database can facilitate simultaneously. Answer an integer.
-3. Forced Match Maximum Pairs Query: Ask for the maximum number of pairs under the constraint that family u and v must be matched. If u=v or the match is medically infeasible, answer "Infeasible"; otherwise, answer an integer.
-4. Forbidden Match Maximum Pairs Query: Ask for the maximum number of pairs under the constraint that matching family u and v is forbidden. Answer an integer.
-5. Family Removal Maximum Pairs Query: Ask for the maximum number of pairs the remaining families can form after family x is removed from the database. Answer an integer.
+Four candidate billing schemes:
+- Scheme A (Standard Billing): Sum of the base treatment coefficients of all departments on the pathway
+- Scheme B (Admission & Discharge Extra): Sum of coefficients of all departments on the pathway, plus the coefficients of the initial and final departments
+- Scheme C (Odd Level Intensive): For each department on the pathway, if its care level is odd, its coefficient is doubled; otherwise, it remains the base coefficient. All are then summed
+- Scheme D (Specialized Terminal Extra): Sum of coefficients of all departments on the pathway, plus the coefficients of all specialized terminal departments (leaves) on the pathway
+
+Your goals:
+1. Identify which billing scheme (A, B, C, or D) the system is currently using through probe queries.
+2. Calculate the total cost assessment value for the target referral pathway ({target_u}, {target_v}).
+
+You can perform the following operations:
+1. Probe Query: Ask for the cost assessment value of any pathway (u, v), and the system returns an integer. Use probe queries as sparingly as possible.
+2. Remaining Query: Ask how many query opportunities are left.
+3. Declare: When you have enough information, submit your inferred scheme type (A, B, C, or D) and the assessment value of the target pathway.
+
+Each turn must contain only one operation tag. Use the following XML format:
+- Probe Query (e.g., querying pathway (2, 5)):
+<probe>2,5</probe>
+- Remaining Query (empty content):
+<remaining></remaining>
+- Declare (e.g., scheme is A, target pathway value is 25):
+<declare>scheme=A, value=25</declare>
 
 Note:
-- All queries are based on the same fixed database graph G.
-- Constraint queries are only used for medical simulation and do not alter the actual database.
-- You cannot directly ask "Can family s successfully match in the maximized scheme?".
-
-When you have collected enough information, please submit your final determination. If the answer is wrong or the format is invalid, the determination fails.
-
-## Query and Answer Format (must strictly follow)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Match Query:
-<query_edge>A,B</query_edge>
-
-- Global Maximum Pairs Query:
-<query_global_matching></query_global_matching>
-
-- Forced Match Maximum Pairs Query:
-<query_force_edge>A,B</query_force_edge>
-
-- Forbidden Match Maximum Pairs Query:
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- Family Removal Maximum Pairs Query:
-<query_remove_vertex>A</query_remove_vertex>
-
-Final determination on whether family s can match:
-<answer>Yes</answer> or <answer>No</answer>
+- The number of probe queries is limited, use them wisely.
+- The declare operation must provide both the scheme type and the target pathway assessment value.
+- If the declaration is incorrect or query limit is exceeded, the assessment fails.
 """
 
     contextualized_rule_zh_3 = """\
-教育教学管理中的“最佳双人互助学习小组最大化覆盖判定”系统，规则如下：
+欢迎进入“知识图谱学习时长测算”系统。
 
-系统设定了一个有限的学生关系图 G=(V,E)，其中顶点集合 V 包含 {n} 名学生，标识为 {vertices}。图中存在若干可互补结对的组合（边），但具体的适配关系对你不可见。我们已选定一名需要特别关注的学生 s={target}。
+本系统设定了一棵前置知识依赖树，包含编号为 1 到 {n} 的知识概念，其中概念 1 为核心基础概念。图谱结构和各个概念的标准学习学时已固定。系统秘密采用了一种学习路径学时聚合方案（共有四种候选），该方案在整个过程中保持不变。
 
-你的目标是判定：重点关注学生 s 是否能在全班组成最多互助双人小组（即形成最大匹配，每人最多加入一个小组）的最优方案中成功结对。
+知识图谱静态信息：
+- 概念集合：{{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- 依赖连接：1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- 概念标准学时（权重）：概念1为4，概念2为3，概念3为5，概念4为6，概念5为2，概念6为7，概念7为1，概念8为9，概念9为8，概念10为10
+- 概念深度（基础概念深度为0）：
+  - 深度0：概念1
+  - 深度1：概念2、3、4
+  - 深度2：概念5、6、7、8、10
+  - 深度3：概念9
+- 进阶终端概念（叶子节点）：{{5, 7, 8, 9, 10}}
 
-你可以反复提交以下类型的查询（每次仅限一个查询）：
+学习路径定义：图谱中任意两个概念 u 和 v 之间存在唯一的学习连通路径，路径包含 u 和 v 本身，允许 u 等于 v（单概念学习）。
 
-1. 适配查询：询问学生 u 和学生 v 之间是否性格/专业互补可以结对。回答"是"或"否"。
-2. 全局最大结对数查询：询问当前班级最多能同时组成多少个互助小组。回答一个整数。
-3. 强制结对的最大小组数查询：询问在必须让学生 u 和 v 结对的约束下，班级最多能组成多少个小组。若 u=v 或不可结对，回答"不可行"；否则回答整数。
-4. 禁用结对的最大小组数查询：询问在禁止学生 u 和 v 结对的约束下，最多能组成多少个小组。回答一个整数。
-5. 缺席学生的最大小组数查询：询问在学生 x 请假缺席后，剩余班级最多能组成多少个小组。回答一个整数。
+四种候选学时聚合方案：
+- 方案A（标准总学时）：路径上所有概念的标准学时之和
+- 方案B（首尾巩固复习）：路径上所有概念标准学时之和，再加上起点和终点概念的学时（作为额外复习时间）
+- 方案C（奇数深度强化）：路径上每个概念，若其深度为奇数，则需要双倍学时进行深度学习，否则按标准学时，最后求和
+- 方案D（进阶挑战耗时）：路径上所有概念标准学时之和，再加上路径中所有进阶终端概念（叶子节点）的学时
+
+你的目标是：
+1. 通过探测查询，识别出系统当前使用的是哪一种聚合方案（A、B、C 或 D）
+2. 计算目标学习路径 ({target_u}, {target_v}) 的总学时
+
+你可以进行以下操作：
+1. 探测查询（Probe）：询问任意学习路径 (u, v) 的总学时，系统会返回一个整数。请尽可能少地使用探测查询。
+2. 剩余次数查询：询问还剩余多少次查询机会。
+3. 最终声明（Declare）：当你有足够信息时，提交你推断的方案类型（A、B、C 或 D）以及目标路径的总学时。
+
+每次只能包含一个操作标签。请使用以下 XML 格式：
+- 探测查询（例如查询路径 (2, 5)）：
+<probe>2,5</probe>
+- 剩余次数查询（内容为空）：
+<remaining></remaining>
+- 最终声明（例如方案为 A，目标路径总学时为 25）：
+<declare>scheme=A, value=25</declare>
 
 注意：
-- 所有查询基于同一个固定的学生关系图 G。
-- 约束性查询仅用于排班预演，不改变班级的实际情况。
-- 你不能直接询问"学生 s 是否能在最大化方案中成功结对"。
-
-当你收集足够信息后，请提交最终判定。若答案错误或格式不符，排班失败。
-
-## 询问与提交答案的格式（必须严格遵守）
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 适配查询：
-<query_edge>A,B</query_edge>
-
-- 全局最大结对数查询：
-<query_global_matching></query_global_matching>
-
-- 强制结对的最大小组数查询：
-<query_force_edge>A,B</query_force_edge>
-
-- 禁用结对的最大小组数查询：
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- 缺席学生的最大小组数查询：
-<query_remove_vertex>A</query_remove_vertex>
-
-最终判定重点关注学生 s 是否能在最大化方案中结划：
-<answer>是</answer> 或 <answer>否</answer>
+- 探测查询的次数有限，请谨慎使用
+- 最终声明必须同时给出方案类型和目标路径的总学时
+- 若声明错误或超出查询次数限制，测算失败
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Maximum Optimal Study Buddy Coverage Determination" system for educational management. The rules are as follows:
+Welcome to the "Knowledge Graph Learning Hours Estimation" system.
 
-The system defines a finite student relationship graph G=(V,E), where the vertex set V contains {n} students, labeled as {vertices}. There are several complementary pair combinations (edges) between them, but the specific compatibility relationships are hidden from you. We have selected a student needing special attention, s={target}.
+The system features a prerequisite dependency tree with knowledge concepts numbered 1 to {n}, where Concept 1 is the core fundamental concept. The graph structure and the standard learning hours for each concept are fixed. The system has secretly adopted a learning path hours aggregation scheme (out of four candidates), which remains constant during your estimation.
 
-Your goal is to determine: whether student s can successfully form a pair in an optimal scheme that maximizes the total number of study buddy pairs in the class (i.e., forming a maximum matching, where each student joins at most one pair).
+Static knowledge graph information:
+- Concept set: {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- Dependency links: 1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- Standard learning hours (weights): Concept 1 is 4, Concept 2 is 3, Concept 3 is 5, Concept 4 is 6, Concept 5 is 2, Concept 6 is 7, Concept 7 is 1, Concept 8 is 9, Concept 9 is 8, Concept 10 is 10
+- Concept depth (Fundamental concept depth is 0):
+  - Depth 0: Concept 1
+  - Depth 1: Concepts 2, 3, 4
+  - Depth 2: Concepts 5, 6, 7, 8, 10
+  - Depth 3: Concept 9
+- Advanced terminal concepts (leaves): {{5, 7, 8, 9, 10}}
 
-You can repeatedly submit the following types of queries (one query at a time):
+Learning path definition: For any two concepts u and v, there is a unique connected learning path including both u and v. Single-concept learning (u equals v) is allowed.
 
-1. Compatibility Query: Ask whether student u and student v have complementary traits/majors to form a pair. Answer "Yes" or "No".
-2. Global Maximum Pairs Query: Ask for the maximum number of study buddy pairs the class can form simultaneously. Answer an integer.
-3. Forced Pair Maximum Pairs Query: Ask for the maximum number of pairs under the constraint that student u and v must be paired. If u=v or they are incompatible, answer "Infeasible"; otherwise, answer an integer.
-4. Forbidden Pair Maximum Pairs Query: Ask for the maximum number of pairs under the constraint that pairing student u and v is forbidden. Answer an integer.
-5. Student Absence Maximum Pairs Query: Ask for the maximum number of pairs the remaining class can form after student x takes a leave of absence. Answer an integer.
+Four candidate hours aggregation schemes:
+- Scheme A (Standard Total Hours): Sum of the standard learning hours of all concepts on the path
+- Scheme B (Start & End Review): Sum of learning hours of all concepts on the path, plus the hours of the starting and ending concepts (as extra review time)
+- Scheme C (Odd Depth Reinforcement): For each concept on the path, if its depth is odd, it requires double hours for deep learning; otherwise, it takes standard hours. All are then summed
+- Scheme D (Advanced Challenge Hours): Sum of learning hours of all concepts on the path, plus the hours of all advanced terminal concepts (leaves) on the path
+
+Your goals:
+1. Identify which aggregation scheme (A, B, C, or D) the system is currently using through probe queries.
+2. Calculate the total learning hours for the target learning path ({target_u}, {target_v}).
+
+You can perform the following operations:
+1. Probe Query: Ask for the total hours of any learning path (u, v), and the system returns an integer. Use probe queries as sparingly as possible.
+2. Remaining Query: Ask how many query opportunities are left.
+3. Declare: When you have enough information, submit your inferred scheme type (A, B, C, or D) and the total hours of the target path.
+
+Each turn must contain only one operation tag. Use the following XML format:
+- Probe Query (e.g., querying path (2, 5)):
+<probe>2,5</probe>
+- Remaining Query (empty content):
+<remaining></remaining>
+- Declare (e.g., scheme is A, target path total hours is 25):
+<declare>scheme=A, value=25</declare>
 
 Note:
-- All queries are based on the same fixed student relationship graph G.
-- Constraint queries are only used for class planning simulation and do not change the actual situation.
-- You cannot directly ask "Can student s be paired in the maximized scheme?".
-
-When you have collected enough information, please submit your final determination. If the answer is wrong or the format is invalid, the planning fails.
-
-## Query and Answer Format (must strictly follow)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Compatibility Query:
-<query_edge>A,B</query_edge>
-
-- Global Maximum Pairs Query:
-<query_global_matching></query_global_matching>
-
-- Forced Pair Maximum Pairs Query:
-<query_force_edge>A,B</query_force_edge>
-
-- Forbidden Pair Maximum Pairs Query:
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- Student Absence Maximum Pairs Query:
-<query_remove_vertex>A</query_remove_vertex>
-
-Final determination on whether student s can be paired:
-<answer>Yes</answer> or <answer>No</answer>
+- The number of probe queries is limited, use them wisely.
+- The declare operation must provide both the scheme type and the target path total hours.
+- If the declaration is incorrect or query limit is exceeded, the estimation fails.
 """
 
     contextualized_rule_zh_4 = """\
-智能制造车间中的“双机协同生产线最大化覆盖判定”系统，规则如下：
+欢迎使用“供应链装配成本核算”系统。
 
-系统设定了一个有限的设备接口网络图 G=(V,E)，其中顶点集合 V 包含 {n} 台加工设备，标识为 {vertices}。设备之间存在若干兼容接口组合（边），但具体的物理兼容关系对你不可见。我们已选定一台核心高价值设备 s={target}。
+本系统设定了一棵树形供应链/装配网络，包含编号为 1 到 {n} 的工作站，其中工作站 1 为总装配中心。网络结构和各个工作站的基础加工成本已固定。系统秘密采用了一种物料流转成本核算方案（共有四种候选），该方案在核算过程中保持不变。
 
-你的目标是判定：核心设备 s 是否能在车间总产能最大化（即组建最多数量的双机协同生产线，形成最大匹配，每台设备最多接入一条生产线）的调度方案中被投入使用。
+供应链静态信息：
+- 工作站集合：{{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- 流转连接：1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- 基础加工成本（权重）：工作站1为4，工作站2为3，工作站3为5，工作站4为6，工作站5为2，工作站6为7，工作站7为1，工作站8为9，工作站9为8，工作站10为10
+- 供应链层级（总装配中心层级为0）：
+  - 层级0：工作站1
+  - 层级1：工作站2、3、4
+  - 层级2：工作站5、6、7、8、10
+  - 层级3：工作站9
+- 原料进件站（叶子节点）：{{5, 7, 8, 9, 10}}
 
-你可以反复提交以下类型的查询（每次仅限一个查询）：
+流转路径定义：网络中任意两个工作站 u 和 v 之间存在唯一的物料流转路径，路径包含 u 和 v 本身，允许 u 等于 v（本站加工）。
 
-1. 兼容查询：询问设备 u 和设备 v 之间是否具备接口兼容条件以组建生产线。回答"是"或"否"。
-2. 全局最大生产线规模查询：询问当前车间最多能同时开启多少条双机生产线。回答一个整数。
-3. 强制组合的最大生产线规模查询：询问在必须组合设备 u 和 v 的约束下，最多能开启多少条生产线。若 u=v 或接口不兼容，回答"不可行"；否则回答整数。
-4. 禁用组合的最大生产线规模查询：询问在禁止组合设备 u 和 v 的约束下，最多能开启多少条生产线。回答一个整数。
-5. 停用设备的最大生产线规模查询：询问在设备 x 停机维护后，剩余车间最多能开启多少条生产线。回答一个整数。
+四种候选核算方案：
+- 方案A（直接加总）：路径上所有工作站的基础加工成本之和
+- 方案B（首尾质检附加）：路径上所有工作站基础加工成本之和，再加上流转起点和终点工作站的加工成本作为质检费
+- 方案C（奇数层级税费双倍）：路径上每个工作站，若其层级为奇数，则加工成本按2倍核算，否则按原成本，最后求和
+- 方案D（原料处理附加）：路径上所有工作站基础加工成本之和，再加上路径中所有原料进件站（叶子节点）的成本
+
+你的目标是：
+1. 通过探测查询，识别出系统当前使用的是哪一种核算方案（A、B、C 或 D）
+2. 计算目标流转路径 ({target_u}, {target_v}) 的总核算成本
+
+你可以进行以下操作：
+1. 探测查询（Probe）：询问任意流转路径 (u, v) 的核算成本，系统会返回一个整数。请尽可能少地使用探测查询。
+2. 剩余次数查询：询问还剩余多少次抽样查询机会。
+3. 最终声明（Declare）：当你有足够信息时，提交你推断的方案类型（A、B、C 或 D）以及目标路径的总核算成本。
+
+每次只能包含一个操作标签。请使用以下 XML 格式：
+- 探测查询（例如查询路径 (2, 5)）：
+<probe>2,5</probe>
+- 剩余次数查询（内容为空）：
+<remaining></remaining>
+- 最终声明（例如方案为 A，目标路径核算成本为 25）：
+<declare>scheme=A, value=25</declare>
 
 注意：
-- 所有查询基于同一个固定的设备接口网络图 G。
-- 约束性查询仅用于排产预演，不改变实际的车间设备状态。
-- 你不能直接询问"设备 s 是否能在产能最大化方案中被投入使用"。
-
-当你收集足够信息后，请提交最终判定。若答案错误或格式不符，排产失败。
-
-## 询问与提交答案的格式（必须严格遵守）
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 兼容查询：
-<query_edge>A,B</query_edge>
-
-- 全局最大生产线规模查询：
-<query_global_matching></query_global_matching>
-
-- 强制组合的最大生产线规模查询：
-<query_force_edge>A,B</query_force_edge>
-
-- 禁用组合的最大生产线规模查询：
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- 停用设备的最大生产线规模查询：
-<query_remove_vertex>A</query_remove_vertex>
-
-最终判定核心设备 s 是否能在最大化方案中被投入使用：
-<answer>是</answer> 或 <answer>否</answer>
+- 探测查询的次数有限，请谨慎使用
+- 最终声明必须同时给出方案类型和目标路径的总核算成本
+- 若声明错误或超出查询次数限制，核算失败
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Maximum Collaborative Production Line Coverage Determination" system for smart manufacturing workshops. The rules are as follows:
+[Manufacturing/Industry Scenario]
+Welcome to the "Supply Chain Assembly Cost Accounting" system.
 
-The system defines a finite equipment interface network graph G=(V,E), where the vertex set V contains {n} processing machines, labeled as {vertices}. There are several compatible interface combinations (edges) between them, but the specific physical compatibility is hidden from you. We have selected a core high-value machine s={target}.
+The system features a tree-structured supply chain/assembly network with workstations numbered 1 to {n}, where Workstation 1 is the main assembly center. The network structure and the base processing costs of each workstation are fixed. The system has secretly adopted a material flow cost accounting scheme (out of four candidates), which remains constant during your accounting process.
 
-Your goal is to determine: whether the core machine s can be put into operation in a scheduling scheme that maximizes the workshop's total capacity (i.e., establishing the maximum number of dual-machine collaborative production lines, forming a maximum matching, where each machine joins at most one line).
+Static supply chain information:
+- Workstation set: {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- Flow links: 1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- Base processing cost (weights): Station 1 is 4, Station 2 is 3, Station 3 is 5, Station 4 is 6, Station 5 is 2, Station 6 is 7, Station 7 is 1, Station 8 is 9, Station 9 is 8, Station 10 is 10
+- Supply chain tier (Main assembly center tier is 0):
+  - Tier 0: Station 1
+  - Tier 1: Stations 2, 3, 4
+  - Tier 2: Stations 5, 6, 7, 8, 10
+  - Tier 3: Station 9
+- Raw material intake stations (leaves): {{5, 7, 8, 9, 10}}
 
-You can repeatedly submit the following types of queries (one query at a time):
+Flow path definition: For any two workstations u and v, there is a unique material flow path including both u and v. Intra-station processing (u equals v) is allowed.
 
-1. Compatibility Query: Ask whether machine u and machine v have compatible interfaces to form a production line. Answer "Yes" or "No".
-2. Global Maximum Production Lines Query: Ask for the maximum number of dual-machine production lines the workshop can operate simultaneously. Answer an integer.
-3. Forced Combination Maximum Lines Query: Ask for the maximum number of lines under the constraint that machine u and v must be combined. If u=v or their interfaces are incompatible, answer "Infeasible"; otherwise, answer an integer.
-4. Forbidden Combination Maximum Lines Query: Ask for the maximum number of lines under the constraint that combining machine u and v is forbidden. Answer an integer.
-5. Machine Downtime Maximum Lines Query: Ask for the maximum number of lines the remaining workshop can operate after machine x is shut down for maintenance. Answer an integer.
+Four candidate accounting schemes:
+- Scheme A (Direct Summation): Sum of the base processing costs of all workstations on the flow path
+- Scheme B (Start & End QA Surcharge): Sum of processing costs of all workstations on the flow path, plus the costs of the origin and destination workstations as quality assurance fees
+- Scheme C (Odd Tier Double Tax): For each workstation on the path, if its tier is odd, its processing cost is calculated at double the rate; otherwise, it remains at the base cost. All are then summed
+- Scheme D (Raw Material Handling Surcharge): Sum of processing costs of all workstations on the flow path, plus the costs of all raw material intake stations (leaves) on the path
+
+Your goals:
+1. Identify which accounting scheme (A, B, C, or D) the system is currently using through probe queries.
+2. Calculate the total accounted cost for the target flow path ({target_u}, {target_v}).
+
+You can perform the following operations:
+1. Probe Query: Ask for the accounted cost of any flow path (u, v), and the system returns an integer. Use probe queries as sparingly as possible.
+2. Remaining Query: Ask how many sampling query opportunities are left.
+3. Declare: When you have enough information, submit your inferred scheme type (A, B, C, or D) and the total accounted cost of the target path.
+
+Each turn must contain only one operation tag. Use the following XML format:
+- Probe Query (e.g., querying path (2, 5)):
+<probe>2,5</probe>
+- Remaining Query (empty content):
+<remaining></remaining>
+- Declare (e.g., scheme is A, target path accounted cost is 25):
+<declare>scheme=A, value=25</declare>
 
 Note:
-- All queries are based on the same fixed equipment network graph G.
-- Constraint queries are only used for scheduling simulation and do not alter the actual workshop status.
-- You cannot directly ask "Can machine s be put into operation in the maximized scheme?".
-
-When you have collected enough information, please submit your final determination. If the answer is wrong or the format is invalid, the scheduling fails.
-
-## Query and Answer Format (must strictly follow)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Compatibility Query:
-<query_edge>A,B</query_edge>
-
-- Global Maximum Production Lines Query:
-<query_global_matching></query_global_matching>
-
-- Forced Combination Maximum Lines Query:
-<query_force_edge>A,B</query_force_edge>
-
-- Forbidden Combination Maximum Lines Query:
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- Machine Downtime Maximum Lines Query:
-<query_remove_vertex>A</query_remove_vertex>
-
-Final determination on whether core machine s can be put into operation:
-<answer>Yes</answer> or <answer>No</answer>
+- The number of probe queries is limited, use them wisely.
+- The declare operation must provide both the scheme type and the target path accounted cost.
+- If the declaration is incorrect or query limit is exceeded, the accounting fails.
 """
 
     contextualized_rule_zh_5 = """\
-大型律师事务所的“联合辩护团队最大化覆盖判定”系统，规则如下：
+欢迎进入“企业架构连带责任追溯”系统。
 
-系统设定了一个有限的律师执业网络图 G=(V,E)，其中顶点集合 V 包含 {n} 名执业律师，标识为 {vertices}。律师之间存在若干无利益冲突且专业互补的合作可能（边），但具体的互补关系对你不可见。我们已选定一名资深合伙人律师 s={target}。
+本系统设定了一个树形企业控制架构，包含编号为 1 到 {n} 的实体法人，其中实体 1 为母公司集团。架构拓扑和各个实体的基础责任基数已固定。系统秘密采用了一种责任传导计算方案（共有四种候选），该方案在整个追溯过程中保持不变。
 
-你的目标是判定：资深律师 s 是否能在律所接案规模最大化（即组建最多数量的联合双人辩护团队，形成最大匹配，每名律师最多参与一个核心案件）的排班方案中被分配到案件。
+企业架构静态信息：
+- 实体集合：{{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- 控股连接：1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- 基础责任基数（权重）：实体1为4，实体2为3，实体3为5，实体4为6，实体5为2，实体6为7，实体7为1，实体8为9，实体9为8，实体10为10
+- 分离度/深度（母公司深度为0）：
+  - 深度0：实体1
+  - 深度1：实体2、3、4
+  - 深度2：实体5、6、7、8、10
+  - 深度3：实体9
+- 前线业务实体（叶子节点）：{{5, 7, 8, 9, 10}}
 
-你可以反复提交以下类型的查询（每次仅限一个查询）：
+传导链条定义：架构中任意两个实体 u 和 v 之间存在唯一的控制权追溯链条，链条包含 u 和 v 本身，允许 u 等于 v（单实体责任）。
 
-1. 合作查询：询问律师 u 和律师 v 之间是否具备专业互补且无冲突的合作条件。回答"是"或"否"。
-2. 全局最大团队数量查询：询问当前律所最多能同时组建多少个联合辩护团队。回答一个整数。
-3. 强制合作的最大团队数量查询：询问在必须让律师 u 和 v 搭档的约束下，最多能组建多少个辩护团队。若 u=v 或不满足合作条件，回答"不可行"；否则回答整数。
-4. 禁用合作的最大团队数量查询：询问在禁止律师 u 和 v 搭档的约束下，最多能组建多少个辩护团队。回答一个整数。
-5. 律师休假的最大团队数量查询：询问在律师 x 休假后，剩余律师最多能组建多少个辩护团队。回答一个整数。
+四种候选传导计算方案：
+- 方案A（共同连带）：链条上所有实体的基础责任基数之和
+- 方案B（主事与统筹惩戒）：链条上所有实体基础责任基数之和，再加上追溯起点和终点实体的责任基数
+- 方案C（奇数分离度重点审查）：链条上每个实体，若其分离度（深度）为奇数，则责任基数按2倍计算，否则按原基数，最后求和
+- 方案D（前线业务穿透惩罚）：链条上所有实体基础责任基数之和，再加上链条中所有前线业务实体（叶子节点）的责任基数
+
+你的目标是：
+1. 通过探测查询，识别出系统当前使用的是哪一种计算方案（A、B、C 或 D）
+2. 计算目标追溯链条 ({target_u}, {target_v}) 的总责任点数
+
+你可以进行以下操作：
+1. 探测查询（Probe）：询问任意传导链条 (u, v) 的总责任点数，系统会返回一个整数。请尽可能少地使用探测查询。
+2. 剩余次数查询：询问还剩余多少次质询机会。
+3. 最终声明（Declare）：当你有足够信息时，提交你推断的方案类型（A、B、C 或 D）以及目标链条的总责任点数。
+
+每次只能包含一个操作标签。请使用以下 XML 格式：
+- 探测查询（例如查询链条 (2, 5)）：
+<probe>2,5</probe>
+- 剩余次数查询（内容为空）：
+<remaining></remaining>
+- 最终声明（例如方案为 A，目标链条责任点数为 25）：
+<declare>scheme=A, value=25</declare>
 
 注意：
-- 所有查询基于同一个固定的律师执业网络图 G。
-- 约束性查询仅用于案源分配预演，不改变律所的实际人员关系。
-- 你不能直接询问"律师 s 是否能在接案规模最大化方案中被分配"。
-
-当你收集足够信息后，请提交最终判定。若答案错误或格式不符，分配失败。
-
-## 询问与提交答案的格式（必须严格遵守）
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 合作查询：
-<query_edge>A,B</query_edge>
-
-- 全局最大团队数量查询：
-<query_global_matching></query_global_matching>
-
-- 强制合作的最大团队数量查询：
-<query_force_edge>A,B</query_force_edge>
-
-- 禁用合作的最大团队数量查询：
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- 律师休假的最大团队数量查询：
-<query_remove_vertex>A</query_remove_vertex>
-
-最终判定资深律师 s 是否能在接案最大化方案中被分配：
-<answer>是</answer> 或 <answer>否</answer>
+- 探测查询的次数有限，请谨慎使用
+- 最终声明必须同时给出方案类型和目标链条的总责任点数
+- 若声明错误或超出查询次数限制，追溯失败
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the "Maximum Joint Defense Team Coverage Determination" system for large law firms. The rules are as follows:
+[Law Scenario]
+Welcome to the "Corporate Architecture Joint Liability Tracing" system.
 
-The system defines a finite lawyer practice network graph G=(V,E), where the vertex set V contains {n} practicing lawyers, labeled as {vertices}. There are several conflict-free and professionally complementary collaborative possibilities (edges) between them, but the specific complementary relationships are hidden from you. We have selected a senior partner lawyer s={target}.
+The system features a tree-structured corporate control architecture with legal entities numbered 1 to {n}, where Entity 1 is the parent holding group. The topological structure and the base liability points of each entity are fixed. The system has secretly adopted a liability propagation calculation scheme (out of four candidates), which remains constant during your tracing process.
 
-Your goal is to determine: whether senior lawyer s can be assigned to a case in a scheduling scheme that maximizes the firm's total case intake (i.e., forming the maximum number of joint two-lawyer defense teams, forming a maximum matching, where each lawyer participates in at most one core case).
+Static corporate architecture information:
+- Entity set: {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}
+- Ownership links: 1-2, 1-3, 1-4, 2-5, 2-6, 6-9, 3-7, 3-8, 4-10
+- Base liability points (weights): Entity 1 is 4, Entity 2 is 3, Entity 3 is 5, Entity 4 is 6, Entity 5 is 2, Entity 6 is 7, Entity 7 is 1, Entity 8 is 9, Entity 9 is 8, Entity 10 is 10
+- Degree of separation/Depth (Parent group depth is 0):
+  - Depth 0: Entity 1
+  - Depth 1: Entities 2, 3, 4
+  - Depth 2: Entities 5, 6, 7, 8, 10
+  - Depth 3: Entity 9
+- Frontline operational entities (leaves): {{5, 7, 8, 9, 10}}
 
-You can repeatedly submit the following types of queries (one query at a time):
+Propagation chain definition: For any two entities u and v, there is a unique control tracing chain including both u and v. Single-entity liability (u equals v) is allowed.
 
-1. Collaboration Query: Ask whether lawyer u and lawyer v have conflict-free and complementary conditions to collaborate. Answer "Yes" or "No".
-2. Global Maximum Teams Query: Ask for the maximum number of joint defense teams the firm can form simultaneously. Answer an integer.
-3. Forced Collaboration Maximum Teams Query: Ask for the maximum number of teams under the constraint that lawyer u and v must be partnered. If u=v or conditions are not met, answer "Infeasible"; otherwise, answer an integer.
-4. Forbidden Collaboration Maximum Teams Query: Ask for the maximum number of teams under the constraint that partnering lawyer u and v is forbidden. Answer an integer.
-5. Lawyer Leave Maximum Teams Query: Ask for the maximum number of teams the remaining lawyers can form after lawyer x goes on leave. Answer an integer.
+Four candidate propagation calculation schemes:
+- Scheme A (Joint Liability): Sum of the base liability points of all entities in the chain
+- Scheme B (Principal & Coordinator Penalty): Sum of liability points of all entities in the chain, plus the points of the origin and destination entities of the tracing chain
+- Scheme C (Odd Degree Strict Audit): For each entity in the chain, if its degree of separation is odd, its liability points are doubled; otherwise, it remains at base points. All are then summed
+- Scheme D (Frontline Piercing Penalty): Sum of liability points of all entities in the chain, plus the points of all frontline operational entities (leaves) in the chain
+
+Your goals:
+1. Identify which calculation scheme (A, B, C, or D) the system is currently using through probe queries.
+2. Calculate the total liability points for the target tracing chain ({target_u}, {target_v}).
+
+You can perform the following operations:
+1. Probe Query: Ask for the total liability points of any propagation chain (u, v), and the system returns an integer. Use probe queries as sparingly as possible.
+2. Remaining Query: Ask how many inquiry opportunities are left.
+3. Declare: When you have enough information, submit your inferred scheme type (A, B, C, or D) and the total liability points of the target chain.
+
+Each turn must contain only one operation tag. Use the following XML format:
+- Probe Query (e.g., querying chain (2, 5)):
+<probe>2,5</probe>
+- Remaining Query (empty content):
+<remaining></remaining>
+- Declare (e.g., scheme is A, target chain liability points is 25):
+<declare>scheme=A, value=25</declare>
 
 Note:
-- All queries are based on the same fixed lawyer network graph G.
-- Constraint queries are only used for case allocation simulation and do not change the actual firm relationships.
-- You cannot directly ask "Can lawyer s be assigned in the maximized scheme?".
-
-When you have collected enough information, please submit your final determination. If the answer is wrong or the format is invalid, the allocation fails.
-
-## Query and Answer Format (must strictly follow)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Collaboration Query:
-<query_edge>A,B</query_edge>
-
-- Global Maximum Teams Query:
-<query_global_matching></query_global_matching>
-
-- Forced Collaboration Maximum Teams Query:
-<query_force_edge>A,B</query_force_edge>
-
-- Forbidden Collaboration Maximum Teams Query:
-<query_forbid_edge>A,B</query_forbid_edge>
-
-- Lawyer Leave Maximum Teams Query:
-<query_remove_vertex>A</query_remove_vertex>
-
-Final determination on whether senior lawyer s can be assigned:
-<answer>Yes</answer> or <answer>No</answer>
+- The number of probe queries is limited, use them wisely.
+- The declare operation must provide both the scheme type and the target chain liability points.
+- If the declaration is incorrect or query limit is exceeded, the tracing fails.
 """
 
-    tags = ["answer", "query_edge", "query_global_matching", "query_force_edge", 
-            "query_forbid_edge", "query_remove_vertex"]
-
-    # 难度配置：
-    # 1 (简单)       - 4个顶点，简单路径图，目标顶点在最大匹配中
-    # 2 (中等偏下)   - 5个顶点，星形图，目标顶点是中心（在最大匹配中）
-    # 3 (中等偏上)   - 6个顶点，简单环加一个悬挂点，目标顶点不在最大匹配中
-    # 4 (较难)       - 7个顶点，复杂图结构，需要多次查询
-    # 5 (难)         - 8个顶点，更复杂的图结构，需要综合判断
+    tags = ["probe", "remaining", "declare", "answer"]
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 4,
-                "vertices": "A,B,C,D",
-                "edges": [("A", "B"), ("B", "C"), ("C", "D")],  # 路径图 A-B-C-D
-                "target": "B",
-                "answer": "是",  # B可以在最大匹配中（例如 A-B, C-D）
-                "max_matching_size": 2,
-            },
-            2: {
-                "n": 5,
-                "vertices": "A,B,C,D,E",
-                "edges": [("A", "B"), ("A", "C"), ("A", "D"), ("A", "E")],  # 星形图，A为中心
-                "target": "A",
-                "answer": "是",  # A在最大匹配中
-                "max_matching_size": 1,
-            },
-            3: {
-                "n": 6,
-                "vertices": "A,B,C,D,E,F",
-                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"), ("E", "A")],  # 5-环，F为孤立点
-                "target": "F",
-                "answer": "否",  # F是孤立点，无法在最大匹配中被覆盖
-                "max_matching_size": 2,
-            },
-            4: {
-                "n": 7,
-                "vertices": "A,B,C,D,E,F,G",
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E"), ("E", "F"), ("E", "G")],
-                "target": "D",
-                "answer": "是",
-                "max_matching_size": 3,
-            },
-            5: {
-                "n": 8,
-                "vertices": "A,B,C,D,E,F,G,H",
-                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "A"), ("E", "F"), ("F", "G"), ("G", "H"), ("H", "E"), ("A", "E")],  # 两个4-环通过A-E连接
-                "target": "A",
-                "answer": "是",
-                "max_matching_size": 4,
-            },
+        1: {
+            "target_u": 2,
+            "target_v": 5,
+            "scheme": "A",
+            "max_probes": 5,
         },
-        "en": {
-            1: {
-                "n": 4,
-                "vertices": "A,B,C,D",
-                "edges": [("A", "B"), ("B", "C"), ("C", "D")],
-                "target": "B",
-                "answer": "Yes",
-                "max_matching_size": 2,
-            },
-            2: {
-                "n": 5,
-                "vertices": "A,B,C,D,E",
-                "edges": [("A", "B"), ("A", "C"), ("A", "D"), ("A", "E")],
-                "target": "A",
-                "answer": "Yes",
-                "max_matching_size": 1,
-            },
-            3: {
-                "n": 6,
-                "vertices": "A,B,C,D,E,F",
-                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"), ("E", "A")],
-                "target": "F",
-                "answer": "No",
-                "max_matching_size": 2,
-            },
-            4: {
-                "n": 7,
-                "vertices": "A,B,C,D,E,F,G",
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E"), ("E", "F"), ("E", "G")],
-                "target": "D",
-                "answer": "Yes",
-                "max_matching_size": 3,
-            },
-            5: {
-                "n": 8,
-                "vertices": "A,B,C,D,E,F,G,H",
-                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "A"), ("E", "F"), ("F", "G"), ("G", "H"), ("H", "E"), ("A", "E")],
-                "target": "A",
-                "answer": "Yes",
-                "max_matching_size": 4,
-            },
+        2: {
+            "target_u": 5,
+            "target_v": 7,
+            "scheme": "B",
+            "max_probes": 4,
+        },
+        3: {
+            "target_u": 2,
+            "target_v": 10,
+            "scheme": "C",
+            "max_probes": 4,
+        },
+        4: {
+            "target_u": 7,
+            "target_v": 9,
+            "scheme": "D",
+            "max_probes": 3,
+        },
+        5: {
+            "target_u": 5,
+            "target_v": 10,
+            "scheme": "C",
+            "max_probes": 3,
         },
     }
 
-    reasoning_type = "演绎推理"
-    data_structure = "图"
-
     def __init__(self, config):
+        self.edges = [
+            (1, 2), (1, 3), (1, 4),
+            (2, 5), (2, 6),
+            (6, 9),
+            (3, 7), (3, 8),
+            (4, 10)
+        ]
+        
+        self.weights = {
+            1: 4, 2: 3, 3: 5, 4: 6, 5: 2,
+            6: 7, 7: 1, 8: 9, 9: 8, 10: 10
+        }
+        
+        self.depths = {
+            1: 0,
+            2: 1, 3: 1, 4: 1,
+            5: 2, 6: 2, 7: 2, 8: 2, 10: 2,
+            9: 3
+        }
+        
+        self.leaves = {5, 7, 8, 9, 10}
+        
+        self.adj = {i: [] for i in range(1, 11)}
+        for u, v in self.edges:
+            self.adj[u].append(v)
+            self.adj[v].append(u)
+        
         super().__init__(config)
 
+    def parse(self, response: str):
+        parsed_info = super().parse(response)
+        if "declare" in parsed_info and "answer" not in parsed_info:
+            parsed_info["answer"] = parsed_info["declare"]
+        return parsed_info
+
     def _initialize_game(self):
-        lang = self.config.language
-        diff = int(self.config.difficulty)  # 防御性类型转换
-
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
-            raise KeyError(f"Unsupported difficulty: {diff}")
-
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["vertices"] = cfg["vertices"]
-        self._game_info["target"] = cfg["target"]
-
-        # 构建图结构
-        self.vertices = set(v.strip() for v in cfg["vertices"].split(","))
-        self.edges = set()
-        for u, v in cfg["edges"]:
-            # 无向图，统一存储为字典序小的在前
-            edge = tuple(sorted([u, v]))
-            self.edges.add(edge)
-
-        self.target = cfg["target"]
-        self.correct_answer = cfg["answer"]
-
-        # 构建邻接表
-        self.adj = {v: set() for v in self.vertices}
-        for u, v in self.edges:
-            self.adj[u].add(v)
-            self.adj[v].add(u)
-
-        # 动态计算最大匹配规模，确保与查询结果一致
-        self.max_matching_size = self._compute_max_matching(self.edges)
-
-    def _normalize_edge(self, u, v):
-        """将边标准化为字典序"""
-        return tuple(sorted([u.strip(), v.strip()]))
-
-    def _compute_max_matching(self, available_edges, required_edges=None):
-        """
-        计算最大匹配规模（使用增广路算法）
-        available_edges: 可用的边集合
-        required_edges: 必须包含的边集合（如果有）
-        返回：最大匹配规模，如果不可行返回 -1
-        """
-        if required_edges is None:
-            required_edges = set()
-
-        # 检查必须包含的边是否可行
-        used_vertices = set()
-        for u, v in required_edges:
-            if u == v or (u, v) not in available_edges:
-                return -1
-            if u in used_vertices or v in used_vertices:
-                return -1
-            used_vertices.add(u)
-            used_vertices.add(v)
-
-        # 构建邻接表（排除已被 required_edges 使用的顶点）
-        adj = {}
-        all_verts = set()
-        for u, v in available_edges:
-            all_verts.add(u)
-            all_verts.add(v)
-        for vert in all_verts:
-            adj[vert] = set()
-        for u, v in available_edges:
-            if (u, v) not in required_edges:
-                if u not in used_vertices and v not in used_vertices:
-                    adj.setdefault(u, set()).add(v)
-                    adj.setdefault(v, set()).add(u)
-
-        # 使用增广路（匈牙利算法变体）求解一般图的最大匹配
-        # 对于小规模图，使用暴力回溯搜索
-        free_edges = [e for e in available_edges if e not in required_edges]
-        free_edges = [(u, v) for u, v in free_edges if u not in used_vertices and v not in used_vertices]
+        diff = int(self.config.difficulty)
         
-        # 暴力搜索最大匹配（图规模 <= 8，边数很少，完全可行）
-        max_extra = self._brute_force_matching(free_edges, used_vertices.copy())
-        return len(required_edges) + max_extra
+        if diff not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported difficulty: {diff}")
+        
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        self._game_info["n"] = 10
+        self._game_info["target_u"] = cfg["target_u"]
+        self._game_info["target_v"] = cfg["target_v"]
+        
+        self.target_u = cfg["target_u"]
+        self.target_v = cfg["target_v"]
+        self.scheme = cfg["scheme"]
+        self.max_probes = cfg["max_probes"]
+        self.probe_count = 0
 
-    def _brute_force_matching(self, edges, matched_vertices):
-        """暴力搜索剩余边中的最大匹配"""
-        if not edges:
+    def _find_path(self, u, v):
+        if u == v:
+            return [u]
+        
+        from collections import deque
+        queue = deque([(u, [u])])
+        visited = {u}
+        
+        while queue:
+            node, path = queue.popleft()
+            if node == v:
+                return path
+            
+            for neighbor in self.adj[node]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, path + [neighbor]))
+        
+        return []
+
+    def _calculate_aggregation(self, u, v):
+        path = self._find_path(u, v)
+        if not path:
             return 0
         
-        # 选择第一条边，尝试包含或不包含
-        u, v = edges[0]
-        rest = edges[1:]
+        if self.scheme == "A":
+            return sum(self.weights[node] for node in path)
         
-        # 不包含这条边
-        best = self._brute_force_matching(rest, matched_vertices)
+        elif self.scheme == "B":
+            base_sum = sum(self.weights[node] for node in path)
+            return base_sum + self.weights[u] + self.weights[v]
         
-        # 包含这条边（如果两个顶点都未被匹配）
-        if u not in matched_vertices and v not in matched_vertices:
-            new_matched = matched_vertices | {u, v}
-            best = max(best, 1 + self._brute_force_matching(rest, new_matched))
+        elif self.scheme == "C":
+            total = 0
+            for node in path:
+                if self.depths[node] % 2 == 1:
+                    total += self.weights[node] * 2
+                else:
+                    total += self.weights[node]
+            return total
         
-        return best
+        elif self.scheme == "D":
+            base_sum = sum(self.weights[node] for node in path)
+            leaf_sum = sum(self.weights[node] for node in path if node in self.leaves)
+            return base_sum + leaf_sum
+        
+        return 0
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["declare"]
         
-        # 标准化答案
-        if self.config.language == "zh":
-            return raw_ans == self.correct_answer
-        else:
-            return raw_ans.lower() == self.correct_answer.lower()
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
+        
+        if "scheme" not in ans_dict or "value" not in ans_dict:
+            return False
+        
+        declared_scheme = ans_dict["scheme"].upper()
+        if declared_scheme != self.scheme:
+            return False
+        
+        try:
+            declared_value = int(ans_dict["value"])
+        except ValueError:
+            return False
+        
+        correct_value = self._calculate_aggregation(self.target_u, self.target_v)
+        
+        return declared_value == correct_value
 
     def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑处理方法"""
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            infeasible_res = "不可行"
-            error_res = "错误：无效的查询格式或顶点不存在。"
+            error_probe_limit = "错误：已超出探测查询次数限制。"
+            error_invalid_nodes = "错误：节点编号无效。"
+            error_invalid_format = "错误：格式无效。"
         else:
-            yes_res, no_res = "Yes", "No"
-            infeasible_res = "Infeasible"
-            error_res = "Error: Invalid query format or vertex does not exist."
-
-        # 优先级：按照 tags 顺序处理
-        if "query_edge" in parsed_info:
+            error_probe_limit = "Error: Probe query limit exceeded."
+            error_invalid_nodes = "Error: Invalid node IDs."
+            error_invalid_format = "Error: Invalid format."
+        
+        if "probe" in parsed_info:
+            if self.probe_count >= self.max_probes:
+                raise ValueError(error_probe_limit)
+            
             try:
-                raw = parsed_info["query_edge"]
+                raw = parsed_info["probe"].strip()
                 parts = [x.strip() for x in raw.split(",")]
                 if len(parts) != 2:
-                    return error_res
-                u, v = parts
-                if u not in self.vertices or v not in self.vertices:
-                    return error_res
-                edge = self._normalize_edge(u, v)
-                return yes_res if edge in self.edges else no_res
-            except:
-                return error_res
-
-        elif "query_global_matching" in parsed_info:
-            return str(self.max_matching_size)
-
-        elif "query_force_edge" in parsed_info:
-            try:
-                raw = parsed_info["query_force_edge"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_res
-                u, v = parts
-                if u not in self.vertices or v not in self.vertices:
-                    return error_res
-                edge = self._normalize_edge(u, v)
+                    raise ValueError(error_invalid_format)
                 
-                # 检查边是否存在以及是否是自环
-                if u == v or edge not in self.edges:
-                    return infeasible_res
+                u, v = int(parts[0]), int(parts[1])
                 
-                # 计算强制包含该边的最大匹配
-                result = self._compute_max_matching(self.edges, {edge})
-                if result == -1:
-                    return infeasible_res
-                return str(result)
-            except:
-                return error_res
-
-        elif "query_forbid_edge" in parsed_info:
-            try:
-                raw = parsed_info["query_forbid_edge"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_res
-                u, v = parts
-                if u not in self.vertices or v not in self.vertices:
-                    return error_res
-                edge = self._normalize_edge(u, v)
+                if u < 1 or u > 10 or v < 1 or v > 10:
+                    raise ValueError(error_invalid_nodes)
                 
-                # 计算禁用该边的最大匹配
-                available_edges = self.edges - {edge}
-                result = self._compute_max_matching(available_edges)
-                return str(result)
-            except:
-                return error_res
-
-        elif "query_remove_vertex" in parsed_info:
-            try:
-                vertex = parsed_info["query_remove_vertex"].strip()
-                if vertex not in self.vertices:
-                    return error_res
-                
-                # 移除顶点后的边集
-                available_edges = set()
-                for u, v in self.edges:
-                    if u != vertex and v != vertex:
-                        available_edges.add((u, v))
-                
-                result = self._compute_max_matching(available_edges)
-                return str(result)
-            except:
-                return error_res
-
+            except (ValueError, IndexError):
+                raise ValueError(error_invalid_format)
+            
+            self.probe_count += 1
+            result = self._calculate_aggregation(u, v)
+            return str(result)
+        
+        elif "remaining" in parsed_info:
+            remaining = self.max_probes - self.probe_count
+            return str(remaining)
+        
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct):
-        """根据正确答案生成一个明显不同的错误答案"""
-        # 若 correct 是纯整数字符串
-        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
+    def _cf_make_wrong(self, correct: str) -> str:
+        try:
             return str(int(correct) + 1)
-        
-        # 中文逻辑
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-        
-        # 英文逻辑 (忽略大小写，保持原始大小写风格)
-        lower_correct = correct.lower()
-        if lower_correct == "yes":
-            # 保持大小写习惯
-            return "No" if correct[0].isupper() else "no"
-        if lower_correct == "no":
-            return "Yes" if correct[0].isupper() else "yes"
-        
-        # 若都不匹配
-        return correct + "_WRONG"
+        except ValueError:
+            return correct + "1"
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
+    def get_all_possible_queries(self):
         queries = []
-        
-        # 1. 全局最大匹配规模查询
-        # <query_global_matching></query_global_matching>
-        xml_global = "<query_global_matching></query_global_matching>"
-        # 模拟 parse 后的结果
-        parsed_global = {"query_global_matching": ""}
-        ans_global = self._cf_core_produce(parsed_global)
-        queries.append({"query": xml_global, "answer": ans_global})
-        
-        # 准备顶点列表，排序以保证确定性
-        vertices = sorted(list(self.vertices))
-        n = len(vertices)
-        
-        # 2. 针对边/顶点对的查询 (邻接、强制边、禁用边)
-        # 遍历所有唯一的顶点对 (u, v)，且 u < v
-        for i in range(n):
-            for j in range(i + 1, n):
-                u = vertices[i]
-                v = vertices[j]
-                pair_str = f"{u},{v}"
-                
-                # 2.1 邻接查询
-                xml_edge = f"<query_edge>{pair_str}</query_edge>"
-                parsed_edge = {"query_edge": pair_str}
-                ans_edge = self._cf_core_produce(parsed_edge)
-                queries.append({"query": xml_edge, "answer": ans_edge})
-                
-                # 2.2 强制包含边的最大匹配规模查询
-                xml_force = f"<query_force_edge>{pair_str}</query_force_edge>"
-                parsed_force = {"query_force_edge": pair_str}
-                ans_force = self._cf_core_produce(parsed_force)
-                queries.append({"query": xml_force, "answer": ans_force})
-                
-                # 2.3 禁用边的最大匹配规模查询
-                xml_forbid = f"<query_forbid_edge>{pair_str}</query_forbid_edge>"
-                parsed_forbid = {"query_forbid_edge": pair_str}
-                ans_forbid = self._cf_core_produce(parsed_forbid)
-                queries.append({"query": xml_forbid, "answer": ans_forbid})
-                
-        # 3. 移除顶点的最大匹配规模查询
-        # 遍历所有顶点
-        for v in vertices:
-            xml_remove = f"<query_remove_vertex>{v}</query_remove_vertex>"
-            parsed_remove = {"query_remove_vertex": v}
-            ans_remove = self._cf_core_produce(parsed_remove)
-            queries.append({"query": xml_remove, "answer": ans_remove})
-            
+        seen = set()
+        for i in range(1, 11):
+            for j in range(i, 11):
+                key = (i, j)
+                if key not in seen:
+                    seen.add(key)
+                    result = self._calculate_aggregation(i, j)
+                    queries.append({
+                        "query": f"<probe>{i},{j}</probe>",
+                        "answer": str(result),
+                    })
         return queries

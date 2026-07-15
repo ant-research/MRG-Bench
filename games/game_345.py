@@ -1,894 +1,661 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   条件比例：满足某条件的元素占集合总数的比例
-# ============================================================
-
 from .base import Game
 import re
-from fractions import Fraction
 
+class TreeMaxWidthGame(Game):
 
-class AttributeSetInferenceGame(Game):
+    reasoning_type = "演绎推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们来玩一个"属性集合推断"的游戏，规则如下：
+我们现在来玩一个"树的最大层宽推理"游戏，规则如下：
 
-游戏设定了一个有限集合 S，规模为 {n}（共 {n} 个元素）。集合中每个元素可以携带三个二值属性中的任意子集：A、B、C（可能不携带任何属性，也可能同时携带全部三个属性）。属性分配在游戏开始时已固定，不会改变。
+游戏设定了一个预先固定的有限有根树，根节点的 ID 为 1。整棵树在交互开始前完全确定，交互过程中不会改变。
 
-你的目标是：推断出集合中"恰好具有两个属性"的元素数量 X（0 小于等于 X 小于等于 {n}），以及其占比 X/{n}（用最简分数表示）。
+树的定义：
+- 深度（层号）定义：根的深度为 0；任一节点的子节点深度为其父节点深度加 1。
+- 每个节点的子节点数量为非负整数，树无环且连通。
+- 节点使用唯一整数 ID 标识；除根外的所有节点仅在被揭示为某节点的子节点时首次出现。
+- 已知信息：根节点的 ID 为 1 以及以上规则。总节点数与高度未知。
 
-## 允许的查询类型
+你的目标是推断：
+1. 最大层宽 W（某一深度上的节点数的最大值）
+2. 所有达到该最大层宽的深度集合 L（去重、升序）
 
-你只能进行"并集覆盖查询"，即查询"至少具有某些属性之一"的元素的数量或比例。
+你可以反复向我提出以下三类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-允许查询的七种属性并集为：
-1. A：至少具有属性 A
-2. B：至少具有属性 B
-3. C：至少具有属性 C
-4. A 或 B：至少具有属性 A 或属性 B（或两者都有）
-5. B 或 C：至少具有属性 B 或属性 C（或两者都有）
-6. C 或 A：至少具有属性 C 或属性 A（或两者都有）
-7. A 或 B 或 C：至少具有属性 A、B、C 中的任意一个（或多个）
+1. 查询节点 X 的子节点：询问节点 X 的所有直接子节点信息。我会返回子节点数量、子节点 ID 列表以及这些子节点的深度。
+2. 查询节点 X 的深度：询问节点 X 的深度。我会返回一个非负整数。
+3. 比较节点 A 和 B 的深度：询问节点 A 与节点 B 是否在同一深度。我会回答"是"或"否"。
 
-对于每次查询，你需要声明请求返回的信息类型：
-- 数量（count）：返回满足条件的元素个数（整数）
-- 比例（ratio）：返回满足条件的元素占比（最简分数形式）
-- 两者（both）：同时返回数量和比例
+注意：
+- 只能查询已知存在的节点（根节点 1 始终已知；其他节点只有在某次查询中作为子节点被返回后才已知）。
+- 对不合法请求（未知节点、格式错误等）将返回"无效请求"。
+- 所有节点 ID 唯一且固定；子节点列表的返回顺序在重复查询中保持一致。
 
-## 禁止的查询
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-以下查询类型是不允许的，若尝试将导致游戏失败：
-- 任何交集查询（例如"同时具有 A 和 B"）
-- 任何"恰好 k 个""至少 k 个""至多 k 个"属性的查询
-- 空集或不在上述七种之列的集合
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-## 查询格式（必须严格遵守）
+- 查询节点的子节点（例如查询节点 1）：
+<query_children>1</query_children>
 
-每次只能提交一个查询，使用以下 XML 格式：
+- 查询节点的深度（例如查询节点 5）：
+<query_depth>5</query_depth>
 
-- 查询单个属性 A 的数量：
-<query>A, count</query>
+- 比较两个节点的深度（例如比较节点 2 和 3）：
+<query_compare>2,3</query_compare>
 
-- 查询属性 B 或 C 的比例：
-<query>B or C, ratio</query>
+提交最终答案时，必须说明最大层宽 W 以及达到最大层宽的深度集合 L（用逗号隔开，升序排列），格式如下：
 
-- 查询属性 A 或 B 或 C 的数量和比例：
-<query>A or B or C, both</query>
-
-注意：属性名称大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
-
-## 提交答案格式
-
-当你收集足够信息后，请提交最终答案，格式如下：
-
-<answer>count=X, ratio=X/{n}</answer>
-
-其中 X 是恰好具有两个属性的元素数量，X/{n} 是最简分数形式的比例。
-
-请尽可能少地进行查询，高效推断出答案。
+<answer>W=3, L=1,2</answer>
 """
 
     game_rule_en = """\
-Let's play an "Attribute Set Inference" game. Here are the rules:
+Let's play a "Tree Max Width Inference" game. Here are the rules:
 
-There is a finite set S with a size of {n} (containing {n} elements). Each element in the set may carry any subset of three binary attributes: A, B, C (it may carry no attributes, or all three attributes). The attribute assignments are fixed at the start and will not change.
+The game has a pre-fixed finite rooted tree with root node ID = 1. The entire tree is fully determined before interaction begins and does not change during interaction.
 
-Your goal is: to infer the count X of elements that have "exactly two attributes" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
+Tree Definition:
+- Depth (level) definition: the root has depth 0; any node's children have depth equal to their parent's depth plus 1.
+- Each node has a non-negative number of children, the tree is acyclic and connected.
+- Nodes are identified by unique integer IDs; all nodes except the root only appear when first revealed as children of some node.
+- Known information: the root node's ID is 1 and the above rules. Total node count and height are unknown.
 
-## Allowed Query Types
+Your goal is to infer:
+1. The maximum layer width W (the maximum number of nodes at any single depth)
+2. The set L of all depths that achieve this maximum layer width (deduplicated, in ascending order)
 
-You can only perform "union coverage queries", i.e., querying the count or proportion of elements that have "at least one of certain attributes".
+You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully:
 
-The seven allowed attribute unions are:
-1. A: at least has attribute A
-2. B: at least has attribute B
-3. C: at least has attribute C
-4. A or B: at least has attribute A or attribute B (or both)
-5. B or C: at least has attribute B or attribute C (or both)
-6. C or A: at least has attribute C or attribute A (or both)
-7. A or B or C: at least has any one (or more) of attributes A, B, C
+1. Query children of node X: Ask for all direct children information of node X. I will return the number of children, the list of child IDs, and the depth of these children.
+2. Query depth of node X: Ask for the depth of node X. I will return a non-negative integer.
+3. Compare depths of nodes A and B: Ask whether node A and node B are at the same depth. I will answer "Yes" or "No".
 
-For each query, you need to specify the type of information to return:
-- count: returns the number of elements satisfying the condition (integer)
-- ratio: returns the proportion of elements satisfying the condition (simplified fraction)
-- both: returns both count and ratio
+Notes:
+- You can only query nodes that are known to exist (root node 1 is always known; other nodes are only known after being returned as children in some query).
+- Invalid requests (unknown nodes, format errors, etc.) will return "Invalid request".
+- All node IDs are unique and fixed; the order of children lists remains consistent across repeated queries.
 
-## Forbidden Queries
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game is a failure.
 
-The following query types are not allowed and will cause game failure if attempted:
-- Any intersection queries (e.g., "has both A and B")
-- Any queries about "exactly k", "at least k", or "at most k" attributes
-- Empty set or sets not among the seven types above
+Each query must contain only one tag. Use the following XML format:
 
-## Query Format (must be strictly followed)
+- Query children of a node (e.g., querying node 1):
+<query_children>1</query_children>
 
-Only one query can be submitted at a time, using the following XML format:
+- Query depth of a node (e.g., querying node 5):
+<query_depth>5</query_depth>
 
-- Query the count of single attribute A:
-<query>A, count</query>
+- Compare depths of two nodes (e.g., comparing nodes 2 and 3):
+<query_compare>2,3</query_compare>
 
-- Query the ratio of attribute B or C:
-<query>B or C, ratio</query>
+When submitting the final answer, specify the maximum width W and the set of depths L that achieve maximum width (comma-separated, in ascending order), using this format:
 
-- Query both count and ratio of attribute A or B or C:
-<query>A or B or C, both</query>
-
-Note: Attribute names are case-sensitive, use "or" as connector, query type is count, ratio, or both.
-
-## Answer Submission Format
-
-When you have collected sufficient information, submit your final answer in the following format:
-
-<answer>count=X, ratio=X/{n}</answer>
-
-Where X is the count of elements with exactly two attributes, and X/{n} is the proportion in simplified fraction form.
-
-Please use as few queries as possible to efficiently infer the answer.
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_zh_1 = """\
-智能交通系统正在进行路口监控探头的能力评估。
+欢迎进入【全国物流网络分析系统】。
 
-当前区域共有 {n} 个监控探头（集合规模为 {n}）。每个探头可以搭载三种违章抓拍功能（属性）中的任意组合：A（违停抓拍）、B（超速抓拍）、C（闯红灯抓拍）。有的探头可能没有任何抓拍功能，有的可能同时搭载了三项。探头的硬件配置在评估开始时已固定，不会改变。
+系统映射了一个固定的物流分发网络（无环且连通的树状结构），总网点数与最大层级均未知。
+- 根节点（全国总仓）的 ID 为 1，层数（深度）为 0。
+- 任一下级转运中心/站点的层数等于其直属上级层数加 1。
+- 每个网点有若干或零个直属下级网点。除总仓外，其他网点仅在被查询为其上级的下属时才会显示真实 ID。
 
-你的目标是：推断出"恰好搭载了两项抓拍功能"的探头数量 X（0 小于等于 X 小于等于 {n}），以及其占探头总数的比例 X/{n}（用最简分数表示）。
+你的目标是推断出该物流网的负载峰值特征：
+1. 某一层级包含的最多网点数量 W（即网络最大层宽）
+2. 达到该最大网点数量的所有层数集合 L（去重且升序排列）
 
-## 允许的查询类型
+你可以反复向系统提交以下三类查询（每次限一个），系统将返回真实数据：
+（注：系统底层数据流使用通用术语，返回内容中将以“节点”表示网点，以“子节点”表示下级网点，以“深度”表示层数）
 
-你只能向交通数据库发起"并集覆盖查询"，即查询"至少搭载了某些抓拍功能之一"的探头的数量或比例。
+1. 查询网点的直属下属：询问网点 X 的所有直接下级网点。系统会返回下级数量、ID 列表及它们的层数。
+2. 查询网点层数：询问网点 X 距离总仓的层数。
+3. 比较网点层数：判断网点 A 和 B 是否处于同一层数。
 
-允许查询的七种功能并集为：
-1. A：至少具备 A（违停抓拍）
-2. B：至少具备 B（超速抓拍）
-3. C：至少具备 C（闯红灯抓拍）
-4. A 或 B：至少具备 A 或 B（或两者都有）
-5. B 或 C：至少具备 B 或 C（或两者都有）
-6. C 或 A：至少具备 C 或 A（或两者都有）
-7. A 或 B 或 C：至少具备 A、B、C 中的任意一项（或多项）
+注意：
+- 只能查询已知存在的网点 ID（初始仅已知总仓 1）。
+- 提交格式错误或未知 ID 会被拒绝。
+- 所有网点 ID 唯一且网络结构固定。
 
-对于每次查询，你需要声明请求返回的系统数据类型：
-- 数量（count）：返回满足条件的探头个数（整数）
-- 比例（ratio）：返回满足条件的探头占比（最简分数形式）
-- 两者（both）：同时返回数量和比例
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-## 禁止的查询
+- 查询网点的直属下属（例如查询网点 1）：
+<query_children>1</query_children>
 
-以下查询类型是不允许的，若尝试将导致系统拒绝访问（评估失败）：
-- 任何交集查询（例如"同时具备 A 和 B"）
-- 任何"恰好 k 项""至少 k 项""至多 k 项"功能的精确条件查询
-- 空集或不在上述七种之列的组合
+- 查询网点的层数（例如查询网点 5）：
+<query_depth>5</query_depth>
 
-## 查询格式（必须严格遵守）
+- 比较两个网点的层数（例如比较网点 2 和 3）：
+<query_compare>2,3</query_compare>
 
-每次只能提交一个查询，使用以下 XML 格式：
+最终提交答案时，必须说明最大网点数 W 以及达到该数量的层数集合 L（用逗号隔开，升序排列），格式如下：
 
-- 查询单个功能 A 的数量：
-<query>A, count</query>
-
-- 查询功能 B 或 C 的比例：
-<query>B or C, ratio</query>
-
-- 查询功能 A 或 B 或 C 的数量和比例：
-<query>A or B or C, both</query>
-
-注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
-
-## 提交答案格式
-
-当你收集足够信息后，请提交最终评估报告，格式如下：
-
-<answer>count=X, ratio=X/{n}</answer>
-
-其中 X 是恰好具备两项抓拍功能的探头数量，X/{n} 是最简分数形式的比例。
-
-请尽可能少地进行查询，高效推断出评估答案。
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-An intelligent transportation system is evaluating the capabilities of intersection surveillance cameras.
+Welcome to the [National Logistics Network Analysis System].
 
-There are currently {n} surveillance cameras in the area (a set size of {n}). Each camera may be equipped with any combination of three violation detection functions (attributes): A (Illegal Parking Detection), B (Speeding Detection), and C (Red Light Running Detection). Some cameras may have no detection functions, while others may have all three. The hardware configurations of the cameras are fixed at the start of the evaluation and will not change.
+The system maps a fixed logistics distribution network (an acyclic and connected tree structure). The total number of stations and the maximum tier are unknown.
+- The root node (National Main Hub) has ID 1 and a tier (depth) of 0.
+- Any subordinate transit center/station has a tier equal to its direct superior's tier plus 1.
+- Each station has a non-negative number of direct subordinate stations. Except for the main hub, other stations only appear when queried as subordinates of a known station.
 
-Your goal is: to infer the count X of cameras that are equipped with "exactly two detection functions" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
+Your goal is to infer the peak load characteristics of this logistics network:
+1. The maximum number of stations at any single tier W (i.e., maximum layer width)
+2. The set of tiers L that reach this maximum station count (deduplicated, in ascending order)
 
-## Allowed Query Types
+You can repeatedly submit the following three types of queries (one per turn), and the system will return factual data:
+(Note: The system's underlying data stream uses general terms. The returned content will use "node" for station, "child node" for subordinate station, and "depth" for tier.)
 
-You can only perform "union coverage queries" to the traffic database, i.e., querying the count or proportion of cameras that have "at least one of certain detection functions".
+1. Query direct subordinates of station X: Ask for all direct subordinate stations of station X. The system returns the count, ID list, and their tier.
+2. Query tier of station X: Ask for the tier of station X from the main hub.
+3. Compare tiers of station A and B: Ask whether station A and B are at the same tier.
 
-The seven allowed function unions are:
-1. A: at least has function A
-2. B: at least has function B
-3. C: at least has function C
-4. A or B: at least has function A or B (or both)
-5. B or C: at least has function B or C (or both)
-6. C or A: at least has function C or A (or both)
-7. A or B or C: at least has any one (or more) of functions A, B, C
+Notes:
+- You can only query station IDs that are known to exist (initially only main hub 1 is known).
+- Invalid requests or unknown IDs will be rejected.
+- All station IDs are unique and the network structure is fixed.
 
-For each query, you need to specify the type of system data to return:
-- count: returns the number of cameras satisfying the condition (integer)
-- ratio: returns the proportion of cameras satisfying the condition (simplified fraction)
-- both: returns both count and ratio
+Each query must contain only one tag. Use the following XML format:
 
-## Forbidden Queries
+- Query direct subordinates of a station (e.g., querying station 1):
+<query_children>1</query_children>
 
-The following query types are not allowed and will cause database access denial (evaluation failure) if attempted:
-- Any intersection queries (e.g., "equipped with both A and B")
-- Any exact condition queries about "exactly k", "at least k", or "at most k" functions
-- Empty set or combinations not among the seven types above
+- Query tier of a station (e.g., querying station 5):
+<query_depth>5</query_depth>
 
-## Query Format (must be strictly followed)
+- Compare tiers of two stations (e.g., comparing station 2 and 3):
+<query_compare>2,3</query_compare>
 
-Only one query can be submitted at a time, using the following XML format:
+When submitting the final answer, specify the maximum width W and the set of tiers L that achieve this maximum width (comma-separated, in ascending order), using this format:
 
-- Query the count of single function A:
-<query>A, count</query>
-
-- Query the ratio of function B or C:
-<query>B or C, ratio</query>
-
-- Query both count and ratio of function A or B or C:
-<query>A or B or C, both</query>
-
-Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
-
-## Answer Submission Format
-
-When you have collected sufficient information, submit your final evaluation report in the following format:
-
-<answer>count=X, ratio=X/{n}</answer>
-
-Where X is the count of cameras with exactly two detection functions, and X/{n} is the proportion in simplified fraction form.
-
-Please use as few queries as possible to efficiently infer the evaluation answer.
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_zh_2 = """\
-医学研究团队正在对一组临床试验患者样本进行病史分析。
+欢迎使用【流行病传播链追踪系统】。
 
-本次试验共有 {n} 名患者样本（集合规模为 {n}）。每名患者可能伴有三种基础疾病史（属性）中的任意组合：A（高血压病史）、B（糖尿病史）、C（心血管疾病史）。部分患者可能没有任何此类病史，而部分患者可能同时伴有三种病史。患者的病史档案在分析开始时已固定，不会改变。
+系统中存在一个已被完全确认的病毒传播链（无环连通的树状结构），总感染人数与最大传播代数均未知。
+- 零号病人（感染源）的 ID 为 1，其传播代数（深度）为 0。
+- 任何被感染者的传播代数等于其直接传染源的传播代数加 1。
+- 每位患者可能直接传染若干或零个人。除零号病人外，其他人仅在作为被传染者查询时首次出现。
 
-你的目标是：推断出"恰好伴有两项基础疾病史"的患者数量 X（0 小于等于 X 小于等于 {n}），以及其占样本总数的比例 X/{n}（用最简分数表示）。
+你的目标是推断出该传播链的爆发峰值：
+1. 单一传播代数中出现的最大感染人数 W（即最大层宽）
+2. 达到该最大感染人数的所有传播代数集合 L（去重且升序排列）
 
-## 允许的查询类型
+你可以反复向系统提交以下三类查询（每次限一个），系统将返回真实数据：
+（注：系统底层数据流使用通用术语，返回内容中将以“节点”表示患者，以“子节点”表示直接被传染者，以“深度”表示传播代数）
 
-你只能向医疗电子病历系统发起"并集覆盖查询"，即查询"至少伴有某几种病史之一"的患者数量或比例。
+1. 查询患者的直接传染者：询问患者 X 直接传染的所有人。系统会返回传染人数、被传染者 ID 列表以及他们的传播代数。
+2. 查询患者传播代数：询问患者 X 的传播代数。
+3. 比较患者传播代数：判断患者 A 和 B 是否属于同一传播代数。
 
-允许查询的七种病史并集为：
-1. A：至少伴有 A（高血压病史）
-2. B：至少伴有 B（糖尿病史）
-3. C：至少伴有 C（心血管疾病史）
-4. A 或 B：至少伴有 A 或 B（或两者皆有）
-5. B 或 C：至少伴有 B 或 C（或两者皆有）
-6. C 或 A：至少伴有 C 或 A（或两者皆有）
-7. A 或 B 或 C：至少伴有 A、B、C 中的任意一项（或多项）
+注意：
+- 只能查询已知的患者 ID（初始仅已知零号病人 1）。
+- 提交格式错误或未知 ID 会被拒绝。
+- 所有患者 ID 唯一且传播链固定。
 
-对于每次查询，你需要声明请求返回的统计数据类型：
-- 数量（count）：返回满足条件的患者人数（整数）
-- 比例（ratio）：返回满足条件的患者占比（最简分数形式）
-- 两者（both）：同时返回数量和比例
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-## 禁止的查询
+- 查询患者的直接被传染者（例如查询患者 1）：
+<query_children>1</query_children>
 
-以下查询类型是不允许的，若尝试将导致系统报错（分析失败）：
-- 任何交集查询（例如"同时伴有 A 和 B"）
-- 任何"恰好 k 项""至少 k 项""至多 k 项"病史的精确条件查询
-- 空集或不在上述七种之列的组合
+- 查询患者的传播代数（例如查询患者 5）：
+<query_depth>5</query_depth>
 
-## 查询格式（必须严格遵守）
+- 比较两名患者的传播代数（例如比较患者 2 和 3）：
+<query_compare>2,3</query_compare>
 
-每次只能提交一个查询，使用以下 XML 格式：
+最终提交答案时，必须说明最大感染人数 W 以及达到该人数的传播代数集合 L（用逗号隔开，升序排列），格式如下：
 
-- 查询单项病史 A 的数量：
-<query>A, count</query>
-
-- 查询病史 B 或 C 的比例：
-<query>B or C, ratio</query>
-
-- 查询病史 A 或 B 或 C 的数量和比例：
-<query>A or B or C, both</query>
-
-注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
-
-## 提交答案格式
-
-当你收集足够信息后，请提交最终分析结论，格式如下：
-
-<answer>count=X, ratio=X/{n}</answer>
-
-其中 X 是恰好伴有两项基础疾病史的患者数量，X/{n} 是最简分数形式的比例。
-
-请尽可能少地进行查询，高效推断出分析答案。
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-A medical research team is conducting a medical history analysis on a cohort of clinical trial patients.
+[Medical Scenario]
+Welcome to the [Epidemic Transmission Chain Tracking System].
 
-There are {n} patient samples in this trial (a set size of {n}). Each patient may have any combination of three underlying medical histories (attributes): A (Hypertension History), B (Diabetes History), and C (Cardiovascular Disease History). Some patients may have no such medical histories, while others may present all three. The patients' medical records are fixed at the start of the analysis and will not change.
+The system contains a fully confirmed viral transmission chain (an acyclic connected tree structure). The total number of infected individuals and the maximum generation are unknown.
+- Patient Zero (the source of infection) has ID 1 and a transmission generation (depth) of 0.
+- Any infected person's transmission generation equals their direct infector's generation plus 1.
+- Each patient may directly infect a non-negative number of people. Except for Patient Zero, others only appear when queried as infectees.
 
-Your goal is: to infer the count X of patients who have "exactly two underlying medical histories" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
+Your goal is to infer the outbreak peak of this transmission chain:
+1. The maximum number of infections in any single transmission generation W (i.e., maximum layer width)
+2. The set of generations L that reach this maximum infection count (deduplicated, in ascending order)
 
-## Allowed Query Types
+You can repeatedly submit the following three types of queries (one per turn), and the system will return factual data:
+(Note: The system's underlying data stream uses general terms. The returned content will use "node" for patient, "child node" for direct infectee, and "depth" for transmission generation.)
 
-You can only perform "union coverage queries" to the electronic medical record system, i.e., querying the count or proportion of patients who have "at least one of certain medical histories".
+1. Query direct infectees of patient X: Ask for all individuals directly infected by patient X. The system returns the count, ID list, and their transmission generation.
+2. Query generation of patient X: Ask for the transmission generation of patient X.
+3. Compare generations of patient A and B: Ask whether patient A and B belong to the same transmission generation.
 
-The seven allowed medical history unions are:
-1. A: at least has A (Hypertension History)
-2. B: at least has B (Diabetes History)
-3. C: at least has C (Cardiovascular Disease History)
-4. A or B: at least has A or B (or both)
-5. B or C: at least has B or C (or both)
-6. C or A: at least has C or A (or both)
-7. A or B or C: at least has any one (or more) of histories A, B, C
+Notes:
+- You can only query known patient IDs (initially only Patient Zero 1 is known).
+- Invalid requests or unknown IDs will be rejected.
+- All patient IDs are unique and the transmission chain is fixed.
 
-For each query, you need to specify the type of statistical data to return:
-- count: returns the number of patients satisfying the condition (integer)
-- ratio: returns the proportion of patients satisfying the condition (simplified fraction)
-- both: returns both count and ratio
+Each query must contain only one tag. Use the following XML format:
 
-## Forbidden Queries
+- Query direct infectees of a patient (e.g., querying patient 1):
+<query_children>1</query_children>
 
-The following query types are not allowed and will cause a system error (analysis failure) if attempted:
-- Any intersection queries (e.g., "has both A and B")
-- Any exact condition queries about "exactly k", "at least k", or "at most k" medical histories
-- Empty set or combinations not among the seven types above
+- Query generation of a patient (e.g., querying patient 5):
+<query_depth>5</query_depth>
 
-## Query Format (must be strictly followed)
+- Compare generations of two patients (e.g., comparing patient 2 and 3):
+<query_compare>2,3</query_compare>
 
-Only one query can be submitted at a time, using the following XML format:
+When submitting the final answer, specify the maximum infection count W and the set of generations L that achieve this count (comma-separated, in ascending order), using this format:
 
-- Query the count of a single history A:
-<query>A, count</query>
-
-- Query the ratio of history B or C:
-<query>B or C, ratio</query>
-
-- Query both count and ratio of history A or B or C:
-<query>A or B or C, both</query>
-
-Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
-
-## Answer Submission Format
-
-When you have collected sufficient information, submit your final analysis conclusion in the following format:
-
-<answer>count=X, ratio=X/{n}</answer>
-
-Where X is the count of patients with exactly two underlying medical histories, and X/{n} is the proportion in simplified fraction form.
-
-Please use as few queries as possible to efficiently infer the analysis answer.
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_zh_3 = """\
-高校科研管理处正在对校内各科研实验室的资质特征进行统计盘点。
+欢迎进入【学术传承图谱系统】。
 
-全校共有 {n} 个受评实验室（集合规模为 {n}）。每个实验室可能具备三种科研资质（属性）中的任意组合：A（国家级基金资助）、B（跨学科研究项目）、C（产学研合作基地）。有的实验室可能正处于起步阶段，不具备任何资质；有的则可能同时囊括这三项。各实验室的资质状态在盘点开始时已锁定，不会发生改变。
+系统中记录了一个固定的学者师承网络（无环连通的树状结构），总学者数与最长传承代数均未知。
+- 创始泰斗（根节点）的 ID 为 1，其学术代数（深度）为 0。
+- 任何学生的学术代数等于其直属导师的学术代数加 1。
+- 每位学者可能指导若干或零名直属学生。除创始泰斗外，其他学者仅在作为某人的学生被查询时才会显现。
 
-你的目标是：推断出"恰好具备两项科研资质"的实验室数量 X（0 小于等于 X 小于等于 {n}），以及其占总数的比例 X/{n}（用最简分数表示）。
+你的目标是推断出该学派的繁盛节点：
+1. 处于同一学术代数的最多学者人数 W（即最大层宽）
+2. 达到该最大人数的所有学术代数集合 L（去重且升序排列）
 
-## 允许的查询类型
+你可以反复向系统提交以下三类查询（每次限一个），系统将返回真实数据：
+（注：系统底层数据流使用通用术语，返回内容中将以“节点”表示学者，以“子节点”表示直属学生，以“深度”表示学术代数）
 
-你只能向科研管理系统发起"并集覆盖查询"，即查询"至少具备某几项资质之一"的实验室数量或比例。
+1. 查询学者的直属学生：询问学者 X 指导的所有直接学生。系统会返回学生数量、ID 列表及其学术代数。
+2. 查询学者的学术代数：询问学者 X 的学术代数。
+3. 比较学者学术代数：判断学者 A 和 B 是否属于同一学术代数。
 
-允许查询的七种资质并集为：
-1. A：至少具备 A（国家级基金资助）
-2. B：至少具备 B（跨学科研究项目）
-3. C：至少具备 C（产学研合作基地）
-4. A 或 B：至少具备 A 或 B（或两者皆有）
-5. B 或 C：至少具备 B 或 C（或两者皆有）
-6. C 或 A：至少具备 C 或 A（或两者皆有）
-7. A 或 B 或 C：至少具备 A、B、C 中的任意一项（或多项）
+注意：
+- 只能查询已知的学者 ID（初始仅已知创始泰斗 1）。
+- 提交格式错误或未知 ID 会被拒绝。
+- 所有学者 ID 唯一且传承网络固定。
 
-对于每次查询，你需要声明请求返回的指标类型：
-- 数量（count）：返回满足条件的实验室个数（整数）
-- 比例（ratio）：返回满足条件的实验室占比（最简分数形式）
-- 两者（both）：同时返回数量和比例
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-## 禁止的查询
+- 查询学者的直属学生（例如查询学者 1）：
+<query_children>1</query_children>
 
-以下查询类型是不允许的，若尝试将导致系统拦截（盘点失败）：
-- 任何交集查询（例如"同时具备 A 和 B"）
-- 任何"恰好 k 项""至少 k 项""至多 k 项"资质的精确条件查询
-- 空集或不在上述七种之列的组合
+- 查询学者的学术代数（例如查询学者 5）：
+<query_depth>5</query_depth>
 
-## 查询格式（必须严格遵守）
+- 比较两名学者的学术代数（例如比较学者 2 和 3）：
+<query_compare>2,3</query_compare>
 
-每次只能提交一个查询，使用以下 XML 格式：
+最终提交答案时，必须说明最大学者人数 W 以及达到该人数的学术代数集合 L（用逗号隔开，升序排列），格式如下：
 
-- 查询单项资质 A 的数量：
-<query>A, count</query>
-
-- 查询资质 B 或 C 的比例：
-<query>B or C, ratio</query>
-
-- 查询资质 A 或 B 或 C 的数量和比例：
-<query>A or B or C, both</query>
-
-注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
-
-## 提交答案格式
-
-当你收集足够信息后，请提交最终盘点结果，格式如下：
-
-<answer>count=X, ratio=X/{n}</answer>
-
-其中 X 是恰好具备两项科研资质的实验室数量，X/{n} 是最简分数形式的比例。
-
-请尽可能少地进行查询，高效推断出盘点答案。
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-The university's research management office is taking an inventory of the qualification characteristics of various research laboratories on campus.
+Welcome to the [Academic Heritage Mapping System].
 
-There are {n} laboratories under evaluation in total (a set size of {n}). Each laboratory may possess any combination of three research qualifications (attributes): A (National Fund Support), B (Interdisciplinary Project), and C (Industry-Academia Collaboration). Some starting labs may have no qualifications, while others may hold all three simultaneously. The qualification statuses of the laboratories are locked at the start of the inventory and will not change.
+The system records a fixed scholarly mentorship network (an acyclic connected tree structure). The total number of scholars and the maximum lineage generation are unknown.
+- The founding luminary (root node) has ID 1 and an academic generation (depth) of 0.
+- Any student's academic generation equals their direct mentor's generation plus 1.
+- Each scholar may advise a non-negative number of direct students. Except for the founding luminary, other scholars only appear when queried as someone's student.
 
-Your goal is: to infer the count X of laboratories that possess "exactly two research qualifications" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
+Your goal is to infer the flourishing points of this school of thought:
+1. The maximum number of scholars in any single academic generation W (i.e., maximum layer width)
+2. The set of generations L that reach this maximum scholar count (deduplicated, in ascending order)
 
-## Allowed Query Types
+You can repeatedly submit the following three types of queries (one per turn), and the system will return factual data:
+(Note: The system's underlying data stream uses general terms. The returned content will use "node" for scholar, "child node" for direct student, and "depth" for academic generation.)
 
-You can only perform "union coverage queries" to the research management system, i.e., querying the count or proportion of laboratories that have "at least one of certain qualifications".
+1. Query direct students of scholar X: Ask for all direct students advised by scholar X. The system returns the count, ID list, and their academic generation.
+2. Query generation of scholar X: Ask for the academic generation of scholar X.
+3. Compare generations of scholar A and B: Ask whether scholar A and B belong to the same academic generation.
 
-The seven allowed qualification unions are:
-1. A: at least has A (National Fund Support)
-2. B: at least has B (Interdisciplinary Project)
-3. C: at least has C (Industry-Academia Collaboration)
-4. A or B: at least has A or B (or both)
-5. B or C: at least has B or C (or both)
-6. C or A: at least has C or A (or both)
-7. A or B or C: at least has any one (or more) of qualifications A, B, C
+Notes:
+- You can only query known scholar IDs (initially only founding luminary 1 is known).
+- Invalid requests or unknown IDs will be rejected.
+- All scholar IDs are unique and the mentorship network is fixed.
 
-For each query, you need to specify the type of indicator to return:
-- count: returns the number of laboratories satisfying the condition (integer)
-- ratio: returns the proportion of laboratories satisfying the condition (simplified fraction)
-- both: returns both count and ratio
+Each query must contain only one tag. Use the following XML format:
 
-## Forbidden Queries
+- Query direct students of a scholar (e.g., querying scholar 1):
+<query_children>1</query_children>
 
-The following query types are not allowed and will be intercepted by the system (inventory failure) if attempted:
-- Any intersection queries (e.g., "possesses both A and B")
-- Any exact condition queries about "exactly k", "at least k", or "at most k" qualifications
-- Empty set or combinations not among the seven types above
+- Query generation of a scholar (e.g., querying scholar 5):
+<query_depth>5</query_depth>
 
-## Query Format (must be strictly followed)
+- Compare generations of two scholars (e.g., comparing scholar 2 and 3):
+<query_compare>2,3</query_compare>
 
-Only one query can be submitted at a time, using the following XML format:
+When submitting the final answer, specify the maximum scholar count W and the set of generations L that achieve this count (comma-separated, in ascending order), using this format:
 
-- Query the count of a single qualification A:
-<query>A, count</query>
-
-- Query the ratio of qualification B or C:
-<query>B or C, ratio</query>
-
-- Query both count and ratio of qualification A or B or C:
-<query>A or B or C, both</query>
-
-Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
-
-## Answer Submission Format
-
-When you have collected sufficient information, submit your final inventory result in the following format:
-
-<answer>count=X, ratio=X/{n}</answer>
-
-Where X is the count of laboratories with exactly two research qualifications, and X/{n} is the proportion in simplified fraction form.
-
-Please use as few queries as possible to efficiently infer the inventory answer.
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_zh_4 = """\
-智能制造工厂的质检中心正在审查批次流水线上的精密加工零件。
+欢迎使用【BOM（物料清单）层级解析系统】。
 
-当前质检批次包含 {n} 个精密零件（集合规模为 {n}）。每个零件在生产过程中可能经过了三种特殊工艺（属性）中的任意组合：A（表面抛光处理）、B（热处理强化）、C（防锈涂层覆盖）。部分零件可能仅为毛坯，未经过这些特殊处理，而部分零件可能经过了全部三道工艺。各零件的工艺记录在审查开始时已封存，不会改变。
+系统内嵌了一个预先固定的产品装配结构树（无环连通），总组件数与最大装配层级均未知。
+- 最终成品（根节点）的 ID 为 1，其装配层级（深度）为 0。
+- 任何子组件的层级等于其所属直接父组件的层级加 1。
+- 每个组件由若干或零个直接子组件装配而成。除最终成品外，其他子组件仅在作为某组件的下级BOM被查询时才会显现。
 
-你的目标是：推断出"恰好经过两道特殊工艺处理"的零件数量 X（0 小于等于 X 小于等于 {n}），以及其占批次总数的比例 X/{n}（用最简分数表示）。
+你的目标是推断出该产品装配的复杂度峰值：
+1. 单一装配层级中包含的最多组件数量 W（即最大层宽）
+2. 达到该最大组件数量的所有装配层级集合 L（去重且升序排列）
 
-## 允许的查询类型
+你可以反复向系统提交以下三类查询（每次限一个），系统将返回真实数据：
+（注：系统底层数据流使用通用术语，返回内容中将以“节点”表示组件，以“子节点”表示直接子组件，以“深度”表示装配层级）
 
-你只能向生产控制系统（MES）发起"并集覆盖查询"，即查询"至少经过某几道特殊工艺之一"的零件数量或比例。
+1. 查询组件的直接子组件：询问组件 X 包含的所有直接下级物料。系统会返回子组件数量、ID 列表及它们的装配层级。
+2. 查询组件装配层级：询问组件 X 的装配层级。
+3. 比较组件装配层级：判断组件 A 和 B 是否位于同一装配层级。
 
-允许查询的七种工艺并集为：
-1. A：至少经过 A（表面抛光处理）
-2. B：至少经过 B（热处理强化）
-3. C：至少经过 C（防锈涂层覆盖）
-4. A 或 B：至少经过 A 或 B（或两者皆有）
-5. B 或 C：至少经过 B 或 C（或两者皆有）
-6. C 或 A：至少经过 C 或 A（或两者皆有）
-7. A 或 B 或 C：至少经过 A、B、C 中的任意一道（或多道）
+注意：
+- 只能查询已知存在的组件 ID（初始仅已知最终成品 1）。
+- 提交格式错误或未知 ID 会被拒绝。
+- 所有组件 ID 唯一且BOM结构固定。
 
-对于每次查询，你需要声明请求返回的质检参数类型：
-- 数量（count）：返回满足条件的零件个数（整数）
-- 比例（ratio）：返回满足条件的零件占比（最简分数形式）
-- 两者（both）：同时返回数量和比例
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-## 禁止的查询
+- 查询组件的直接子组件（例如查询组件 1）：
+<query_children>1</query_children>
 
-以下查询类型是不允许的，若尝试将导致 MES 系统阻断（审查失败）：
-- 任何交集查询（例如"同时经过 A 和 B"）
-- 任何"恰好 k 道""至少 k 道""至多 k 道"工艺的精确条件查询
-- 空集或不在上述七种之列的组合
+- 查询组件的层级（例如查询组件 5）：
+<query_depth>5</query_depth>
 
-## 查询格式（必须严格遵守）
+- 比较两个组件的层级（例如比较组件 2 和 3）：
+<query_compare>2,3</query_compare>
 
-每次只能提交一个查询，使用以下 XML 格式：
+最终提交答案时，必须说明最大组件数 W 以及达到该数量的装配层级集合 L（用逗号隔开，升序排列），格式如下：
 
-- 查询单一工艺 A 的数量：
-<query>A, count</query>
-
-- 查询工艺 B 或 C 的比例：
-<query>B or C, ratio</query>
-
-- 查询工艺 A 或 B 或 C 的数量和比例：
-<query>A or B or C, both</query>
-
-注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
-
-## 提交答案格式
-
-当你收集足够信息后，请提交最终质检报告，格式如下：
-
-<answer>count=X, ratio=X/{n}</answer>
-
-其中 X 是恰好经过两道特殊工艺处理的零件数量，X/{n} 是最简分数形式的比例。
-
-请尽可能少地进行查询，高效推断出质检答案。
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-The quality inspection center of a smart manufacturing plant is reviewing precision machined parts from an assembly line batch.
+[Manufacturing/Industry Scenario]
+Welcome to the [BOM (Bill of Materials) Level Analysis System].
 
-The current inspection batch contains {n} precision parts (a set size of {n}). Each part may have undergone any combination of three special processes (attributes) during production: A (Surface Polishing), B (Heat Treatment), and C (Anti-rust Coating). Some parts may be roughcast without these treatments, while others may have undergone all three processes. The process records for each part are sealed at the start of the review and will not change.
+The system embeds a pre-fixed product assembly structure tree (acyclic and connected). The total number of components and the maximum assembly level are unknown.
+- The final assembled product (root node) has ID 1 and an assembly level (depth) of 0.
+- Any subcomponent's level equals its direct parent component's level plus 1.
+- Each component is assembled from a non-negative number of direct subcomponents. Except for the final product, other subcomponents only appear when queried as a lower-level BOM of a known component.
 
-Your goal is: to infer the count X of parts that have undergone "exactly two special processes" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
+Your goal is to infer the complexity peak of this product assembly:
+1. The maximum number of components at any single assembly level W (i.e., maximum layer width)
+2. The set of assembly levels L that reach this maximum component count (deduplicated, in ascending order)
 
-## Allowed Query Types
+You can repeatedly submit the following three types of queries (one per turn), and the system will return factual data:
+(Note: The system's underlying data stream uses general terms. The returned content will use "node" for component, "child node" for direct subcomponent, and "depth" for assembly level.)
 
-You can only perform "union coverage queries" to the Manufacturing Execution System (MES), i.e., querying the count or proportion of parts that have "undergone at least one of certain special processes".
+1. Query direct subcomponents of component X: Ask for all direct lower-level materials comprising component X. The system returns the count, ID list, and their assembly level.
+2. Query level of component X: Ask for the assembly level of component X.
+3. Compare levels of component A and B: Ask whether component A and B are at the same assembly level.
 
-The seven allowed process unions are:
-1. A: at least undergone A (Surface Polishing)
-2. B: at least undergone B (Heat Treatment)
-3. C: at least undergone C (Anti-rust Coating)
-4. A or B: at least undergone A or B (or both)
-5. B or C: at least undergone B or C (or both)
-6. C or A: at least undergone C or A (or both)
-7. A or B or C: at least undergone any one (or more) of processes A, B, C
+Notes:
+- You can only query known component IDs (initially only final product 1 is known).
+- Invalid requests or unknown IDs will be rejected.
+- All component IDs are unique and the BOM structure is fixed.
 
-For each query, you need to specify the type of quality inspection parameter to return:
-- count: returns the number of parts satisfying the condition (integer)
-- ratio: returns the proportion of parts satisfying the condition (simplified fraction)
-- both: returns both count and ratio
+Each query must contain only one tag. Use the following XML format:
 
-## Forbidden Queries
+- Query direct subcomponents of a component (e.g., querying component 1):
+<query_children>1</query_children>
 
-The following query types are not allowed and will be blocked by the MES system (review failure) if attempted:
-- Any intersection queries (e.g., "undergone both A and B")
-- Any exact condition queries about "exactly k", "at least k", or "at most k" processes
-- Empty set or combinations not among the seven types above
+- Query level of a component (e.g., querying component 5):
+<query_depth>5</query_depth>
 
-## Query Format (must be strictly followed)
+- Compare levels of two components (e.g., comparing component 2 and 3):
+<query_compare>2,3</query_compare>
 
-Only one query can be submitted at a time, using the following XML format:
+When submitting the final answer, specify the maximum component count W and the set of assembly levels L that achieve this count (comma-separated, in ascending order), using this format:
 
-- Query the count of a single process A:
-<query>A, count</query>
-
-- Query the ratio of process B or C:
-<query>B or C, ratio</query>
-
-- Query both count and ratio of process A or B or C:
-<query>A or B or C, both</query>
-
-Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
-
-## Answer Submission Format
-
-When you have collected sufficient information, submit your final inspection report in the following format:
-
-<answer>count=X, ratio=X/{n}</answer>
-
-Where X is the count of parts that have undergone exactly two special processes, and X/{n} is the proportion in simplified fraction form.
-
-Please use as few queries as possible to efficiently infer the inspection answer.
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_zh_5 = """\
-法院司法数据中心正在对一批处于审理阶段的复杂商业纠纷案件进行卷宗归类。
+欢迎使用【企业股权穿透核查系统】。
 
-当前批次共有 {n} 宗案件（集合规模为 {n}）。每宗案件的诉状中可能涉及三种特定法律争议（属性）中的任意组合：A（涉及知识产权争议）、B（涉及跨国贸易条款）、C（涉及垄断经营行为）。有的案件可能仅涉及常规违约，未包含上述争议；有的重大案件则可能同时牵涉这三项争议。案卷的争议定性在归类工作开始时已固化，不会改变。
+系统锁定了一个复杂的集团控股网络（无环连通的树状结构），总公司数量与最大控股层级均未知。
+- 集团最终控股母公司（根节点）的 ID 为 1，其控股层级（深度）为 0。
+- 任何子公司的层级等于其直接控股母公司的层级加 1。
+- 每家公司可能直接控股若干或零家子公司。除最终控股母公司外，其他企业仅在作为某公司的直接控股子公司被查询时才会显露。
 
-你的目标是：推断出"恰好具备两项争议特征"的案件数量 X（0 小于等于 X 小于等于 {n}），以及其占案件总数的比例 X/{n}（用最简分数表示）。
+你的目标是推断出该集团的架构扩张特征：
+1. 处于同一控股层级的最多子公司数量 W（即最大层宽）
+2. 达到该最大企业数量的所有控股层级集合 L（去重且升序排列）
 
-## 允许的查询类型
+你可以反复向系统提交以下三类查询（每次限一个），系统将返回真实数据：
+（注：系统底层数据流使用通用术语，返回内容中将以“节点”表示企业，以“子节点”表示直接控股子公司，以“深度”表示控股层级）
 
-你只能向司法数据系统发起"并集覆盖查询"，即查询"至少涉及某几项法律争议之一"的案件数量或比例。
+1. 查询企业的直接控股子公司：询问企业 X 直接持股的所有子公司。系统会返回子公司数量、ID 列表及它们的控股层级。
+2. 查询企业控股层级：询问企业 X 的控股层级。
+3. 比较企业控股层级：判断企业 A 和 B 是否位于同一控股层级。
 
-允许查询的七种争议并集为：
-1. A：至少涉及 A（知识产权争议）
-2. B：至少涉及 B（跨国贸易条款）
-3. C：至少涉及 C（垄断经营行为）
-4. A 或 B：至少涉及 A 或 B（或两者皆有）
-5. B 或 C：至少涉及 B 或 C（或两者皆有）
-6. C 或 A：至少涉及 C 或 A（或两者皆有）
-7. A 或 B 或 C：至少涉及 A、B、C 中的任意一项（或多项）
+注意：
+- 只能查询已知的企业 ID（初始仅已知最终母公司 1）。
+- 提交格式错误或未知 ID 会被拒绝。
+- 所有企业 ID 唯一且股权网络固定。
 
-对于每次查询，你需要声明请求返回的数据视图类型：
-- 数量（count）：返回满足条件的案件宗数（整数）
-- 比例（ratio）：返回满足条件的案件占比（最简分数形式）
-- 两者（both）：同时返回数量和比例
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-## 禁止的查询
+- 查询企业的直接控股子公司（例如查询企业 1）：
+<query_children>1</query_children>
 
-以下查询类型是不允许的，若尝试将导致系统驳回请求（归类失败）：
-- 任何交集查询（例如"同时涉及 A 和 B"）
-- 任何"恰好牵涉 k 项""至少牵涉 k 项""至多牵涉 k 项"争议的精确条件查询
-- 空集或不在上述七种之列的组合
+- 查询企业的控股层级（例如查询企业 5）：
+<query_depth>5</query_depth>
 
-## 查询格式（必须严格遵守）
+- 比较两家企业的控股层级（例如比较企业 2 和 3）：
+<query_compare>2,3</query_compare>
 
-每次只能提交一个查询，使用以下 XML 格式：
+最终提交答案时，必须说明最大企业数量 W 以及达到该数量的控股层级集合 L（用逗号隔开，升序排列），格式如下：
 
-- 查询单一争议 A 的数量：
-<query>A, count</query>
-
-- 查询争议 B 或 C 的比例：
-<query>B or C, ratio</query>
-
-- 查询争议 A 或 B 或 C 的数量和比例：
-<query>A or B or C, both</query>
-
-注意：属性名称 A、B、C 大小写敏感，连接词使用"or"，查询类型为 count、ratio 或 both。
-
-## 提交答案格式
-
-当你收集足够信息后，请提交最终的卷宗归类结论，格式如下：
-
-<answer>count=X, ratio=X/{n}</answer>
-
-其中 X 是恰好具备两项争议特征的案件数量，X/{n} 是最简分数形式的比例。
-
-请尽可能少地进行查询，高效推断出归类答案。
+<answer>W=3, L=1,2</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-The court's judicial data center is classifying the dossiers of a batch of complex commercial dispute cases currently under trial.
+[Law Scenario]
+Welcome to the [Corporate Equity Penetration Verification System].
 
-There are {n} cases in the current batch (a set size of {n}). The complaint for each case may involve any combination of three specific legal disputes (attributes): A (Intellectual Property Dispute), B (Cross-border Trade Clause), and C (Monopoly Behavior). Some cases may only involve conventional breaches of contract without these specific disputes, while some major cases might entangle all three. The qualitative nature of the disputes in the dossiers is fixed at the start of the classification and will not change.
+The system has locked onto a complex group holding network (an acyclic connected tree structure). The total number of companies and the maximum ownership tier are unknown.
+- The ultimate parent holding company (root node) has ID 1 and an ownership tier (depth) of 0.
+- Any subsidiary's tier equals its direct parent company's tier plus 1.
+- Each company may directly hold a non-negative number of subsidiaries. Except for the ultimate parent, other entities only appear when queried as a direct subsidiary of a known company.
 
-Your goal is: to infer the count X of cases that have "exactly two dispute characteristics" (0 less than or equal to X less than or equal to {n}), and their proportion X/{n} (expressed as a simplified fraction).
+Your goal is to infer the structural expansion characteristics of this corporate group:
+1. The maximum number of subsidiaries at any single ownership tier W (i.e., maximum layer width)
+2. The set of ownership tiers L that reach this maximum company count (deduplicated, in ascending order)
 
-## Allowed Query Types
+You can repeatedly submit the following three types of queries (one per turn), and the system will return factual data:
+(Note: The system's underlying data stream uses general terms. The returned content will use "node" for company, "child node" for direct subsidiary, and "depth" for ownership tier.)
 
-You can only perform "union coverage queries" to the judicial data system, i.e., querying the count or proportion of cases that "involve at least one of certain legal disputes".
+1. Query direct subsidiaries of company X: Ask for all subsidiaries directly held by company X. The system returns the count, ID list, and their ownership tier.
+2. Query tier of company X: Ask for the ownership tier of company X.
+3. Compare tiers of company A and B: Ask whether company A and B are at the same ownership tier.
 
-The seven allowed dispute unions are:
-1. A: at least involves A (Intellectual Property Dispute)
-2. B: at least involves B (Cross-border Trade Clause)
-3. C: at least involves C (Monopoly Behavior)
-4. A or B: at least involves A or B (or both)
-5. B or C: at least involves B or C (or both)
-6. C or A: at least involves C or A (or both)
-7. A or B or C: at least involves any one (or more) of disputes A, B, C
+Notes:
+- You can only query known company IDs (initially only ultimate parent 1 is known).
+- Invalid requests or unknown IDs will be rejected.
+- All company IDs are unique and the equity network is fixed.
 
-For each query, you need to specify the type of data view to return:
-- count: returns the number of cases satisfying the condition (integer)
-- ratio: returns the proportion of cases satisfying the condition (simplified fraction)
-- both: returns both count and ratio
+Each query must contain only one tag. Use the following XML format:
 
-## Forbidden Queries
+- Query direct subsidiaries of a company (e.g., querying company 1):
+<query_children>1</query_children>
 
-The following query types are not allowed and will result in the system rejecting the request (classification failure) if attempted:
-- Any intersection queries (e.g., "involves both A and B")
-- Any exact condition queries about "exactly involving k", "at least involving k", or "at most involving k" disputes
-- Empty set or combinations not among the seven types above
+- Query tier of a company (e.g., querying company 5):
+<query_depth>5</query_depth>
 
-## Query Format (must be strictly followed)
+- Compare tiers of two companies (e.g., comparing company 2 and 3):
+<query_compare>2,3</query_compare>
 
-Only one query can be submitted at a time, using the following XML format:
+When submitting the final answer, specify the maximum company count W and the set of ownership tiers L that achieve this count (comma-separated, in ascending order), using this format:
 
-- Query the count of a single dispute A:
-<query>A, count</query>
-
-- Query the ratio of dispute B or C:
-<query>B or C, ratio</query>
-
-- Query both count and ratio of dispute A or B or C:
-<query>A or B or C, both</query>
-
-Note: Attribute names A, B, C are case-sensitive, use "or" as connector, query type is count, ratio, or both.
-
-## Answer Submission Format
-
-When you have collected sufficient information, submit your final dossier classification conclusion in the following format:
-
-<answer>count=X, ratio=X/{n}</answer>
-
-Where X is the count of cases with exactly two dispute characteristics, and X/{n} is the proportion in simplified fraction form.
-
-Please use as few queries as possible to efficiently infer the classification answer.
+<answer>W=3, L=1,2</answer>
 """
 
-    tags = ["answer", "query"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "集合"
+    tags = ["answer", "query_children", "query_depth", "query_compare"]
 
-    # 难度配置：难度越高，集合规模越大，属性分配越复杂
-    # 每个难度都预设了固定的属性分配，确保游戏可重现
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {  # 简单：N=5，简单分配
-                "n": 5,
-                # 元素1: A,B; 元素2: B,C; 元素3: A; 元素4: C; 元素5: A,B,C
-                # 恰好两个属性: 1,2 => X=2
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["B", "C"],
-                    "3": ["A"],
-                    "4": ["C"],
-                    "5": ["A", "B", "C"],
+            1: {
+                "tree": {
+                    1: {"children": [2, 3], "depth": 0},
+                    2: {"children": [4], "depth": 1},
+                    3: {"children": [5], "depth": 1},
+                    4: {"children": [], "depth": 2},
+                    5: {"children": [], "depth": 2},
                 },
+                "answer_W": 2,
+                "answer_L": [1, 2],
             },
-            2: {  # 中等偏下：N=8
-                "n": 8,
-                # 元素1: A,B; 元素2: B,C; 元素3: C,A; 元素4: A; 
-                # 元素5: B; 元素6: C; 元素7: A,B,C; 元素8: 无
-                # 恰好两个属性: 1,2,3 => X=3
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["B", "C"],
-                    "3": ["C", "A"],
-                    "4": ["A"],
-                    "5": ["B"],
-                    "6": ["C"],
-                    "7": ["A", "B", "C"],
-                    "8": [],
+            2: {
+                "tree": {
+                    1: {"children": [2, 3, 4], "depth": 0},
+                    2: {"children": [5], "depth": 1},
+                    3: {"children": [6], "depth": 1},
+                    4: {"children": [], "depth": 1},
+                    5: {"children": [], "depth": 2},
+                    6: {"children": [], "depth": 2},
                 },
+                "answer_W": 3,
+                "answer_L": [1],
             },
-            3: {  # 中等偏上：N=10
-                "n": 10,
-                # 元素1-2: A,B; 元素3-4: B,C; 元素5: C,A; 元素6: A; 
-                # 元素7: B; 元素8: C; 元素9: A,B,C; 元素10: 无
-                # 恰好两个属性: 1,2,3,4,5 => X=5
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["A", "B"],
-                    "3": ["B", "C"],
-                    "4": ["B", "C"],
-                    "5": ["C", "A"],
-                    "6": ["A"],
-                    "7": ["B"],
-                    "8": ["C"],
-                    "9": ["A", "B", "C"],
-                    "10": [],
+            3: {
+                "tree": {
+                    1: {"children": [2, 3], "depth": 0},
+                    2: {"children": [4, 5], "depth": 1},
+                    3: {"children": [6, 7], "depth": 1},
+                    4: {"children": [8], "depth": 2},
+                    5: {"children": [9], "depth": 2},
+                    6: {"children": [10], "depth": 2},
+                    7: {"children": [11], "depth": 2},
+                    8: {"children": [], "depth": 3},
+                    9: {"children": [], "depth": 3},
+                    10: {"children": [], "depth": 3},
+                    11: {"children": [], "depth": 3},
                 },
+                "answer_W": 4,
+                "answer_L": [2, 3],
             },
-            4: {  # 较难：N=12
-                "n": 12,
-                # 更复杂的分配
-                # 元素1-3: A,B; 元素4-5: B,C; 元素6-7: C,A; 元素8: A; 
-                # 元素9: B; 元素10: C; 元素11-12: A,B,C
-                # 恰好两个属性: 1,2,3,4,5,6,7 => X=7
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["A", "B"],
-                    "3": ["A", "B"],
-                    "4": ["B", "C"],
-                    "5": ["B", "C"],
-                    "6": ["C", "A"],
-                    "7": ["C", "A"],
-                    "8": ["A"],
-                    "9": ["B"],
-                    "10": ["C"],
-                    "11": ["A", "B", "C"],
-                    "12": ["A", "B", "C"],
+            4: {
+                "tree": {
+                    1: {"children": [2, 3, 4], "depth": 0},
+                    2: {"children": [5, 6], "depth": 1},
+                    3: {"children": [7], "depth": 1},
+                    4: {"children": [], "depth": 1},
+                    5: {"children": [8], "depth": 2},
+                    6: {"children": [9], "depth": 2},
+                    7: {"children": [10], "depth": 2},
+                    8: {"children": [11], "depth": 3},
+                    9: {"children": [], "depth": 3},
+                    10: {"children": [], "depth": 3},
+                    11: {"children": [], "depth": 4},
                 },
+                "answer_W": 3,
+                "answer_L": [1, 2, 3],
             },
-            5: {  # 难：N=15
-                "n": 15,
-                # 最复杂的分配
-                # 元素1-4: A,B; 元素5-7: B,C; 元素8-9: C,A; 元素10-11: A; 
-                # 元素12: B; 元素13: C; 元素14-15: A,B,C
-                # 恰好两个属性: 1,2,3,4,5,6,7,8,9 => X=9
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["A", "B"],
-                    "3": ["A", "B"],
-                    "4": ["A", "B"],
-                    "5": ["B", "C"],
-                    "6": ["B", "C"],
-                    "7": ["B", "C"],
-                    "8": ["C", "A"],
-                    "9": ["C", "A"],
-                    "10": ["A"],
-                    "11": ["A"],
-                    "12": ["B"],
-                    "13": ["C"],
-                    "14": ["A", "B", "C"],
-                    "15": ["A", "B", "C"],
+            5: {
+                "tree": {
+                    1: {"children": [2, 3], "depth": 0},
+                    2: {"children": [4, 5, 6], "depth": 1},
+                    3: {"children": [7, 8], "depth": 1},
+                    4: {"children": [9], "depth": 2},
+                    5: {"children": [10], "depth": 2},
+                    6: {"children": [], "depth": 2},
+                    7: {"children": [11], "depth": 2},
+                    8: {"children": [], "depth": 2},
+                    9: {"children": [12], "depth": 3},
+                    10: {"children": [13], "depth": 3},
+                    11: {"children": [], "depth": 3},
+                    12: {"children": [], "depth": 4},
+                    13: {"children": [], "depth": 4},
                 },
+                "answer_W": 5,
+                "answer_L": [2],
             },
         },
         "en": {
             1: {
-                "n": 5,
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["B", "C"],
-                    "3": ["A"],
-                    "4": ["C"],
-                    "5": ["A", "B", "C"],
+                "tree": {
+                    1: {"children": [2, 3], "depth": 0},
+                    2: {"children": [4], "depth": 1},
+                    3: {"children": [5], "depth": 1},
+                    4: {"children": [], "depth": 2},
+                    5: {"children": [], "depth": 2},
                 },
+                "answer_W": 2,
+                "answer_L": [1, 2],
             },
             2: {
-                "n": 8,
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["B", "C"],
-                    "3": ["C", "A"],
-                    "4": ["A"],
-                    "5": ["B"],
-                    "6": ["C"],
-                    "7": ["A", "B", "C"],
-                    "8": [],
+                "tree": {
+                    1: {"children": [2, 3, 4], "depth": 0},
+                    2: {"children": [5], "depth": 1},
+                    3: {"children": [6], "depth": 1},
+                    4: {"children": [], "depth": 1},
+                    5: {"children": [], "depth": 2},
+                    6: {"children": [], "depth": 2},
                 },
+                "answer_W": 3,
+                "answer_L": [1],
             },
             3: {
-                "n": 10,
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["A", "B"],
-                    "3": ["B", "C"],
-                    "4": ["B", "C"],
-                    "5": ["C", "A"],
-                    "6": ["A"],
-                    "7": ["B"],
-                    "8": ["C"],
-                    "9": ["A", "B", "C"],
-                    "10": [],
+                "tree": {
+                    1: {"children": [2, 3], "depth": 0},
+                    2: {"children": [4, 5], "depth": 1},
+                    3: {"children": [6, 7], "depth": 1},
+                    4: {"children": [8], "depth": 2},
+                    5: {"children": [9], "depth": 2},
+                    6: {"children": [10], "depth": 2},
+                    7: {"children": [11], "depth": 2},
+                    8: {"children": [], "depth": 3},
+                    9: {"children": [], "depth": 3},
+                    10: {"children": [], "depth": 3},
+                    11: {"children": [], "depth": 3},
                 },
+                "answer_W": 4,
+                "answer_L": [2, 3],
             },
             4: {
-                "n": 12,
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["A", "B"],
-                    "3": ["A", "B"],
-                    "4": ["B", "C"],
-                    "5": ["B", "C"],
-                    "6": ["C", "A"],
-                    "7": ["C", "A"],
-                    "8": ["A"],
-                    "9": ["B"],
-                    "10": ["C"],
-                    "11": ["A", "B", "C"],
-                    "12": ["A", "B", "C"],
+                "tree": {
+                    1: {"children": [2, 3, 4], "depth": 0},
+                    2: {"children": [5, 6], "depth": 1},
+                    3: {"children": [7], "depth": 1},
+                    4: {"children": [], "depth": 1},
+                    5: {"children": [8], "depth": 2},
+                    6: {"children": [9], "depth": 2},
+                    7: {"children": [10], "depth": 2},
+                    8: {"children": [11], "depth": 3},
+                    9: {"children": [], "depth": 3},
+                    10: {"children": [], "depth": 3},
+                    11: {"children": [], "depth": 4},
                 },
+                "answer_W": 3,
+                "answer_L": [1, 2, 3],
             },
             5: {
-                "n": 15,
-                "attributes": {
-                    "1": ["A", "B"],
-                    "2": ["A", "B"],
-                    "3": ["A", "B"],
-                    "4": ["A", "B"],
-                    "5": ["B", "C"],
-                    "6": ["B", "C"],
-                    "7": ["B", "C"],
-                    "8": ["C", "A"],
-                    "9": ["C", "A"],
-                    "10": ["A"],
-                    "11": ["A"],
-                    "12": ["B"],
-                    "13": ["C"],
-                    "14": ["A", "B", "C"],
-                    "15": ["A", "B", "C"],
+                "tree": {
+                    1: {"children": [2, 3], "depth": 0},
+                    2: {"children": [4, 5, 6], "depth": 1},
+                    3: {"children": [7, 8], "depth": 1},
+                    4: {"children": [9], "depth": 2},
+                    5: {"children": [10], "depth": 2},
+                    6: {"children": [], "depth": 2},
+                    7: {"children": [11], "depth": 2},
+                    8: {"children": [], "depth": 2},
+                    9: {"children": [12], "depth": 3},
+                    10: {"children": [13], "depth": 3},
+                    11: {"children": [], "depth": 3},
+                    12: {"children": [], "depth": 4},
+                    13: {"children": [], "depth": 4},
                 },
+                "answer_W": 5,
+                "answer_L": [2],
             },
         },
     }
@@ -897,7 +664,6 @@ Please use as few queries as possible to efficiently infer the classification an
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：加载难度配置，计算真实答案"""
         lang = self.config.language
         diff = int(self.config.difficulty)
 
@@ -907,221 +673,249 @@ Please use as few queries as possible to efficiently infer the classification an
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
         
-        # 存储每个元素的属性集合
-        self.attributes = cfg["attributes"]
-        self.n = cfg["n"]
+        self.tree = cfg["tree"]
+        self.answer_W = cfg["answer_W"]
+        self.answer_L = cfg["answer_L"]
         
-        # 计算真实答案：恰好两个属性的元素数量
-        self.answer_count = 0
-        for element_id, attrs in self.attributes.items():
-            if len(attrs) == 2:  # 恰好两个属性
-                self.answer_count += 1
+        self.queried_children = set()
         
-        # 计算答案比例（最简分数）
-        self.answer_ratio = Fraction(self.answer_count, self.n)
-
-    def _parse_query(self, query_str):
-        """
-        解析查询字符串，返回 (属性集合, 查询类型)
-        例如："A or B, count" -> (["A", "B"], "count")
-        """
-        parts = [p.strip() for p in query_str.split(",")]
-        if len(parts) != 2:
-            raise ValueError("Query format error: expected 'attributes, type'")
-        
-        attr_part = parts[0].strip()
-        query_type = parts[1].strip().lower()
-        
-        if query_type not in ["count", "ratio", "both"]:
-            raise ValueError(f"Invalid query type: {query_type}")
-        
-        # 解析属性部分
-        attr_list = [a.strip() for a in re.split(r'\s+or\s+', attr_part, flags=re.IGNORECASE)]
-        
-        # 验证属性合法性
-        valid_attrs = {"A", "B", "C"}
-        for attr in attr_list:
-            if attr not in valid_attrs:
-                raise ValueError(f"Invalid attribute: {attr}")
-        
-        # 检查是否为允许的七种查询之一
-        attr_set = frozenset(attr_list)
-        allowed_sets = [
-            frozenset(["A"]),
-            frozenset(["B"]),
-            frozenset(["C"]),
-            frozenset(["A", "B"]),
-            frozenset(["B", "C"]),
-            frozenset(["C", "A"]),
-            frozenset(["A", "B", "C"]),
-        ]
-        
-        if attr_set not in allowed_sets:
-            raise ValueError(f"Query set not allowed: {attr_list}")
-        
-        return attr_list, query_type
-
-    def _compute_union_count(self, attr_list):
-        """计算满足"至少具有 attr_list 中任一属性"的元素数量"""
-        count = 0
-        for element_id, element_attrs in self.attributes.items():
-            # 检查元素是否至少具有 attr_list 中的一个属性
-            if any(attr in element_attrs for attr in attr_list):
-                count += 1
-        return count
+        self.known_nodes = {1}
 
     def evaluate(self, parsed_info):
-        """评估模型提交的答案是否正确"""
         raw_ans = parsed_info["answer"]
         
-        # 解析答案格式: count=X, ratio=X/N
         try:
-            kv_pairs = [x.strip() for x in raw_ans.split(",")]
-            ans_dict = {}
-            for kv in kv_pairs:
-                if "=" not in kv:
-                    continue
-                k, v = kv.split("=", 1)
-                ans_dict[k.strip()] = v.strip()
+            w_match = re.search(r'W\s*=\s*(\d+)', raw_ans, re.IGNORECASE)
+            l_match = re.search(r'L\s*=\s*([\d,\s]+)', raw_ans, re.IGNORECASE)
             
-            if "count" not in ans_dict or "ratio" not in ans_dict:
+            if not w_match or not l_match:
                 return False
             
-            # 检查数量
-            model_count = int(ans_dict["count"])
-            if model_count != self.answer_count:
-                return False
+            model_W = int(w_match.group(1))
+            model_L_str = l_match.group(1).strip()
+            model_L = sorted([int(x.strip()) for x in model_L_str.split(",") if x.strip()])
             
-            # 检查比例（解析分数）
-            model_ratio_str = ans_dict["ratio"]
-            # 可能的格式: "2/5" 或 "2 / 5"
-            ratio_parts = model_ratio_str.replace(" ", "").split("/")
-            if len(ratio_parts) != 2:
-                return False
-            model_ratio = Fraction(int(ratio_parts[0]), int(ratio_parts[1]))
-            
-            return model_ratio == self.answer_ratio
+            return model_W == self.answer_W and model_L == self.answer_L
             
         except Exception:
             return False
 
+    def _cf_make_wrong(self, correct: str) -> str:
+        is_zh = (self.config.language == "zh")
+        yes_res = "是" if is_zh else "Yes"
+        no_res = "否" if is_zh else "No"
+        
+        if correct.strip() in (yes_res, no_res):
+            return no_res if correct.strip() == yes_res else yes_res
+        
+        if correct.strip().isdigit():
+            d = int(correct.strip())
+            wrong_d = d + 1
+            return str(wrong_d)
+        
+        if is_zh:
+            m = re.search(r'有 (\d+) 个子节点：\[(.*?)\]', correct)
+            if m:
+                orig_count = int(m.group(1))
+                children_str = m.group(2)
+                children_list = [c.strip() for c in children_str.split(",") if c.strip()]
+                if orig_count > 1 and len(children_list) > 1:
+                    wrong_children = children_list[:-1]
+                    wrong_count = len(wrong_children)
+                    wrong_children_str = ",".join(wrong_children)
+                    return correct.replace(
+                        f"有 {orig_count} 个子节点：[{children_str}]",
+                        f"有 {wrong_count} 个子节点：[{wrong_children_str}]",
+                        1
+                    )
+                else:
+                    wrong_count = orig_count + 1
+                    wrong_children_str = children_str + ",999" if children_str else "999"
+                    return correct.replace(
+                        f"有 {orig_count} 个子节点：[{children_str}]",
+                        f"有 {wrong_count} 个子节点：[{wrong_children_str}]",
+                        1
+                    )
+            if "没有子节点" in correct:
+                return correct.replace("没有子节点（叶子节点）", "有 1 个子节点：[999]", 1)
+        else:
+            m = re.search(r'has (\d+) children: \[(.*?)\]', correct)
+            if m:
+                orig_count = int(m.group(1))
+                children_str = m.group(2)
+                children_list = [c.strip() for c in children_str.split(",") if c.strip()]
+                if orig_count > 1 and len(children_list) > 1:
+                    wrong_children = children_list[:-1]
+                    wrong_count = len(wrong_children)
+                    wrong_children_str = ",".join(wrong_children)
+                    return correct.replace(
+                        f"has {orig_count} children: [{children_str}]",
+                        f"has {wrong_count} children: [{wrong_children_str}]",
+                        1
+                    )
+                else:
+                    wrong_count = orig_count + 1
+                    wrong_children_str = children_str + ",999" if children_str else "999"
+                    return correct.replace(
+                        f"has {orig_count} children: [{children_str}]",
+                        f"has {wrong_count} children: [{wrong_children_str}]",
+                        1
+                    )
+            if "no children" in correct:
+                return correct.replace("has no children (leaf node)", "has 1 children: [999]", 1)
+        
+        return correct + (" (数据已更新)" if is_zh else " (data updated)")
+
     def _cf_core_produce(self, parsed_info):
-        """原始的响应生成逻辑"""
-        if "query" not in parsed_info:
-            raise ValueError("No query tag found.")
-        
-        query_str = parsed_info["query"]
-        attr_list, query_type = self._parse_query(query_str)
-        
-        # 计算并集覆盖的元素数量
-        count = self._compute_union_count(attr_list)
-        ratio = Fraction(count, self.n)
-        
-        # 根据查询类型返回响应
-        if query_type == "count":
-            return str(count)
-        elif query_type == "ratio":
-            return f"{ratio.numerator}/{ratio.denominator}"
-        else:  # both
-            return f"count={count}, ratio={ratio.numerator}/{ratio.denominator}"
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            invalid_node = "无效请求：节点 {} 未知或不存在。"
+            invalid_format = "无效请求：格式错误。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            invalid_node = "Invalid request: Node {} is unknown or does not exist."
+            invalid_format = "Invalid request: Format error."
+
+        if "query_children" in parsed_info:
+            try:
+                node_id = int(parsed_info["query_children"].strip())
+                
+                if node_id not in self.known_nodes:
+                    return invalid_node.format(node_id)
+                
+                if node_id not in self.tree:
+                    return invalid_node.format(node_id)
+                
+                node_info = self.tree[node_id]
+                children = node_info["children"]
+                depth = node_info["depth"]
+                
+                for child_id in children:
+                    self.known_nodes.add(child_id)
+                
+                self.queried_children.add(node_id)
+                
+                if self.config.language == "zh":
+                    if len(children) == 0:
+                        return f"节点 {node_id} 没有子节点（叶子节点），深度为 {depth}。"
+                    else:
+                        children_str = ",".join(map(str, children))
+                        return f"节点 {node_id} 有 {len(children)} 个子节点：[{children_str}]，它们的深度为 {depth + 1}。"
+                else:
+                    if len(children) == 0:
+                        return f"Node {node_id} has no children (leaf node), depth is {depth}."
+                    else:
+                        children_str = ",".join(map(str, children))
+                        return f"Node {node_id} has {len(children)} children: [{children_str}], their depth is {depth + 1}."
+                        
+            except Exception:
+                return invalid_format
+
+        elif "query_depth" in parsed_info:
+            try:
+                node_id = int(parsed_info["query_depth"].strip())
+                
+                if node_id not in self.known_nodes:
+                    return invalid_node.format(node_id)
+                
+                if node_id not in self.tree:
+                    return invalid_node.format(node_id)
+                
+                depth = self.tree[node_id]["depth"]
+                return str(depth)
+                
+            except Exception:
+                return invalid_format
+
+        elif "query_compare" in parsed_info:
+            try:
+                raw = parsed_info["query_compare"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return invalid_format
+                    
+                node_a = int(parts[0])
+                node_b = int(parts[1])
+                
+                if node_a not in self.known_nodes:
+                    return invalid_node.format(node_a)
+                if node_b not in self.known_nodes:
+                    return invalid_node.format(node_b)
+                
+                if node_a not in self.tree or node_b not in self.tree:
+                    return invalid_format
+                
+                depth_a = self.tree[node_a]["depth"]
+                depth_b = self.tree[node_b]["depth"]
+                
+                return yes_res if depth_a == depth_b else no_res
+                
+            except Exception:
+                return invalid_format
+
+        else:
+            raise ValueError("No valid query tag found.")
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
+        queries = []
         
-        # 允许查询的七种属性并集
-        allowed_attributes = [
-            "A", 
-            "B", 
-            "C", 
-            "A or B", 
-            "B or C", 
-            "C or A", 
-            "A or B or C"
-        ]
+        if not hasattr(self, "tree") or not self.tree:
+            return queries
+            
+        is_zh = (self.config.language == "zh")
+        yes_res = "是" if is_zh else "Yes"
+        no_res = "否" if is_zh else "No"
         
-        # 允许的查询类型
-        allowed_types = ["count", "ratio", "both"]
+        from collections import deque
+        visited = set()
+        queue = deque([1])
+        visited.add(1)
+        discovered_order = [1]
         
-        # 枚举所有组合
-        for attr_str in allowed_attributes:
-            for type_str in allowed_types:
-                # 构造符合 parse 方法预期的查询字符串 "Attributes, type"
-                query_content = f"{attr_str}, {type_str}"
-                
-                # 构造 parsed_info
-                parsed_info = {"query": query_content}
-                
-                # 直接调用核心计算逻辑，绕过 produce_response 的计数器
-                # _cf_core_produce 依赖 self.attributes (只读)
-                try:
-                    answer = self._cf_core_produce(parsed_info)
-                    results.append({
-                        "query": f"<query>{query_content}</query>",
-                        "answer": answer
-                    })
-                except Exception:
-                    # 如果发生异常（理论上不应发生，因为这里构造的都是合法查询），则跳过
-                    continue
-                    
-        return results
-
-    def _cf_make_wrong(self, correct):
-        """根据正确答案生成一个明显不同的错误答案"""
-        # 纯数字情况
-        if correct.isdigit():
-            val = int(correct)
-            return str(val + 1)
+        while queue:
+            node_id = queue.popleft()
+            node_info = self.tree[node_id]
+            children = node_info["children"]
+            depth = node_info["depth"]
+            
+            q_child = f"<query_children>{node_id}</query_children>"
+            if is_zh:
+                if len(children) == 0:
+                    ans_child = f"节点 {node_id} 没有子节点（叶子节点），深度为 {depth}。"
+                else:
+                    children_str = ",".join(map(str, children))
+                    ans_child = f"节点 {node_id} 有 {len(children)} 个子节点：[{children_str}]，它们的深度为 {depth + 1}。"
+            else:
+                if len(children) == 0:
+                    ans_child = f"Node {node_id} has no children (leaf node), depth is {depth}."
+                else:
+                    children_str = ",".join(map(str, children))
+                    ans_child = f"Node {node_id} has {len(children)} children: [{children_str}], their depth is {depth + 1}."
+            
+            queries.append({"query": q_child, "answer": ans_child})
+            
+            for child_id in children:
+                if child_id not in visited:
+                    visited.add(child_id)
+                    discovered_order.append(child_id)
+                    queue.append(child_id)
         
-        # 组合格式: "count=X, ratio=P/Q"
-        if "count=" in correct and "ratio=" in correct:
-            try:
-                kv_pairs = [x.strip() for x in correct.split(",")]
-                ans_dict = {}
-                for kv in kv_pairs:
-                    if "=" in kv:
-                        k, v = kv.split("=", 1)
-                        ans_dict[k.strip()] = v.strip()
-                c = int(ans_dict["count"])
-                wrong_c = c + 1
-                # 构造一个错误的比例
-                return f"count={wrong_c}, ratio={wrong_c}/{self.n}"
-            except Exception:
-                return correct + "_WRONG"
+        all_nodes = sorted(self.tree.keys())
+        for node_id in all_nodes:
+            depth = self.tree[node_id]["depth"]
+            q_depth = f"<query_depth>{node_id}</query_depth>"
+            ans_depth = str(depth)
+            queries.append({"query": q_depth, "answer": ans_depth})
         
-        # 分数格式: "P/Q"
-        if "/" in correct:
-            try:
-                parts = correct.split("/")
-                numerator = int(parts[0].strip())
-                denominator = int(parts[1].strip())
-                wrong_num = numerator + 1
-                return f"{wrong_num}/{denominator}"
-            except Exception:
-                return correct + "_WRONG"
-                
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            if "否" in correct:
-                return correct.replace("否", "是")
-        else:
-            # 简单的大小写敏感替换逻辑
-            lower_c = correct.lower()
-            if "yes" in lower_c:
-                return correct.replace("Yes", "No").replace("yes", "no").replace("YES", "NO")
-            if "no" in lower_c:
-                return correct.replace("No", "Yes").replace("no", "yes").replace("NO", "YES")
-
-        return correct + "_WRONG"
+        for i in range(len(all_nodes)):
+            for j in range(i + 1, len(all_nodes)):
+                u = all_nodes[i]
+                v = all_nodes[j]
+                q_compare = f"<query_compare>{u},{v}</query_compare>"
+                depth_u = self.tree[u]["depth"]
+                depth_v = self.tree[v]["depth"]
+                ans_compare = yes_res if depth_u == depth_v else no_res
+                queries.append({"query": q_compare, "answer": ans_compare})
+        
+        return queries

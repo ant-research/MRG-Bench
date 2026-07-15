@@ -1,482 +1,634 @@
 from .base import Game
-import random
+import re
 
-class QuadraticSequenceMaxGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
+class TreeFunctionInferenceGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"二次序列最大值"推理游戏，规则如下：
+我们来玩一个"树函数推理"游戏，规则如下：
 
-游戏设定了一个长度为 {n} 的数字序列 S，每个位置 i（i 从 1 到 {n}）的值遵循一个固定但未知的二次函数规则：
-S[i] = a·i² + b·i + c
+游戏设定了一棵有根树，共 12 个节点，编号为 1 到 12，根节点为 1。树的边结构如下：
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-其中 a, b, c 是整数系数，并且 a 不等于 0。该序列在所有位置中存在唯一的最大值。
+对于树中的任意节点 u，定义：
+- S(u)：以 u 为根的子树（包含 u 自身）的节点总数
+- D(u)：u 的后代数量，即 D(u) = S(u) - 1
 
-你的目标是找出这个最大值所在的位置编号。你可以通过以下两种方式向我提问（每次只能问一个问题）：
+我已经秘密选择了一个全局函数 F，它可能是以下三种之一：
+- 类型 alpha：F(u) = D(u)
+- 类型 beta：F(u) = 11 - D(u)（即 N-1-D(u)，其中 N=12）
+- 类型 gamma：F(u) = D(parent(u))，特别地，对于根节点 1，F(1) = 11
 
-1. 值查询：询问某个位置 i 的具体数值。我会告诉你 S[i] 的值。
-2. 比较查询：询问两个位置 i 和 j 的大小关系。我会回答：
-   - "i大于j" 表示 S[i] 大于 S[j]
-   - "i小于j" 表示 S[i] 小于 S[j]
-   - "相等" 表示 S[i] 等于 S[j]
+你的目标包含两部分，必须同时完成：
 
-请尽可能少地使用查询次数来找出答案。当你确定答案后，请提交最大值所在的位置编号。
+1. **映射判定**：确定函数 F 是 alpha、beta 还是 gamma，并提供至少两条查询记录作为证据，说明只有该映射能同时解释这些观测，而其他映射不能。
 
-## 询问与提交答案的格式（必须严格遵守）
+2. **目标节点锁定**：找出使得 S(u) = 6 的节点编号（该节点在此树中唯一存在）。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+你可以进行多轮查询，每轮可以选择以下动作之一：
 
-- 值查询（例如询问位置 5 的值）：
-<query_value>5</query_value>
+1. **节点查询**：查询某个节点 X 的函数值，我会返回 F(X) 的值。
+2. **提交判定**：当你认为已经收集到足够证据时，提交你的映射判定和目标节点。
 
-- 比较查询（例如比较位置 3 和 7）：
-<query_compare>3,7</query_compare>
+**节点查询**（例如查询节点 5）：
+<query>5</query>
 
-提交最终答案时，请给出最大值所在的位置编号，格式如下：
-<answer>5</answer>
+**提交最终答案**：
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
+
+其中：
+- mapping 必须是 alpha、beta 或 gamma 之一
+- target 是你认为满足 S(u)=6 的节点编号
+- evidence 是至少两条查询记录，格式为 [(节点1,返回值1),(节点2,返回值2),...]
+
+- 如果提交的映射判定不足以唯一确定函数类型（即无法排除其他映射），会收到失败警告。累计两次失败警告则游戏失败。
+- 如果目标节点编号错误，游戏失败。
+- 如果查询了无效的节点编号，游戏失败。
+
+请尽可能用少的查询次数完成任务。
 """
 
     game_rule_en = """\
-Let's play a "Quadratic Sequence Maximum" deduction game. Here are the rules:
+Let's play a "Tree Function Inference" game. Here are the rules:
 
-A sequence S of length {n} has been set up. Each position i (i from 1 to {n}) follows a fixed but unknown quadratic function rule:
-S[i] = a·i² + b·i + c
+The game features a rooted tree with 12 nodes, numbered 1 to 12, with node 1 as the root. The tree edges are:
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-where a, b, c are integer coefficients, and a is not equal to 0. The sequence has a unique maximum value among all positions.
+For any node u in the tree, define:
+- S(u): the size of the subtree rooted at u (including u itself)
+- D(u): the number of descendants of u, i.e., D(u) = S(u) - 1
 
-Your goal is to find the position index where this maximum value occurs. You can ask me questions in the following two ways (one question at a time):
+I have secretly chosen a global function F, which is one of the following three types:
+- Type alpha: F(u) = D(u)
+- Type beta: F(u) = 11 - D(u) (i.e., N-1-D(u), where N=12)
+- Type gamma: F(u) = D(parent(u)), and specially for root node 1, F(1) = 11
 
-1. Value Query: Ask for the specific value at position i. I will tell you the value of S[i].
-2. Comparison Query: Ask about the relationship between positions i and j. I will answer:
-   - "i greater than j" means S[i] is greater than S[j]
-   - "i less than j" means S[i] is less than S[j]
-   - "equal" means S[i] equals S[j]
+Your goal consists of two parts, both must be completed:
 
-Please use as few queries as possible to find the answer. When you are confident, submit the position index of the maximum value.
+1. **Mapping Determination**: Identify whether F is alpha, beta, or gamma, and provide at least two query records as evidence, demonstrating that only this mapping can explain all observations while others cannot.
 
-## Query and Answer Format (strictly required)
+2. **Target Node Locking**: Find the node number where S(u) = 6 (this node uniquely exists in this tree).
 
-Each query must contain only one tag. Use the following XML format:
+You can perform multiple rounds of queries. In each round, you can choose one of the following actions:
 
-- Value Query (e.g., asking for value at position 5):
-<query_value>5</query_value>
+1. **Node Query**: Query the function value of a node X, and I will return F(X).
+2. **Submit Determination**: When you believe you have collected sufficient evidence, submit your mapping determination and target node.
 
-- Comparison Query (e.g., comparing positions 3 and 7):
-<query_compare>3,7</query_compare>
+**Node Query** (e.g., querying node 5):
+<query>5</query>
 
-When submitting the final answer, provide the position index of the maximum value in this format:
-<answer>5</answer>
+**Submit Final Answer**:
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
+
+Where:
+- mapping must be one of alpha, beta, or gamma
+- target is the node number you believe satisfies S(u)=6
+- evidence is at least two query records in the format [(node1,value1),(node2,value2),...]
+
+- If the submitted mapping determination is insufficient to uniquely identify the function type (i.e., cannot exclude other mappings), you will receive a failure warning. Two cumulative failure warnings result in game failure.
+- If the target node number is incorrect, the game fails.
+- If you query an invalid node number, the game fails.
+
+Please complete the task with as few queries as possible.
 """
 
-    # ---------------- 场景 1：交通 ----------------
     contextualized_rule_zh_1 = """\
-我们来进行一项"交通拥堵瓶颈"排查任务，规则如下：
+欢迎接入“智能交通路网诊断系统”。
 
-在城市主干道上，设定了 {n} 个连续的智能红绿灯路口（编号从 1 到 {n}）。受车流分布和信号波的时空特性影响，每个路口 i 的"车流拥堵指数"遵循一个固定但未知的二次函数规律：
-拥堵指数[i] = a·i² + b·i + c
+当前我们正在分析一个由 12 个交通枢纽构成的树状拓扑路网，编号为 1 到 12，总控制中心为节点 1。路网的单向连通结构如下：
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-其中 a, b, c 是整数系数，并且 a 不等于 0。该主干道上存在唯一的拥堵指数最高的路口（即车流瓶颈）。
+对于路网中的任意枢纽 u，系统定义：
+- S(u)：以 u 为起点的下游覆盖区枢纽总数（包含 u 自身）
+- D(u)：u 的纯下游从属枢纽数量，即 D(u) = S(u) - 1
 
-你的目标是找出这个最高拥堵指数所在的路口编号。你可以通过以下两种方式向控制中心提问（每次只能问一个问题）：
+系统内置了一个全局“流量分配映射” F，它隐藏在底层并处于以下三种模式之一：
+- 类型 alpha（纯下游依赖模式）：F(u) = D(u)
+- 类型 beta（反向冗余模式）：F(u) = 11 - D(u)（即全网除控制中心外枢纽数减去下游数）
+- 类型 gamma（上游瓶颈模式）：F(u) = D(parent(u))，特别地，对于总控节点 1，F(1) = 11
 
-1. 值查询：询问某个路口 i 的具体拥堵指数。我会告诉你该路口的指数值。
-2. 比较查询：询问两个路口 i 和 j 的拥堵指数高低关系。我会回答：
-   - "i大于j" 表示路口 i 的指数大于路口 j
-   - "i小于j" 表示路口 i 的指数小于路口 j
-   - "相等" 表示两路口指数相等
+你的任务是完成系统排查，必须同时达成：
+1. **模式判定**：确定当前系统的分配映射 F 是 alpha、beta 还是 gamma，并提供至少两条探测记录作为证据，证明仅有该模式能完全符合所有观测读数。
+2. **关键枢纽锁定**：找出覆盖区枢纽总数 S(u) = 6 的分流枢纽编号（此枢纽在路网中唯一）。
 
-请尽可能少地使用查询次数来找出答案。当你确定答案后，请提交拥堵指数最高的路口编号。
+你可以进行多轮查询，每轮可以选择以下动作之一：
+1. **枢纽探测**：查询某个枢纽 X 的分配值，我会返回 F(X) 的值。
+2. **提交判定**：当你认为已经收集到足够证据时，提交你的映射判定和目标枢纽。
 
-## 询问与提交答案的格式（必须严格遵守）
+**枢纽探测**（例如探测枢纽 5）：
+<query>5</query>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+**提交最终答案**：
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- 值查询（例如询问路口 5 的指数）：
-<query_value>5</query_value>
+其中：
+- mapping 必须是 alpha、beta 或 gamma 之一
+- target 是你认为满足 S(u)=6 的枢纽编号
+- evidence 是至少两条探测记录，格式为 [(枢纽1,返回值1),(枢纽2,返回值2),...]
 
-- 比较查询（例如比较路口 3 和 7）：
-<query_compare>3,7</query_compare>
+- 如果提交的模式判定不足以唯一确定映射类型（即无法排除其他模式），会收到失败警告。累计两次失败警告则排查失败。
+- 如果目标枢纽编号错误，排查失败。
+- 如果探测了无效的枢纽编号，排查失败。
 
-提交最终答案时，请给出指数最高的路口编号，格式如下：
-<answer>5</answer>
+请尽可能用最少的探测次数完成任务。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's conduct a "Traffic Congestion Bottleneck" investigation task. Here are the rules:
+Welcome to the "Urban Traffic Network Analysis" system.
 
-On a main city road, there are {n} consecutive smart traffic light intersections (numbered 1 to {n}). Due to traffic flow distribution and signal wave spatiotemporal characteristics, the "traffic congestion index" at each intersection i follows a fixed but unknown quadratic function rule:
-Congestion Index[i] = a·i² + b·i + c
+We are analyzing a directional tree-like road network consisting of 12 critical traffic hubs, numbered 1 to 12, with the main control center as node 1. The edge connections are:
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-where a, b, c are integer coefficients, and a is not equal to 0. There is a unique intersection with the highest congestion index (the traffic bottleneck) on this road.
+For any hub u in the network, the system defines:
+- S(u): the total number of hubs in the downstream coverage zone originating from u (including u itself)
+- D(u): the number of purely downstream subordinate hubs, i.e., D(u) = S(u) - 1
 
-Your goal is to find the intersection number where this maximum congestion index occurs. You can query the control center in the following two ways (one query at a time):
+The system has a hidden global "Traffic Allocation Mapping" F, which operates in one of the following three modes:
+- Type alpha (Downstream Dependency): F(u) = D(u)
+- Type beta (Reverse Redundancy): F(u) = 11 - D(u)
+- Type gamma (Upstream Bottleneck): F(u) = D(parent(u)), and specially for control center 1, F(1) = 11
 
-1. Value Query: Ask for the specific congestion index at intersection i. I will tell you the index value.
-2. Comparison Query: Ask about the relationship between the congestion indices of intersections i and j. I will answer:
-   - "i greater than j" means intersection i's index is greater than j's
-   - "i less than j" means intersection i's index is less than j's
-   - "equal" means the indices are equal
+Your task is to complete the network diagnostics by achieving both of the following:
+1. **Mode Determination**: Identify whether F is alpha, beta, or gamma, and provide at least two probe records as evidence, demonstrating that only this mapping can explain all observations.
+2. **Key Hub Locking**: Find the hub number where the coverage zone size S(u) = 6 (this hub uniquely exists in the network).
 
-Please use as few queries as possible to find the answer. When you are confident, submit the intersection number with the highest congestion index.
+You can perform multiple rounds of queries. In each round, choose one of the following actions:
+1. **Hub Probe**: Query the allocation value of a hub X, and I will return F(X).
+2. **Submit Determination**: When you have sufficient evidence, submit your mapping determination and target hub.
 
-## Query and Answer Format (strictly required)
+**Hub Probe** (e.g., probing hub 5):
+<query>5</query>
 
-Each query must contain only one tag. Use the following XML format:
+**Submit Final Answer**:
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- Value Query (e.g., asking for the index at intersection 5):
-<query_value>5</query_value>
+Where:
+- mapping must be one of alpha, beta, or gamma
+- target is the hub number you believe satisfies S(u)=6
+- evidence is at least two probe records in the format [(hub1,value1),(hub2,value2),...]
 
-- Comparison Query (e.g., comparing intersections 3 and 7):
-<query_compare>3,7</query_compare>
+- If the submitted mode determination cannot uniquely identify the mapping type, you will receive a failure warning. Two cumulative warnings result in diagnostic failure.
+- If the target hub number is incorrect, the task fails.
+- If you probe an invalid hub number, the task fails.
 
-When submitting the final answer, provide the intersection number with the highest congestion index in this format:
-<answer>5</answer>
+Please complete the task with as few probes as possible.
 """
 
-    # ---------------- 场景 2：医疗 ----------------
     contextualized_rule_zh_2 = """\
-我们来进行一项"最佳药物剂量"探索任务，规则如下：
+欢迎使用“病原体变异溯源分析”系统。
 
-在一种新型靶向药的临床试验中，设定了 {n} 个连续的剂量梯度（编号从 1 到 {n}）。患者的"有效缓解评分"与剂量梯度 i 之间遵循一个未知的二次函数药效动力学曲线：
-缓解评分[i] = a·i² + b·i + c
+系统记录了一个具有 12 个变异毒株节点的演化树，编号 1 到 12，初始原始毒株为 1。演化传播路径如下：
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-其中 a, b, c 是整数系数，并且 a 不等于 0。试验中存在唯一的一个最佳剂量梯度，能使有效缓解评分达到峰值。
+对于任意毒株 u，定义：
+- S(u)：以 u 为起点的变异分支上的毒株总数（包含 u 自身）
+- D(u)：u 衍生出的后代毒株数量，即 D(u) = S(u) - 1
 
-你的目标是找出有效缓解评分最高的那个剂量梯度编号。你可以通过以下两种方式向系统提问（每次只能问一个问题）：
+已知该病原体的一种内在“感染力指数” F 受全局演化规律控制，可能是以下三种机制之一：
+- 类型 alpha（正向累积机制）：F(u) = D(u)
+- 类型 beta（基因守恒机制）：F(u) = 11 - D(u)
+- 类型 gamma（祖先依赖机制）：F(u) = D(parent(u))，特别地，原始毒株 F(1) = 11
 
-1. 值查询：测试某个剂量梯度 i 的具体缓解评分。我会告诉你该评分值。
-2. 比较查询：对比两个剂量梯度 i 和 j 的评分高低关系。我会回答：
-   - "i大于j" 表示剂量梯度 i 的评分大于剂量梯度 j
-   - "i小于j" 表示剂量梯度 i 的评分小于剂量梯度 j
-   - "相等" 表示两梯度评分相等
+你的溯源目标包含两部分，必须同时完成：
+1. **机制判定**：确定指数 F 的演化机制是 alpha、beta 还是 gamma，并提供至少两条测序记录作为证据，证明仅有该机制能完全解释这些观测值。
+2. **关键毒株锁定**：找出满足衍生总数 S(u) = 6 的关键分化毒株编号（此毒株在演化树中唯一存在）。
 
-请尽可能少地使用查询次数来找出答案。当你确定答案后，请提交有效缓解评分最高的剂量梯度编号。
+你可以进行多轮查询，每轮可以选择以下动作之一：
+1. **毒株测序**：查询某个毒株 X 的指数值，我会返回 F(X) 的值。
+2. **提交判定**：当你认为已经收集到足够证据时，提交你的机制判定和目标毒株。
 
-## 询问与提交答案的格式（必须严格遵守）
+**毒株测序**（例如查询毒株 5）：
+<query>5</query>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+**提交最终答案**：
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- 值查询（例如测试剂量梯度 5 的评分）：
-<query_value>5</query_value>
+其中：
+- mapping 必须是 alpha、beta 或 gamma 之一
+- target 是你认为满足 S(u)=6 的毒株编号
+- evidence 是至少两条测序记录，格式为 [(毒株1,返回值1),(毒株2,返回值2),...]
 
-- 比较查询（例如对比剂量梯度 3 和 7）：
-<query_compare>3,7</query_compare>
+- 如果提交的机制判定不足以唯一确定演化类型（即无法排除其他机制），会收到失败警告。累计两次失败警告则分析失败。
+- 如果目标毒株编号错误，分析失败。
+- 如果查询了无效的毒株编号，分析失败。
 
-提交最终答案时，请给出评分最高的剂量梯度编号，格式如下：
-<answer>5</answer>
+请尽可能用最少的测序次数完成任务。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's conduct an "Optimal Drug Dosage" exploration task. Here are the rules:
+Welcome to the "Pathogen Mutation Tracing Analysis" system.
 
-In a clinical trial for a new targeted drug, {n} consecutive dosage gradients are set (numbered 1 to {n}). The patients' "effective relief score" at dosage gradient i follows an unknown quadratic pharmacodynamic curve:
-Relief Score[i] = a·i² + b·i + c
+The system tracks an evolutionary tree of 12 mutated strain nodes, numbered 1 to 12, with the original strain as node 1. The transmission paths are:
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-where a, b, c are integer coefficients, and a is not equal to 0. There is a unique optimal dosage gradient that makes the effective relief score reach its peak.
+For any strain u, define:
+- S(u): the total number of strains in the mutation branch starting from u (including u itself)
+- D(u): the number of derived descendant strains, i.e., D(u) = S(u) - 1
 
-Your goal is to find the dosage gradient number where this maximum relief score occurs. You can query the system in the following two ways (one query at a time):
+A specific "Infectivity Index" F of the pathogen is governed by a global evolutionary law, taking one of three mechanisms:
+- Type alpha (Forward Accumulation): F(u) = D(u)
+- Type beta (Genetic Conservation): F(u) = 11 - D(u)
+- Type gamma (Ancestral Dependency): F(u) = D(parent(u)), and specially for original strain 1, F(1) = 11
 
-1. Value Query: Ask for the specific relief score at dosage gradient i. I will tell you the score value.
-2. Comparison Query: Ask about the relationship between the relief scores of gradients i and j. I will answer:
-   - "i greater than j" means gradient i's score is greater than j's
-   - "i less than j" means gradient i's score is less than j's
-   - "equal" means the scores are equal
+Your tracing goal consists of two parts, both must be achieved:
+1. **Mechanism Determination**: Identify whether F is alpha, beta, or gamma, and provide at least two sequencing records as evidence, proving only this mapping explains the observations.
+2. **Key Strain Locking**: Find the strain number where S(u) = 6 (this strain uniquely exists in the evolutionary tree).
 
-Please use as few queries as possible to find the answer. When you are confident, submit the dosage gradient number with the highest relief score.
+You can perform multiple rounds of queries. In each round, choose one of the following:
+1. **Strain Sequencing**: Query the index value of a strain X, and I will return F(X).
+2. **Submit Determination**: When you have sufficient evidence, submit your mechanism determination and target strain.
 
-## Query and Answer Format (strictly required)
+**Strain Sequencing** (e.g., querying strain 5):
+<query>5</query>
 
-Each query must contain only one tag. Use the following XML format:
+**Submit Final Answer**:
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- Value Query (e.g., asking for the score at dosage gradient 5):
-<query_value>5</query_value>
+Where:
+- mapping must be alpha, beta, or gamma
+- target is the strain number you believe satisfies S(u)=6
+- evidence is at least two sequencing records in the format [(strain1,value1),(strain2,value2),...]
 
-- Comparison Query (e.g., comparing dosage gradients 3 and 7):
-<query_compare>3,7</query_compare>
+- If the determination cannot uniquely identify the mechanism type, you will receive a failure warning. Two cumulative warnings result in failure.
+- If the target strain number is incorrect, the analysis fails.
+- If you query an invalid strain number, the analysis fails.
 
-When submitting the final answer, provide the dosage gradient number with the highest relief score in this format:
-<answer>5</answer>
+Please complete the task with minimal sequencing queries.
 """
 
-    # ---------------- 场景 3：教育 ----------------
     contextualized_rule_zh_3 = """\
-我们来进行一项"自适应学习系统"评估任务，规则如下：
+欢迎进入“课程图谱依赖关系分析”系统。
 
-在一门核心课程中，系统划分了 {n} 个连续的难度层级（编号从 1 到 {n}）。根据认知负荷理论，学生的"知识吸收效率"与难度层级 i 之间呈现一个未知的二次函数关系：
-吸收效率[i] = a·i² + b·i + c
+我们构建了一棵包含 12 个核心课程模块的先修知识树，编号 1 到 12，基础导论课为 1。先修关系如下：
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-其中 a, b, c 是整数系数，并且 a 不等于 0。存在唯一的一个难度层级，能使学生的吸收效率最大化。
+对于任意模块 u，定义：
+- S(u)：以 u 为前置的核心课程及衍生方向的总模块数（含 u 本身）
+- D(u)：u 的纯后续衍生模块数，即 D(u) = S(u) - 1
 
-你的目标是找出知识吸收效率达到最大值的那个难度层级编号。你可以通过以下两种方式向系统提问（每次只能问一个问题）：
+教务系统在分配“课程评估权重” F 时应用了三种潜在规则之一：
+- 类型 alpha（衍生广度规则）：F(u) = D(u)
+- 类型 beta（基础反哺规则）：F(u) = 11 - D(u)
+- 类型 gamma（前置依赖规则）：F(u) = D(parent(u))，特别地，基础课 F(1) = 11
 
-1. 值查询：评估某个难度层级 i 的具体吸收效率。我会告诉你该效率值。
-2. 比较查询：对比两个难度层级 i 和 j 的效率高低关系。我会回答：
-   - "i大于j" 表示层级 i 的效率大于层级 j
-   - "i小于j" 表示层级 i 的效率小于层级 j
-   - "相等" 表示两层级效率相等
+你的规划任务包含两部分，必须同时完成：
+1. **权重规则判定**：确定权重 F 采用的是 alpha、beta 还是 gamma 规则，并提供至少两条查阅记录作为证据，证明仅有该规则能完美拟合结果。
+2. **核心模块锁定**：找出满足衍生总模块数 S(u) = 6 的枢纽课程编号（该模块在此图谱中唯一存在）。
 
-请尽可能少地使用查询次数来找出答案。当你确定答案后，请提交吸收效率最大的难度层级编号。
+你可以进行多轮查询，每轮可以选择以下动作之一：
+1. **模块查阅**：查询某个模块 X 的评估值，我会返回 F(X) 的值。
+2. **提交判定**：当你认为已经收集到足够证据时，提交你的映射判定和目标模块。
 
-## 询问与提交答案的格式（必须严格遵守）
+**模块查阅**（例如查阅模块 5）：
+<query>5</query>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+**提交最终答案**：
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- 值查询（例如评估难度层级 5 的效率）：
-<query_value>5</query_value>
+其中：
+- mapping 必须是 alpha、beta 或 gamma 之一
+- target 是你认为满足 S(u)=6 的模块编号
+- evidence 是至少两条查阅记录，格式为 [(模块1,返回值1),(模块2,返回值2),...]
 
-- 比较查询（例如对比难度层级 3 和 7）：
-<query_compare>3,7</query_compare>
+- 如果提交的规则判定不足以唯一确定权重类型（即无法排除其他规则），会收到失败警告。累计两次失败警告则任务失败。
+- 如果目标模块编号错误，任务失败。
+- 如果查阅了无效的模块编号，任务失败。
 
-提交最终答案时，请给出吸收效率最大的难度层级编号，格式如下：
-<answer>5</answer>
+请尽可能用最少的查阅次数完成任务。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's conduct an "Adaptive Learning System" evaluation task. Here are the rules:
+Welcome to the "Curriculum Graph Dependency Analysis" system.
 
-In a core course, the system has divided {n} consecutive difficulty levels (numbered 1 to {n}). According to cognitive load theory, the students' "knowledge absorption efficiency" at difficulty level i shows an unknown quadratic relationship:
-Absorption Efficiency[i] = a·i² + b·i + c
+We have constructed a prerequisite knowledge tree comprising 12 core curriculum modules, numbered 1 to 12, with the foundational introductory course as node 1. The prerequisite relationships are:
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-where a, b, c are integer coefficients, and a is not equal to 0. There is a unique difficulty level that maximizes the students' absorption efficiency.
+For any module u, define:
+- S(u): the total number of modules in the specialization branch predicated on u (including u itself)
+- D(u): the number of subsequent derived modules, i.e., D(u) = S(u) - 1
 
-Your goal is to find the difficulty level number where this maximum absorption efficiency occurs. You can query the system in the following two ways (one query at a time):
+The academic system assigned a "Course Weight Evaluation" F based on one of three potential rules:
+- Type alpha (Derivation Breadth): F(u) = D(u)
+- Type beta (Foundational Feedback): F(u) = 11 - D(u)
+- Type gamma (Prerequisite Dependency): F(u) = D(parent(u)), and specially for foundational course 1, F(1) = 11
 
-1. Value Query: Ask for the specific absorption efficiency at difficulty level i. I will tell you the efficiency value.
-2. Comparison Query: Ask about the relationship between the efficiencies of levels i and j. I will answer:
-   - "i greater than j" means level i's efficiency is greater than j's
-   - "i less than j" means level i's efficiency is less than j's
-   - "equal" means the efficiencies are equal
+Your planning task involves two parts, both must be completed:
+1. **Rule Determination**: Identify whether F follows the alpha, beta, or gamma rule, and provide at least two query records as evidence, proving only this mapping explains the results.
+2. **Core Module Locking**: Find the hub module number where S(u) = 6 (this module uniquely exists in the graph).
 
-Please use as few queries as possible to find the answer. When you are confident, submit the difficulty level number with the maximum absorption efficiency.
+You can perform multiple rounds of queries. In each round, choose one of the following:
+1. **Module Query**: Query the evaluation value of a module X, and I will return F(X).
+2. **Submit Determination**: When you have sufficient evidence, submit your mapping determination and target module.
 
-## Query and Answer Format (strictly required)
+**Module Query** (e.g., querying module 5):
+<query>5</query>
 
-Each query must contain only one tag. Use the following XML format:
+**Submit Final Answer**:
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- Value Query (e.g., asking for the efficiency at level 5):
-<query_value>5</query_value>
+Where:
+- mapping must be alpha, beta, or gamma
+- target is the module number you believe satisfies S(u)=6
+- evidence is at least two query records in the format [(module1,value1),(module2,value2),...]
 
-- Comparison Query (e.g., comparing levels 3 and 7):
-<query_compare>3,7</query_compare>
+- If the determination cannot uniquely identify the rule type, you will receive a warning. Two cumulative warnings result in failure.
+- If the target module number is incorrect, the task fails.
+- If you query an invalid module number, the task fails.
 
-When submitting the final answer, provide the difficulty level number with the maximum absorption efficiency in this format:
-<answer>5</answer>
+Please complete the task with minimal queries.
 """
 
-    # ---------------- 场景 4：制造业/工业 ----------------
     contextualized_rule_zh_4 = """\
-我们来进行一项"精密合金锻造工艺"优化任务，规则如下：
+欢迎进入“工业装备总线层级诊断”系统。
 
-在热处理车间，退火温度被设定为 {n} 个连续的温度档位（编号从 1 到 {n}）。根据热力学规律，合金的"抗拉强度"与退火温度档位 i 之间遵循一个未知的二次函数演变关系：
-抗拉强度[i] = a·i² + b·i + c
+系统扫描到一个包含 12 个组件单元的控制总线树，编号 1 到 12，主控单元为 1。物理连接如下：
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-其中 a, b, c 是整数系数，并且 a 不等于 0。该工艺参数范围内存在唯一的一个最佳温度档位，能使合金的抗拉强度达到极值（最大值）。
+对于任意组件 u，定义：
+- S(u)：以 u 为控制节点的子系统组件总数（含 u 自身）
+- D(u)：u 的下行受控组件数，即 D(u) = S(u) - 1
 
-你的目标是找出能使抗拉强度达到最大的温度档位编号。你可以通过以下两种方式向控制台提问（每次只能问一个问题）：
+系统当前的“总线负载分配” F 受深层逻辑控制，处于以下三种模式之一：
+- 类型 alpha（直属负载模式）：F(u) = D(u)
+- 类型 beta（余量分配模式）：F(u) = 11 - D(u)
+- 类型 gamma（上级背压模式）：F(u) = D(parent(u))，特别地，主控单元 F(1) = 11
 
-1. 值查询：检测某个温度档位 i 下合金的具体抗拉强度。我会告诉你该强度值。
-2. 比较查询：对比两个温度档位 i 和 j 的抗拉强度大小关系。我会回答：
-   - "i大于j" 表示档位 i 的强度大于档位 j
-   - "i小于j" 表示档位 i 的强度小于档位 j
-   - "相等" 表示两档位强度相等
+你的诊断任务包含两部分，必须同时完成：
+1. **分配模式判定**：确定负载分配 F 是 alpha、beta 还是 gamma，并提供至少两条诊断记录作为证据，说明只有该模式能完全解释这些测得的负载。
+2. **关键组件锁定**：找出满足子系统总组件数 S(u) = 6 的中继组件编号（此组件在总线中唯一）。
 
-请尽可能少地使用查询次数来找出答案。当你确定最佳工艺参数后，请提交抗拉强度最大的温度档位编号。
+你可以进行多轮查询，每轮可以选择以下动作之一：
+1. **组件诊断**：查询某个组件 X 的负载值，我会返回 F(X) 的值。
+2. **提交判定**：当你认为已经收集到足够证据时，提交你的分配模式判定和目标组件。
 
-## 询问与提交答案的格式（必须严格遵守）
+**组件诊断**（例如诊断组件 5）：
+<query>5</query>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+**提交最终答案**：
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- 值查询（例如检测温度档位 5 的抗拉强度）：
-<query_value>5</query_value>
+其中：
+- mapping 必须是 alpha、beta 或 gamma 之一
+- target 是你认为满足 S(u)=6 的组件编号
+- evidence 是至少两条诊断记录，格式为 [(组件1,返回值1),(组件2,返回值2),...]
 
-- 比较查询（例如对比温度档位 3 和 7）：
-<query_compare>3,7</query_compare>
+- 如果提交的模式判定不足以唯一确定分配类型（即无法排除其他模式），会收到失败警告。累计两次失败警告则诊断失败。
+- 如果目标组件编号错误，诊断失败。
+- 如果诊断了无效的组件编号，诊断失败。
 
-提交最终答案时，请给出抗拉强度最大的温度档位编号，格式如下：
-<answer>5</answer>
+请尽可能用最少的诊断次数完成任务。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Let's conduct a "Precision Alloy Forging Process" optimization task. Here are the rules:
+Welcome to the "Industrial Equipment Bus Hierarchy Diagnostics" system.
 
-In the heat treatment workshop, the annealing temperature is set to {n} consecutive temperature gears (numbered 1 to {n}). According to thermodynamic principles, the alloy's "tensile strength" at temperature gear i follows an unknown quadratic evolution relationship:
-Tensile Strength[i] = a·i² + b·i + c
+The system has scanned a control bus tree containing 12 component units, numbered 1 to 12, with the main control unit as node 1. The physical connections are:
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-where a, b, c are integer coefficients, and a is not equal to 0. Within this process parameter range, there is a unique optimal temperature gear that maximizes the alloy's tensile strength.
+For any component u, define:
+- S(u): the total number of subsystem components controlled by node u (including u itself)
+- D(u): the number of subordinate components, i.e., D(u) = S(u) - 1
 
-Your goal is to find the temperature gear number where this maximum tensile strength occurs. You can query the control console in the following two ways (one query at a time):
+The current "Bus Load Allocation" F is governed by deep logic, operating in one of three modes:
+- Type alpha (Direct Load Mode): F(u) = D(u)
+- Type beta (Margin Allocation Mode): F(u) = 11 - D(u)
+- Type gamma (Upstream Backpressure Mode): F(u) = D(parent(u)), and specially for main unit 1, F(1) = 11
 
-1. Value Query: Ask for the specific tensile strength at temperature gear i. I will tell you the strength value.
-2. Comparison Query: Ask about the relationship between the tensile strengths at gears i and j. I will answer:
-   - "i greater than j" means gear i's strength is greater than j's
-   - "i less than j" means gear i's strength is less than j's
-   - "equal" means the strengths are equal
+Your diagnostic task involves two parts, both must be accomplished:
+1. **Mode Determination**: Identify whether F is alpha, beta, or gamma, and provide at least two diagnostic records as evidence, proving only this mapping explains the measured loads.
+2. **Key Component Locking**: Find the relay component number where subsystem size S(u) = 6 (this component uniquely exists in the bus).
 
-Please use as few queries as possible to find the answer. When you are confident about the optimal process parameter, submit the temperature gear number with the maximum tensile strength.
+You can perform multiple rounds of queries. In each round, choose one of the following:
+1. **Component Diagnostic**: Query the load value of a component X, and I will return F(X).
+2. **Submit Determination**: When you have sufficient evidence, submit your mapping determination and target component.
 
-## Query and Answer Format (strictly required)
+**Component Diagnostic** (e.g., querying component 5):
+<query>5</query>
 
-Each query must contain only one tag. Use the following XML format:
+**Submit Final Answer**:
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- Value Query (e.g., asking for the tensile strength at gear 5):
-<query_value>5</query_value>
+Where:
+- mapping must be alpha, beta, or gamma
+- target is the component number you believe satisfies S(u)=6
+- evidence is at least two diagnostic records in the format [(component1,value1),(component2,value2),...]
 
-- Comparison Query (e.g., comparing gears 3 and 7):
-<query_compare>3,7</query_compare>
+- If the determination cannot uniquely identify the allocation type, you will receive a warning. Two cumulative warnings result in failure.
+- If the target component number is incorrect, diagnostics fail.
+- If you query an invalid component number, diagnostics fail.
 
-When submitting the final answer, provide the temperature gear number with the maximum tensile strength in this format:
-<answer>5</answer>
+Please complete the task with minimal queries.
 """
 
-    # ---------------- 场景 5：法律 ----------------
     contextualized_rule_zh_5 = """\
-我们来进行一项"隐匿资金链"追踪追溯任务，规则如下：
+欢迎使用“司法判例网络及效力分析”平台。
 
-在一起复杂的经济纠纷案件中，司法鉴定机构对一笔连续变动的资金进行了追踪，划分了 {n} 个连续的追溯时间节点（编号从 1 到 {n}）。根据资金流向模型，每个时间节点 i 的"资金沉淀风险值"呈现出未知的二次函数演变规律：
-风险值[i] = a·i² + b·i + c
+本案涉及一棵由 12 个相关判例构成的引用树，编号 1 到 12，最高法院指导案例为节点 1。引用关系如下：
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-其中 a, b, c 是整数系数，并且 a 不等于 0。在这些时间节点中，存在唯一的一个节点，其资金沉淀风险值最高，是案件突破的关键。
+对于任意判例 u，平台定义：
+- S(u)：以判例 u 为基础衍生出的相关判例总数（含 u 本身）
+- D(u)：u 的直接及间接衍生判例数，即 D(u) = S(u) - 1
 
-你的目标是找出资金沉淀风险值最高的那个时间节点编号。你可以通过以下两种方式向案件数据库提问（每次只能问一个问题）：
+各判例的“法理约束权重” F 遵循本法域的三种隐藏效力原则之一：
+- 类型 alpha（衍生效力原则）：F(u) = D(u)
+- 类型 beta（独立性补足原则）：F(u) = 11 - D(u)
+- 类型 gamma（上位法理原则）：F(u) = D(parent(u))，特别地，指导案例 1 的权重 F(1) = 11
 
-1. 值查询：调取某个时间节点 i 的具体风险值。我会告诉你该风险值。
-2. 比较查询：比对两个时间节点 i 和 j 的风险值高低关系。我会回答：
-   - "i大于j" 表示节点 i 的风险值大于节点 j
-   - "i小于j" 表示节点 i 的风险值小于节点 j
-   - "相等" 表示两节点风险值相等
+你的检视任务包含两部分，必须同时完成：
+1. **效力原则判定**：确定约束权重 F 适用的是 alpha、beta 还是 gamma，并提供至少两条检索记录作为证据，说明只有该原则能充分解释系统的权重定值。
+2. **标杆判例锁定**：找出满足衍生相关判例总数 S(u) = 6 的关键判例编号（该判例在当前网络中唯一）。
 
-请尽可能少地使用查询次数来找出答案。当你锁定案件突破口后，请提交风险值最高的时间节点编号。
+你可以进行多轮查询，每轮可以选择以下动作之一：
+1. **判例检索**：查询某个判例 X 的权重值，我会返回 F(X) 的值。
+2. **提交判定**：当你认为已经收集到足够证据时，提交你的效力原则判定和目标判例。
 
-## 询问与提交答案的格式（必须严格遵守）
+**判例检索**（例如检索判例 5）：
+<query>5</query>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+**提交最终答案**：
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- 值查询（例如调取时间节点 5 的风险值）：
-<query_value>5</query_value>
+其中：
+- mapping 必须是 alpha、beta 或 gamma 之一
+- target 是你认为满足 S(u)=6 的判例编号
+- evidence 是至少两条检索记录，格式为 [(判例1,返回值1),(判例2,返回值2),...]
 
-- 比较查询（例如比对时间节点 3 和 7）：
-<query_compare>3,7</query_compare>
+- 如果提交的原则判定不足以唯一确定效力类型（即无法排除其他原则），会收到失败警告。累计两次失败警告则任务失败。
+- 如果目标判例编号错误，任务失败。
+- 如果检索了无效的判例编号，任务失败。
 
-提交最终答案时，请给出风险值最高的时间节点编号，格式如下：
-<answer>5</answer>
+请尽可能用最少的检索次数完成任务。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's conduct a "Hidden Capital Chain" tracking and tracing task. Here are the rules:
+Welcome to the "Judicial Precedent Network and Efficacy Analysis" platform.
 
-In a complex economic dispute case, forensic experts are tracking continuously changing funds and have divided the timeline into {n} consecutive tracing time nodes (numbered 1 to {n}). Based on the capital flow model, the "fund settlement risk value" at each time node i shows an unknown quadratic evolution pattern:
-Risk Value[i] = a·i² + b·i + c
+This case involves a citation tree composed of 12 related precedents, numbered 1 to 12, with the Supreme Court guiding case as node 1. The citation links are:
+- 1-2, 1-3, 1-4
+- 2-5, 2-6
+- 3-7
+- 4-8, 4-9
+- 8-10, 8-11
+- 9-12
 
-where a, b, c are integer coefficients, and a is not equal to 0. Among these time nodes, there is a unique node with the highest fund settlement risk value, which is the key breakthrough point of the case.
+For any precedent u, the platform defines:
+- S(u): the total number of related precedents derived based on u (including u itself)
+- D(u): the number of direct and indirect derived citing precedents, i.e., D(u) = S(u) - 1
 
-Your goal is to find the time node number where this maximum risk value occurs. You can query the case database in the following two ways (one query at a time):
+The "Jurisprudential Binding Weight" F of each precedent follows one of three hidden principles of efficacy in this jurisdiction:
+- Type alpha (Derivative Efficacy Principle): F(u) = D(u)
+- Type beta (Independence Complement Principle): F(u) = 11 - D(u)
+- Type gamma (Superordinate Jurisprudence Principle): F(u) = D(parent(u)), and specially for guiding case 1, F(1) = 11
 
-1. Value Query: Ask for the specific risk value at time node i. I will tell you the risk value.
-2. Comparison Query: Ask about the relationship between the risk values at nodes i and j. I will answer:
-   - "i greater than j" means node i's risk value is greater than j's
-   - "i less than j" means node i's risk value is less than j's
-   - "equal" means the risk values are equal
+Your review task involves two parts, both must be completed:
+1. **Principle Determination**: Identify whether the binding weight F applies alpha, beta, or gamma, and provide at least two retrieval records as evidence, proving only this principle explains the weight valuation.
+2. **Benchmark Precedent Locking**: Find the key precedent number where S(u) = 6 (this precedent uniquely exists in the network).
 
-Please use as few queries as possible to find the answer. When you have locked onto the breakthrough point, submit the time node number with the highest risk value.
+You can perform multiple rounds of queries. In each round, choose one of the following:
+1. **Precedent Retrieval**: Query the weight value of a precedent X, and I will return F(X).
+2. **Submit Determination**: When you have sufficient evidence, submit your mapping determination and target precedent.
 
-## Query and Answer Format (strictly required)
+**Precedent Retrieval** (e.g., retrieving precedent 5):
+<query>5</query>
 
-Each query must contain only one tag. Use the following XML format:
+**Submit Final Answer**:
+<answer>mapping=alpha, target=4, evidence=[(1,11),(2,2)]</answer>
 
-- Value Query (e.g., asking for the risk value at node 5):
-<query_value>5</query_value>
+Where:
+- mapping must be alpha, beta, or gamma
+- target is the precedent number you believe satisfies S(u)=6
+- evidence is at least two retrieval records in the format [(precedent1,value1),(precedent2,value2),...]
 
-- Comparison Query (e.g., comparing nodes 3 and 7):
-<query_compare>3,7</query_compare>
+- If the determination cannot uniquely identify the principle type, you will receive a warning. Two cumulative warnings result in failure.
+- If the target precedent number is incorrect, the task fails.
+- If you query an invalid precedent number, the task fails.
 
-When submitting the final answer, provide the time node number with the highest risk value in this format:
-<answer>5</answer>
+Please complete the task with minimal queries.
 """
 
-    tags = ["answer", "query_value", "query_compare"]
+    tags = ["answer", "query"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "n": 12,
-                "a": -2,
-                "b": 24,
-                "c": 10,
-            },
-            2: {
-                "n": 15,
-                "a": -3,
-                "b": 30,
-                "c": 20,
-            },
-            3: {
-                "n": 20,
-                "a": -1,
-                "b": 20,
-                "c": 100,
-            },
-            4: {
-                "n": 25,
-                "a": -1,
-                "b": 40,
-                "c": 50,
-            },
-            5: {
-                "n": 30,
-                "a": -2,
-                "b": 60,
-                "c": 500,
-            },
+            1: {"mapping_type": "alpha"},
+            2: {"mapping_type": "beta"},
+            3: {"mapping_type": "gamma"},
+            4: {"mapping_type": "alpha"},
+            5: {"mapping_type": "gamma"},
         },
         "en": {
-            1: {
-                "n": 12,
-                "a": -2,
-                "b": 24,
-                "c": 10,
-            },
-            2: {
-                "n": 15,
-                "a": -3,
-                "b": 30,
-                "c": 20,
-            },
-            3: {
-                "n": 20,
-                "a": -1,
-                "b": 20,
-                "c": 100,
-            },
-            4: {
-                "n": 25,
-                "a": -1,
-                "b": 40,
-                "c": 50,
-            },
-            5: {
-                "n": 30,
-                "a": -2,
-                "b": 60,
-                "c": 500,
-            },
+            1: {"mapping_type": "alpha"},
+            2: {"mapping_type": "beta"},
+            3: {"mapping_type": "gamma"},
+            4: {"mapping_type": "alpha"},
+            5: {"mapping_type": "gamma"},
         },
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 查询计数器
+        self.tree_parent = {
+            1: None,
+            2: 1, 3: 1, 4: 1,
+            5: 2, 6: 2,
+            7: 3,
+            8: 4, 9: 4,
+            10: 8, 11: 8,
+            12: 9
+        }
+        
+        self._compute_tree_properties()
+        
+        self.failure_warnings = 0
+        
+        self.query_history = []
+        
         super().__init__(config)
 
+    def _compute_tree_properties(self):
+        self.children = {i: [] for i in range(1, 13)}
+        for node, parent in self.tree_parent.items():
+            if parent is not None:
+                self.children[parent].append(node)
+        
+        self.subtree_size = {}
+        self.descendant_count = {}
+        
+        def compute_size(u):
+            size = 1
+            for child in self.children[u]:
+                size += compute_size(child)
+            self.subtree_size[u] = size
+            self.descendant_count[u] = size - 1
+            return size
+        
+        compute_size(1)
+
     def _initialize_game(self):
-        """初始化游戏参数，生成序列和答案"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -484,191 +636,182 @@ When submitting the final answer, provide the time node number with the highest 
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
+        self.mapping_type = cfg["mapping_type"]
         
-        # 获取二次函数的系数
-        self.a = cfg["a"]
-        self.b = cfg["b"]
-        self.c = cfg["c"]
-        self.n = cfg["n"]
+        self.strict_mode = (diff >= 4)
+        
+        self._game_info = {}
 
-        # 确保a为负数且顶点在[1, n]内
-        if self.a >= 0:
-            raise ValueError("Coefficient 'a' must be negative to ensure a unique maximum.")
-        vertex = -self.b / (2 * self.a)
-        if not (1 <= vertex <= self.n):
-            raise ValueError(f"Vertex {vertex} is not within the sequence range [1, {self.n}].")
+    def _compute_function_value(self, node, mapping_type):
+        if mapping_type == "alpha":
+            return self.descendant_count[node]
+        elif mapping_type == "beta":
+            return 11 - self.descendant_count[node]
+        elif mapping_type == "gamma":
+            if node == 1:
+                return 11
+            parent = self.tree_parent[node]
+            return self.descendant_count[parent]
+        else:
+            raise ValueError(f"Unknown mapping type: {mapping_type}")
+
+    def _get_function_value(self, node):
+        return self._compute_function_value(node, self.mapping_type)
+
+    def step(self, response: str):
+        try:
+            parsed_info = self.parse(response)
+            if "answer" in parsed_info:
+                raw_ans = parsed_info["answer"]
+                mapping_match = re.search(r'mapping\s*=\s*(\w+)', raw_ans)
+                evidence_match = re.search(r'evidence\s*=\s*\[(.*?)\]', raw_ans)
+                
+                if not mapping_match or not evidence_match:
+                    is_success = self.evaluate(parsed_info)
+                    if is_success:
+                        res = "答案正确" if self.config.language == "zh" else "Correct answer."
+                        self.state.set_state("success", "success")
+                        self.state.add_message("user", res)
+                    else:
+                        res = "答案错误" if self.config.language == "zh" else "Incorrect answer."
+                        self.state.set_state("failed", "incorrect answer")
+                        self.state.add_message("user", res)
+                else:
+                    evidence_pairs = re.findall(r'\((\d+)\s*,\s*(\d+)\)', evidence_match.group(1))
+                    evidence = [(int(n), int(v)) for n, v in evidence_pairs]
+                    
+                    submitted_mapping = mapping_match.group(1).strip()
+                    
+                    mapping_ok = self._validate_mapping(submitted_mapping, evidence)
+                    
+                    if not mapping_ok:
+                        self.failure_warnings += 1
+                        if self.failure_warnings >= 2:
+                            self.state.set_state("failed", "Too many failed mapping determinations")
+                            if self.config.language == "zh":
+                                self.state.add_message("user", "映射判定连续失败两次，游戏结束。")
+                            else:
+                                self.state.add_message("user", "Mapping determination failed twice. Game over.")
+                        else:
+                            if self.config.language == "zh":
+                                warning_msg = "映射判定不成立，这是第 {} 次失败警告。请重新收集证据后再提交。".format(self.failure_warnings)
+                            else:
+                                warning_msg = "Mapping determination failed. This is failure warning {}. Please gather more evidence and try again.".format(self.failure_warnings)
+                            self.state.add_message("user", warning_msg)
+                    else:
+                        is_success = self.evaluate(parsed_info)
+                        if is_success:
+                            res = "答案正确" if self.config.language == "zh" else "Correct answer."
+                            self.state.set_state("success", "success")
+                            self.state.add_message("user", res)
+                        else:
+                            res = "答案错误" if self.config.language == "zh" else "Incorrect answer."
+                            self.state.set_state("failed", "incorrect answer")
+                            self.state.add_message("user", res)
+            else:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+                
+        except Exception as e:
+            self.state.set_state("failed", str(e))
         
-        # 生成整个序列
-        self.sequence = {}
-        for i in range(1, self.n + 1):
-            self.sequence[i] = self.a * (i ** 2) + self.b * i + self.c
-        
-        # 找到最大值的位置（真实答案）
-        max_value = max(self.sequence.values())
-        self.max_position = None
-        for i, val in self.sequence.items():
-            if val == max_value:
-                self.max_position = i
-                break
-        
-        self.max_value = max_value
+        return self.state
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案是否正确"""
+        raw_ans = parsed_info["answer"]
+        
         try:
-            submitted_pos = int(parsed_info["answer"].strip())
-            # 检查提交的位置是否是最大值位置
-            return submitted_pos == self.max_position
-        except:
+            target_match = re.search(r'target\s*=\s*(\d+)', raw_ans)
+            if not target_match:
+                return False
+            submitted_target = int(target_match.group(1).strip())
+        except Exception:
             return False
+        
+        target_node = None
+        for node in range(1, 13):
+            if self.subtree_size[node] == 6:
+                target_node = node
+                break
+        
+        if submitted_target != target_node:
+            return False
+        
+        return True
+
+    def _validate_mapping(self, submitted_mapping, evidence):
+        if submitted_mapping != self.mapping_type:
+            return False
+        
+        for node, value in evidence:
+            if node < 1 or node > 12:
+                return False
+            expected_value = self._compute_function_value(node, submitted_mapping)
+            if value != expected_value:
+                return False
+        
+        other_mappings = [m for m in ["alpha", "beta", "gamma"] if m != submitted_mapping]
+        
+        for other_mapping in other_mappings:
+            can_exclude = False
+            for node, value in evidence:
+                other_value = self._compute_function_value(node, other_mapping)
+                if value != other_value:
+                    can_exclude = True
+                    break
+            
+            if not can_exclude:
+                return False
+        
+        if self.strict_mode and len(evidence) < 3:
+            return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        # 增加查询计数
-        self.query_count += 1
-        
-        # 检查是否超过查询次数限制
-        if self.query_count > 5:
-            if self.config.language == "zh":
-                self.state.set_state("failed", "exceeded max queries")
-                raise ValueError("已超过最大查询次数限制（5次）。")
-            else:
-                self.state.set_state("failed", "exceeded max queries")
-                raise ValueError("Exceeded maximum query limit (5 queries).")
-        
-        # 处理值查询
-        if "query_value" in parsed_info:
+        if "query" in parsed_info:
             try:
-                i = int(parsed_info["query_value"].strip())
-                if i < 1 or i > self.n:
-                    if self.config.language == "zh":
-                        return f"错误：位置超出范围。有效范围是 1 到 {self.n}。"
-                    else:
-                        return f"Error: Position out of range. Valid range is 1 to {self.n}."
-                return str(self.sequence[i])
+                node = int(parsed_info["query"].strip())
             except ValueError:
-                if self.config.language == "zh":
-                    return "错误：无效的位置格式。"
-                else:
-                    return "Error: Invalid position format."
+                raise ValueError("Invalid node number: not an integer.")
+            
+            if node < 1 or node > 12:
+                raise ValueError(f"Invalid node number: {node}. Must be between 1 and 12.")
+            
+            value = self._get_function_value(node)
+            
+            self.query_history.append((node, value))
+            
+            return str(value)
         
-        # 处理比较查询
-        elif "query_compare" in parsed_info:
-            try:
-                raw = parsed_info["query_compare"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    raise ValueError
-                i, j = int(parts[0]), int(parts[1])
-                
-                if i < 1 or i > self.n or j < 1 or j > self.n:
-                    if self.config.language == "zh":
-                        return f"错误：位置超出范围。有效范围是 1 到 {self.n}。"
-                    else:
-                        return f"Error: Position out of range. Valid range is 1 to {self.n}."
-                
-                val_i = self.sequence[i]
-                val_j = self.sequence[j]
-                
-                if self.config.language == "zh":
-                    if val_i > val_j:
-                        return "i大于j"
-                    elif val_i < val_j:
-                        return "i小于j"
-                    else:
-                        return "相等"
-                else:
-                    if val_i > val_j:
-                        return "i greater than j"
-                    elif val_i < val_j:
-                        return "i less than j"
-                    else:
-                        return "equal"
-            except:
-                if self.config.language == "zh":
-                    return "错误：无效的比较查询格式。请使用格式：<query_compare>i,j</query_compare>"
-                else:
-                    return "Error: Invalid comparison query format. Use format: <query_compare>i,j</query_compare>"
-        
-        else:
-            if self.config.language == "zh":
-                raise ValueError("未找到有效的查询标签。")
-            else:
-                raise ValueError("No valid query tag found.")
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
-        
-        # 1. 枚举所有值查询
-        for i in range(1, self.n + 1):
-            query_content = f"<query_value>{i}</query_value>"
-            answer = str(self.sequence[i])
-            results.append({
-                "query": query_content,
-                "answer": answer
-            })
-
-        # 2. 枚举所有比较查询
-        for i in range(1, self.n + 1):
-            for j in range(1, self.n + 1):
-                query_content = f"<query_compare>{i},{j}</query_compare>"
-                
-                val_i = self.sequence[i]
-                val_j = self.sequence[j]
-                
-                if self.config.language == "zh":
-                    if val_i > val_j:
-                        answer = "i大于j"
-                    elif val_i < val_j:
-                        answer = "i小于j"
-                    else:
-                        answer = "相等"
-                else:
-                    if val_i > val_j:
-                        answer = "i greater than j"
-                    elif val_i < val_j:
-                        answer = "i less than j"
-                    else:
-                        answer = "equal"
-                
-                results.append({
-                    "query": query_content,
-                    "answer": answer
-                })
-                
-        return results
+        raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        # 若 correct 是纯整数字符串（考虑负号）
-        try:
-            val = int(correct)
-            return str(val + 1)
-        except ValueError:
-            pass
-
-        # 否则按规则替换关键词
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
         if self.config.language == "zh":
             if "是" in correct:
                 return correct.replace("是", "否")
-            elif "否" in correct:
+            if "否" in correct:
                 return correct.replace("否", "是")
-        else:
-            correct_lower = correct.lower()
-            if "yes" in correct_lower:
-                # 简单的大小写保持
-                return correct.replace("Yes", "No").replace("yes", "no").replace("YES", "NO")
-            elif "no" in correct_lower:
-                return correct.replace("No", "Yes").replace("no", "yes").replace("NO", "YES")
+        elif self.config.language == "en":
+            lowered = correct.lower()
+            if "yes" == lowered:
+                return "No" if correct == "Yes" else "no"
+            if "no" == lowered:
+                return "Yes" if correct == "No" else "yes"
         
-        # 若都不匹配
         return correct + "_WRONG"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        possible_queries = []
+        for node in range(1, 13):
+            val = self._get_function_value(node)
+            
+            possible_queries.append({
+                "query": f"<query>{node}</query>",
+                "answer": str(val)
+            })
+            
+        return possible_queries

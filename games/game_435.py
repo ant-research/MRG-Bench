@@ -1,713 +1,504 @@
 from .base import Game
 import random
 
-
-class GraphDiameterGame(Game):
-
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+class TreeRitualGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"图直径推理"游戏，规则如下：
+我们来玩一个"树上仪式探测"的推理游戏。规则如下：
 
-游戏设定了一个未知的、固定的、简单、连通、无权、无向图 G，顶点集合为 1 到 {n}（共 {n} 个顶点）。
+游戏设定了一个未知的树形结构 T，包含 {n} 个节点，编号为 1 到 {n}。树中存在一个未知的特殊节点 H（目标节点）。同时，存在一个未知但固定的反馈规则 R，可能是以下三种之一：
 
-你的目标是确定图的直径 D（即图中任意两点间最短路径长度的最大值），并给出至少一对顶点 (u,v) 使得它们之间的最短路径长度等于 D，同时用你已获得的信息证明不存在距离大于 D 的顶点对。
+1. 规则 A（距离规则）：返回节点到目标节点 H 的距离
+2. 规则 B（反转规则）：返回某个固定值 F 减去节点到 H 的距离（F 为 H 的离心率，即 H 到所有节点的最大距离）
+3. 规则 C（奇偶规则）：返回节点到 H 的距离的奇偶性（0 或 1）
 
-你可以反复向我提出以下三类查询（每次可以提出任意多条查询），我会根据真实的图结构如实回答：
+你的目标是通过查询推断出：反馈规则类型 R（A、B 或 C）以及目标节点 H 的编号。
 
-1. 邻接列表查询：查询顶点 i 的所有邻接顶点，返回升序列表。
-2. 距离查询：查询顶点 i 到顶点 j 的最短路径长度，返回非负整数。
-3. 直接相邻判定：查询顶点 i 和 j 是否由一条边直接相连，返回"是"或"否"。
+你可以进行以下类型的查询（可多次，尽可能少地使用）：
 
-注意：所有查询中的顶点编号必须在 1 到 {n} 范围内，且 i 不等于 j（对于需要两个顶点的查询）。非法请求将返回"非法请求"。
+1. Echo 查询：询问节点 i 的反馈值。根据实际规则 R，返回对应的非负整数。
+2. Dist 查询：询问节点 i 和节点 j 之间的树上距离。返回一个非负整数。
+3. Verify 查询（至多使用一次，可选）：验证节点 i 是否为目标节点 H。
+   - 若正确：返回"是"，游戏继续，但你仍需识别规则 R 才算完成
+   - 若错误：返回"否"，游戏立即失败
 
-## 查询与提交答案的格式（必须严格遵守）
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-每次可以提出一个或多个查询。请使用以下 XML 格式：
+每次查询只能包含一个标签。请使用以下格式：
 
-- 邻接列表查询（例如查询顶点 3）：
-<query_neighbors>3</query_neighbors>
+- Echo 查询（例如查询节点 5）：
+<query_echo>5</query_echo>
 
-- 距离查询（例如查询顶点 1 和 5）：
-<query_distance>1,5</query_distance>
+- Dist 查询（例如查询节点 1 和节点 3 之间的距离）：
+<query_dist>1,3</query_dist>
 
-- 直接相邻判定（例如查询顶点 2 和 4）：
-<query_adjacent>2,4</query_adjacent>
+- Verify 查询（例如验证节点 2 是否为目标）：
+<query_verify>2</query_verify>
 
-你可以在一次回复中包含多个查询标签。
-
-提交最终答案时，必须说明直径 D、至少一对达成该直径的顶点对，以及你的推理依据。格式如下：
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=你的推理说明
-</answer>
-
-其中：
-- diameter 是你推断的直径值
-- pairs 是至少一对顶点对，格式为 (u,v)，多对用逗号隔开
-- reasoning 是你的推理依据，需要说明为什么这对顶点的距离是 D，以及为什么不存在距离更大的顶点对
-
-示例：
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=通过查询得知顶点1和6的距离为3，通过邻接列表和距离查询确认了所有顶点对的距离上界，没有顶点对的距离超过3。
-</answer>
+提交最终答案时，必须说明规则类型（A、B 或 C）和目标节点编号，格式如下：
+<answer>ritual=A, root=3</answer>
 """
 
     game_rule_en = """\
-Let's play a "Graph Diameter Inference" game. Here are the rules:
+Let's play a "Tree Ritual Detection" deduction game. Here are the rules:
 
-The game uses an unknown, fixed, simple, connected, unweighted, undirected graph G with vertex set from 1 to {n} (total {n} vertices).
+The game has set up an unknown tree structure T with {n} nodes, numbered from 1 to {n}. There exists an unknown special node H (target node) in the tree. Additionally, there is an unknown but fixed feedback rule R, which could be one of the following three:
 
-Your goal is to determine the diameter D of the graph (the maximum shortest path length between any two vertices), provide at least one pair of vertices (u,v) whose shortest path length equals D, and prove that no pair of vertices has a distance greater than D using the information you've obtained.
+1. Rule A (Distance Rule): Returns the distance from a node to the target node H
+2. Rule B (Inverted Rule): Returns a fixed value F minus the distance from a node to H (F is the eccentricity of H, i.e., the maximum distance from H to all nodes)
+3. Rule C (Parity Rule): Returns the parity of the distance from a node to H (0 or 1)
 
-You can repeatedly ask me the following three types of queries (you can ask multiple queries at once), and I will answer truthfully based on the real graph structure:
+Your goal is to infer through queries: the feedback rule type R (A, B, or C) and the target node H's number.
 
-1. Neighbor list query: Query all adjacent vertices of vertex i, returns a sorted list.
-2. Distance query: Query the shortest path length from vertex i to vertex j, returns a non-negative integer.
-3. Direct adjacency check: Query whether vertex i and j are directly connected by an edge, returns "Yes" or "No".
+You can perform the following types of queries (multiple times, use as few as possible):
 
-Note: All vertex IDs in queries must in the range 1 to {n}, and i must not equal j (for queries requiring two vertices). Invalid requests will return "Invalid request".
+1. Echo Query: Ask for the feedback value of node i. Based on the actual rule R, returns a corresponding non-negative integer.
+2. Dist Query: Ask for the tree distance between node i and node j. Returns a non-negative integer.
+3. Verify Query (at most once, optional): Verify whether node i is the target node H.
+   - If correct: Returns "Yes", game continues, but you still need to identify rule R to complete
+   - If incorrect: Returns "No", game fails immediately
 
-## Query and Answer Format (strictly required)
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-You can submit one or multiple queries at once. Use the following XML format:
+Each query must contain only one tag. Use the following format:
 
-- Neighbor list query (e.g., querying vertex 3):
-<query_neighbors>3</query_neighbors>
+- Echo Query (e.g., querying node 5):
+<query_echo>5</query_echo>
 
-- Distance query (e.g., querying vertices 1 and 5):
-<query_distance>1,5</query_distance>
+- Dist Query (e.g., querying distance between node 1 and node 3):
+<query_dist>1,3</query_dist>
 
-- Direct adjacency check (e.g., querying vertices 2 and 4):
-<query_adjacent>2,4</query_adjacent>
+- Verify Query (e.g., verifying if node 2 is the target):
+<query_verify>2</query_verify>
 
-You can include multiple query tags in one response.
-
-When submitting the final answer, you must specify the diameter D, at least one pair of vertices achieving this diameter, and your reasoning. Use this format:
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=Your reasoning explanation
-</answer>
-
-Where:
-- diameter is your inferred diameter value
-- pairs is at least one vertex pair in format (u,v), multiple pairs separated by commas
-- reasoning is your explanation of why this pair has distance D and why no pair has greater distance
-
-Example:
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=Through queries, I found that the distance between vertices 1 and 6 is 3. By checking neighbor lists and distances, I confirmed the upper bound of all vertex pair distances, and no pair exceeds distance 3.
-</answer>
+When submitting the final answer, specify the rule type (A, B, or C) and the target node number, using this format:
+<answer>ritual=A, root=3</answer>
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-我们现在来玩一个“交通线网极值推理”游戏，规则如下：
+我们正在进行一项"城市交通核心检测"任务。本市的交通路网呈现为包含 {n} 个路口（节点编号 1 到 {n}）的树状拓扑结构。网络中隐藏着一个“隐秘交通控制中心”（目标节点 H）。路网的传感器网络使用了一种未知的反馈协议 R，可能为以下三种之一：
 
-游戏设定了一个未知的、固定的轨道交通网络（视为简单、连通、无权、无向图 G），交通站点编号为 1 到 {n}（共 {n} 个站点）。
+1. 协议 A（延迟衰减）：返回该路口到控制中心 H 的网络跳数距离
+2. 协议 B（信号强度）：返回网络最大覆盖半径 F 减去该路口到 H 的距离（F 为中心 H 到最边缘路口的跳数）
+3. 协议 C（相位同步）：返回该路口到 H 距离的奇偶校验位（0 或 1）
 
-你的目标是确定交通网络的“最大通行跨度” D（即任意两站点间最短乘车区间的最大值，也就是图的直径），并给出至少一对站点 (u,v) 使得它们之间的最短路径长度等于 D，同时用你已获得的信息证明不存在距离大于 D 的站点对。
+你的目标是通过探测推断出：反馈协议类型 R（A、B 或 C）以及控制中心 H 的编号。
 
-你可以反复向我提出以下三类查询（每次可以提出任意多条查询），我会根据真实的线网结构如实回答：
+你可以进行以下类型的查询（可多次，尽可能少地使用）：
 
-1. 邻接列表查询：查询站点 i 的所有直达相邻站点，返回升序列表。
-2. 距离查询：查询站点 i 到站点 j 的最少乘车区间数（即最短路径长度），返回非负整数。
-3. 直接相邻判定：查询站点 i 和 j 是否由一条直达线路直接相连，返回"是"或"否"。
+1. Echo 查询：读取路口 i 的传感器反馈值。根据实际协议 R，返回对应的非负整数。
+2. Dist 查询：查询路口 i 和路口 j 之间的拓扑跳数距离。返回一个非负整数。
+3. Verify 查询（至多使用一次，可选）：派遣实地稽查队验证路口 i 是否为控制中心 H。
+   - 若正确：返回"是"，任务继续，但你仍需识别协议 R 才算完成
+   - 若错误：返回"否"，打草惊蛇，任务立即失败
 
-注意：所有查询中的站点编号必须在 1 到 {n} 范围内，且 i 不等于 j（对于需要两个站点的查询）。非法请求将返回"非法请求"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，任务失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下格式：
 
-每次可以提出一个或多个查询。请使用以下 XML 格式：
+- Echo 查询（例如查询路口 5）：
+<query_echo>5</query_echo>
 
-- 邻接列表查询（例如查询站点 3）：
-<query_neighbors>3</query_neighbors>
+- Dist 查询（例如查询路口 1 和路口 3 之间的距离）：
+<query_dist>1,3</query_dist>
 
-- 距离查询（例如查询站点 1 和 5）：
-<query_distance>1,5</query_distance>
+- Verify 查询（例如验证路口 2 是否为中心）：
+<query_verify>2</query_verify>
 
-- 直接相邻判定（例如查询站点 2 和 4）：
-<query_adjacent>2,4</query_adjacent>
-
-你可以在一次回复中包含多个查询标签。
-
-提交最终答案时，必须说明跨度 D、至少一对达成该跨度的站点对，以及你的推理依据。格式如下：
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=你的推理说明
-</answer>
-
-其中：
-- diameter 是你推断的最大通行跨度（直径）值
-- pairs 是至少一对站点对，格式为 (u,v)，多对用逗号隔开
-- reasoning 是你的推理依据，需要说明为什么这对站点的距离是 D，以及为什么不存在距离更大的站点对
-
-示例：
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=通过查询得知站点1和6的距离为3，通过邻接列表和距离查询确认了所有站点对的距离上界，没有站点对的距离超过3。
-</answer>
+提交最终答案时，必须说明协议类型（A、B 或 C）和控制中心编号，格式如下：
+<answer>ritual=A, root=3</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Let's play a "Transit Network Extremum Inference" game. Here are the rules:
+[Traffic Scenario]
+We are conducting an "Urban Traffic Core Detection" task. The city's road network forms a tree topology with {n} intersections (nodes numbered 1 to {n}). Hidden within is a "Secret Traffic Control Center" (target node H). The sensor network uses an unknown feedback protocol R, which could be one of the following three:
 
-The game uses an unknown, fixed transit network (a simple, connected, unweighted, undirected graph G) with station IDs from 1 to {n} (total {n} stations).
+1. Protocol A (Delay Attenuation): Returns the network hop distance from the intersection to control center H
+2. Protocol B (Signal Strength): Returns the maximum coverage radius F minus the distance to H (F is the max hops from H to any intersection)
+3. Protocol C (Phase Synchronization): Returns the parity bit (0 or 1) of the distance to H
 
-Your goal is to determine the maximum transit span D of the network (i.e., the graph diameter, the maximum shortest path length between any two stations), provide at least one pair of stations (u,v) whose shortest path length equals D, and prove that no pair of stations has a distance greater than D using the information you've obtained.
+Your goal is to deduce through probing: the feedback protocol type R (A, B, or C) and the control center H's number.
 
-You can repeatedly ask me the following three types of queries (you can ask multiple queries at once), and I will answer truthfully based on the real network structure:
+You can perform the following types of queries (multiple times, use as few as possible):
 
-1. Neighbor list query: Query all directly adjacent stations of station i, returns a sorted list.
-2. Distance query: Query the shortest path length from station i to station j, returns a non-negative integer.
-3. Direct adjacency check: Query whether station i and j are directly connected by a route, returns "Yes" or "No".
+1. Echo Query: Read the sensor feedback value for intersection i. Based on the actual protocol R, returns a corresponding non-negative integer.
+2. Dist Query: Ask for the topological hop distance between intersection i and j. Returns a non-negative integer.
+3. Verify Query (at most once, optional): Dispatch an inspection team to verify if intersection i is the control center H.
+   - If correct: Returns "Yes", task continues, but you still need to identify protocol R to complete
+   - If incorrect: Returns "No", alerting the target, task fails immediately
 
-Note: All station IDs in queries must be in the range 1 to {n}, and i must not equal j (for queries requiring two stations). Invalid requests will return "Invalid request".
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following format:
 
-You can submit one or multiple queries at once. Use the following XML format:
+- Echo Query (e.g., querying intersection 5):
+<query_echo>5</query_echo>
 
-- Neighbor list query (e.g., querying station 3):
-<query_neighbors>3</query_neighbors>
+- Dist Query (e.g., querying distance between intersection 1 and 3):
+<query_dist>1,3</query_dist>
 
-- Distance query (e.g., querying stations 1 and 5):
-<query_distance>1,5</query_distance>
+- Verify Query (e.g., verifying if intersection 2 is the center):
+<query_verify>2</query_verify>
 
-- Direct adjacency check (e.g., querying stations 2 and 4):
-<query_adjacent>2,4</query_adjacent>
-
-You can include multiple query tags in one response.
-
-When submitting the final answer, you must specify the span D, at least one pair of stations achieving this span, and your reasoning. Use this format:
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=Your reasoning explanation
-</answer>
-
-Where:
-- diameter is your inferred maximum transit span (diameter) value
-- pairs is at least one station pair in format (u,v), multiple pairs separated by commas
-- reasoning is your explanation of why this pair has distance D and why no pair has greater distance
-
-Example:
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=Through queries, I found that the distance between stations 1 and 6 is 3. By checking neighbor lists and distances, I confirmed the upper bound of all station pair distances, and no pair exceeds distance 3.
-</answer>
+When submitting the final answer, specify the protocol type (A, B, or C) and the control center number, using this format:
+<answer>ritual=A, root=3</answer>
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-我们现在来玩一个“医疗分级转诊网络评估”游戏，规则如下：
+我们正在进行一项"传染病零号病人追踪"任务。流行病学调查显示，传播链形成了一个包含 {n} 名感染者（节点编号 1 到 {n}）的树状网络。其中存在一位未知的“零号病人”（目标节点 H）。同时，该病原体的标志物表达符合某种未知的变异规律 R，可能为以下三种之一：
 
-游戏设定了一个未知的、固定的医疗分级转诊网络（视为简单、连通、无权、无向图 G），医疗机构编号为 1 到 {n}（共 {n} 个机构）。
+1. 规律 A（代际法则）：返回该患者距离零号病人 H 的传播代数
+2. 规律 B（抗体衰减）：返回最大传播深度 F 减去该患者到 H 的代数距离（F 为 H 到最末端感染者的代数）
+3. 规律 C（表位交替）：返回该患者到 H 距离的奇偶性（0 或 1）
 
-你的目标是确定转诊网络的“最大转诊层级” D（即任意两机构间最短转诊路径的最大值，也就是图的直径），并给出至少一对机构 (u,v) 使得它们之间的最少转诊层级等于 D，同时用你已获得的信息证明不存在距离大于 D 的机构对。
+你的目标是通过检测推断出：变异规律 R（A、B 或 C）以及零号病人 H 的编号。
 
-你可以反复向我提出以下三类查询（每次可以提出任意多条查询），我会根据真实的转诊网络结构如实回答：
+你可以进行以下类型的查询（可多次，尽可能少地使用）：
 
-1. 邻接列表查询：查询机构 i 的所有直接关联转诊机构，返回升序列表。
-2. 距离查询：查询机构 i 到机构 j 的最少转诊层级（即最短路径长度），返回非负整数。
-3. 直接相邻判定：查询机构 i 和 j 是否由一条直达转诊通道直接相连，返回"是"或"否"。
+1. Echo 查询：检测患者 i 的标志物读数。根据实际规律 R，返回对应的非负整数。
+2. Dist 查询：查询患者 i 和患者 j 之间的传播链代数距离。返回一个非负整数。
+3. Verify 查询（至多使用一次，可选）：对患者 i 进行全基因组序列比对以验证其是否为零号病人。
+   - 若正确：返回"是"，追踪继续，但你仍需识别规律 R 才算完成
+   - 若错误：返回"否"，造成医疗资源浪费，任务立即失败
 
-注意：所有查询中的机构编号必须在 1 到 {n} 范围内，且 i 不等于 j（对于需要两个机构的查询）。非法请求将返回"非法请求"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，任务失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下格式：
 
-每次可以提出一个或多个查询。请使用以下 XML 格式：
+- Echo 查询（例如检测患者 5）：
+<query_echo>5</query_echo>
 
-- 邻接列表查询（例如查询机构 3）：
-<query_neighbors>3</query_neighbors>
+- Dist 查询（例如查询患者 1 和患者 3 之间的距离）：
+<query_dist>1,3</query_dist>
 
-- 距离查询（例如查询机构 1 和 5）：
-<query_distance>1,5</query_distance>
+- Verify 查询（例如验证患者 2 是否为零号病人）：
+<query_verify>2</query_verify>
 
-- 直接相邻判定（例如查询机构 2 和 4）：
-<query_adjacent>2,4</query_adjacent>
-
-你可以在一次回复中包含多个查询标签。
-
-提交最终答案时，必须说明层级 D、至少一对达成该层级的机构对，以及你的推理依据。格式如下：
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=你的推理说明
-</answer>
-
-其中：
-- diameter 是你推断的最大转诊层级（直径）值
-- pairs 是至少一对机构对，格式为 (u,v)，多对用逗号隔开
-- reasoning 是你的推理依据，需要说明为什么这对机构的距离是 D，以及为什么不存在距离更大的机构对
-
-示例：
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=通过查询得知机构1和6的转诊层级为3，通过邻接列表和距离查询确认了所有机构对的距离上界，没有机构对的距离超过3。
-</answer>
+提交最终答案时，必须说明变异规律（A、B 或 C）和零号病人编号，格式如下：
+<answer>ritual=A, root=3</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Let's play a "Medical Referral Network Inference" game. Here are the rules:
+[Medical Scenario]
+We are conducting a "Patient Zero Tracking" task. Epidemiological investigation shows a transmission chain forming a tree network of {n} infected individuals (nodes numbered 1 to {n}). There exists an unknown "Patient Zero" (target node H). The pathogen's marker expression follows an unknown mutation pattern R, which could be one of the following three:
 
-The game uses an unknown, fixed medical referral network (a simple, connected, unweighted, undirected graph G) with institution IDs from 1 to {n} (total {n} institutions).
+1. Pattern A (Generational Law): Returns the transmission generations from the patient to Patient Zero H
+2. Pattern B (Antibody Attenuation): Returns the maximum transmission depth F minus the distance to H (F is the max generations from H to any patient)
+3. Pattern C (Epitope Alternation): Returns the parity (0 or 1) of the distance to H
 
-Your goal is to determine the maximum referral depth D of the network (i.e., the graph diameter, the maximum shortest path length between any two institutions), provide at least one pair of institutions (u,v) whose shortest referral path length equals D, and prove that no pair of institutions has a distance greater than D using the information you've obtained.
+Your goal is to deduce through testing: the mutation pattern R (A, B, or C) and Patient Zero H's number.
 
-You can repeatedly ask me the following three types of queries (you can ask multiple queries at once), and I will answer truthfully based on the real network structure:
+You can perform the following types of queries (multiple times, use as few as possible):
 
-1. Neighbor list query: Query all directly associated referral institutions of institution i, returns a sorted list.
-2. Distance query: Query the shortest path length from institution i to institution j, returns a non-negative integer.
-3. Direct adjacency check: Query whether institution i and j are directly connected by a referral channel, returns "Yes" or "No".
+1. Echo Query: Test the marker reading for patient i. Based on the actual pattern R, returns a corresponding non-negative integer.
+2. Dist Query: Ask for the transmission chain distance between patient i and j. Returns a non-negative integer.
+3. Verify Query (at most once, optional): Perform whole-genome sequencing to verify if patient i is Patient Zero.
+   - If correct: Returns "Yes", tracking continues, but you still need to identify pattern R to complete
+   - If incorrect: Returns "No", wasting medical resources, task fails immediately
 
-Note: All institution IDs in queries must be in the range 1 to {n}, and i must not equal j (for queries requiring two institutions). Invalid requests will return "Invalid request".
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following format:
 
-You can submit one or multiple queries at once. Use the following XML format:
+- Echo Query (e.g., testing patient 5):
+<query_echo>5</query_echo>
 
-- Neighbor list query (e.g., querying institution 3):
-<query_neighbors>3</query_neighbors>
+- Dist Query (e.g., querying distance between patient 1 and 3):
+<query_dist>1,3</query_dist>
 
-- Distance query (e.g., querying institutions 1 and 5):
-<query_distance>1,5</query_distance>
+- Verify Query (e.g., verifying if patient 2 is Patient Zero):
+<query_verify>2</query_verify>
 
-- Direct adjacency check (e.g., querying institutions 2 and 4):
-<query_adjacent>2,4</query_adjacent>
-
-You can include multiple query tags in one response.
-
-When submitting the final answer, you must specify the depth D, at least one pair of institutions achieving this depth, and your reasoning. Use this format:
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=Your reasoning explanation
-</answer>
-
-Where:
-- diameter is your inferred maximum referral depth (diameter) value
-- pairs is at least one institution pair in format (u,v), multiple pairs separated by commas
-- reasoning is your explanation of why this pair has distance D and why no pair has greater distance
-
-Example:
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=Through queries, I found that the distance between institutions 1 and 6 is 3. By checking neighbor lists and distances, I confirmed the upper bound of all institution pair distances, and no pair exceeds distance 3.
-</answer>
+When submitting the final answer, specify the mutation pattern (A, B, or C) and Patient Zero's number, using this format:
+<answer>ritual=A, root=3</answer>
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-我们现在来玩一个“知识图谱认知路径分析”游戏，规则如下：
+我们正在进行一项"知识图谱溯源"任务。该学科包含 {n} 个知识模块（节点编号 1 到 {n}），构成了一个树状的前置依赖网络。其中存在一个未知的“核心元概念”（目标节点 H）。系统的认知负荷评估标准 R 也是未知的，可能为以下三种之一：
 
-游戏设定了一个未知的、固定的知识图谱依赖网络（视为简单、连通、无权、无向图 G），知识点编号为 1 到 {n}（共 {n} 个知识点）。
+1. 标准 A（深度评估）：返回该模块到核心概念 H 的衍生步数
+2. 标准 B（留存指数）：返回最大认知深度 F 减去该模块到 H 的衍生步数（F 为 H 到最末端模块的步数）
+3. 标准 C（分类标签）：返回该模块到 H 步数的奇偶性（0 或 1）
 
-你的目标是确定该认知路径的“最大认知跨度” D（即任意两知识点间最短学习步数的最大值，也就是图的直径），并给出至少一对知识点 (u,v) 使得它们之间的学习步数等于 D，同时用你已获得的信息证明不存在跨度大于 D 的知识点对。
+你的目标是通过评估推断出：评估标准 R（A、B 或 C）以及核心概念 H 的编号。
 
-你可以反复向我提出以下三类查询（每次可以提出任意多条查询），我会根据真实的图谱结构如实回答：
+你可以进行以下类型的查询（可多次，尽可能少地使用）：
 
-1. 邻接列表查询：查询知识点 i 的所有直接关联知识点，返回升序列表。
-2. 距离查询：查询知识点 i 到知识点 j 的最少学习步数（即最短路径长度），返回非负整数。
-3. 直接相邻判定：查询知识点 i 和 j 是否由直接的依赖关系相连，返回"是"或"否"。
+1. Echo 查询：提取模块 i 的认知负荷读数。根据实际标准 R，返回对应的非负整数。
+2. Dist 查询：查询模块 i 和模块 j 之间的依赖链路距离。返回一个非负整数。
+3. Verify 查询（至多使用一次，可选）：开展深度教研以验证模块 i 是否为核心概念。
+   - 若正确：返回"是"，溯源继续，但你仍需识别标准 R 才算完成
+   - 若错误：返回"否"，教研方向偏离，任务立即失败
 
-注意：所有查询中的知识点编号必须在 1 到 {n} 范围内，且 i 不等于 j（对于需要两个知识点的查询）。非法请求将返回"非法请求"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，任务失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下格式：
 
-每次可以提出一个或多个查询。请使用以下 XML 格式：
+- Echo 查询（例如提取模块 5）：
+<query_echo>5</query_echo>
 
-- 邻接列表查询（例如查询知识点 3）：
-<query_neighbors>3</query_neighbors>
+- Dist 查询（例如查询模块 1 和模块 3 之间的距离）：
+<query_dist>1,3</query_dist>
 
-- 距离查询（例如查询知识点 1 和 5）：
-<query_distance>1,5</query_distance>
+- Verify 查询（例如验证模块 2 是否为核心概念）：
+<query_verify>2</query_verify>
 
--直接相邻判定（例如查询知识点 2 和 4）：
-<query_adjacent>2,4</query_adjacent>
-
-你可以在一次回复中包含多个查询标签。
-
-提交最终答案时，必须说明认知跨度 D、至少一对达成该跨度的知识点对，以及你的推理依据。格式如下：
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=你的推理说明
-</answer>
-
-其中：
-- diameter 是你推断的最大认知跨度（直径）值
-- pairs 是至少一对知识点对，格式为 (u,v)，多对用逗号隔开
-- reasoning 是你的推理依据，需要说明为什么这对知识点的跨度是 D，以及为什么不存在跨度更大的知识点对
-
-示例：
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=通过查询得知知识点1和6的学习步数为3，通过邻接列表和距离查询确认了所有知识点对的距离上界，没有知识点对的学习步数超过3。
-</answer>
+提交最终答案时，必须说明评估标准（A、B 或 C）和核心概念编号，格式如下：
+<answer>ritual=A, root=3</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Knowledge Graph Cognitive Path Inference" game. Here are the rules:
+We are conducting a "Knowledge Graph Tracing" task. The subject contains {n} learning modules (nodes numbered 1 to {n}), forming a tree-structured prerequisite network. There exists an unknown "Core Meta-Concept" (target node H). The cognitive load evaluation standard R is also unknown, which could be one of the following three:
 
-The game uses an unknown, fixed knowledge dependency network (a simple, connected, unweighted, undirected graph G) with concept IDs from 1 to {n} (total {n} concepts).
+1. Standard A (Depth Evaluation): Returns the derivation steps from the module to the core concept H
+2. Standard B (Retention Index): Returns the maximum cognitive depth F minus the steps to H (F is the max steps from H to any leaf module)
+3. Standard C (Category Tag): Returns the parity (0 or 1) of the steps to H
 
-Your goal is to determine the maximum cognitive span D of the network (i.e., the graph diameter, the maximum shortest learning steps between any two concepts), provide at least one pair of concepts (u,v) whose shortest learning steps equal D, and prove that no pair of concepts has a distance greater than D using the information you've obtained.
+Your goal is to deduce through assessment: the evaluation standard R (A, B, or C) and the core concept H's number.
 
-You can repeatedly ask me the following three types of queries (you can ask multiple queries at once), and I will answer truthfully based on the real graph structure:
+You can perform the following types of queries (multiple times, use as few as possible):
 
-1. Neighbor list query: Query all directly related concepts of concept i, returns a sorted list.
-2. Distance query: Query the shortest learning steps from concept i to concept j, returns a non-negative integer.
-3. Direct adjacency check: Query whether concept i and j are directly connected by a dependency relationship, returns "Yes" or "No".
+1. Echo Query: Extract the cognitive load reading for module i. Based on the actual standard R, returns a corresponding non-negative integer.
+2. Dist Query: Ask for the prerequisite link distance between module i and j. Returns a non-negative integer.
+3. Verify Query (at most once, optional): Conduct in-depth research to verify if module i is the core concept.
+   - If correct: Returns "Yes", tracing continues, but you still need to identify standard R to complete
+   - If incorrect: Returns "No", research direction skewed, task fails immediately
 
-Note: All concept IDs in queries must be in the range 1 to {n}, and i must not equal j (for queries requiring two concepts). Invalid requests will return "Invalid request".
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following format:
 
-You can submit one or multiple queries at once. Use the following XML format:
+- Echo Query (e.g., assessing module 5):
+<query_echo>5</query_echo>
 
-- Neighbor list query (e.g., querying concept 3):
-<query_neighbors>3</query_neighbors>
+- Dist Query (e.g., querying distance between module 1 and 3):
+<query_dist>1,3</query_dist>
 
-- Distance query (e.g., querying concepts 1 and 5):
-<query_distance>1,5</query_distance>
+- Verify Query (e.g., verifying if module 2 is the core concept):
+<query_verify>2</query_verify>
 
-- Direct adjacency check (e.g., querying concepts 2 and 4):
-<query_adjacent>2,4</query_adjacent>
-
-You can include multiple query tags in one response.
-
-When submitting the final answer, you must specify the cognitive span D, at least one pair of concepts achieving this span, and your reasoning. Use this format:
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=Your reasoning explanation
-</answer>
-
-Where:
-- diameter is your inferred maximum cognitive span (diameter) value
-- pairs is at least one concept pair in format (u,v), multiple pairs separated by commas
-- reasoning is your explanation of why this pair has distance D and why no pair has greater distance
-
-Example:
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=Through queries, I found that the learning steps between concepts 1 and 6 is 3. By checking neighbor lists and distances, I confirmed the upper bound of all concept pair distances, and no pair exceeds distance 3.
-</answer>
+When submitting the final answer, specify the evaluation standard (A, B, or C) and the core concept number, using this format:
+<answer>ritual=A, root=3</answer>
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-我们现在来玩一个“工业供应链拓扑分析”游戏，规则如下：
+我们正在进行一项"工业管网故障排查"任务。厂区的流体输送管网是一个包含 {n} 个节点（节点编号 1 到 {n}）的树状结构。管网中有一个未知的“主控泵站”（目标节点 H）。管网传感器的校准规则 R 是未知的，可能为以下三种之一：
 
-游戏设定了一个未知的、固定的工业供应链拓扑网络（视为简单、连通、无权、无向图 G），物流节点编号为 1 到 {n}（共 {n} 个节点，如工厂或仓库）。
+1. 规则 A（压降检测）：返回该节点到主控泵站 H 的管道段数
+2. 规则 B（静压读数）：返回系统最大扬程 F 减去该节点到 H 的管道段数（F 为 H 到最边缘节点的段数）
+3. 规则 C（阀门相位）：返回该节点到 H 距离的奇偶状态（0 或 1）
 
-你的目标是确定供应链网络的“最大物流周转层级” D（即任意两节点间最少物流周转环节的最大值，也就是图的直径），并给出至少一对节点 (u,v) 使得它们之间的周转环节等于 D，同时用你已获得的信息证明不存在周转层级大于 D 的节点对。
+你的目标是通过排查推断出：传感器校准规则 R（A、B 或 C）以及主控泵站 H 的编号。
 
-你可以反复向我提出以下三类查询（每次可以提出任意多条查询），我会根据真实的拓扑网络结构如实回答：
+你可以进行以下类型的查询（可多次，尽可能少地使用）：
 
-1. 邻接列表查询：查询节点 i 的所有直接上下游节点，返回升序列表。
-2. 距离查询：查询节点 i 到节点 j 的最少周转环节（即最短路径长度），返回非负整数。
-3. 直接相邻判定：查询节点 i 和 j 是否存在直接的物流运输关系，返回"是"或"否"。
+1. Echo 查询：读取节点 i 的传感器数值。根据实际规则 R，返回对应的非负整数。
+2. Dist 查询：查询节点 i 和节点 j 之间的管道段数。返回一个非负整数。
+3. Verify 查询（至多使用一次，可选）：强制系统停机以验证节点 i 是否为主控泵站。
+   - 若正确：返回"是"，排查继续，但你仍需识别规则 R 才算完成
+   - 若错误：返回"否"，引发严重生产事故，任务立即失败
 
-注意：所有查询中的节点编号必须在 1 到 {n} 范围内，且 i 不等于 j（对于需要两个节点的查询）。非法请求将返回"非法请求"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，任务失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下格式：
 
-每次可以提出一个或多个查询。请使用以下 XML 格式：
+- Echo 查询（例如读取节点 5）：
+<query_echo>5</query_echo>
 
-- 邻接列表查询（例如查询节点 3）：
-<query_neighbors>3</query_neighbors>
+- Dist 查询（例如查询节点 1 和节点 3 之间的管道距离）：
+<query_dist>1,3</query_dist>
 
-- 距离查询（例如查询节点 1 和 5）：
-<query_distance>1,5</query_distance>
+- Verify 查询（例如验证节点 2 是否为主控泵站）：
+<query_verify>2</query_verify>
 
-- 直接相邻判定（例如查询节点 2 和 4）：
-<query_adjacent>2,4</query_adjacent>
-
-你可以在一次回复中包含多个查询标签。
-
-提交最终答案时，必须说明周转层级 D、至少一对达成该层级的节点对，以及你的推理依据。格式如下：
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=你的推理说明
-</answer>
-
-其中：
-- diameter 是你推断的最大物流周转层级（直径）值
-- pairs 是至少一对节点对，格式为 (u,v)，多对用逗号隔开
-- reasoning 是你的推理依据，需要说明为什么这对节点的距离是 D，以及为什么不存在距离更大的节点对
-
-示例：
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=通过查询得知节点1和6的周转环节为3，通过邻接列表和距离查询确认了所有节点对的距离上界，没有节点对的周转环节超过3。
-</answer>
+提交最终答案时，必须说明校准规则（A、B 或 C）和主控泵站编号，格式如下：
+<answer>ritual=A, root=3</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industry Scenario]
-Let's play an "Industrial Supply Chain Topology Inference" game. Here are the rules:
+We are conducting an "Industrial Pipeline Troubleshooting" task. The plant's fluid distribution network forms a tree structure with {n} nodes (numbered 1 to {n}). There exists an unknown "Main Control Pump" (target node H). The sensor calibration rule R is unknown, which could be one of the following three:
 
-The game uses an unknown, fixed supply chain topology network (a simple, connected, unweighted, undirected graph G) with logistics node IDs from 1 to {n} (total {n} nodes).
+1. Rule A (Pressure Drop): Returns the number of pipe segments from the node to control pump H
+2. Rule B (Static Pressure): Returns the system's maximum head F minus the pipe segments to H (F is the max segments from H to any edge node)
+3. Rule C (Valve Phase): Returns the parity state (0 or 1) of the distance to H
 
-Your goal is to determine the maximum transfer depth D of the network (i.e., the graph diameter, the maximum shortest logistic transfer steps between any two nodes), provide at least one pair of nodes (u,v) whose transfer steps equal D, and prove that no pair of nodes has a distance greater than D using the information you've obtained.
+Your goal is to deduce through troubleshooting: the calibration rule R (A, B, or C) and the control pump H's number.
 
-You can repeatedly ask me the following three types of queries (you can ask multiple queries at once), and I will answer truthfully based on the real network structure:
+You can perform the following types of queries (multiple times, use as few as possible):
 
-1. Neighbor list query: Query all directly linked upstream/downstream nodes of node i, returns a sorted list.
-2. Distance query: Query the minimum transfer steps from node i to node j, returns a non-negative integer.
-3. Direct adjacency check: Query whether node i and j have a direct logistic transport relationship, returns "Yes" or "No".
+1. Echo Query: Read the sensor numerical value for node i. Based on the actual rule R, returns a corresponding non-negative integer.
+2. Dist Query: Ask for the pipe segment distance between node i and j. Returns a non-negative integer.
+3. Verify Query (at most once, optional): Force a system shutdown to verify if node i is the main control pump.
+   - If correct: Returns "Yes", troubleshooting continues, but you still need to identify rule R to complete
+   - If incorrect: Returns "No", causing a severe production accident, task fails immediately
 
-Note: All node IDs in queries must be in the range 1 to {n}, and i must not equal j (for queries requiring two nodes). Invalid requests will return "Invalid request".
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following format:
 
-You can submit one or multiple queries at once. Use the following XML format:
+- Echo Query (e.g., reading node 5):
+<query_echo>5</query_echo>
 
-- Neighbor list query (e.g., querying node 3):
-<query_neighbors>3</query_neighbors>
+- Dist Query (e.g., querying distance between node 1 and 3):
+<query_dist>1,3</query_dist>
 
-- Distance query (e.g., querying nodes 1 and 5):
-<query_distance>1,5</query_distance>
+- Verify Query (e.g., verifying if node 2 is the main pump):
+<query_verify>2</query_verify>
 
-- Direct adjacency check (e.g., querying nodes 2 and 4):
-<query_adjacent>2,4</query_adjacent>
-
-You can include multiple query tags in one response.
-
-When submitting the final answer, you must specify the transfer depth D, at least one pair of nodes achieving this depth, and your reasoning. Use this format:
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=Your reasoning explanation
-</answer>
-
-Where:
-- diameter is your inferred maximum logistic transfer depth (diameter) value
-- pairs is at least one node pair in format (u,v), multiple pairs separated by commas
-- reasoning is your explanation of why this pair has distance D and why no pair has greater distance
-
-Example:
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=Through queries, I found that the distance between nodes 1 and 6 is 3. By checking neighbor lists and distances, I confirmed the upper bound of all node pair distances, and no pair exceeds distance 3.
-</answer>
+When submitting the final answer, specify the calibration rule (A, B, or C) and the main pump's number, using this format:
+<answer>ritual=A, root=3</answer>
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-我们现在来玩一个“商业股权穿透与洗钱风险排查”游戏，规则如下：
+我们正在进行一项"金融洗钱网络审查"任务。资金追踪显示，涉案的 {n} 个洗钱壳公司（节点编号 1 到 {n}）构成了一个树状的股权代持网络。网络中隐藏着一名未知的“实际控制人”（目标节点 H）。账目的混淆算法 R 是未知的，可能为以下三种之一：
 
-游戏设定了一个未知的、固定的商业股权穿透关联网络（视为简单、连通、无权、无向图 G），法律实体编号为 1 到 {n}（共 {n} 个实体，如公司或自然人）。
+1. 算法 A（层级穿透）：返回该公司距离实际控制人 H 的代持层级数
+2. 算法 B（资金留存）：返回网络最大深度 F 减去该公司到 H 的层级数（F 为 H 到最外围壳公司的层级数）
+3. 算法 C（审计辖区）：返回该公司到 H 距离的奇偶性（0 或 1，代表境内/境外管辖）
 
-你的目标是确定关联网络的“最大股权穿透深度” D（即任意两实体间最少穿透层级的最大值，也就是图的直径），并给出至少一对实体 (u,v) 使得它们之间的穿透层级等于 D，同时用你已获得的信息证明不存在穿透层级大于 D 的实体对。
+你的目标是通过审查推断出：混淆算法 R（A、B 或 C）以及实际控制人 H 的节点编号。
 
-你可以反复向我提出以下三类查询（每次可以提出任意多条查询），我会根据真实的关联网络结构如实回答：
+你可以进行以下类型的查询（可多次，尽可能少地使用）：
 
-1. 邻接列表查询：查询实体 i 的所有直接参股/控股实体，返回升序列表。
-2. 距离查询：查询实体 i 到实体 j 的最少穿透层级（即最短关联路径长度），返回非负整数。
-3. 直接相邻判定：查询实体 i 和 j 是否存在直接的股权关联关系，返回"是"或"否"。
+1. Echo 查询：调取公司 i 的账目混淆特征值。根据实际算法 R，返回对应的非负整数。
+2. Dist 查询：查询公司 i 和公司 j 之间的股权层级跨度。返回一个非负整数。
+3. Verify 查询（至多使用一次，可选）：申请搜查令以确认公司 i 是否为实际控制人。
+   - 若正确：返回"是"，审查继续，但你仍需识别算法 R 才算完成
+   - 若错误：返回"否"，打草惊蛇导致证据销毁，任务立即失败
 
-注意：所有查询中的实体编号必须在 1 到 {n} 范围内，且 i 不等于 j（对于需要两个实体的查询）。非法请求将返回"非法请求"。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，任务失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下格式：
 
-每次可以提出一个或多个查询。请使用以下 XML 格式：
+- Echo 查询（例如调取公司 5）：
+<query_echo>5</query_echo>
 
-- 邻接列表查询（例如查询实体 3）：
-<query_neighbors>3</query_neighbors>
+- Dist 查询（例如查询公司 1 和公司 3 之间的层级跨度）：
+<query_dist>1,3</query_dist>
 
-- 距离查询（例如查询实体 1 和 5）：
-<query_distance>1,5</query_distance>
+- Verify 查询（例如验证公司 2 是否为实际控制人）：
+<query_verify>2</query_verify>
 
-- 直接相邻判定（例如查询实体 2 和 4）：
-<query_adjacent>2,4</query_adjacent>
-
-你可以在一次回复中包含多个查询标签。
-
-提交最终答案时，必须说明穿透深度 D、至少一对达成该深度的实体对，以及你的推理依据。格式如下：
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=你的推理说明
-</answer>
-
-其中：
-- diameter 是你推断的最大股权穿透深度（直径）值
-- pairs 是至少一对实体对，格式为 (u,v)，多对用逗号隔开
-- reasoning 是你的推理依据，需要说明为什么这对实体的距离是 D，以及为什么不存在距离更大的实体对
-
-示例：
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=通过查询得知实体1和6的穿透层级为3，通过邻接列表和距离查询确认了所有实体对的距离上界，没有实体对的穿透层级超过3。
-</answer>
+提交最终答案时，必须说明混淆算法（A、B 或 C）和实际控制人编号，格式如下：
+<answer>ritual=A, root=3</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's play a "Commercial Equity Penetration Inference" game. Here are the rules:
+[Legal Scenario]
+We are conducting a "Financial Money Laundering Network Audit". Funds tracing shows {n} shell companies (nodes numbered 1 to {n}) forming a tree-structured equity proxy network. Hidden within is an unknown "Ultimate Beneficial Owner" (UBO, target node H). The ledger obfuscation algorithm R is unknown, which could be one of the following three:
 
-The game uses an unknown, fixed equity association network (a simple, connected, unweighted, undirected graph G) with legal entity IDs from 1 to {n} (total {n} entities).
+1. Algorithm A (Tier Penetration): Returns the number of proxy tiers from the company to UBO H
+2. Algorithm B (Fund Retention): Returns the maximum network depth F minus the tiers to H (F is the max tiers from H to any outer shell company)
+3. Algorithm C (Audit Jurisdiction): Returns the parity (0 or 1, domestic/offshore) of the distance to H
 
-Your goal is to determine the maximum penetration depth D of the network (i.e., the graph diameter, the maximum shortest penetration layers between any two entities), provide at least one pair of entities (u,v) whose penetration depth equals D, and prove that no pair of entities has a depth greater than D using the information you've obtained.
+Your goal is to uncover through auditing: the obfuscation algorithm R (A, B, or C) and the UBO H's number.
 
-You can repeatedly ask me the following three types of queries (you can ask multiple queries at once), and I will answer truthfully based on the real network structure:
+You can perform the following types of queries (multiple times, use as few as possible):
 
-1. Neighbor list query: Query all directly associated (holding/held) entities of entity i, returns a sorted list.
-2. Distance query: Query the minimum penetration layers from entity i to entity j, returns a non-negative integer.
-3. Direct adjacency check: Query whether entity i and j have a direct equity association, returns "Yes" or "No".
+1. Echo Query: Subpoena the obfuscation feature value for company i. Based on the actual algorithm R, returns a corresponding non-negative integer.
+2. Dist Query: Ask for the equity tier span between company i and j. Returns a non-negative integer.
+3. Verify Query (at most once, optional): Execute a search warrant to confirm if company i is the UBO.
+   - If correct: Returns "Yes", audit continues, but you still need to identify algorithm R to complete
+   - If incorrect: Returns "No", alerting suspects and causing evidence destruction, task fails immediately
 
-Note: All entity IDs in queries must be in the range 1 to {n}, and i must not equal j (for queries requiring two entities). Invalid requests will return "Invalid request".
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following format:
 
-You can submit one or multiple queries at once. Use the following XML format:
+- Echo Query (e.g., subpoenaing company 5):
+<query_echo>5</query_echo>
 
-- Neighbor list query (e.g., querying entity 3):
-<query_neighbors>3</query_neighbors>
+- Dist Query (e.g., querying tier span between company 1 and 3):
+<query_dist>1,3</query_dist>
 
-- Distance query (e.g., querying entities 1 and 5):
-<query_distance>1,5</query_distance>
+- Verify Query (e.g., verifying if company 2 is the UBO):
+<query_verify>2</query_verify>
 
-- Direct adjacency check (e.g., querying entities 2 and 4):
-<query_adjacent>2,4</query_adjacent>
-
-You can include multiple query tags in one response.
-
-When submitting the final answer, you must specify the penetration depth D, at least one pair of entities achieving this depth, and your reasoning. Use this format:
-
-<answer>
-diameter=D
-pairs=(u1,v1),(u2,v2)
-reasoning=Your reasoning explanation
-</answer>
-
-Where:
-- diameter is your inferred maximum penetration depth (diameter) value
-- pairs is at least one entity pair in format (u,v), multiple pairs separated by commas
-- reasoning is your explanation of why this pair has depth D and why no pair has greater depth
-
-Example:
-<answer>
-diameter=3
-pairs=(1,6)
-reasoning=Through queries, I found that the distance between entities 1 and 6 is 3. By checking neighbor lists and distances, I confirmed the upper bound of all entity pair distances, and no pair exceeds distance 3.
-</answer>
+When submitting the final answer, specify the obfuscation algorithm (A, B, or C) and the UBO's number, using this format:
+<answer>ritual=A, root=3</answer>
 """
 
-    tags = ["answer", "query_neighbors", "query_distance", "query_adjacent"]
+    tags = ["answer", "query_echo", "query_dist", "query_verify"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 6,
-                "edges": [(1,2), (2,3), (3,4), (4,5), (5,6)],
-                "diameter": 5,
-                "diameter_pairs": [(1,6)],
+                "n": 5,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
+                "target": 3,
+                "rule": "A"
             },
             2: {
                 "n": 7,
-                "edges": [(1,2), (1,3), (1,4), (1,5), (1,6), (1,7)],
-                "diameter": 2,
-                "diameter_pairs": [(2,3), (2,4), (3,5)],
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
+                "target": 1,
+                "rule": "C"
             },
             3: {
                 "n": 8,
-                "edges": [(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (7,8), (8,1)],
-                "diameter": 4,
-                "diameter_pairs": [(1,5), (2,6), (3,7), (4,8)],
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (7, 8)],
+                "target": 2,
+                "rule": "A"
             },
             4: {
-                "n": 10,
-                "edges": [(1,2), (2,3), (3,4), (4,5), (5,1), 
-                         (6,7), (7,8), (8,9), (9,10), (10,6), (5,6)],
-                "diameter": 5,
-                "diameter_pairs": [(2,9), (3,8), (2,8), (3,9)],
+                "n": 9,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (6, 7), (6, 8), (8, 9)],
+                "target": 6,
+                "rule": "B"
             },
             5: {
-                "n": 12,
-                "edges": [(1,2), (1,3), (2,3), (2,4), (3,5), (4,5), (4,6), (5,7),
-                         (6,7), (6,8), (7,9), (8,9), (8,10), (9,11), (10,11), (10,12), (11,12)],
-                "diameter": 6,
-                "diameter_pairs": [(1,12)],
-            },
+                "n": 10,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (3, 6), (6, 7), (1, 8), (8, 9), (9, 10)],
+                "target": 3,
+                "rule": "B"
+            }
         },
         "en": {
             1: {
-                "n": 6,
-                "edges": [(1,2), (2,3), (3,4), (4,5), (5,6)],
-                "diameter": 5,
-                "diameter_pairs": [(1,6)],
+                "n": 5,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
+                "target": 3,
+                "rule": "A"
             },
             2: {
                 "n": 7,
-                "edges": [(1,2), (1,3), (1,4), (1,5), (1,6), (1,7)],
-                "diameter": 2,
-                "diameter_pairs": [(2,3), (2,4), (3,5)],
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
+                "target": 1,
+                "rule": "C"
             },
             3: {
                 "n": 8,
-                "edges": [(1,2), (2,3), (3,4), (4,5), (5,6), (6,7), (7,8), (8,1)],
-                "diameter": 4,
-                "diameter_pairs": [(1,5), (2,6), (3,7), (4,8)],
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (7, 8)],
+                "target": 2,
+                "rule": "A"
             },
             4: {
-                "n": 10,
-                "edges": [(1,2), (2,3), (3,4), (4,5), (5,1), 
-                         (6,7), (7,8), (8,9), (9,10), (10,6), (5,6)],
-                "diameter": 5,
-                "diameter_pairs": [(2,9), (3,8), (2,8), (3,9)],
+                "n": 9,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (6, 7), (6, 8), (8, 9)],
+                "target": 6,
+                "rule": "B"
             },
             5: {
-                "n": 12,
-                "edges": [(1,2), (1,3), (2,3), (2,4), (3,5), (4,5), (4,6), (5,7),
-                         (6,7), (6,8), (7,9), (8,9), (8,10), (9,11), (10,11), (10,12), (11,12)],
-                "diameter": 6,
-                "diameter_pairs": [(1,12)],
-            },
-        },
+                "n": 10,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (3, 6), (6, 7), (1, 8), (8, 9), (9, 10)],
+                "target": 3,
+                "rule": "B"
+            }
+        }
     }
 
     def __init__(self, config):
+        self.verify_used = False
         super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -717,284 +508,166 @@ reasoning=Through queries, I found that the distance between entities 1 and 6 is
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
         
-        # 构建图的邻接表
         self.n = cfg["n"]
-        self.adj_list = {i: set() for i in range(1, self.n + 1)}
-        for u, v in cfg["edges"]:
-            self.adj_list[u].add(v)
-            self.adj_list[v].add(u)
+        self.edges = cfg["edges"]
+        self.target = cfg["target"]
+        self.rule = cfg["rule"]
         
-        # 预计算所有点对之间的最短距离（BFS）
-        self.distances = {}
+        self.adj = {i: [] for i in range(1, self.n + 1)}
+        for u, v in self.edges:
+            self.adj[u].append(v)
+            self.adj[v].append(u)
+        
+        self.dist_matrix = {}
         for start in range(1, self.n + 1):
-            self.distances[start] = self._bfs_distances(start)
+            self.dist_matrix[start] = self._bfs_distances(start)
         
-        # 记录真实的直径和达成直径的顶点对
-        self.true_diameter = cfg["diameter"]
-        self.true_diameter_pairs = set()
-        for u, v in cfg["diameter_pairs"]:
-            self.true_diameter_pairs.add((min(u,v), max(u,v)))
+        self.F = max(self.dist_matrix[self.target].values())
 
     def _bfs_distances(self, start):
-        """使用BFS计算从start到所有其他顶点的最短距离"""
         from collections import deque
-        distances = {start: 0}
+        dist = {start: 0}
         queue = deque([start])
         
         while queue:
             u = queue.popleft()
-            for v in self.adj_list[u]:
-                if v not in distances:
-                    distances[v] = distances[u] + 1
+            for v in self.adj[u]:
+                if v not in dist:
+                    dist[v] = dist[u] + 1
                     queue.append(v)
         
-        return distances
+        return dist
 
-    def _is_valid_vertex(self, v):
-        """检查顶点编号是否有效"""
-        try:
-            v_int = int(v)
-            return 1 <= v_int <= self.n
-        except:
-            return False
+    def _get_echo_value(self, node):
+        d = self.dist_matrix[self.target][node]
+        
+        if self.rule == "A":
+            return d
+        elif self.rule == "B":
+            return self.F - d
+        elif self.rule == "C":
+            return d % 2
+        else:
+            raise ValueError(f"Unknown rule: {self.rule}")
 
     def evaluate(self, parsed_info):
-        """评估答案是否正确"""
         raw_ans = parsed_info["answer"]
         
-        # 解析答案
-        lines = raw_ans.strip().split('\n')
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
         ans_dict = {}
-        for line in lines:
-            line = line.strip()
-            if '=' in line:
-                key, value = line.split('=', 1)
-                ans_dict[key.strip()] = value.strip()
+        for kv in kv_pairs:
+            parts = kv.split("=", 1)
+            if len(parts) == 2:
+                ans_dict[parts[0].strip()] = parts[1].strip()
         
-        # 检查必需字段
-        if "diameter" not in ans_dict or "pairs" not in ans_dict:
+        if "ritual" not in ans_dict or "root" not in ans_dict:
             return False
         
-        # 检查直径是否正确
+        if ans_dict["ritual"].upper() != self.rule:
+            return False
+        
         try:
-            stated_diameter = int(ans_dict["diameter"])
+            guessed_root = int(ans_dict["root"])
+            return guessed_root == self.target
         except:
             return False
-        
-        if stated_diameter != self.true_diameter:
-            return False
-        
-        # 检查至少一对顶点对是否正确
-        pairs_str = ans_dict["pairs"]
-        # 解析顶点对格式: (u1,v1),(u2,v2)
-        import re
-        pair_matches = re.findall(r'\((\d+),(\d+)\)', pairs_str)
-        
-        if not pair_matches:
-            return False
-        
-        # 检查是否至少有一对是真实的直径对
-        found_valid_pair = False
-        for u_str, v_str in pair_matches:
-            try:
-                u, v = int(u_str), int(v_str)
-                normalized_pair = (min(u,v), max(u,v))
-                # 检查这对顶点的距离是否确实等于直径
-                if u in self.distances and v in self.distances[u]:
-                    if self.distances[u][v] == self.true_diameter:
-                        found_valid_pair = True
-                        break
-            except:
-                continue
-        
-        return found_valid_pair
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
-        
-        # 1. 枚举邻接列表查询 (Neighbor list query)
-        for i in range(1, self.n + 1):
-            q_content = str(i)
-            # 构造模拟的 parsed_info
-            parsed_info = {"query_neighbors": q_content}
-            # 调用内部逻辑获取正确回复
-            response = self._cf_core_produce(parsed_info)
-            queries.append({
-                "query": f"<query_neighbors>{q_content}</query_neighbors>",
-                "answer": response
-            })
-            
-        # 2. 枚举距离查询与直接相邻判定 (Distance & Adjacency)
-        # 遍历所有 i != j 的有序对，因为回复格式包含输入顺序 (例如 query_distance(1,5) 和 (5,1) 文本不同)
-        for i in range(1, self.n + 1):
-            for j in range(1, self.n + 1):
-                if i == j:
-                    continue
-                
-                q_content = f"{i},{j}"
-                
-                # 距离查询
-                parsed_dist = {"query_distance": q_content}
-                resp_dist = self._cf_core_produce(parsed_dist)
-                queries.append({
-                    "query": f"<query_distance>{q_content}</query_distance>",
-                    "answer": resp_dist
-                })
-                
-                # 相邻判定
-                parsed_adj = {"query_adjacent": q_content}
-                resp_adj = self._cf_core_produce(parsed_adj)
-                queries.append({
-                    "query": f"<query_adjacent>{q_content}</query_adjacent>",
-                    "answer": resp_adj
-                })
-                
-        return queries
 
     def _cf_core_produce(self, parsed_info):
-        responses = []
-        
         if self.config.language == "zh":
-            yes_word, no_word = "是", "否"
-            invalid_msg = "非法请求"
+            yes_res, no_res = "是", "否"
+            error_format = "错误：格式无效或节点编号错误。"
+            error_range = "错误：节点编号超出范围。"
+            error_verify = "错误：Verify 查询只能使用一次。"
         else:
-            yes_word, no_word = "Yes", "No"
-            invalid_msg = "Invalid request"
-        
-        # 处理邻接列表查询
-        if "query_neighbors" in parsed_info:
-            queries = parsed_info["query_neighbors"].strip().split('\n')
-            for query in queries:
-                query = query.strip()
-                if not query:
-                    continue
-                if not self._is_valid_vertex(query):
-                    responses.append(f"query_neighbors({query}): {invalid_msg}")
-                    continue
-                v = int(query)
-                neighbors = sorted(list(self.adj_list[v]))
-                neighbors_str = ",".join(map(str, neighbors))
-                responses.append(f"query_neighbors({v}): [{neighbors_str}]")
-        
-        # 处理距离查询
-        if "query_distance" in parsed_info:
-            queries = parsed_info["query_distance"].strip().split('\n')
-            for query in queries:
-                query = query.strip()
-                if not query:
-                    continue
-                try:
-                    parts = query.split(',')
-                    if len(parts) != 2:
-                        responses.append(f"query_distance({query}): {invalid_msg}")
-                        continue
-                    u_str, v_str = parts[0].strip(), parts[1].strip()
-                    if not self._is_valid_vertex(u_str) or not self._is_valid_vertex(v_str):
-                        responses.append(f"query_distance({query}): {invalid_msg}")
-                        continue
-                    u, v = int(u_str), int(v_str)
-                    if u == v:
-                        responses.append(f"query_distance({u},{v}): {invalid_msg}")
-                        continue
-                    dist = self.distances[u][v]
-                    responses.append(f"query_distance({u},{v}): {dist}")
-                except:
-                    responses.append(f"query_distance({query}): {invalid_msg}")
-        
-        # 处理直接相邻判定查询
-        if "query_adjacent" in parsed_info:
-            queries = parsed_info["query_adjacent"].strip().split('\n')
-            for query in queries:
-                query = query.strip()
-                if not query:
-                    continue
-                try:
-                    parts = query.split(',')
-                    if len(parts) != 2:
-                        responses.append(f"query_adjacent({query}): {invalid_msg}")
-                        continue
-                    u_str, v_str = parts[0].strip(), parts[1].strip()
-                    if not self._is_valid_vertex(u_str) or not self._is_valid_vertex(v_str):
-                        responses.append(f"query_adjacent({query}): {invalid_msg}")
-                        continue
-                    u, v = int(u_str), int(v_str)
-                    if u == v:
-                        responses.append(f"query_adjacent({u},{v}): {invalid_msg}")
-                        continue
-                    is_adj = v in self.adj_list[u]
-                    result = yes_word if is_adj else no_word
-                    responses.append(f"query_adjacent({u},{v}): {result}")
-                except:
-                    responses.append(f"query_adjacent({query}): {invalid_msg}")
-        
-        if not responses:
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid format or node number."
+            error_range = "Error: Node number out of range."
+            error_verify = "Error: Verify query can only be used once."
+
+        if "query_echo" in parsed_info:
+            try:
+                node = int(parsed_info["query_echo"].strip())
+                if node < 1 or node > self.n:
+                    return error_range
+                return str(self._get_echo_value(node))
+            except:
+                return error_format
+
+        elif "query_dist" in parsed_info:
+            try:
+                raw = parsed_info["query_dist"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                node1, node2 = int(parts[0]), int(parts[1])
+                if node1 < 1 or node1 > self.n or node2 < 1 or node2 > self.n:
+                    return error_range
+                return str(self.dist_matrix[node1][node2])
+            except:
+                return error_format
+
+        elif "query_verify" in parsed_info:
+            if self.verify_used:
+                return error_verify
+            self.verify_used = True
+            
+            try:
+                node = int(parsed_info["query_verify"].strip())
+                if node < 1 or node > self.n:
+                    return error_range
+                
+                if node == self.target:
+                    return yes_res
+                else:
+                    if not getattr(self, "enable_counterfactual", False):
+                        self.state.set_state("failed", "verify failed")
+                    return no_res
+            except:
+                return error_format
+
+        else:
             raise ValueError("No valid query tag found.")
-        
-        return "\n".join(responses)
 
     def _cf_make_wrong(self, correct: str) -> str:
-        import re
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        lines = correct.split('\n')
-        if not lines:
-            return correct + "_WRONG"
+        mapping = {
+            "是": "否",
+            "否": "是",
+            "Yes": "No",
+            "No": "Yes"
+        }
         
-        # 只修改第一行的结果
-        first_line = lines[0]
+        if correct in mapping:
+            return mapping[correct]
         
-        # 情况1：距离查询结果，格式如 "query_distance(u,v): 3"
-        dist_match = re.search(r'(query_distance\(\d+,\d+\):\s*)(\d+)', first_line)
-        if dist_match:
-            old_val = int(dist_match.group(2))
-            new_val = old_val + 1
-            lines[0] = first_line[:dist_match.start(2)] + str(new_val) + first_line[dist_match.end(2):]
-            return '\n'.join(lines)
-        
-        # 情况2：邻接判定结果，包含 Yes/No 或 是/否
-        if "Yes" in first_line:
-            lines[0] = first_line.replace("Yes", "No", 1)
-            return '\n'.join(lines)
-        if "No" in first_line:
-            lines[0] = first_line.replace("No", "Yes", 1)
-            return '\n'.join(lines)
-        if "是" in first_line:
-            lines[0] = first_line.replace("是", "否", 1)
-            return '\n'.join(lines)
-        if "否" in first_line:
-            lines[0] = first_line.replace("否", "是", 1)
-            return '\n'.join(lines)
-        
-        # 情况3：邻接列表查询结果，格式如 "query_neighbors(3): [1,2,5]"
-        # 修改邻接列表：移除一个邻居或添加一个假邻居
-        neighbors_match = re.search(r'(query_neighbors\((\d+)\):\s*\[)(.*?)(\])', first_line)
-        if neighbors_match:
-            u_str = neighbors_match.group(2)
-            neighbors_str = neighbors_match.group(3)
-            if neighbors_str.strip():
-                neighbor_list = [x.strip() for x in neighbors_str.split(',')]
-                if len(neighbor_list) > 1:
-                    # 移除最后一个邻居
-                    neighbor_list = neighbor_list[:-1]
-                else:
-                    # 只有一个邻居，添加一个假邻居
-                    fake = (int(neighbor_list[0]) % self.n) + 1
-                    while str(fake) == neighbor_list[0] or str(fake) == u_str:
-                        fake = (fake % self.n) + 1
-                    neighbor_list.append(str(fake))
-                    # 保证有序
-                    neighbor_list.sort(key=int)
-                new_neighbors = ','.join(neighbor_list)
-                lines[0] = neighbors_match.group(1) + new_neighbors + neighbors_match.group(4)
-            return '\n'.join(lines)
+        correct_lower = correct.lower()
+        if correct_lower == "yes": return "No"
+        if correct_lower == "no": return "Yes"
         
         return correct + "_WRONG"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        
+        if self.config.language == "zh":
+            yes_res = "是"
+        else:
+            yes_res = "Yes"
+
+        for i in range(1, self.n + 1):
+            query_str = f"<query_echo>{i}</query_echo>"
+            answer = str(self._get_echo_value(i))
+            queries.append({"query": query_str, "answer": answer})
+
+        for i in range(1, self.n + 1):
+            for j in range(i + 1, self.n + 1):
+                query_str = f"<query_dist>{i},{j}</query_dist>"
+                answer = str(self.dist_matrix[i][j])
+                queries.append({"query": query_str, "answer": answer})
+
+        query_str = f"<query_verify>{self.target}</query_verify>"
+        queries.append({"query": query_str, "answer": yes_res})
+
+        return queries

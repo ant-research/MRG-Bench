@@ -1,551 +1,599 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   区间聚合：某区间内所有元素的和/最大值/最小值是多少
-# ============================================================
-
 from .base import Game
-import re
+import random
 
+class HiddenGraphDistanceGame(Game):
 
-class SequenceReconstructionGame(Game):
+    reasoning_type = "演绎推理"
+    data_structure = "图"
 
     game_rule_zh = """\
-我们现在来玩一个"序列重构"的推理游戏，规则如下：
+我们来玩一个"隐藏图距离推理"游戏，规则如下：
 
-游戏设定了一个长度为 {n} 的有序序列，序列中每个位置的值是 0 到 9 之间的整数（包含 0 和 9）。你的任务是通过查询来推断出这个完整的序列。
+游戏设定了一个固定但未知的无向、无权、连通图 G，图中有 {n} 个顶点，顶点编号为 {vertex_list}。
+我已选定一个源点 s = {source}，你的目标是推断出从源点 s 到所有其他顶点的最短路径距离之和 S。
 
-## 已知信息
+隐藏信息：图的边集合（即哪些顶点之间存在边）对你是未知的。
+已知信息：顶点数量、顶点列表、源点。
 
-1. 序列长度为 {n}
-2. 序列所有元素的总和为 {total_sum}
+你可以通过以下五种查询来收集信息（每次只能进行一种查询）：
 
-## 查询规则
+1. **层波计数查询**：询问距离源点恰好为 t 的顶点数量，记为 L(t)。
+2. **累计覆盖查询**：询问距离源点不超过 t 的顶点总数，记为 C(t)。
+3. **相邻判定查询**：询问两个顶点 x 和 y 之间是否存在边。
+4. **度数查询**：询问某个顶点 x 的度数（即与它直接相连的边数）。
+5. **相对远近比较查询**：比较两个顶点 x 和 y 到源点的距离，判断哪个更近或是否等距。
 
-你可以进行区间和查询，每次查询需要指定一个连续区间的左端点 L 和右端点 R（位置编号从 1 到 {n}），我会告诉你这个区间内所有元素的和。
+你需要尽可能少地进行查询，最终给出距离和 S 的数值。
 
-查询限制：
-- 左端点 L 必须严格小于右端点 R
-- 不能查询整个序列（即不能同时 L=1 且 R={n}）
-- 请尽可能少地使用查询次数
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-## 查询格式
+- 层波计数查询（例如询问距离为 2 的顶点数）：
+<query_layer>2</query_layer>
 
-使用以下 XML 格式进行区间和查询：
+- 累计覆盖查询（例如询问距离不超过 2 的顶点总数）：
+<query_cumulative>2</query_cumulative>
 
-<query>L,R</query>
+- 相邻判定查询（例如询问顶点 1 和顶点 3 是否相邻）：
+<query_adjacent>1,3</query_adjacent>
 
-例如，查询位置 2 到位置 5 的区间和：
-<query>2,5</query>
+- 度数查询（例如询问顶点 5 的度数）：
+<query_degree>5</query_degree>
 
-## 提交答案格式
+- 相对远近比较查询（例如比较顶点 2 和顶点 4 到源点的距离）：
+<query_compare>2,4</query_compare>
 
-当你确定了完整序列后，请按顺序提交所有位置的值（用逗号分隔）：
+当你确定答案后，请提交距离和 S 的值：
 
-<answer>x1,x2,x3,...,x{n}</answer>
+<answer>{answer_value}</answer>
 
-例如，对于长度为 5 的序列：
-<answer>3,1,4,1,5</answer>
-
-注意：答案必须完全正确才算成功，任何位置的错误都会导致游戏失败。
+其中 {answer_value} 为你推断出的整数。
 """
 
     game_rule_en = """\
-Let's play a "Sequence Reconstruction" deduction game. Here are the rules:
+Let's play a "Hidden Graph Distance Inference" game. Here are the rules:
 
-A sequence of length {n} has been set up, where each position contains an integer between 0 and 9 (inclusive). Your task is to infer the complete sequence through queries.
+The game is based on a fixed but unknown undirected, unweighted, connected graph G with {n} vertices, labeled as {vertex_list}.
+I have selected a source vertex s = {source}. Your goal is to infer the sum S of shortest path distances from source s to all other vertices.
 
-## Given Information
+Hidden information: The edge set of the graph (i.e., which vertices are connected) is unknown to you.
+Known information: Number of vertices, vertex list, source vertex.
 
-1. The sequence has length {n}
-2. The sum of all elements in the sequence is {total_sum}
+You can collect information through the following five types of queries (only one query per turn):
 
-## Query Rules
+1. **Layer Count Query**: Ask for the number of vertices at exactly distance t from the source, denoted as L(t).
+2. **Cumulative Coverage Query**: Ask for the total number of vertices at distance at most t from the source, denoted as C(t).
+3. **Adjacency Query**: Ask whether there is an edge between two vertices x and y.
+4. **Degree Query**: Ask for the degree of a vertex x (i.e., the number of edges connected to it).
+5. **Distance Comparison Query**: Compare the distances of two vertices x and y from the source, determining which is closer or if they are equidistant.
 
-You can perform range sum queries. Each query requires specifying a left endpoint L and a right endpoint R of a continuous range (positions numbered from 1 to {n}), and I will tell you the sum of all elements in that range.
+You should perform as few queries as possible and finally provide the value of distance sum S.
 
-Query constraints:
-- Left endpoint L must be strictly less than right endpoint R
-- You cannot query the entire sequence (i.e., L=1 and R={n} simultaneously is not allowed)
-- Please use as few queries as possible
+Each query must contain only one tag. Use the following XML format:
 
-## Query Format
+- Layer Count Query (e.g., asking for vertices at distance 2):
+<query_layer>2</query_layer>
 
-Use the following XML format for range sum queries:
+- Cumulative Coverage Query (e.g., asking for vertices at distance at most 2):
+<query_cumulative>2</query_cumulative>
 
-<query>L,R</query>
+- Adjacency Query (e.g., asking if vertices 1 and 3 are adjacent):
+<query_adjacent>1,3</query_adjacent>
 
-For example, to query the range sum from position 2 to position 5:
-<query>2,5</query>
+- Degree Query (e.g., asking for the degree of vertex 5):
+<query_degree>5</query_degree>
 
-## Answer Submission Format
+- Distance Comparison Query (e.g., comparing distances of vertices 2 and 4 from source):
+<query_compare>2,4</query_compare>
 
-When you have determined the complete sequence, submit all position values in order (comma-separated):
+When you have determined the answer, submit the distance sum S:
 
-<answer>x1,x2,x3,...,x{n}</answer>
+<answer>{answer_value}</answer>
 
-For example, for a sequence of length 5:
-<answer>3,1,4,1,5</answer>
-
-Note: The answer must be completely correct to succeed. Any error in any position will result in game failure.
+Where {answer_value} is the integer you inferred.
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-这是一套用于城市干线交通监控的智能系统。
-系统正在监控一条由 {n} 个连续路段组成的快速路。每个路段的“拥堵指数”评级为 0 到 9 的整数。你的任务是通过调用区间监控接口，推断出每个路段的具体拥堵指数。
+欢迎使用“城市物流调度系统”。
 
-## 已知信息
+本系统监控着一个未知的连通物流网络 G，其中包含 {n} 个站点，编号为 {vertex_list}。
+我们已设定中央调度中心 s = {source}，你的目标是评估整体网络效率，即推断出从调度中心 s 到所有其他站点的最少中转跳数之和 S。
 
-1. 监控线路总共包含 {n} 个路段（编号从 1 到 {n}）
-2. 整条线路的所有路段拥堵指数总和为 {total_sum}
+隐藏信息：各站点之间的直达路线对你是未知的。
+已知信息：站点总数、站点列表、中央调度中心。
 
-## 查询规则
+你可以通过以下五种查询来收集物流网络结构信息（每次只能进行一种查询）：
 
-你可以调用区间聚合传感接口，每次查询需要指定一个连续路段的起点 L 和终点 R（位置编号从 1 到 {n}），系统会返回该区间内所有路段的拥堵指数之和。
+1. **层波计数查询**：询问需要恰好 t 次中转跳数才能到达的站点数量，记为 L(t)。
+2. **累计覆盖查询**：询问中转跳数不超过 t 的站点总数，记为 C(t)。
+3. **相邻判定查询**：询问两个站点 x 和 y 之间是否存在直达路线。
+4. **度数查询**：询问某个站点 x 的直达路线数（即与其直接相连的站点数）。
+5. **相对远近比较查询**：比较站点 x 和 y 到调度中心的物流层级，判断哪个更近或是否等距。
 
-查询限制：
-- 起点 L 必须严格小于终点 R
-- 接口不支持一次性查询整条线路（即不能同时 L=1 且 R={n}）
-- 请尽可能少地消耗系统查询配额
+你需要尽可能少地进行查询，最终给出中转跳数之和 S。
 
-## 查询格式
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-使用以下 XML 格式进行查询：
+- 层波计数查询（例如询问中转跳数为 2 的站点数）：
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- 累计覆盖查询（例如询问中转跳数不超过 2 的站点总数）：
+<query_cumulative>2</query_cumulative>
 
-例如，查询第 2 路段到第 5 路段的拥堵指数之和：
-<query>2,5</query>
+- 相邻判定查询（例如询问站点 1 和 3 是否直达）：
+<query_adjacent>1,3</query_adjacent>
 
-## 提交答案格式
+- 度数查询（例如询问站点 5 的直达路线数）：
+<query_degree>5</query_degree>
 
-当排查出所有路段的拥堵指数后，请按顺序提交完整的数据序列（用逗号分隔）：
+- 相对远近比较查询（例如比较站点 2 和 4 到调度中心的远近）：
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+当你确定答案后，请提交跳数之和 S：
 
-例如，对于长度为 5 的线路：
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-注意：上报的数据必须完全正确，任何一个路段的误判都将导致调度失败。
+其中 {answer_value} 为你推断出的整数。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-This is an intelligent system for monitoring urban arterial traffic.
-The system is monitoring an expressway consisting of {n} consecutive road segments. The "congestion index" for each segment is an integer ranging from 0 to 9. Your task is to deduce the exact congestion index of each segment by invoking the range monitoring interface.
+Welcome to the "City Logistics Dispatch System".
 
-## Given Information
+This system monitors an unknown connected logistics network G, which includes {n} stations labeled as {vertex_list}.
+We have designated the central dispatch center s = {source}. Your goal is to evaluate the overall network efficiency by inferring the sum S of the minimum transit jumps from the dispatch center s to all other stations.
 
-1. The monitored route contains a total of {n} segments (numbered from 1 to {n})
-2. The sum of the congestion indices for all segments on the route is {total_sum}
+Hidden information: The direct routes between stations are unknown to you.
+Known information: Total number of stations, station list, central dispatch center.
 
-## Query Rules
+You can collect network structure information through the following five types of queries (only one query per turn):
 
-You can invoke the range aggregation sensor interface. Each query requires specifying a starting point L and an ending point R (position numbers from 1 to {n}) of a continuous section, and the system will return the sum of the congestion indices for all segments in that range.
+1. **Layer Count Query**: Ask for the number of stations requiring exactly t transit jumps, denoted as L(t).
+2. **Cumulative Coverage Query**: Ask for the total number of stations reachable within at most t transit jumps, denoted as C(t).
+3. **Adjacency Query**: Ask whether there is a direct route between stations x and y.
+4. **Degree Query**: Ask for the number of direct routes of station x (i.e., stations directly connected to it).
+5. **Distance Comparison Query**: Compare the transit levels of stations x and y from the dispatch center, determining which is closer or if they are equidistant.
 
-Query constraints:
-- Starting point L must be strictly less than ending point R
-- The interface does not support querying the entire route at once (i.e., L=1 and R={n} simultaneously is not allowed)
-- Please consume as few system query quotas as possible
+You should perform as few queries as possible and finally provide the transit jump sum S.
 
-## Query Format
+Each query must contain only one tag. Use the following XML format:
 
-Use the following XML format for queries:
+- Layer Count Query (e.g., asking for stations at 2 jumps):
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- Cumulative Coverage Query (e.g., asking for stations at most 2 jumps away):
+<query_cumulative>2</query_cumulative>
 
-For example, to query the sum of congestion indices from segment 2 to segment 5:
-<query>2,5</query>
+- Adjacency Query (e.g., asking if stations 1 and 3 are directly connected):
+<query_adjacent>1,3</query_adjacent>
 
-## Answer Submission Format
+- Degree Query (e.g., asking for the direct routes of station 5):
+<query_degree>5</query_degree>
 
-Once you have determined the congestion indices for all segments, submit the complete data sequence in order (comma-separated):
+- Distance Comparison Query (e.g., comparing distances of stations 2 and 4 from the center):
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+When you have determined the answer, submit the jump sum S:
 
-For example, for a route of length 5:
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-Note: The reported data must be completely correct. Any misjudgment on any segment will result in a system dispatch failure.
+Where {answer_value} is the integer you inferred.
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-这是一套用于连续生理指标监测的辅助诊断系统。
-系统记录了患者在连续的 {n} 个时间窗口内的生理监测数据。每个时间窗口的“异常指数”评定为 0 到 9 的整数。你的任务是通过调用区间聚合接口，精确推断出每个时间窗口的异常指数，以排查病因。
+欢迎进入“流行病接触追踪溯源系统”。
 
-## 已知信息
+本系统正在分析一个未知的连通接触者网络 G，其中涉及 {n} 名人员，编号为 {vertex_list}。
+我们已确认零号病人 s = {source}。你的任务是评估疫情的传播广度，即推断出从零号病人 s 到所有其他人员的最短传播代数（传播链长度）之和 S。
 
-1. 监测周期总共包含 {n} 个时间窗口（编号从 1 到 {n}）
-2. 整个周期的异常指数总和为 {total_sum}
+隐藏信息：人员之间的直接接触史（即边集合）对你是未知的。
+已知信息：人员总数、人员编号列表、零号病人。
 
-## 查询规则
+你可以通过以下五种查询来收集传播链信息（每次只能进行一种查询）：
 
-你可以调用区间诊断接口，每次查询需要指定一个连续时间段的起始窗口 L 和结束窗口 R（编号从 1 到 {n}），系统会返回该时间段内所有窗口的异常指数之和。
+1. **层波计数查询**：询问传播代数恰好为 t 的人数，记为 L(t)。
+2. **累计覆盖查询**：询问传播代数不超过 t 的总人数，记为 C(t)。
+3. **相邻判定查询**：询问两名人员 x 和 y 是否有过直接接触。
+4. **度数查询**：询问某人员 x 的密切接触者数量。
+5. **相对远近比较查询**：比较两名人员 x 和 y 距离零号病人的传播代数，判断谁更近或是否等距。
 
-查询限制：
-- 起始窗口 L 必须严格小于结束窗口 R
-- 接口不支持一次性查询整个周期（即不能同时 L=1 且 R={n}）
-- 请尽可能少地消耗系统诊断次数
+你需要尽可能少地进行查询，最终给出传播代数之和 S。
 
-## 查询格式
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-使用以下 XML 格式进行查询：
+- 层波计数查询（例如询问传播代数为 2 的人数）：
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- 累计覆盖查询（例如询问传播代数不超过 2 的总人数）：
+<query_cumulative>2</query_cumulative>
 
-例如，查询第 2 到第 5 窗口的异常指数之和：
-<query>2,5</query>
+- 相邻判定查询（例如询问人员 1 和 3 是否直接接触）：
+<query_adjacent>1,3</query_adjacent>
 
-## 提交答案格式
+- 度数查询（例如询问人员 5 的密接人数）：
+<query_degree>5</query_degree>
 
-当推断出所有窗口的异常指数后，请按顺序提交完整的分析序列（用逗号分隔）：
+- 相对远近比较查询（例如比较人员 2 和 4 到零号病人的传播链远近）：
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+当你确定答案后，请提交传播代数之和 S：
 
-例如，对于周期长度为 5 的监测：
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-注意：诊断结论必须完全正确，任何一个时间窗口的误判都将导致辅助诊断失败。
+其中 {answer_value} 为你推断出的整数。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-This is an auxiliary diagnostic system for continuous physiological monitoring.
-The system has recorded patient data over {n} consecutive time windows. The "anomaly index" for each window is evaluated as an integer from 0 to 9. Your task is to precisely deduce the anomaly index of each time window by querying the range aggregation interface to identify the underlying cause.
+Welcome to the "Epidemic Contact Tracing and Sourcing System".
 
-## Given Information
+This system is analyzing an unknown connected network of contacts G, involving {n} individuals labeled as {vertex_list}.
+We have identified patient zero s = {source}. Your task is to evaluate the spread of the epidemic by inferring the sum S of the shortest transmission generations (chain lengths) from patient zero s to all other individuals.
 
-1. The monitoring period contains a total of {n} time windows (numbered from 1 to {n})
-2. The total sum of anomaly indices across the entire period is {total_sum}
+Hidden information: The direct contact history between individuals (i.e., the edges) is unknown to you.
+Known information: Total number of individuals, individual list, patient zero.
 
-## Query Rules
+You can collect transmission chain information through the following five types of queries (only one query per turn):
 
-You can invoke the range diagnostic interface. Each query requires specifying a starting window L and an ending window R (position numbers from 1 to {n}) of a continuous timeframe, and the system will return the sum of anomaly indices within that range.
+1. **Layer Count Query**: Ask for the number of individuals at exactly transmission generation t, denoted as L(t).
+2. **Cumulative Coverage Query**: Ask for the total number of individuals within at most transmission generation t, denoted as C(t).
+3. **Adjacency Query**: Ask whether individuals x and y had direct contact.
+4. **Degree Query**: Ask for the number of close contacts of individual x.
+5. **Distance Comparison Query**: Compare the transmission generations of individuals x and y from patient zero, determining who is closer or if they are equidistant.
 
-Query constraints:
-- Starting window L must be strictly less than ending window R
-- The interface does not support querying the entire period at once (i.e., L=1 and R={n} simultaneously is not allowed)
-- Please minimize the use of system diagnostic queries
+You should perform as few queries as possible and finally provide the transmission generation sum S.
 
-## Query Format
+Each query must contain only one tag. Use the following XML format:
 
-Use the following XML format for queries:
+- Layer Count Query (e.g., asking for individuals at generation 2):
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- Cumulative Coverage Query (e.g., asking for individuals up to generation 2):
+<query_cumulative>2</query_cumulative>
 
-For example, to query the sum of anomaly indices from window 2 to window 5:
-<query>2,5</query>
+- Adjacency Query (e.g., asking if individuals 1 and 3 had direct contact):
+<query_adjacent>1,3</query_adjacent>
 
-## Answer Submission Format
+- Degree Query (e.g., asking for the number of close contacts of individual 5):
+<query_degree>5</query_degree>
 
-Once you have deduced the anomaly indices for all windows, submit the complete analysis sequence in order (comma-separated):
+- Distance Comparison Query (e.g., comparing transmission distances of individuals 2 and 4):
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+When you have determined the answer, submit the transmission generation sum S:
 
-For example, for a period of length 5:
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-Note: The diagnostic conclusion must be entirely correct. Any misjudgment in any time window will lead to the failure of the auxiliary diagnosis.
+Where {answer_value} is the integer you inferred.
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-这是一套自适应学习路径规划的评估系统。
-系统分析了学生在 {n} 个连续学习模块中的表现。每个模块遗留的“知识缺陷点”数量在 0 到 9 之间。你的任务是通过阶段性测试查询接口，推断出每个模块的具体缺陷点数量，以为学生定制补救计划。
+欢迎来到“课程依赖图谱分析平台”。
 
-## 已知信息
+本平台存储着一个未知的连通课程依赖网络 G，包含 {n} 个知识模块，编号为 {vertex_list}。
+系统设定了基础导论课 s = {source}。你的目标是评估整体学习难度，即推断出从导论课 s 到所有其他模块的最短前置依赖层级之和 S。
 
-1. 学习路径总共包含 {n} 个模块（编号从 1 到 {n}）
-2. 所有模块的知识缺陷点总和为 {total_sum}
+隐藏信息：各模块之间的直接前置/后续关联（边集合）对你是未知的。
+已知信息：模块总数、模块编号列表、基础导论课。
 
-## 查询规则
+你可以通过以下五种查询来探索课程结构（每次只能进行一种查询）：
 
-你可以调用阶段性综合测试接口，每次查询需要指定一个连续学习阶段的起始模块 L 和结束模块 R（编号从 1 到 {n}），系统会返回该阶段内的知识缺陷点之和。
+1. **层波计数查询**：询问依赖层级恰好为 t 的知识模块数量，记为 L(t)。
+2. **累计覆盖查询**：询问依赖层级不超过 t 的知识模块总数，记为 C(t)。
+3. **相邻判定查询**：询问两个模块 x 和 y 是否互为直接依赖关联。
+4. **度数查询**：询问某个模块 x 的直接关联模块数。
+5. **相对远近比较查询**：比较模块 x 和 y 距离基础导论课的依赖深度，判断哪个更浅或是否同级。
 
-查询限制：
-- 起始模块 L 必须严格小于结束模块 R
-- 不能一次性测试所有的模块（即不能同时 L=1 且 R={n}）
-- 为了避免学生过度疲劳，请尽可能少地进行测试查询
+你需要尽可能少地进行查询，最终给出依赖层级之和 S。
 
-## 查询格式
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-使用以下 XML 格式进行查询：
+- 层波计数查询（例如询问依赖层级为 2 的模块数）：
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- 累计覆盖查询（例如询问依赖层级不超过 2 的模块总数）：
+<query_cumulative>2</query_cumulative>
 
-例如，查询第 2 模块到第 5 模块的缺陷点之和：
-<query>2,5</query>
+- 相邻判定查询（例如询问模块 1 和 3 是否直接关联）：
+<query_adjacent>1,3</query_adjacent>
 
-## 提交答案格式
+- 度数查询（例如询问模块 5 的直接关联数）：
+<query_degree>5</query_degree>
 
-当明确了所有模块的缺陷点后，请按顺序提交完整的评估序列（用逗号分隔）：
+- 相对远近比较查询（例如比较模块 2 和 4 到导论课的依赖深度）：
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+当你确定答案后，请提交依赖层级之和 S：
 
-例如，对于包含 5 个模块的路径：
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-注意：评估结果必须完全正确，任何一个模块的遗漏都会影响最终的个性化学习方案。
+其中 {answer_value} 为你推断出的整数。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-This is an evaluation system for adaptive learning path planning.
-The system analyzes a student's performance across {n} consecutive learning modules. The number of lingering "knowledge deficits" per module ranges from 0 to 9. Your task is to deduce the exact number of deficits for each module using the phase-test query interface to customize a remedial plan for the student.
+Welcome to the "Course Dependency Graph Analysis Platform".
 
-## Given Information
+This platform stores an unknown connected course dependency network G, containing {n} knowledge modules labeled as {vertex_list}.
+The system has set the foundational introductory course s = {source}. Your goal is to evaluate the overall learning difficulty by inferring the sum S of the shortest prerequisite dependency levels from the introductory course s to all other modules.
 
-1. The learning path contains a total of {n} modules (numbered from 1 to {n})
-2. The sum of knowledge deficits across all modules is {total_sum}
+Hidden information: The direct prerequisite/successor associations between modules (i.e., the edges) are unknown to you.
+Known information: Total number of modules, module list, foundational introductory course.
 
-## Query Rules
+You can explore the course structure through the following five types of queries (only one query per turn):
 
-You can invoke the comprehensive phase-test interface. Each query requires specifying a starting module L and an ending module R (position numbers from 1 to {n}) of a continuous phase, and the system will return the sum of knowledge deficits in that range.
+1. **Layer Count Query**: Ask for the number of knowledge modules at exactly dependency level t, denoted as L(t).
+2. **Cumulative Coverage Query**: Ask for the total number of knowledge modules within at most dependency level t, denoted as C(t).
+3. **Adjacency Query**: Ask whether modules x and y have a direct dependency association.
+4. **Degree Query**: Ask for the number of directly associated modules of module x.
+5. **Distance Comparison Query**: Compare the dependency depths of modules x and y from the introductory course, determining which is shallower or if they are on the same level.
 
-Query constraints:
-- Starting module L must be strictly less than ending module R
-- You cannot test all modules at once (i.e., L=1 and R={n} simultaneously is not allowed)
-- To avoid test fatigue for the student, please minimize the number of queries
+You should perform as few queries as possible and finally provide the dependency level sum S.
 
-## Query Format
+Each query must contain only one tag. Use the following XML format:
 
-Use the following XML format for queries:
+- Layer Count Query (e.g., asking for modules at dependency level 2):
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- Cumulative Coverage Query (e.g., asking for modules up to level 2):
+<query_cumulative>2</query_cumulative>
 
-For example, to query the total deficits from module 2 to module 5:
-<query>2,5</query>
+- Adjacency Query (e.g., asking if modules 1 and 3 are directly associated):
+<query_adjacent>1,3</query_adjacent>
 
-## Answer Submission Format
+- Degree Query (e.g., asking for the direct associations of module 5):
+<query_degree>5</query_degree>
 
-Once you have clearly identified the deficits for all modules, submit the complete evaluation sequence in order (comma-separated):
+- Distance Comparison Query (e.g., comparing dependency depths of modules 2 and 4):
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+When you have determined the answer, submit the dependency level sum S:
 
-For example, for a path consisting of 5 modules:
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-Note: The evaluation must be perfectly accurate. Missing out on any module's deficit will compromise the final personalized learning plan.
+Where {answer_value} is the integer you inferred.
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-这是一套用于精密装配流水线的质量控制系统。
-一条装配线由 {n} 个连续的加工工位组成，每个工位在加工时会引入 0 到 9 微米的“加工微量偏差”。你的任务是通过调用激光区间测距接口，推断出每一个工位产生的具体偏差值，以便指导机床校准。
+欢迎使用“智能工厂装配流水线诊断系统”。
 
-## 已知信息
+系统中存在一个未知的连通工序流转图 G，包含 {n} 个生产节点，编号为 {vertex_list}。
+我们设定了核心原料仓 s = {source}。你的任务是评估车间整体的制造延迟指数，即推断出从原料仓 s 到所有其他生产节点的最少流转环节数目之和 S。
 
-1. 装配线共有 {n} 个工位（编号从 1 到 {n}）
-2. 经过所有工位后，成品的累计偏差总量为 {total_sum} 微米
+隐藏信息：生产节点之间的直接物料交接通道对你是未知的。
+已知信息：生产节点总数、节点编号列表、核心原料仓。
 
-## 查询规则
+你可以通过以下五种查询来获取装配线架构（每次只能进行一种查询）：
 
-你可以调用激光累计测量接口，每次查询需要指定测量的起始工位 L 和结束工位 R（编号从 1 到 {n}），测量仪会返回该区间段内所有工位引入的偏差之和。
+1. **层波计数查询**：询问距离原料仓恰好 t 个流转环节的节点数量，记为 L(t)。
+2. **累计覆盖查询**：询问流转环节不超过 t 的生产节点总数，记为 C(t)。
+3. **相邻判定查询**：询问两个节点 x 和 y 之间是否有直接的物料交接通道。
+4. **度数查询**：询问某个节点 x 的直接上下游节点数。
+5. **相对远近比较查询**：比较节点 x 和 y 距离原料仓的流转远近，判断哪个更近或是否等距。
 
-查询限制：
-- 起始工位 L 必须严格小于结束工位 R
-- 测量仪受限于轨道结构，不能直接测量整条产线的偏差（即不能同时 L=1 且 R={n}）
-- 激光测量成本较高，请尽可能少地进行查询
+你需要尽可能少地进行查询，最终给出流转环节数目之和 S。
 
-## 查询格式
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-使用以下 XML 格式进行查询：
+- 层波计数查询（例如询问流转环节为 2 的节点数）：
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- 累计覆盖查询（例如询问流转环节不超过 2 的节点总数）：
+<query_cumulative>2</query_cumulative>
 
-例如，测量第 2 工位到第 5 工位的累计偏差：
-<query>2,5</query>
+- 相邻判定查询（例如询问节点 1 和 3 是否直接交接）：
+<query_adjacent>1,3</query_adjacent>
 
-## 提交答案格式
+- 度数查询（例如询问节点 5 的直接上下游数）：
+<query_degree>5</query_degree>
 
-当推断出所有工位的独立偏差后，请按顺序提交完整的偏差序列（用逗号分隔）：
+- 相对远近比较查询（例如比较节点 2 和 4 到原料仓的流转距离）：
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+当你确定答案后，请提交流转环节数目之和 S：
 
-例如，对于拥有 5 个工位的流水线：
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-注意：校准数据必须完全正确，任何一个工位的误判都将导致产品直接报废。
+其中 {answer_value} 为你推断出的整数。
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-This is a quality control system for a precision assembly line.
-The assembly line consists of {n} consecutive processing stations. Each station introduces a "micro-machining deviation" between 0 and 9 micrometers. Your task is to deduce the exact deviation produced at each individual station by querying the laser range measurement interface, which will guide the machine calibration.
+Welcome to the "Smart Factory Assembly Line Diagnostic System".
 
-## Given Information
+The system involves an unknown connected process flow graph G, containing {n} production nodes labeled as {vertex_list}.
+We have designated the core raw material warehouse s = {source}. Your task is to evaluate the overall manufacturing delay index of the workshop by inferring the sum S of the minimum transfer steps from the warehouse s to all other production nodes.
 
-1. The assembly line has a total of {n} stations (numbered from 1 to {n})
-2. After passing through all stations, the cumulative deviation of the final product is {total_sum} micrometers
+Hidden information: The direct material handover channels between production nodes are unknown to you.
+Known information: Total number of production nodes, node list, core raw material warehouse.
 
-## Query Rules
+You can obtain assembly line architecture information through the following five types of queries (only one query per turn):
 
-You can invoke the cumulative laser measurement interface. Each query requires specifying a starting station L and an ending station R (position numbers from 1 to {n}), and the instrument will return the total deviation accumulated within that segment.
+1. **Layer Count Query**: Ask for the number of nodes at exactly t transfer steps from the warehouse, denoted as L(t).
+2. **Cumulative Coverage Query**: Ask for the total number of production nodes within at most t transfer steps, denoted as C(t).
+3. **Adjacency Query**: Ask whether there is a direct material handover channel between nodes x and y.
+4. **Degree Query**: Ask for the number of direct upstream/downstream nodes for node x.
+5. **Distance Comparison Query**: Compare the transfer distances of nodes x and y from the warehouse, determining which is closer or if they are equidistant.
 
-Query constraints:
-- Starting station L must be strictly less than ending station R
-- Constrained by the track layout, the instrument cannot measure the entire assembly line at once (i.e., L=1 and R={n} simultaneously is not allowed)
-- Laser measurements are costly; please minimize the number of queries
+You should perform as few queries as possible and finally provide the transfer steps sum S.
 
-## Query Format
+Each query must contain only one tag. Use the following XML format:
 
-Use the following XML format for queries:
+- Layer Count Query (e.g., asking for nodes at 2 transfer steps):
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- Cumulative Coverage Query (e.g., asking for nodes up to 2 transfer steps):
+<query_cumulative>2</query_cumulative>
 
-For example, to measure the cumulative deviation from station 2 to station 5:
-<query>2,5</query>
+- Adjacency Query (e.g., asking if nodes 1 and 3 hand over directly):
+<query_adjacent>1,3</query_adjacent>
 
-## Answer Submission Format
+- Degree Query (e.g., asking for the direct upstream/downstream count of node 5):
+<query_degree>5</query_degree>
 
-Once you have deduced the independent deviations for all stations, submit the complete deviation sequence in order (comma-separated):
+- Distance Comparison Query (e.g., comparing transfer distances of nodes 2 and 4):
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+When you have determined the answer, submit the transfer steps sum S:
 
-For example, for an assembly line with 5 stations:
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-Note: The calibration data must be absolutely exact. Any miscalculation at any station will cause the product to be scrapped.
+Where {answer_value} is the integer you inferred.
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-这是一套用于追踪金融犯罪资金链的司法审计系统。
-案卷显示，嫌疑人在连续的 {n} 个月内进行了非法资金转移。每个月的“非法转移金额”（单位：百万元）均为 0 到 9 的整数。你的任务是通过调取区间银行流水接口，推断出每个月确切的转移金额，完善检方的诉讼时间线。
+欢迎使用“经济犯罪资金链穿透分析系统”。
 
-## 已知信息
+本系统正在侦测一个未知的连通资金网络 G，其中包含 {n} 个涉案实体，编号为 {vertex_list}。
+我们已锁定主犯实体 s = {source}。你的目标是量化整个洗钱网络的复杂程度，即推断出从主犯 s 到所有其他实体的最少资金流转层级之和 S。
 
-1. 调查周期共跨越 {n} 个月（编号从 1 到 {n}）
-2. 整个涉案期间的非法转移资金总计为 {total_sum} 百万元
+隐藏信息：各实体之间的直接资金交易记录（边集合）对你是未知的。
+已知信息：涉案实体总数、实体编号列表、主犯实体。
 
-## 查询规则
+你可以通过以下五种查询来调查资金链网络（每次只能进行一种查询）：
 
-你可以向司法接口提交流水协查请求，每次查询需要指定连续月份的起始月 L 和结束月 R（编号从 1 到 {n}），银行将反馈该周期内的非法转移总额。
+1. **层波计数查询**：询问距离主犯恰好为 t 个洗钱层级的实体数量，记为 L(t)。
+2. **累计覆盖查询**：询问洗钱层级不超过 t 的涉案实体总数，记为 C(t)。
+3. **相邻判定查询**：询问两个实体 x 和 y 之间是否存在直接的资金交易。
+4. **度数查询**：询问某个实体 x 的直接交易对象数量。
+5. **相对远近比较查询**：比较实体 x 和 y 与主犯在资金流转上的远近，判断哪个层级更浅或是否等深。
 
-查询限制：
-- 起始月 L 必须严格小于结束月 R
-- 受限于搜查令权限，不能一次性调取整个涉案周期的流水（即不能同时 L=1 且 R={n}）
-- 调证流程繁琐，请尽可能精简查询次数
+你需要尽可能少地进行查询，最终给出资金流转层级之和 S。
 
-## 查询格式
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-使用以下 XML 格式进行查询：
+- 层波计数查询（例如询问洗钱层级为 2 的实体数）：
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- 累计覆盖查询（例如询问洗钱层级不超过 2 的实体总数）：
+<query_cumulative>2</query_cumulative>
 
-例如，调取第 2 个月到第 5 个月的转移总计：
-<query>2,5</query>
+- 相邻判定查询（例如询问实体 1 和 3 是否有直接交易）：
+<query_adjacent>1,3</query_adjacent>
 
-## 提交答案格式
+- 度数查询（例如询问实体 5 的直接交易对象数）：
+<query_degree>5</query_degree>
 
-当查实了所有月份的具体涉案金额后，请按时间顺序提交完整的资金序列（用逗号分隔）：
+- 相对远近比较查询（例如比较实体 2 和 4 到主犯的洗钱层级深浅）：
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+当你确定答案后，请提交流转层级之和 S：
 
-例如，对于周期为 5 个月的案件：
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-注意：审计报告的金额必须完全准确，任何一处的误差都会成为辩方推翻证据链的突破口。
+其中 {answer_value} 为你推断出的整数。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-This is a forensic auditing system used to track the capital chains in financial crimes.
-The case files indicate that the suspect made illegal fund transfers over {n} consecutive months. The "illegal transfer amount" (in millions) for each month is an integer from 0 to 9. Your task is to deduce the exact transfer amount for each month by subpoenaing range-based bank records to complete the prosecution's timeline.
+Welcome to the "Economic Crime Capital Chain Penetration Analysis System".
 
-## Given Information
+This system is detecting an unknown connected capital network G, containing {n} involved entities labeled as {vertex_list}.
+We have locked onto the prime culprit entity s = {source}. Your goal is to quantify the complexity of the entire money laundering network by inferring the sum S of the minimum capital transfer levels from the prime culprit s to all other entities.
 
-1. The investigation period spans {n} months (numbered from 1 to {n})
-2. The total sum of illegally transferred funds over the entire period is {total_sum} million
+Hidden information: The direct financial transaction records (i.e., edges) between entities are unknown to you.
+Known information: Total number of involved entities, entity list, prime culprit entity.
 
-## Query Rules
+You can investigate the capital chain network through the following five types of queries (only one query per turn):
 
-You can submit a transaction verification request to the judicial interface. Each query requires specifying a starting month L and an ending month R (position numbers from 1 to {n}) of a continuous period, and the bank will return the total illicit transfer sum for that timeframe.
+1. **Layer Count Query**: Ask for the number of entities at exactly t money laundering levels from the prime culprit, denoted as L(t).
+2. **Cumulative Coverage Query**: Ask for the total number of involved entities within at most t money laundering levels, denoted as C(t).
+3. **Adjacency Query**: Ask whether there are direct financial transactions between entities x and y.
+4. **Degree Query**: Ask for the number of direct transaction partners of entity x.
+5. **Distance Comparison Query**: Compare the capital transfer levels of entities x and y from the prime culprit, determining which is shallower or if they are at the same level.
 
-Query constraints:
-- Starting month L must be strictly less than ending month R
-- Restricted by the search warrant limits, you cannot subpoena the entire investigation period at once (i.e., L=1 and R={n} simultaneously is not allowed)
-- The evidence retrieval process is tedious; please minimize the number of queries
+You should perform as few queries as possible and finally provide the capital transfer level sum S.
 
-## Query Format
+Each query must contain only one tag. Use the following XML format:
 
-Use the following XML format for queries:
+- Layer Count Query (e.g., asking for entities at money laundering level 2):
+<query_layer>2</query_layer>
 
-<query>L,R</query>
+- Cumulative Coverage Query (e.g., asking for entities up to level 2):
+<query_cumulative>2</query_cumulative>
 
-For example, to query the total transfers from month 2 to month 5:
-<query>2,5</query>
+- Adjacency Query (e.g., asking if entities 1 and 3 have direct transactions):
+<query_adjacent>1,3</query_adjacent>
 
-## Answer Submission Format
+- Degree Query (e.g., asking for the direct transaction partners of entity 5):
+<query_degree>5</query_degree>
 
-Once the precise amounts for all months are verified, submit the complete financial sequence chronologically (comma-separated):
+- Distance Comparison Query (e.g., comparing money laundering levels of entities 2 and 4):
+<query_compare>2,4</query_compare>
 
-<answer>x1,x2,x3,...,x{n}</answer>
+When you have determined the answer, submit the transfer level sum S:
 
-For example, for a 5-month investigation:
-<answer>3,1,4,1,5</answer>
+<answer>{answer_value}</answer>
 
-Note: The audit report amounts must be completely accurate. Any discrepancy will serve as a loophole for the defense to invalidate the chain of evidence.
+Where {answer_value} is the integer you inferred.
 """
 
-    tags = ["answer", "query"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
-
-    # 难度配置（保留供外部调用参考，但不直接用于序列生成）
-    # 1 (简单)      - N=4, 简单序列
-    # 2 (中等偏下)  - N=6, 中等复杂度
-    # 3 (中等偏上)  - N=8, 需要更多推理
-    # 4 (较难)      - N=10, 复杂序列
-    # 5 (难)        - N=12, 最复杂
+    tags = ["answer", "query_layer", "query_cumulative", "query_adjacent", "query_degree", "query_compare"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
                 "n": 4,
-                "sequence": [2, 5, 1, 3],  # 总和 11
+                "vertices": [1, 2, 3, 4],
+                "source": 1,
+                "edges": [(1, 2), (2, 3), (3, 4)],
             },
             2: {
                 "n": 6,
-                "sequence": [3, 1, 4, 1, 5, 9],  # 总和 23
+                "vertices": [1, 2, 3, 4, 5, 6],
+                "source": 1,
+                "edges": [(1, 2), (1, 3), (1, 4), (1, 5), (1, 6)],
             },
             3: {
-                "n": 8,
-                "sequence": [2, 7, 1, 8, 2, 8, 1, 8],  # 总和 37
+                "n": 7,
+                "vertices": [1, 2, 3, 4, 5, 6, 7],
+                "source": 1,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
             },
             4: {
-                "n": 10,
-                "sequence": [5, 3, 8, 9, 7, 9, 3, 2, 3, 8],  # 总和 57
+                "n": 8,
+                "vertices": [1, 2, 3, 4, 5, 6, 7, 8],
+                "source": 1,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (5, 8), (6, 7)],
             },
             5: {
-                "n": 12,
-                "sequence": [6, 2, 8, 3, 1, 8, 5, 3, 0, 9, 7, 4],  # 总和 56
+                "n": 10,
+                "vertices": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                "source": 1,
+                "edges": [(1, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 6), (3, 7), 
+                         (4, 7), (4, 8), (5, 9), (6, 9), (7, 10), (8, 10), (9, 10)],
             },
         },
         "en": {
             1: {
                 "n": 4,
-                "sequence": [2, 5, 1, 3],
+                "vertices": [1, 2, 3, 4],
+                "source": 1,
+                "edges": [(1, 2), (2, 3), (3, 4)],
             },
             2: {
                 "n": 6,
-                "sequence": [3, 1, 4, 1, 5, 9],
+                "vertices": [1, 2, 3, 4, 5, 6],
+                "source": 1,
+                "edges": [(1, 2), (1, 3), (1, 4), (1, 5), (1, 6)],
             },
             3: {
-                "n": 8,
-                "sequence": [2, 7, 1, 8, 2, 8, 1, 8],
+                "n": 7,
+                "vertices": [1, 2, 3, 4, 5, 6, 7],
+                "source": 1,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
             },
             4: {
-                "n": 10,
-                "sequence": [5, 3, 8, 9, 7, 9, 3, 2, 3, 8],
+                "n": 8,
+                "vertices": [1, 2, 3, 4, 5, 6, 7, 8],
+                "source": 1,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (5, 8), (6, 7)],
             },
             5: {
-                "n": 12,
-                "sequence": [6, 2, 8, 3, 1, 8, 5, 3, 0, 9, 7, 4],
+                "n": 10,
+                "vertices": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                "source": 1,
+                "edges": [(1, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 6), (3, 7), 
+                         (4, 7), (4, 8), (5, 9), (6, 9), (7, 10), (8, 10), (9, 10)],
             },
         },
     }
@@ -554,185 +602,246 @@ Note: The audit report amounts must be completely accurate. Any discrepancy will
         super().__init__(config)
 
     def _initialize_game(self):
-        """
-        根据配置初始化游戏：使用确定性种子生成序列，避免硬编码
-        """
-        import random as _random
-        
         lang = self.config.language
         diff = int(self.config.difficulty)
-        
-        # 难度对应的序列长度
-        DIFFICULTY_TO_N = {1: 4, 2: 6, 3: 8, 4: 10, 5: 12}
-        
-        if diff not in DIFFICULTY_TO_N:
+
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
+
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        self.n = DIFFICULTY_TO_N[diff]
+        self.n = cfg["n"]
+        self.vertices = cfg["vertices"]
+        self.source = cfg["source"]
+        self.edges = set()
+        for u, v in cfg["edges"]:
+            self.edges.add((min(u, v), max(u, v)))
         
-        # 使用确定性种子生成序列（每次相同难度+语言产生相同序列）
-        seed = hash((lang, diff, "SequenceReconstructionGame")) % (2**32)
-        rng = _random.Random(seed)
-        self.sequence = [rng.randint(0, 9) for _ in range(self.n)]
-        self.total_sum = sum(self.sequence)
+        self.adj = {v: [] for v in self.vertices}
+        for u, v in self.edges:
+            self.adj[u].append(v)
+            self.adj[v].append(u)
         
-        # 初始化查询计数器
-        self.query_count = 0
+        self.distances = self._compute_distances()
         
-        # 设置游戏信息用于规则模板
+        self.target_sum = sum(self.distances.values())
+        
+        self.layer_count = {}
+        self.cumulative_count = {}
+        
+        for dist in self.distances.values():
+            self.layer_count[dist] = self.layer_count.get(dist, 0) + 1
+        
+        max_dist = max(self.distances.values()) if self.distances else 0
+        cumulative = 0
+        for t in range(max_dist + 1):
+            cumulative += self.layer_count.get(t, 0)
+            self.cumulative_count[t] = cumulative
+        
         self._game_info["n"] = self.n
-        self._game_info["total_sum"] = self.total_sum
+        self._game_info["vertex_list"] = ", ".join(map(str, self.vertices))
+        self._game_info["source"] = self.source
+        self._game_info["answer_value"] = "S"
+
+    def _compute_distances(self):
+        from collections import deque
+        
+        distances = {v: float('inf') for v in self.vertices}
+        distances[self.source] = 0
+        queue = deque([self.source])
+        
+        while queue:
+            u = queue.popleft()
+            for v in self.adj[u]:
+                if distances[v] == float('inf'):
+                    distances[v] = distances[u] + 1
+                    queue.append(v)
+        
+        return distances
 
     def evaluate(self, parsed_info):
-        """
-        评估模型提交的答案是否正确
-        答案格式：<answer>x1,x2,...,xn</answer>
-        """
-        raw_ans = parsed_info["answer"].strip()
-        
         try:
-            # 解析答案：逗号分隔的数字列表
-            answer_list = [int(x.strip()) for x in raw_ans.split(",")]
-            
-            # 检查长度是否匹配
-            if len(answer_list) != self.n:
-                return False
-            
-            # 检查每个值是否在 0-9 范围内
-            if not all(0 <= x <= 9 for x in answer_list):
-                return False
-            
-            # 检查是否完全匹配目标序列
-            return answer_list == self.sequence
-            
-        except (ValueError, AttributeError):
+            answer = int(parsed_info["answer"].strip())
+            return answer == self.target_sum
+        except:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        if "query" not in parsed_info:
-            if self.config.language == "zh":
-                return "错误：未找到有效的查询标签。"
-            else:
-                return "Error: No valid query tag found."
-        
-        try:
-            # 解析查询参数
-            query_str = parsed_info["query"].strip()
-            parts = [x.strip() for x in query_str.split(",")]
-            
-            if len(parts) != 2:
-                raise ValueError("Query format error")
-            
-            L = int(parts[0])
-            R = int(parts[1])
-            
-        except (ValueError, AttributeError):
-            if self.config.language == "zh":
-                return f"错误：查询格式无效。请使用格式 <query>L,R</query>，其中 L 和 R 是整数。"
-            else:
-                return f"Error: Invalid query format. Please use format <query>L,R</query> where L and R are integers."
-        except Exception as e:
-            if self.config.language == "zh":
-                return f"错误：处理查询时发生异常。"
-            else:
-                return f"Error: Exception occurred while processing query."
-
-        # 验证查询的合法性
-        # 1. L 必须严格小于 R
-        if L >= R:
-            if self.config.language == "zh":
-                return "错误：左端点必须严格小于右端点。"
-            else:
-                return "Error: Left endpoint must be strictly less than right endpoint."
-        
-        # 2. 端点必须在有效范围内
-        if L < 1 or R > self.n:
-            if self.config.language == "zh":
-                return f"错误：查询范围必须在 1 到 {self.n} 之间。"
-            else:
-                return f"Error: Query range must be between 1 and {self.n}."
-        
-        # 3. 不能查询整个序列
-        if L == 1 and R == self.n:
-            if self.config.language == "zh":
-                return "错误：不能查询整个序列。"
-            else:
-                return "Error: Cannot query the entire sequence."
-        
-        # 计算区间和（注意：序列索引从0开始，但查询位置从1开始）
-        range_sum = sum(self.sequence[L-1:R])
-        
-        # 增加查询计数
-        self.query_count += 1
-        
-        # 返回结果
         if self.config.language == "zh":
-            return f"区间 [{L},{R}] 的和为：{range_sum}"
+            yes_res, no_res = "是", "否"
+            closer_res, farther_res, equal_res = "更近", "更远", "等距"
+            error_vertex = "错误：顶点编号无效。"
+            error_format = "错误：查询格式无效。"
         else:
-            return f"Sum of range [{L},{R}]: {range_sum}"
+            yes_res, no_res = "Yes", "No"
+            closer_res, farther_res, equal_res = "closer", "farther", "equidistant"
+            error_vertex = "Error: Invalid vertex ID."
+            error_format = "Error: Invalid query format."
 
-    def _cf_make_wrong(self, correct):
-        import re as _re
+        if "query_layer" in parsed_info:
+            try:
+                t = int(parsed_info["query_layer"].strip())
+                if t < 0:
+                    return error_format
+                return str(self.layer_count.get(t, 0))
+            except:
+                return error_format
+
+        elif "query_cumulative" in parsed_info:
+            try:
+                t = int(parsed_info["query_cumulative"].strip())
+                if t < 0:
+                    return error_format
+                max_dist = max(self.distances.values()) if self.distances else 0
+                if t > max_dist:
+                    return str(self.n)
+                return str(self.cumulative_count.get(t, 0))
+            except:
+                return error_format
+
+        elif "query_adjacent" in parsed_info:
+            try:
+                raw = parsed_info["query_adjacent"].strip()
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                u, v = int(parts[0]), int(parts[1])
+                if u not in self.vertices or v not in self.vertices:
+                    return error_vertex
+                edge = (min(u, v), max(u, v))
+                return yes_res if edge in self.edges else no_res
+            except:
+                return error_format
+
+        elif "query_degree" in parsed_info:
+            try:
+                v = int(parsed_info["query_degree"].strip())
+                if v not in self.vertices:
+                    return error_vertex
+                return str(len(self.adj[v]))
+            except:
+                return error_format
+
+        elif "query_compare" in parsed_info:
+            try:
+                raw = parsed_info["query_compare"].strip()
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                x, y = int(parts[0]), int(parts[1])
+                if x not in self.vertices or y not in self.vertices:
+                    return error_vertex
+                
+                dist_x = self.distances[x]
+                dist_y = self.distances[y]
+                
+                if self.config.language == "zh":
+                    if dist_x < dist_y:
+                        return f"{x} 距离源点更近"
+                    elif dist_x > dist_y:
+                        return f"{x} 距离源点更远"
+                    else:
+                        return f"{x} 和 {y} 等距"
+                else:
+                    if dist_x < dist_y:
+                        return f"{x} is {closer_res}"
+                    elif dist_x > dist_y:
+                        return f"{x} is {farther_res}"
+                    else:
+                        return f"{x} and {y} are {equal_res}"
+            except:
+                return error_format
+
+        else:
+            raise ValueError("No valid query tag found.")
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct.lstrip('-').isdigit():
+            return str(int(correct) + 1)
         
-        # 尝试找到响应中的数值并修改
-        def _alter_number(m):
-            val = int(m.group(0))
-            return str(val + 1)
-
-        # 找到最后一个独立数字（即结果部分）并修改
         if self.config.language == "zh":
-            pattern = r'(?<=的和为：)\d+'
+            if correct == "是":
+                return "否"
+            elif correct == "否":
+                return "是"
+            if "更近" in correct:
+                return correct.replace("更近", "更远")
+            if "更远" in correct:
+                return correct.replace("更远", "更近")
+            if "等距" in correct:
+                return correct.replace("等距", "更近")
         else:
-            pattern = r'(?<=: )\d+'
-
-        new_resp = _re.sub(pattern, _alter_number, correct)
-        if new_resp != correct:
-            return new_resp
-
-        # fallback：如果上面的模式没有匹配到，回退到通用逻辑
-        match = list(_re.finditer(r'\d+', correct))
-        if match:
-            last = match[-1]
-            altered_val = str(int(last.group(0)) + 1)
-            return correct[:last.start()] + altered_val + correct[last.end():]
+            lower_correct = correct.lower()
+            if lower_correct == "yes":
+                if correct.istitle(): return "No"
+                if correct.isupper(): return "NO"
+                return "no"
+            elif lower_correct == "no":
+                if correct.istitle(): return "Yes"
+                if correct.isupper(): return "YES"
+                return "yes"
+            if "closer" in correct:
+                return correct.replace("closer", "farther")
+            if "farther" in correct:
+                return correct.replace("farther", "closer")
+            if "equidistant" in correct:
+                return correct.replace("equidistant", "closer")
 
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
+        queries = []
+        
+        for t in range(self.n + 1):
+            str_t = str(t)
+            
+            parsed_layer = {"query_layer": str_t}
+            ans_layer = self._cf_core_produce(parsed_layer)
+            queries.append({
+                "query": f"<query_layer>{str_t}</query_layer>",
+                "answer": ans_layer
+            })
+            
+            parsed_cum = {"query_cumulative": str_t}
+            ans_cum = self._cf_core_produce(parsed_cum)
+            queries.append({
+                "query": f"<query_cumulative>{str_t}</query_cumulative>",
+                "answer": ans_cum
+            })
 
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        possible_queries = []
+        n_vertices = len(self.vertices)
         
-        # L 从 1 遍历到 N-1
-        # R 从 L+1 遍历到 N
-        for L in range(1, self.n):
-            for R in range(L + 1, self.n + 1):
-                # 排除游戏规则禁止的“整个序列查询”
-                if L == 1 and R == self.n:
-                    continue
+        for i in range(n_vertices):
+            u = self.vertices[i]
+            
+            parsed_deg = {"query_degree": str(u)}
+            ans_deg = self._cf_core_produce(parsed_deg)
+            queries.append({
+                "query": f"<query_degree>{u}</query_degree>",
+                "answer": ans_deg
+            })
+            
+            for j in range(n_vertices):
+                v = self.vertices[j]
                 
-                # 构造查询字符串 (需要是合法的 XML 标签字符串)
-                query_str = f"<query>{L},{R}</query>"
+                if u != v:
+                    val_cmp = f"{u},{v}"
+                    parsed_cmp = {"query_compare": val_cmp}
+                    ans_cmp = self._cf_core_produce(parsed_cmp)
+                    queries.append({
+                        "query": f"<query_compare>{val_cmp}</query_compare>",
+                        "answer": ans_cmp
+                    })
                 
-                # 计算正确答案（复用内部逻辑，不调用 produce_response 以避免增加计数器）
-                range_sum = sum(self.sequence[L-1:R])
-                
-                if self.config.language == "zh":
-                    answer_str = f"区间 [{L},{R}] 的和为：{range_sum}"
-                else:
-                    answer_str = f"Sum of range [{L},{R}]: {range_sum}"
-                
-                possible_queries.append({
-                    "query": query_str,
-                    "answer": answer_str
-                })
-        
-        return possible_queries
+                if i < j:
+                    val_adj = f"{u},{v}"
+                    parsed_adj = {"query_adjacent": val_adj}
+                    ans_adj = self._cf_core_produce(parsed_adj)
+                    queries.append({
+                        "query": f"<query_adjacent>{val_adj}</query_adjacent>",
+                        "answer": ans_adj
+                    })
+                    
+        return queries

@@ -1,695 +1,647 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   删节点后连通性：删除某节点后，连通分量数量如何变化
-# ============================================================
-
-from typing import List, Dict
 from .base import Game
-import json
+import random
 
+class TopologicalOrderGame(Game):
 
-class GraphConnectivityGame(Game):
+    reasoning_type = "归纳推理"
+    data_structure = "图"
 
     game_rule_zh = """\
-我们现在来玩一个"删点连通性推理"游戏，规则如下：
+我们现在来玩一个"拓扑排序推理"游戏，规则如下：
 
-游戏设定了一个固定但未知的简单无向连通图 G，顶点集为 {{A, B, C, D, E, F, G, H, I}}，共 9 个顶点。初始图是连通的（连通分量数为 1）。边的连接关系对你不可见。
+游戏设定了一组有限元素集合 V 和一张固定的有向图 G=(V,E)，图中无自环与重边。边 A→B 表示"A 必须先于 B"的前置约束关系；图中允许传递约束（若 A→B 且 B→C，则隐含 A 早于 C）。你无法直接看到边集 E，但可以通过查询来推断图的结构。
 
-你的目标是通过查询推断出图的连通性结构，并最终提交以下两项信息：
-1. 列出所有"关键顶点"（即删除后连通分量数大于 1 的顶点），并给出每个关键顶点对应的分量数。
-2. 指出删除后产生连通分量数最多的顶点（若有多个并列，需全部列出）。
+游戏维护一个当前前缀序列 S（初始为空），表示已被确认可按先后约束追加的元素序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
 
-## 可用查询
+你的目标是通过交互查询判断图 G 是否存在拓扑序：
+- 若存在：构造并提交一个覆盖全部元素且满足所有有向边约束的全序（拓扑排序）。
+- 若不存在：提交一个有向环的明确证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
 
-每轮你只能提出以下三种查询之一（可重复查询）：
+1. **LIST**：获取全部元素集合与数量。
+   格式：<list></list>
 
-1. **删点分量数查询**：询问删除某个顶点 X 后，剩余图有多少个连通分量。
-2. **删点分量详情查询**：询问删除某个顶点 X 后，剩余图的连通分量数及各分量规模（按升序排列）。
-3. **分量数比较查询**：询问删除顶点 X 与删除顶点 Y，哪个产生的连通分量数更多。
+2. **STATE**：查看当前前缀序列 S。
+   格式：<state></state>
 
-注意：你不能直接询问边、度数、邻接关系、路径等结构信息。
+3. **PLACE**：尝试将元素 X 追加到 S 的末尾（X 尚未在 S 中）。
+   格式：<place>X</place>
+   响应：若 X 无未满足前置则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一个尚未满足的前置元素。
 
-## 查询格式（必须严格遵守）
+4. **COUNT**：查询相对当前 S，元素 X 仍未满足的直接前置数量。
+   格式：<count>X</count>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+5. **COMPARE**：询问元素 A 和 B 之间是否存在可达性诱导的强制先后关系。
+   格式：<compare>A,B</compare>
+   响应："A<B"（存在 A 到 B 的路径）、"B<A"（存在 B 到 A 的路径）或"NO-CONSTRAINT"（无约束）。
 
-- 删点分量数查询（例如询问顶点 A）：
-<query_count>A</query_count>
+6. **ASK-ZERO**：询问是否存在相对当前 S 入度为 0 的未放置元素。
+   格式：<ask_zero></ask_zero>
+   响应："YES X"（存在，X 为其中一个）或"NO"（不存在）。
 
-- 删点分量详情查询（例如询问顶点 B）：
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**：离线验证一条覆盖全部元素且不重复的序列是否为合法拓扑序（不更改 S）。
+   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
+   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的边）。
 
-- 分量数比较查询（例如比较顶点 C 和 D）：
-<query_compare>C,D</query_compare>
+8. **RESET**：清空 S 为初始空前缀（G 不变）。
+   格式：<reset></reset>
 
-## 提交答案格式（必须严格遵守）
+提交拓扑序：
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-当你收集足够信息后，请一次性提交最终答案，格式如下：
+提交有向环证据：
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-其中：
-- critical 是一个字典，键为关键顶点，值为删除该顶点后的连通分量数
-- max_vertices 是一个集合，包含所有使连通分量数达到最大的顶点
-
-示例说明：上述答案表示删除 A 后产生 2 个分量，删除 B 后产生 3 个分量，而 B 是产生最多分量的顶点。
-
-请尽可能少地使用查询次数来推断出正确答案。
+注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成推理。
 """
 
     game_rule_en = """\
-Let's play a "Vertex Deletion Connectivity Inference" game. Here are the rules:
+Let's play a "Topological Order Inference" game. Here are the rules:
 
-The game has set up a fixed but unknown simple undirected connected graph G with vertex set {{A, B, C, D, E, F, G, H, I}}, containing 9 vertices. Initially, the graph is connected (number of connected components equals 1). The edge connections are not visible to you.
+The game has a finite set of elements V and a fixed directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means "A must come before B" as a precedence constraint; transitive constraints are allowed (if A→B and B→C, then A implicitly comes before C). You cannot directly see the edge set E, but can infer the graph structure through queries.
 
-Your goal is to infer the connectivity structure of the graph through queries and ultimately submit the following two pieces of information:
-1. List all "critical vertices" (vertices whose deletion results in more than 1 connected component) and provide the number of components for each critical vertex.
-2. Identify the vertex (or vertices) whose deletion produces the maximum number of connected components (if there are ties, list all of them).
+The game maintains a current prefix sequence S (initially empty), representing elements that have been confirmed to be appendable in order respecting constraints. Except for PLACE and RESET operations, other operations do not change S.
 
-## Available Queries
+Your goal is to determine through interactive queries whether graph G has a topological order:
+- If exists: construct and submit a total order covering all elements satisfying all directed edge constraints (topological sort).
+- If not exists: submit explicit evidence of a directed cycle (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
 
-Each round you can only make one of the following three types of queries (queries can be repeated):
+1. **LIST**: Get the complete element set and count.
+   Format: <list></list>
 
-1. **Component Count Query**: Ask how many connected components remain after deleting a vertex X.
-2. **Component Detail Query**: Ask for the number of connected components and the size of each component (in ascending order) after deleting a vertex X.
-3. **Component Count Comparison Query**: Ask which deletion produces more connected components: deleting vertex X or deleting vertex Y.
+2. **STATE**: View the current prefix sequence S.
+   Format: <state></state>
 
-Note: You cannot directly ask about edges, degrees, adjacency relationships, paths, or other structural information.
+3. **PLACE**: Try to append element X to the end of S (X not yet in S).
+   Format: <place>X</place>
+   Response: "OK" if X has no unsatisfied prerequisites and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite of X.
 
-## Query Format (must be strictly followed)
+4. **COUNT**: Query the number of direct prerequisites of element X that are still unsatisfied relative to current S.
+   Format: <count>X</count>
 
-Each query must contain only one tag. Use the following XML format:
+5. **COMPARE**: Ask whether there exists a reachability-induced mandatory ordering between elements A and B.
+   Format: <compare>A,B</compare>
+   Response: "A<B" (path from A to B exists), "B<A" (path from B to A exists), or "NO-CONSTRAINT" (no constraint).
 
-- Component Count Query (e.g., asking about vertex A):
-<query_count>A</query_count>
+6. **ASK-ZERO**: Ask whether there exists an unplaced element with in-degree 0 relative to current S.
+   Format: <ask_zero></ask_zero>
+   Response: "YES X" (exists, X is one such element) or "NO" (does not exist).
 
-- Component Detail Query (e.g., asking about vertex B):
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**: Offline verify whether a sequence covering all elements without repetition is a valid topological order (does not change S).
+   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
+   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated edge).
 
-- Component Count Comparison Query (e.g., comparing vertices C and D):
-<query_compare>C,D</query_compare>
+8. **RESET**: Clear S back to initial empty prefix (G unchanged).
+   Format: <reset></reset>
 
-## Answer Submission Format (must be strictly followed)
+Submit topological order:
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-When you have gathered enough information, submit your final answer in the following format:
+Submit directed cycle evidence:
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-Where:
-- critical is a dictionary with keys as critical vertices and values as the number of connected components after deleting that vertex
-- max_vertices is a set containing all vertices that produce the maximum number of components
-
-Example explanation: The above answer indicates that deleting A produces 2 components, deleting B produces 3 components, and B is the vertex that produces the most components.
-
-Please use as few queries as possible to infer the correct answer.
+Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the reasoning.
 """
 
-    # =========================================================================
-    # 场景 1：交通 (Transportation)
-    # =========================================================================
     contextualized_rule_zh_1 = """\
-为应对极端天气对城市路网的冲击，我们现在进行一场“交通枢纽封锁推演”，规则如下：
+这是一套“城市交通导航规划”系统。规则如下：
 
-推演设定了一个固定但未知的高速交通网络 G，包含 9 个交通枢纽，代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有枢纽都在同一个互通的路网内（连通分量数为 1）。各枢纽之间的直连路线对你不可见。
+系统设定了一组有限的交通路口集合 V 和一张固定的城市路网有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先通过路口 A，才能前往路口 B”的单向通行约束；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 经过）。你无法直接看到所有路网的通行限制 E，但可以通过查询来推断路网结构。
 
-你的目标是通过模拟查询推断路网的脆弱点，并最终提交以下两项信息：
-1. 列出所有“关键枢纽”（即封锁该枢纽后，路网会瘫痪并分裂成 1 个以上互不相通的独立路网区域的枢纽），并给出每个关键枢纽封锁后产生的独立区域数。
-2. 指出封锁后导致路网分裂程度最严重（产生最多独立区域）的枢纽（若有多个并列，需全部列出）。
+系统维护一个当前路线前缀序列 S（初始为空），表示已被确认符合通行约束并成功规划的路口序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
 
-## 可用查询
+你的目标是通过交互查询判断该路网是否存在一条能够合法通行所有指定路口的完整路线：
+- 若存在：构造并提交一条覆盖全部路口且满足所有通行约束的完整导航路线（拓扑排序）。
+- 若不存在：提交一个造成交通死锁的闭环死胡同证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
 
-每轮你只能提出以下三种查询之一（可重复查询）：
+1. **LIST**：获取全部需通行的交通路口集合与数量。
+   格式：<list></list>
 
-1. **封锁区域数查询**：询问封锁某枢纽 X 后，剩余路网有多少个独立的互通区域。
-2. **封锁区域详情查询**：询问封锁某枢纽 X 后，剩余路网的独立区域数及各区域包含的枢纽数量（按升序排列）。
-3. **分裂程度比较查询**：询问封锁枢纽 X 与封锁枢纽 Y，哪个产生的独立路网区域更多。
+2. **STATE**：查看当前已规划的路线前缀序列 S。
+   格式：<state></state>
 
-注意：你不能直接询问路线、连接度、相邻关系、路径等结构信息。
+3. **PLACE**：尝试将路口 X 追加到规划路线 S 的末尾（X 尚未在 S 中）。
+   格式：<place>X</place>
+   响应：若 X 无未满足的前置路口则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一个尚未满足的前置路口。
 
-## 查询格式（必须严格遵守）
+4. **COUNT**：查询相对当前路线 S，路口 X 仍未满足的直接前置路口数量。
+   格式：<count>X</count>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+5. **COMPARE**：询问路口 A 和 B 之间是否存在强制的先后通行关系。
+   格式：<compare>A,B</compare>
+   响应："A<B"（必须先过 A 再过 B）、"B<A"（必须先过 B 再过 A）或"NO-CONSTRAINT"（无通行先后约束）。
 
-- 封锁区域数查询（例如询问枢纽 A）：
-<query_count>A</query_count>
+6. **ASK-ZERO**：询问是否存在相对当前路线 S，可以直接作为下一步通行的路口（入度为0）。
+   格式：<ask_zero></ask_zero>
+   响应："YES X"（存在，X 为其中一个）或"NO"（不存在）。
 
-- 封锁区域详情查询（例如询问枢纽 B）：
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**：离线验证一条覆盖全部路口且不重复的路线是否为合法导航路线（不更改 S）。
+   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
+   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的约束）。
 
-- 分裂程度比较查询（例如比较枢纽 C 和 D）：
-<query_compare>C,D</query_compare>
+8. **RESET**：清空当前路线 S 为初始空路线（路网约束不变）。
+   格式：<reset></reset>
 
-## 提交答案格式（必须严格遵守）
+提交完整导航路线：
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-当你收集足够信息后，请一次性提交最终答案，格式如下：
+提交交通死锁（有向环）证据：
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-其中：
-- critical 是一个字典，键为关键枢纽，值为封锁该枢纽后的独立路网区域数
-- max_vertices 是一个集合，包含所有使独立区域数达到最大的枢纽
-
-示例说明：上述答案表示封锁 A 后产生 2 个区域，封锁 B 后产生 3 个区域，而 B 是产生最多区域的枢纽。
-
-请尽可能少地使用查询次数来推断出正确答案。
+注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成路线规划与推理。
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-To respond to the impact of extreme weather on the urban road network, let's conduct a "Transport Hub Closure Simulation". Here are the rules:
+[Traffic Scenario]
+This is a "City Traffic Navigation Planning" system. Here are the rules:
 
-The simulation is set on a fixed but unknown transit network G, containing 9 transport hubs designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all hubs are interconnected within a single functioning network (number of connected components equals 1). The direct routes between hubs are not visible to you.
+The system defines a finite set of traffic intersections V and a fixed city road network directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a one-way precedence constraint: "You must pass intersection A before proceeding to intersection B". Transitive constraints are allowed (if A→B and B→C, then implicitly A must be passed before C). You cannot directly see the entire network restrictions E, but can infer the structure through queries.
 
-Your goal is to infer the vulnerabilities of the transit network through queries and ultimately submit the following two pieces of information:
-1. List all "critical hubs" (hubs whose closure results in the network splitting into more than 1 isolated transit zone) and provide the number of isolated zones for each critical hub.
-2. Identify the hub (or hubs) whose closure produces the maximum number of isolated transit zones (if there are ties, list all of them).
+The system maintains a current route prefix sequence S (initially empty), representing the sequence of intersections that have been confirmed and successfully planned in compliance with constraints. Except for PLACE and RESET operations, other operations do not change S.
 
-## Available Queries
+Your goal is to determine through interactive queries whether there exists a valid full route covering all designated intersections:
+- If exists: construct and submit a complete navigation route covering all intersections while satisfying all precedence constraints (topological sort).
+- If not exists: submit explicit evidence of a traffic deadlock or closed-loop dead end (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
 
-Each round you can only make one of the following three types of queries (queries can be repeated):
+1. **LIST**: Get the complete set of required intersections and count.
+   Format: <list></list>
 
-1. **Closure Zone Count Query**: Ask how many isolated transit zones remain after closing hub X.
-2. **Closure Zone Detail Query**: Ask for the number of isolated transit zones and the number of hubs in each zone (in ascending order) after closing hub X.
-3. **Fragmentation Comparison Query**: Ask which closure produces more isolated transit zones: closing hub X or closing hub Y.
+2. **STATE**: View the current planned route prefix sequence S.
+   Format: <state></state>
 
-Note: You cannot directly ask about specific routes, connectivity degrees, adjacent relationships, paths, or other structural information.
+3. **PLACE**: Try to append intersection X to the end of the planned route S (X not yet in S).
+   Format: <place>X</place>
+   Response: "OK" if X has no unsatisfied prerequisite intersections and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite of X.
 
-## Query Format (must be strictly followed)
+4. **COUNT**: Query the number of direct prerequisite intersections of X that are still unsatisfied relative to current S.
+   Format: <count>X</count>
 
-Each query must contain only one tag. Use the following XML format:
+5. **COMPARE**: Ask whether there exists a mandatory passing order between intersections A and B.
+   Format: <compare>A,B</compare>
+   Response: "A<B" (must pass A before B), "B<A" (must pass B before A), or "NO-CONSTRAINT" (no mandatory order).
 
-- Closure Zone Count Query (e.g., asking about hub A):
-<query_count>A</query_count>
+6. **ASK-ZERO**: Ask whether there exists an intersection that can be immediately passed next relative to current S (in-degree 0).
+   Format: <ask_zero></ask_zero>
+   Response: "YES X" (exists, X is one such intersection) or "NO" (does not exist).
 
-- Closure Zone Detail Query (e.g., asking about hub B):
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**: Offline verify whether a route covering all intersections without repetition is a valid navigation route (does not change S).
+   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
+   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated constraint).
 
-- Fragmentation Comparison Query (e.g., comparing hubs C and D):
-<query_compare>C,D</query_compare>
+8. **RESET**: Clear S back to initial empty route (network constraints unchanged).
+   Format: <reset></reset>
 
-## Answer Submission Format (must be strictly followed)
+Submit complete navigation route:
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-When you have gathered enough information, submit your final answer in the following format:
+Submit traffic deadlock evidence:
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-Where:
-- critical is a dictionary with keys as critical hubs and values as the number of isolated transit zones after closing that hub
-- max_vertices is a set containing all hubs that produce the maximum number of isolated zones
-
-Example explanation: The above answer indicates that closing A produces 2 zones, closing B produces 3 zones, and B is the hub that produces the most zones.
-
-Please use as few queries as possible to infer the correct answer.
+Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the planning and inference.
 """
 
-    # =========================================================================
-    # 场景 2：医疗 (Healthcare)
-    # =========================================================================
     contextualized_rule_zh_2 = """\
-在应对高传染性疾病时，我们需要进行“医疗站点隔离与网络调配分析”，规则如下：
+这是一套“医疗临床路径规划”系统。规则如下：
 
-系统设定了一个固定但未知的区域医疗协同网络 G，包含 9 个医疗站点，代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有站点均可通过安全转诊通道互相连通（连通分量数为 1）。通道的分布对你不可见。
+系统设定了一组有限的诊疗步骤集合 V 和一张固定的医疗流程有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先完成诊疗步骤 A，才能进行步骤 B”的医疗安全约束；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 完成）。你无法直接看到所有医疗约束 E，但可以通过查询来推断诊疗前置条件。
 
-你的目标是通过调配查询推断医疗网络的抗风险结构，并最终提交以下两项信息：
-1. 列出所有“核心医疗枢纽”（即隔离关停该站点后，协同网络会被切断成 1 个以上互不相通的独立救助区的站点），并给出每个核心枢纽关停后产生的独立救助区数量。
-2. 指出关停后导致协同网络割裂最严重（产生最多独立救助区）的医疗站点（若有多个并列，需全部列出）。
+系统维护一个当前操作前缀序列 S（初始为空），表示已被确认符合医疗安全规范并成功实施的诊疗步骤序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
 
-## 可用查询
+你的目标是通过交互查询判断该临床路径是否存在一个能够合法涵盖所有步骤的完整诊疗方案：
+- 若存在：构造并提交一份覆盖全部步骤且满足所有医疗安全约束的完整诊疗方案（拓扑排序）。
+- 若不存在：提交一个导致医疗流程矛盾的死循环证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
 
-每轮你只能提出以下三种查询之一（可重复查询）：
+1. **LIST**：获取本次需要进行的所有诊疗步骤集合与数量。
+   格式：<list></list>
 
-1. **隔离区域数查询**：询问关停某站点 X 后，剩余协同网络有多少个独立的救助区。
-2. **隔离区域详情查询**：询问关停某站点 X 后，剩余协同网络的独立救助区数量及各区域包含的站点规模（按升序排列）。
-3. **割裂程度比较查询**：询问关停站点 X 与关停站点 Y，哪个产生的独立救助区更多。
+2. **STATE**：查看当前已完成的诊疗前缀序列 S。
+   格式：<state></state>
 
-注意：你不能直接询问转诊通道、连接度、相邻关系、转移路径等结构信息。
+3. **PLACE**：尝试将步骤 X 追加到已完成序列 S 的末尾（X 尚未在 S 中）。
+   格式：<place>X</place>
+   响应：若 X 无未满足的前置步骤则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一个尚未满足的前置诊疗步骤。
 
-## 查询格式（必须严格遵守）
+4. **COUNT**：查询相对当前序列 S，步骤 X 仍未满足的直接前置步骤数量。
+   格式：<count>X</count>
 
-每次查询只能包含一个标签。请使用以下 XML format：
+5. **COMPARE**：询问步骤 A 和 B 之间是否存在强制的先后实施关系。
+   格式：<compare>A,B</compare>
+   响应："A<B"（必须先执行 A 再执行 B）、"B<A"（必须先执行 B 再执行 A）或"NO-CONSTRAINT"（无先后约束）。
 
-- 隔离区域数查询（例如询问站点 A）：
-<query_count>A</query_count>
+6. **ASK-ZERO**：询问是否存在相对当前序列 S，可以直接作为下一步执行的诊疗步骤（入度为0）。
+   格式：<ask_zero></ask_zero>
+   响应："YES X"（存在，X 为其中一个）或"NO"（不存在）。
 
-- 隔离区域详情查询（例如询问站点 B）：
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**：离线验证一份覆盖全步骤且不重复的方案是否为合法临床路径（不更改 S）。
+   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
+   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的医疗约束）。
 
-- 割裂程度比较查询（例如比较站点 C 和 D）：
-<query_compare>C,D</query_compare>
+8. **RESET**：清空当前序列 S 为初始空状态（医疗流程约束不变）。
+   格式：<reset></reset>
 
-## 提交答案格式（必须严格遵守）
+提交完整诊疗方案：
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-当你收集足够信息后，请一次性提交最终答案，格式如下：
+提交医疗流程死循环证据：
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-其中：
-- critical 是一个字典，键为核心医疗枢纽，值为关停该站点后的独立救助区数量
-- max_vertices 是一个集合，包含所有使独立救助区数量达到最大的医疗站点
-
-示例说明：上述答案表示关停 A 后产生 2 个救助区，关停 B 后产生 3 个救助区，而 B 是产生最多救助区的站点。
-
-请尽可能少地使用查询次数来推断出正确答案。
+注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成推理。
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-To respond to highly contagious diseases, we need to conduct a "Medical Center Quarantine and Network Allocation Analysis". Here are the rules:
+[Medical Scenario]
+This is a "Clinical Pathway Planning" system. Here are the rules:
 
-The system involves a fixed but unknown regional medical coordination network G, containing 9 medical centers designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all centers are interconnected through secure transfer channels (number of connected components equals 1). The distribution of these channels is not visible to you.
+The system defines a finite set of medical procedures V and a fixed clinical workflow directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a medical safety constraint: "You must complete procedure A before performing procedure B". Transitive constraints are allowed (if A→B and B→C, then implicitly A must be done before C). You cannot directly see all medical constraints E, but can infer the prerequisites through queries.
 
-Your goal is to infer the risk-resistance structure of the medical network through queries and ultimately submit the following two pieces of information:
-1. List all "critical medical hubs" (centers whose quarantine/shutdown results in the coordination network splitting into more than 1 isolated medical zone) and provide the number of isolated zones for each critical hub.
-2. Identify the center (or centers) whose shutdown produces the maximum number of isolated medical zones (if there are ties, list all of them).
+The system maintains a current operation prefix sequence S (initially empty), representing procedures that have been confirmed compliant with medical safety rules and successfully executed. Except for PLACE and RESET operations, other operations do not change S.
 
-## Available Queries
+Your goal is to determine through interactive queries whether there exists a complete valid clinical pathway covering all procedures:
+- If exists: construct and submit a full treatment plan covering all procedures and satisfying all medical safety constraints (topological sort).
+- If not exists: submit explicit evidence of a contradictory loop in the medical workflow (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
 
-Each round you can only make one of the following three types of queries (queries can be repeated):
+1. **LIST**: Get the complete set of required medical procedures and count.
+   Format: <list></list>
 
-1. **Quarantine Zone Count Query**: Ask how many isolated medical zones remain after shutting down center X.
-2. **Quarantine Zone Detail Query**: Ask for the number of isolated medical zones and the size of each zone (in ascending order) after shutting down center X.
-3. **Fragmentation Comparison Query**: Ask which shutdown produces more isolated medical zones: shutting down center X or shutting down center Y.
+2. **STATE**: View the current executed procedure prefix sequence S.
+   Format: <state></state>
 
-Note: You cannot directly ask about specific transfer channels, connectivity degrees, adjacent relationships, patient transfer paths, or other structural information.
+3. **PLACE**: Try to append procedure X to the end of the executed sequence S (X not yet in S).
+   Format: <place>X</place>
+   Response: "OK" if X has no unsatisfied prerequisite procedures and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite of X.
 
-## Query Format (must be strictly followed)
+4. **COUNT**: Query the number of direct prerequisite procedures of X that are still unsatisfied relative to current S.
+   Format: <count>X</count>
 
-Each query must contain only one tag. Use the following XML format:
+5. **COMPARE**: Ask whether there exists a mandatory execution order between procedures A and B.
+   Format: <compare>A,B</compare>
+   Response: "A<B" (must execute A before B), "B<A" (must execute B before A), or "NO-CONSTRAINT" (no mandatory order).
 
-- Quarantine Zone Count Query (e.g., asking about center A):
-<query_count>A</query_count>
+6. **ASK-ZERO**: Ask whether there exists a procedure that can be immediately executed next relative to current S (in-degree 0).
+   Format: <ask_zero></ask_zero>
+   Response: "YES X" (exists, X is one such procedure) or "NO" (does not exist).
 
-- Quarantine Zone Detail Query (e.g., asking about center B):
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**: Offline verify whether a plan covering all procedures without repetition is a valid clinical pathway (does not change S).
+   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
+   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated medical constraint).
 
-- Fragmentation Comparison Query (e.g., comparing centers C and D):
-<query_compare>C,D</query_compare>
+8. **RESET**: Clear S back to initial empty sequence (medical constraints unchanged).
+   Format: <reset></reset>
 
-## Answer Submission Format (must be strictly followed)
+Submit complete treatment plan:
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-When you have gathered enough information, submit your final answer in the following format:
+Submit medical workflow loop evidence:
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-Where:
-- critical is a dictionary with keys as critical medical hubs and values as the number of isolated medical zones after shutting down that center
-- max_vertices is a set containing all centers that produce the maximum number of isolated zones
-
-Example explanation: The above answer indicates that shutting down A produces 2 zones, shutting down B produces 3 zones, and B is the center that produces the most zones.
-
-Please use as few queries as possible to infer the correct answer.
+Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the planning and inference.
 """
 
-    # =========================================================================
-    # 场景 3：教育 (Education)
-    # =========================================================================
     contextualized_rule_zh_3 = """\
-为优化区域教育资源共享机制，我们正在开展“教研中心退出影响评估”，规则如下：
+这是一套“高校选课与培养方案规划”系统。规则如下：
 
-评估框架内有一个固定但未知的学术交流网络 G，包含 9 个教研中心，代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有中心通过资源共享协议互联互通（连通分量数为 1）。具体的合作连接关系对你不可见。
+系统设定了一组有限的课程集合 V 和一张固定的课程体系有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先修读课程 A，才能选修课程 B”的先修课约束；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 修读）。你无法直接看到所有的选课限制 E，但可以通过查询来推断课程体系结构。
 
-你的目标是通过系统查询推断出学术网络的连通架构，并最终提交以下两项信息：
-1. 列出所有“核心教研枢纽”（即该中心退出共享网络后，整体网络会分裂成 1 个以上互不相连的学术孤岛的中心），并给出每个核心枢纽退出后产生的孤岛数。
-2. 指出退出后导致网络分裂最严重（产生最多学术孤岛）的教研中心（若有多个并列，需全部列出）。
+系统维护一个当前修读前缀序列 S（初始为空），表示已被确认符合先修约束并成功加入培养方案的课程序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
 
-## 可用查询
+你的目标是通过交互查询判断该课程体系是否存在一份能够合法修完所有指定课程的完整选课计划：
+- 若存在：构造并提交一份覆盖全部课程且满足所有先修要求的培养方案（拓扑排序）。
+- 若不存在：提交一个导致选课死锁的循环先修证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
 
-每轮你只能提出以下三种查询之一（可重复查询）：
+1. **LIST**：获取需要修读的全部课程集合与数量。
+   格式：<list></list>
 
-1. **退出后孤岛数查询**：询问某中心 X 退出后，剩余网络形成多少个独立的学术孤岛。
-2. **退出后孤岛详情查询**：询问某中心 X 退出后，剩余网络的独立孤岛数及各孤岛包含的中心数量（按升序排列）。
-3. **分裂程度比较查询**：询问中心 X 退出与中心 Y 退出，哪个产生的独立学术孤岛更多。
+2. **STATE**：查看当前已规划的修读前缀序列 S。
+   格式：<state></state>
 
-注意：你不能直接询问合作协议、连接度、相邻关系、交流路径等结构信息。
+3. **PLACE**：尝试将课程 X 追加到修读序列 S 的末尾（X 尚未在 S 中）。
+   格式：<place>X</place>
+   响应：若 X 无未满足的先修课则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一门尚未满足的先修课程。
 
-## 查询格式（必须严格遵守）
+4. **COUNT**：查询相对当前序列 S，课程 X 仍未满足的直接先修课数量。
+   格式：<count>X</count>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+5. **COMPARE**：询问课程 A 和 B 之间是否存在强制的先后修读关系。
+   格式：<compare>A,B</compare>
+   响应："A<B"（必须先修 A 再修 B）、"B<A"（必须先修 B 再修 A）或"NO-CONSTRAINT"（无先后约束）。
 
-- 退出后孤岛数查询（例如询问中心 A）：
-<query_count>A</query_count>
+6. **ASK-ZERO**：询问是否存在相对当前序列 S，可以直接作为下一门选修的课程（入度为0）。
+   格式：<ask_zero></ask_zero>
+   响应："YES X"（存在，X 为其中一门）或"NO"（不存在）。
 
-- 退出后孤岛详情查询（例如询问中心 B）：
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**：离线验证一份覆盖全课程且不重复的计划是否为合法的培养方案（不更改 S）。
+   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
+   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的先修约束）。
 
-- 分裂程度比较查询（例如比较中心 C 和 D）：
-<query_compare>C,D</query_compare>
+8. **RESET**：清空当前修读序列 S 为初始空方案（课程体系不变）。
+   格式：<reset></reset>
 
-## 提交答案格式（必须严格遵守）
+提交完整培养方案：
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-当你收集足够信息后，请一次性提交最终答案，格式如下：
+提交选课死锁证据：
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-其中：
-- critical 是一个字典，键为核心教研枢纽，值为该中心退出后的独立学术孤岛数
-- max_vertices 是一个集合，包含所有使独立孤岛数达到最大的中心
-
-示例说明：上述答案表示 A 退出后产生 2 个孤岛， B 退出后产生 3 个孤岛，而 B 是产生最多孤岛的中心。
-
-请尽可能少地使用查询次数来推断出正确答案。
+注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成规划与推理。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-To optimize the regional mechanism for sharing educational resources, we are conducting a "Research Center Withdrawal Impact Assessment". Here are the rules:
+This is a "University Course Enrollment and Curriculum Planning" system. Here are the rules:
 
-The assessment framework includes a fixed but unknown academic exchange network G, containing 9 research centers designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all centers are interconnected through resource-sharing agreements (number of connected components equals 1). The specific collaborative connections are not visible to you.
+The system defines a finite set of courses V and a fixed curriculum directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a prerequisite constraint: "You must complete course A before enrolling in course B". Transitive constraints are allowed (if A→B and B→C, then implicitly A must be taken before C). You cannot directly see all enrollment restrictions E, but can infer the curriculum structure through queries.
 
-Your goal is to infer the connectivity architecture of the academic network through system queries and ultimately submit the following two pieces of information:
-1. List all "key academic hubs" (centers whose withdrawal from the sharing network results in the overall network splitting into more than 1 isolated academic cluster) and provide the number of isolated clusters for each key hub.
-2. Identify the center (or centers) whose withdrawal produces the maximum number of isolated academic clusters (if there are ties, list all of them).
+The system maintains a current enrollment prefix sequence S (initially empty), representing the sequence of courses that have been confirmed compliant with prerequisite rules and successfully added to the curriculum plan. Except for PLACE and RESET operations, other operations do not change S.
 
-## Available Queries
+Your goal is to determine through interactive queries whether there exists a valid full enrollment plan covering all designated courses:
+- If exists: construct and submit a complete curriculum plan covering all courses and satisfying all prerequisite constraints (topological sort).
+- If not exists: submit explicit evidence of an enrollment deadlock caused by cyclic prerequisites (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
 
-Each round you can only make one of the following three types of queries (queries can be repeated):
+1. **LIST**: Get the complete set of required courses and count.
+   Format: <list></list>
 
-1. **Withdrawal Cluster Count Query**: Ask how many isolated academic clusters remain after center X withdraws.
-2. **Withdrawal Cluster Detail Query**: Ask for the number of isolated academic clusters and the number of centers in each cluster (in ascending order) after center X withdraws.
-3. **Fragmentation Comparison Query**: Ask which withdrawal produces more isolated academic clusters: center X withdrawing or center Y withdrawing.
+2. **STATE**: View the current planned enrollment prefix sequence S.
+   Format: <state></state>
 
-Note: You cannot directly ask about specific sharing agreements, connectivity degrees, adjacent relationships, exchange paths, or other structural information.
+3. **PLACE**: Try to append course X to the end of the enrollment sequence S (X not yet in S).
+   Format: <place>X</place>
+   Response: "OK" if X has no unsatisfied prerequisites and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite course of X.
 
-## Query Format (must be strictly followed)
+4. **COUNT**: Query the number of direct prerequisite courses of X that are still unsatisfied relative to current S.
+   Format: <count>X</count>
 
-Each query must contain only one tag. Use the following XML format:
+5. **COMPARE**: Ask whether there exists a mandatory taking order between courses A and B.
+   Format: <compare>A,B</compare>
+   Response: "A<B" (must take A before B), "B<A" (must take B before A), or "NO-CONSTRAINT" (no mandatory order).
 
-- Withdrawal Cluster Count Query (e.g., asking about center A):
-<query_count>A</query_count>
+6. **ASK-ZERO**: Ask whether there exists a course that can be immediately taken next relative to current S (in-degree 0).
+   Format: <ask_zero></ask_zero>
+   Response: "YES X" (exists, X is one such course) or "NO" (does not exist).
 
-- Withdrawal Cluster Detail Query (e.g., asking about center B):
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**: Offline verify whether a plan covering all courses without repetition is a valid curriculum plan (does not change S).
+   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
+   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated prerequisite constraint).
 
-- Fragmentation Comparison Query (e.g., comparing centers C and D):
-<query_compare>C,D</query_compare>
+8. **RESET**: Clear S back to initial empty sequence (curriculum structure unchanged).
+   Format: <reset></reset>
 
-## Answer Submission Format (must be strictly followed)
+Submit complete curriculum plan:
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-When you have gathered enough information, submit your final answer in the following format:
+Submit enrollment deadlock evidence:
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-Where:
-- critical is a dictionary with keys as key academic hubs and values as the number of isolated academic clusters after that center withdraws
-- max_vertices is a set containing all centers that produce the maximum number of isolated clusters
-
-Example explanation: The above answer indicates that A withdrawing produces 2 clusters, B withdrawing produces 3 clusters, and B is the center that produces the most clusters.
-
-Please use as few queries as possible to infer the correct answer.
+Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the planning and inference.
 """
 
-    # =========================================================================
-    # 场景 4：制造业/工业 (Manufacturing/Industry)
-    # =========================================================================
     contextualized_rule_zh_4 = """\
-为了评估供应链的抗风险能力，我们启动了“生产节点断链压力测试”，规则如下：
+这是一套“工业流水线与装配工序排程”系统。规则如下：
 
-测试设定了一个固定但未知的生产流转网络 G，包含 9 个核心车间节点，代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有节点构成一个完整的物流互通系统（连通分量数为 1）。车间之间的具体物流线路对你不可见。
+系统设定了一组有限的装配工序集合 V 和一张固定的生产依赖有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先完成工序 A，才能进行工序 B”的物理装配约束；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 加工）。你无法直接看到所有的装配依赖 E，但可以通过查询来推断图纸结构。
 
-你的目标是通过断链模拟查询推断出供应链的拓扑瓶颈，并最终提交以下两项信息：
-1. 列出所有“关键生产枢纽”（即停工该节点后，整个供应链会断裂成 1 个以上互不相连的独立生产子系统的节点），并给出每个关键节点停工后产生的子系统数。
-2. 指出停工后导致供应链碎裂最严重（产生最多独立生产子系统）的车间节点（若有多个并列，需全部列出）。
+系统维护一个当前排程前缀序列 S（初始为空），表示已被确认符合装配约束并成功排入流水线的工序序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
 
-## 可用查询
+你的目标是通过交互查询判断该装配设计是否存在一份能够合法完成所有加工作业的生产标准作业指导书（SOP）：
+- 若存在：构造并提交一份覆盖全部工序且满足所有物理依赖约束的排程计划（拓扑排序）。
+- 若不存在：提交一个导致流水线卡死的循环装配缺陷证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
 
-每轮你只能提出以下三种查询之一（可重复查询）：
+1. **LIST**：获取所有需要进行的装配工序集合与数量。
+   格式：<list></list>
 
-1. **停工后子系统数查询**：询问某车间节点 X 停工阻断后，剩余系统拆分为多少个独立的生产子系统。
-2. **停工后子系统详情查询**：询问某车间节点 X 停工阻断后，剩余系统的独立子系统数及各子系统的车间数量（按升序排列）。
-3. **断链程度比较查询**：询问节点 X 停工与节点 Y 停工，哪个产生的独立生产子系统更多。
+2. **STATE**：查看当前流水线上已排程的工序前缀序列 S。
+   格式：<state></state>
 
-注意：你不能直接询问物流线路、连接度、相邻关系、运输路径等结构信息。
+3. **PLACE**：尝试将工序 X 追加到排程序列 S 的末尾（X 尚未在 S 中）。
+   格式：<place>X</place>
+   响应：若 X 无未满足的前置依赖则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一道尚未完成的前置工序。
 
-## 查询格式（必须严格遵守）
+4. **COUNT**：查询相对当前序列 S，工序 X 仍未满足的直接前置依赖数量。
+   格式：<count>X</count>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+5. **COMPARE**：询问工序 A 和 B 之间是否存在强制的加工先后关系。
+   格式：<compare>A,B</compare>
+   响应："A<B"（必须先加工 A 再加工 B）、"B<A"（必须先加工 B 再加工 A）或"NO-CONSTRAINT"（无先后约束）。
 
-- 停工后子系统数查询（例如询问节点 A）：
-<query_count>A</query_count>
+6. **ASK-ZERO**：询问是否存在相对当前序列 S，可以直接安排上线的工序（入度为0）。
+   格式：<ask_zero></ask_zero>
+   响应："YES X"（存在，X 为其中一道工序）或"NO"（不存在）。
 
-- 停工后子系统详情查询（例如询问节点 B）：
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**：离线验证一份覆盖全工序且不重复的排程是否为合法的作业指导书（不更改 S）。
+   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
+   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的装配约束）。
 
-- 断链程度比较查询（例如比较节点 C 和 D）：
-<query_compare>C,D</query_compare>
+8. **RESET**：清空当前排程序列 S 为初始空方案（生产图纸约束不变）。
+   格式：<reset></reset>
 
-## 提交答案格式（必须严格遵守）
+提交完整排程计划（SOP）：
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-当你收集足够信息后，请一次性提交最终答案，格式如下：
+提交装配缺陷（有向环）证据：
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-其中：
-- critical 是一个字典，键为关键生产枢纽，值为停工该节点后的独立生产子系统数
-- max_vertices 是一个集合，包含所有使独立子系统数达到最大的车间节点
-
-示例说明：上述答案表示 A 停工后产生 2 个子系统， B 停工后产生 3 个子系统，而 B 是产生最多子系统的节点。
-
-请尽可能少地使用查询次数来推断出正确答案。
+注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成排程与推理。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-To evaluate the risk-resistance capacity of the supply chain, we have launched a "Production Node Disruption Stress Test". Here are the rules:
+[Manufacturing / Industrial Scenario]
+This is an "Industrial Assembly Line and Process Scheduling" system. Here are the rules:
 
-The test is set on a fixed but unknown production flow network G, containing 9 core production nodes (workshops), designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all nodes form a complete, interconnected logistics system (number of connected components equals 1). The specific logistics routes between workshops are not visible to you.
+The system defines a finite set of assembly operations V and a fixed production dependency directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a physical assembly constraint: "You must complete operation A before proceeding to operation B". Transitive constraints are allowed (if A→B and B→C, then implicitly A must be processed before C). You cannot directly see all assembly dependencies E, but can infer the blueprint structure through queries.
 
-Your goal is to infer the topological bottlenecks of the supply chain through disruption simulation queries and ultimately submit the following two pieces of information:
-1. List all "critical production hubs" (nodes whose shutdown results in the entire supply chain breaking into more than 1 isolated production subsystem) and provide the number of isolated subsystems for each critical node.
-2. Identify the node (or nodes) whose shutdown produces the maximum number of isolated production subsystems (if there are ties, list all of them).
+The system maintains a current schedule prefix sequence S (initially empty), representing the sequence of operations that have been confirmed compliant with assembly constraints and successfully scheduled. Except for PLACE and RESET operations, other operations do not change S.
 
-## Available Queries
+Your goal is to determine through interactive queries whether there exists a valid Standard Operating Procedure (SOP) covering all processing jobs:
+- If exists: construct and submit a complete schedule plan covering all operations and satisfying all physical dependency constraints (topological sort).
+- If not exists: submit explicit evidence of a cyclic assembly defect causing a pipeline jam (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
 
-Each round you can only make one of the following three types of queries (queries can be repeated):
+1. **LIST**: Get the complete set of required assembly operations and count.
+   Format: <list></list>
 
-1. **Disruption Subsystem Count Query**: Ask how many isolated production subsystems remain after shutting down node X.
-2. **Disruption Subsystem Detail Query**: Ask for the number of isolated production subsystems and the number of workshops in each subsystem (in ascending order) after shutting down node X.
-3. **Fragmentation Comparison Query**: Ask which shutdown produces more isolated production subsystems: shutting down node X or shutting down node Y.
+2. **STATE**: View the current scheduled operation prefix sequence S.
+   Format: <state></state>
 
-Note: You cannot directly ask about specific logistics routes, connectivity degrees, adjacent relationships, transport paths, or other structural information.
+3. **PLACE**: Try to append operation X to the end of the schedule sequence S (X not yet in S).
+   Format: <place>X</place>
+   Response: "OK" if X has no unsatisfied prerequisite dependencies and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite operation of X.
 
-## Query Format (must be strictly followed)
+4. **COUNT**: Query the number of direct prerequisite operations of X that are still unsatisfied relative to current S.
+   Format: <count>X</count>
 
-Each query must contain only one tag. Use the following XML format:
+5. **COMPARE**: Ask whether there exists a mandatory processing order between operations A and B.
+   Format: <compare>A,B</compare>
+   Response: "A<B" (must process A before B), "B<A" (must process B before A), or "NO-CONSTRAINT" (no mandatory order).
 
-- Disruption Subsystem Count Query (e.g., asking about node A):
-<query_count>A</query_count>
+6. **ASK-ZERO**: Ask whether there exists an operation that can be immediately scheduled next relative to current S (in-degree 0).
+   Format: <ask_zero></ask_zero>
+   Response: "YES X" (exists, X is one such operation) or "NO" (does not exist).
 
-- Disruption Subsystem Detail Query (e.g., asking about node B):
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**: Offline verify whether a schedule covering all operations without repetition is a valid SOP (does not change S).
+   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
+   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated assembly constraint).
 
-- Fragmentation Comparison Query (e.g., comparing nodes C and D):
-<query_compare>C,D</query_compare>
+8. **RESET**: Clear S back to initial empty sequence (blueprint constraints unchanged).
+   Format: <reset></reset>
 
-## Answer Submission Format (must be strictly followed)
+Submit complete schedule plan (SOP):
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-When you have gathered enough information, submit your final answer in the following format:
+Submit assembly defect (directed cycle) evidence:
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-Where:
-- critical is a dictionary with keys as critical production hubs and values as the number of isolated production subsystems after shutting down that node
-- max_vertices is a set containing all nodes that produce the maximum number of isolated subsystems
-
-Example explanation: The above answer indicates that shutting down A produces 2 subsystems, shutting down B produces 3 subsystems, and B is the node that produces the most subsystems.
-
-Please use as few queries as possible to infer the correct answer.
+Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the scheduling and inference.
 """
 
-    # =========================================================================
-    # 场景 5：法律 (Legal)
-    # =========================================================================
     contextualized_rule_zh_5 = """\
-在打击跨国经济犯罪的行动中，我们正在进行“利益关联实体查封推演”，规则如下：
+这是一套“法定审批与司法调查程序规划”系统。规则如下：
 
-卷宗中锁定了一个固定但未知的资金往来网络 G，涉及 9 个法律实体（公司/个人），代号为 {{A, B, C, D, E, F, G, H, I}}。初始状态下，所有实体均通过隐秘的资金链路互相关联（连通分量数为 1）。具体的资金往来链路对你不可见。
+系统设定了一组有限的法定程序集合 V 和一张固定的司法流程有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先完成程序 A，才能开展程序 B”的法定先决条件（如先获批搜查令才能取证）；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 执行）。你无法直接看到所有的法理约束 E，但可以通过查询来推断调查流程。
 
-你的目标是通过查封模拟查询推断出该利益网络的结构弱点，并最终提交以下两项信息：
-1. 列出所有“关键洗钱枢纽”（即查封冻结该实体后，整个资金网络会被切断成 1 个以上互不往来的独立利益孤岛的实体），并给出每个关键实体查封后产生的孤岛数。
-2. 指出查封后导致利益网络分化最严重（产生最多利益孤岛）的实体（若有多个并列，需全部列出）。
+系统维护一个当前执行前缀序列 S（初始为空），表示已被确认符合法定程序并成功记录在案的流程序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
 
-## 可用查询
+你的目标是通过交互查询判断该案件卷宗是否存在一条合法合规且覆盖所有环节的完整程序时间表：
+- 若存在：构造并提交一份覆盖全部程序且满足所有法定约束的合法办案流程（拓扑排序）。
+- 若不存在：提交一个导致权力审批死锁或法理逻辑循环的违规证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
 
-每轮你只能提出以下三种查询之一（可重复查询）：
+1. **LIST**：获取本次调查需要履行的全部法定程序集合与数量。
+   格式：<list></list>
 
-1. **查封后孤岛数查询**：询问查封某实体 X 后，剩余资金网络形成多少个独立的利益孤岛。
-2. **查封后孤岛详情查询**：询问查封某实体 X 后，剩余网络的独立孤岛数及各孤岛包含的实体数量（按升序排列）。
-3. **分化程度比较查询**：询问查封实体 X 与查封实体 Y，哪个产生的独立利益孤岛更多。
+2. **STATE**：查看当前已合法执行的程序卷宗前缀序列 S。
+   格式：<state></state>
 
-注意：你不能直接询问资金往来链路、连接度、相邻关系、资金转移路径等结构信息。
+3. **PLACE**：尝试将程序 X 追加到执行序列 S 的末尾（X 尚未在 S 中）。
+   格式：<place>X</place>
+   响应：若 X 无未满足的先决程序则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一项尚未履行的先决程序。
 
-## 查询格式（必须严格遵守）
+4. **COUNT**：查询相对当前序列 S，程序 X 仍未满足的直接先决程序数量。
+   格式：<count>X</count>
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+5. **COMPARE**：询问程序 A 和 B 之间是否存在强制的先后执行关系。
+   格式：<compare>A,B</compare>
+   响应："A<B"（必须先执行 A 再执行 B）、"B<A"（必须先执行 B 再执行 A）或"NO-CONSTRAINT"（无法定先后约束）。
 
-- 查封后孤岛数查询（例如询问实体 A）：
-<query_count>A</query_count>
+6. **ASK-ZERO**：询问是否存在相对当前序列 S，可以直接作为下一步启动的法定程序（入度为0）。
+   格式：<ask_zero></ask_zero>
+   响应："YES X"（存在，X 为其中一项）或"NO"（不存在）。
 
-- 查封后孤岛详情查询（例如询问实体 B）：
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**：离线验证一份覆盖全程序且不重复的时间表是否为合法合规的办案流程（不更改 S）。
+   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
+   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的法定约束）。
 
-- 分化程度比较查询（例如比较实体 C 和 D）：
-<query_compare>C,D</query_compare>
+8. **RESET**：清空当前执行序列 S 为初始未启动状态（法理约束不变）。
+   格式：<reset></reset>
 
-## 提交答案格式（必须严格遵守）
+提交合法办案流程：
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-当你收集足够信息后，请一次性提交最终答案，格式如下：
+提交审批死锁/法理循环证据：
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-其中：
-- critical 是一个字典，键为关键洗钱枢纽，值为查封该实体后的独立利益孤岛数
-- max_vertices 是一个集合，包含所有使独立孤岛数达到最大的实体
-
-示例说明：上述答案表示查封 A 后产生 2 个孤岛，查封 B 后产生 3 个孤岛，而 B 是产生最多孤岛的实体。
-
-请尽可能少地使用查询次数来推断出正确答案。
+注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成规划与推理。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-In the operation to combat transnational economic crimes, we are conducting an "Associated Entity Asset Freezing Simulation". Here are the rules:
+This is a "Statutory Approval and Judicial Investigation Procedure Planning" system. Here are the rules:
 
-The case files have targeted a fixed but unknown financial transaction network G, involving 9 legal entities (companies/individuals) designated as {{A, B, C, D, E, F, G, H, I}}. Initially, all entities are interconnected through hidden financial links (number of connected components equals 1). The specific transaction links are not visible to you.
+The system defines a finite set of statutory procedures V and a fixed judicial workflow directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a legal prerequisite: "You must complete procedure A before initiating procedure B" (e.g., obtaining a warrant before evidence collection). Transitive constraints are allowed (if A→B and B→C, then implicitly A must be executed before C). You cannot directly see all jurisprudential constraints E, but can infer the investigation workflow through queries.
 
-Your goal is to infer the structural weaknesses of this interest network through asset freezing simulation queries and ultimately submit the following two pieces of information:
-1. List all "critical financial hubs" (entities whose freezing/seizure results in the entire financial network being cut off into more than 1 isolated interest cluster) and provide the number of isolated clusters for each critical entity.
-2. Identify the entity (or entities) whose seizure produces the maximum number of isolated interest clusters (if there are ties, list all of them).
+The system maintains a current execution prefix sequence S (initially empty), representing the sequence of procedures that have been confirmed compliant with statutory rules and successfully recorded in the dossier. Except for PLACE and RESET operations, other operations do not change S.
 
-## Available Queries
+Your goal is to determine through interactive queries whether there exists a fully compliant procedure schedule covering all necessary steps for the case:
+- If exists: construct and submit a lawful investigation workflow covering all procedures and satisfying all statutory constraints (topological sort).
+- If not exists: submit explicit evidence of a regulatory violation causing an approval deadlock or cyclic jurisprudential logic (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
 
-Each round you can only make one of the following three types of queries (queries can be repeated):
+1. **LIST**: Get the complete set of required statutory procedures and count.
+   Format: <list></list>
 
-1. **Freezing Cluster Count Query**: Ask how many isolated interest clusters remain after freezing entity X.
-2. **Freezing Cluster Detail Query**: Ask for the number of isolated interest clusters and the number of entities in each cluster (in ascending order) after freezing entity X.
-3. **Fragmentation Comparison Query**: Ask which seizure produces more isolated interest clusters: freezing entity X or freezing entity Y.
+2. **STATE**: View the current lawfully executed procedure prefix sequence S.
+   Format: <state></state>
 
-Note: You cannot directly ask about specific transaction links, connectivity degrees, adjacent relationships, fund transfer paths, or other structural information.
+3. **PLACE**: Try to append procedure X to the end of the execution sequence S (X not yet in S).
+   Format: <place>X</place>
+   Response: "OK" if X has no unsatisfied prerequisite procedures and X is added to S; otherwise "BLOCKED Y" where Y is an unfulfilled prerequisite procedure of X.
 
-## Query Format (must be strictly followed)
+4. **COUNT**: Query the number of direct prerequisite procedures of X that are still unsatisfied relative to current S.
+   Format: <count>X</count>
 
-Each query must contain only one tag. Use the following XML format:
+5. **COMPARE**: Ask whether there exists a mandatory execution order between procedures A and B.
+   Format: <compare>A,B</compare>
+   Response: "A<B" (must execute A before B), "B<A" (must execute B before A), or "NO-CONSTRAINT" (no mandatory order).
 
-- Freezing Cluster Count Query (e.g., asking about entity A):
-<query_count>A</query_count>
+6. **ASK-ZERO**: Ask whether there exists a procedure that can be immediately initiated next relative to current S (in-degree 0).
+   Format: <ask_zero></ask_zero>
+   Response: "YES X" (exists, X is one such procedure) or "NO" (does not exist).
 
-- Freezing Cluster Detail Query (e.g., asking about entity B):
-<query_detail>B</query_detail>
+7. **CHECK-SEQUENCE**: Offline verify whether a schedule covering all procedures without repetition is a lawful investigation workflow (does not change S).
+   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
+   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated statutory constraint).
 
-- Fragmentation Comparison Query (e.g., comparing entities C and D):
-<query_compare>C,D</query_compare>
+8. **RESET**: Clear S back to the initial uninitiated state (jurisprudential constraints unchanged).
+   Format: <reset></reset>
 
-## Answer Submission Format (must be strictly followed)
+Submit lawful investigation workflow:
+<answer_topo>X1,X2,...,Xn</answer_topo>
 
-When you have gathered enough information, submit your final answer in the following format:
+Submit approval deadlock / cyclic logic evidence:
+<answer_cycle>C1,C2,...,Ck</answer_cycle>
 
-<answer>critical={{A:2, B:3}}, max_vertices={{B}}</answer>
-
-Where:
-- critical is a dictionary with keys as critical financial hubs and values as the number of isolated interest clusters after freezing that entity
-- max_vertices is a set containing all entities that produce the maximum number of isolated clusters
-
-Example explanation: The above answer indicates that freezing A produces 2 clusters, freezing B produces 3 clusters, and B is the entity that produces the most clusters.
-
-Please use as few queries as possible to infer the correct answer.
+Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the planning and inference.
 """
 
-    tags = ["answer", "query_count", "query_detail", "query_compare"]
-
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+    tags = ["answer_topo", "answer_cycle", "list", "state", "place", "count", "compare", "ask_zero", "check_sequence", "reset"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "edges": [
-                    ("E", "A"), ("E", "B"), ("E", "C"), ("E", "D"),
-                    ("E", "F"), ("E", "G"), ("E", "H"), ("E", "I")
-                ],
-                "critical": {"E": 8},
-                "max_vertices": {"E"}
+                "elements": ["A", "B", "C"],
+                "edges": [("A", "B"), ("B", "C")],
+                "has_cycle": False,
             },
             2: {
-                "edges": [
-                    ("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"),
-                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "I")
-                ],
-                "critical": {"B": 2, "C": 2, "D": 2, "E": 2, "F": 2, "G": 2, "H": 2},
-                "max_vertices": {"B", "C", "D", "E", "F", "G", "H"}
+                "elements": ["A", "B", "C", "D"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")],
+                "has_cycle": False,
             },
             3: {
-                "edges": [
-                    ("A", "B"), ("B", "C"), ("C", "A"), 
-                    ("A", "D"), ("D", "E"), ("E", "F"), 
-                    ("F", "G"), ("G", "H"), ("H", "I"), ("I", "G") 
-                ],
-                "critical": {"A": 2, "D": 2, "E": 2, "F": 2},
-                "max_vertices": {"A", "D", "E", "F"}
+                "elements": ["A", "B", "C", "D", "E"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E"), ("A", "E")],
+                "has_cycle": False,
             },
             4: {
-                "edges": [
-                    ("A", "B"), ("B", "C"), ("C", "A"), 
-                    ("A", "E"), ("D", "E"),  
-                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "I"), ("I", "F") 
-                ],
-                "critical": {"E": 3, "A": 2, "F": 2},
-                "max_vertices": {"E"}
+                "elements": ["A", "B", "C", "D"],
+                "edges": [("A", "B"), ("B", "C"), ("C", "A"), ("D", "A")],
+                "has_cycle": True,
             },
             5: {
-                "edges": [
-                    ("A", "B"), ("B", "C"), ("C", "D"), ("D", "A"),
-                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "E"),
-                    ("A", "I"), ("I", "E"),
-                ],
-                "critical": {"I": 2, "A": 2, "E": 2},
-                "max_vertices": {"I", "A", "E"}
+                "elements": ["A", "B", "C", "D", "E", "F"],
+                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"), ("E", "B"), ("F", "A")],
+                "has_cycle": True,
             },
         },
         "en": {
             1: {
-                "edges": [
-                    ("E", "A"), ("E", "B"), ("E", "C"), ("E", "D"),
-                    ("E", "F"), ("E", "G"), ("E", "H"), ("E", "I")
-                ],
-                "critical": {"E": 8},
-                "max_vertices": {"E"}
+                "elements": ["A", "B", "C"],
+                "edges": [("A", "B"), ("B", "C")],
+                "has_cycle": False,
             },
             2: {
-                "edges": [
-                    ("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"),
-                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "I")
-                ],
-                "critical": {"B": 2, "C": 2, "D": 2, "E": 2, "F": 2, "G": 2, "H": 2},
-                "max_vertices": {"B", "C", "D", "E", "F", "G", "H"}
+                "elements": ["A", "B", "C", "D"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")],
+                "has_cycle": False,
             },
             3: {
-                "edges": [
-                    ("A", "B"), ("B", "C"), ("C", "A"),
-                    ("A", "D"), ("D", "E"), ("E", "F"),
-                    ("F", "G"), ("G", "H"), ("H", "I"), ("I", "G")
-                ],
-                "critical": {"A": 2, "D": 2, "E": 2, "F": 2},
-                "max_vertices": {"A", "D", "E", "F"}
+                "elements": ["A", "B", "C", "D", "E"],
+                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E"), ("A", "E")],
+                "has_cycle": False,
             },
             4: {
-                "edges": [
-                    ("A", "B"), ("B", "C"), ("C", "A"),
-                    ("A", "E"), ("D", "E"),
-                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "I"), ("I", "F")
-                ],
-                "critical": {"E": 3, "A": 2, "F": 2},
-                "max_vertices": {"E"}
+                "elements": ["A", "B", "C", "D"],
+                "edges": [("A", "B"), ("B", "C"), ("C", "A"), ("D", "A")],
+                "has_cycle": True,
             },
             5: {
-                "edges": [
-                    ("A", "B"), ("B", "C"), ("C", "D"), ("D", "A"),
-                    ("E", "F"), ("F", "G"), ("G", "H"), ("H", "E"),
-                    ("A", "I"), ("I", "E"),
-                ],
-                "critical": {"I": 2, "A": 2, "E": 2},
-                "max_vertices": {"I", "A", "E"}
+                "elements": ["A", "B", "C", "D", "E", "F"],
+                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"), ("E", "B"), ("F", "A")],
+                "has_cycle": True,
             },
         },
     }
@@ -698,9 +650,8 @@ Please use as few queries as possible to infer the correct answer.
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，构建图结构"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -708,227 +659,275 @@ Please use as few queries as possible to infer the correct answer.
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.elements = set(cfg["elements"])
+        self.edges = cfg["edges"]
+        self.has_cycle = cfg["has_cycle"]
         
-        # 构建邻接表
-        self.vertices = {"A", "B", "C", "D", "E", "F", "G", "H", "I"}
-        self.adj = {v: set() for v in self.vertices}
-        
-        for u, v in cfg["edges"]:
+        self.adj = {elem: set() for elem in self.elements}
+        self.reverse_adj = {elem: set() for elem in self.elements}
+        for u, v in self.edges:
             self.adj[u].add(v)
-            self.adj[v].add(u)
+            self.reverse_adj[v].add(u)
         
-        # 记录正确答案
-        self.ground_truth_critical = cfg["critical"]
-        self.ground_truth_max = cfg["max_vertices"]
+        self.reachable = {elem: set() for elem in self.elements}
+        for start in self.elements:
+            self._compute_reachable(start)
         
-        self._game_info["n"] = 9
+        self.current_sequence = []
+        
+        self._game_info = {}
 
-    def _count_components_after_deletion(self, vertex):
-        """计算删除某个顶点后的连通分量数及每个分量的规模"""
-        if vertex not in self.vertices:
-            return None, None
-        
-        # 剩余顶点集
-        remaining = self.vertices - {vertex}
+    def _compute_reachable(self, start):
         visited = set()
-        components = []
-        
-        # DFS找连通分量
-        def dfs(v, component):
-            visited.add(v)
-            component.add(v)
-            for neighbor in self.adj[v]:
-                if neighbor in remaining and neighbor not in visited:
-                    dfs(neighbor, component)
-        
-        for v in remaining:
-            if v not in visited:
-                component = set()
-                dfs(v, component)
-                components.append(len(component))
-        
-        components.sort()  # 升序排列
-        return len(components), components
+        stack = [start]
+        while stack:
+            node = stack.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            for neighbor in self.adj[node]:
+                if neighbor not in visited:
+                    stack.append(neighbor)
+        visited.discard(start)
+        self.reachable[start] = visited
 
-    def evaluate(self, parsed_info):
-        """评估答案是否正确"""
-        try:
-            raw_ans = parsed_info["answer"]
-            
-            # 解析答案：critical={A:2, B:3}, max_vertices={B}
-            # 使用简单的字符串解析
-            critical_start = raw_ans.find("critical=") + 9
-            critical_end = raw_ans.find("}", critical_start) + 1
-            max_start = raw_ans.find("max_vertices=") + 13
-            max_end = raw_ans.find("}", max_start) + 1
-            
-            critical_str = raw_ans[critical_start:critical_end].strip()
-            max_str = raw_ans[max_start:max_end].strip()
-            
-            # 解析critical字典
-            # 格式: {A:2, B:3} 或 {'A':2, 'B':3}
-            critical_dict = {}
-            if critical_str and critical_str != "{}":
-                critical_str = critical_str.strip("{}")
-                for pair in critical_str.split(","):
-                    pair = pair.strip()
-                    if ":" in pair:
-                        k, v = pair.split(":")
-                        k = k.strip().strip("'\"")
-                        v = v.strip()
-                        critical_dict[k] = int(v)
-            
-            # 解析max_vertices集合
-            # 格式: {B} 或 {'B'} 或 {B, C}
-            max_set = set()
-            if max_str and max_str != "{}":
-                max_str = max_str.strip("{}")
-                for item in max_str.split(","):
-                    item = item.strip().strip("'\"")
-                    if item:
-                        max_set.add(item)
-            
-            # 检查critical是否完全匹配
-            if critical_dict != self.ground_truth_critical:
-                return False
-            
-            # 检查max_vertices是否完全匹配
-            if max_set != self.ground_truth_max:
-                return False
-            
-            return True
-            
-        except Exception as e:
-            # 解析失败
+    def _get_unsatisfied_predecessors(self, elem):
+        placed_set = set(self.current_sequence)
+        direct_preds = self.reverse_adj[elem]
+        return direct_preds - placed_set
+
+    def _can_place(self, elem):
+        if elem in self.current_sequence:
+            return False, None
+        unsatisfied = self._get_unsatisfied_predecessors(elem)
+        if unsatisfied:
+            return False, next(iter(unsatisfied))
+        return True, None
+
+    def _get_zero_indegree_elements(self):
+        placed_set = set(self.current_sequence)
+        zero_indegree = []
+        for elem in self.elements:
+            if elem not in placed_set:
+                if len(self._get_unsatisfied_predecessors(elem)) == 0:
+                    zero_indegree.append(elem)
+        return zero_indegree
+
+    def _check_sequence_validity(self, sequence):
+        if set(sequence) != self.elements or len(sequence) != len(self.elements):
+            return False, None
+        
+        pos = {elem: i for i, elem in enumerate(sequence)}
+        for u, v in self.edges:
+            if pos[u] >= pos[v]:
+                return False, (u, v)
+        return True, None
+
+    def _check_cycle_validity(self, cycle):
+        if len(cycle) < 2:
             return False
-
-    def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑，计算查询结果"""
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            err_format = "错误：查询格式无效或顶点不存在。"
-            err_invalid = "错误：无效的查询标签。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            err_format = "Error: Invalid query format or vertex does not exist."
-            err_invalid = "Error: Invalid query tag."
-
-        # 优先级：query_count > query_detail > query_compare
-        if "query_count" in parsed_info:
-            vertex = parsed_info["query_count"].strip()
-            if vertex not in self.vertices:
-                return err_format
-            
-            count, _ = self._count_components_after_deletion(vertex)
-            return str(count)
         
-        elif "query_detail" in parsed_info:
-            vertex = parsed_info["query_detail"].strip()
-            if vertex not in self.vertices:
-                return err_format
-            
-            count, components = self._count_components_after_deletion(vertex)
-            # 返回格式：count=2, sizes=[3, 5]
-            if self.config.language == "zh":
-                return f"分量数={count}, 规模={components}"
-            else:
-                return f"count={count}, sizes={components}"
-        
-        elif "query_compare" in parsed_info:
-            try:
-                raw = parsed_info["query_compare"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return err_format
-                
-                v1, v2 = parts
-                if v1 not in self.vertices or v2 not in self.vertices:
-                    return err_format
-                
-                count1, _ = self._count_components_after_deletion(v1)
-                count2, _ = self._count_components_after_deletion(v2)
-                
-                if count1 > count2:
-                    return f"{v1}>{v2}"
-                elif count1 == count2:
-                    return f"{v1}={v2}"
-                else:
-                    return f"{v1}<{v2}"
-            except:
-                return err_format
-        
-        else:
-            return err_invalid
+        for i in range(len(cycle)):
+            u = cycle[i]
+            v = cycle[(i + 1) % len(cycle)]
+            if v not in self.adj.get(u, set()):
+                return False
+        return True
 
-    def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        # 若 correct 是纯整数字符串
-        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
-            return str(int(correct) + 1)
-        
-        # 中文：是/否
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-        
-        # 英文：Yes/No (忽略大小写)
-        lower_c = correct.lower()
-        if lower_c == "yes":
-            # 保持原始大小写风格
-            if correct.isupper(): return "NO"
-            if correct[0].isupper(): return "No"
-            return "no"
-        if lower_c == "no":
-            if correct.isupper(): return "YES"
-            if correct[0].isupper(): return "Yes"
-            return "yes"
-            
-        # 若都不匹配：在字符串末尾追加 "_WRONG"
-        return correct + "_WRONG"
-
-    def get_all_possible_queries(self) -> List[Dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串（XML格式）
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
+    def get_all_possible_queries(self) -> list[dict]:
         queries = []
-        vertices = sorted(list(self.vertices))
-        
-        # 1. 删点分量数查询
-        for v in vertices:
-            payload = {"query_count": v}
-            # 复用内部逻辑获取答案
-            ans = self._cf_core_produce(payload)
+        sorted_elements = sorted(list(self.elements))
+
+        queries.append({
+            "query": "<list></list>",
+            "answer": f"ITEMS: {','.join(sorted_elements)} COUNT: {len(self.elements)}"
+        })
+
+        queries.append({
+            "query": "<state></state>",
+            "answer": "INSTALLED: []"
+        })
+
+        zero_elems = self._get_zero_indegree_elements()
+        if zero_elems:
+            ask_zero_ans = f"YES {zero_elems[0]}"
+        else:
+            ask_zero_ans = "NO"
+        queries.append({
+            "query": "<ask_zero></ask_zero>",
+            "answer": ask_zero_ans
+        })
+
+        for elem in sorted_elements:
+            unsatisfied = self._get_unsatisfied_predecessors(elem)
             queries.append({
-                "query": f"<query_count>{v}</query_count>",
-                "answer": ans
+                "query": f"<count>{elem}</count>",
+                "answer": str(len(unsatisfied))
             })
-            
-        # 2. 删点分量详情查询
-        for v in vertices:
-            payload = {"query_detail": v}
-            ans = self._cf_core_produce(payload)
-            queries.append({
-                "query": f"<query_detail>{v}</query_detail>",
-                "answer": ans
-            })
-            
-        # 3. 分量数比较查询
-        # 仅枚举无序对以减少冗余
-        for i, v1 in enumerate(vertices):
-            for v2 in vertices[i+1:]:
-                payload = {"query_compare": f"{v1},{v2}"}
-                ans = self._cf_core_produce(payload)
+
+        for a in sorted_elements:
+            for b in sorted_elements:
+                if a == b:
+                    continue
+                if b in self.reachable[a]:
+                    ans = f"{a}<{b}"
+                elif a in self.reachable[b]:
+                    ans = f"{b}<{a}"
+                else:
+                    ans = "NO-CONSTRAINT"
                 queries.append({
-                    "query": f"<query_compare>{v1},{v2}</query_compare>",
+                    "query": f"<compare>{a},{b}</compare>",
                     "answer": ans
                 })
-                
+
         return queries
+
+    def parse(self, response: str):
+        parsed_info = super().parse(response)
+        if "answer_topo" in parsed_info or "answer_cycle" in parsed_info:
+            parsed_info["answer"] = parsed_info.get("answer_topo", parsed_info.get("answer_cycle", ""))
+        return parsed_info
+
+    def evaluate(self, parsed_info):
+        if "answer_topo" in parsed_info:
+            raw = parsed_info["answer_topo"].strip()
+            try:
+                sequence = [x.strip() for x in raw.split(",") if x.strip()]
+                is_valid, _ = self._check_sequence_validity(sequence)
+                return (not self.has_cycle) and is_valid
+            except:
+                return False
+        
+        elif "answer_cycle" in parsed_info:
+            raw = parsed_info["answer_cycle"].strip()
+            try:
+                cycle = [x.strip() for x in raw.split(",") if x.strip()]
+                is_valid = self._check_cycle_validity(cycle)
+                return self.has_cycle and is_valid
+            except:
+                return False
+        
+        return False
+
+    def _core_produce_response(self, parsed_info):
+        if "list" in parsed_info:
+            elements_str = ",".join(sorted(self.elements))
+            return f"ITEMS: {elements_str} COUNT: {len(self.elements)}"
+        
+        elif "state" in parsed_info:
+            if self.current_sequence:
+                seq_str = ",".join(self.current_sequence)
+                return f"INSTALLED: [{seq_str}]"
+            else:
+                return "INSTALLED: []"
+        
+        elif "place" in parsed_info:
+            elem = parsed_info["place"].strip()
+            if elem not in self.elements:
+                return "ERROR: Element not found." if self.config.language == "en" else "错误：元素不存在。"
+            
+            if elem in self.current_sequence:
+                return "ERROR: Element already placed." if self.config.language == "en" else "错误：元素已放置。"
+            
+            can_place, blocked_by = self._can_place(elem)
+            if can_place:
+                self.current_sequence.append(elem)
+                return "OK"
+            else:
+                return f"BLOCKED {blocked_by}"
+        
+        elif "count" in parsed_info:
+            elem = parsed_info["count"].strip()
+            if elem not in self.elements:
+                return "ERROR: Element not found." if self.config.language == "en" else "错误：元素不存在。"
+            
+            unsatisfied = self._get_unsatisfied_predecessors(elem)
+            return str(len(unsatisfied))
+        
+        elif "compare" in parsed_info:
+            try:
+                raw = parsed_info["compare"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    raise ValueError
+                a, b = parts
+                
+                if a not in self.elements or b not in self.elements:
+                    return "ERROR: Element not found." if self.config.language == "en" else "错误：元素不存在。"
+                
+                if b in self.reachable[a]:
+                    return f"{a}<{b}"
+                elif a in self.reachable[b]:
+                    return f"{b}<{a}"
+                else:
+                    return "NO-CONSTRAINT"
+            except:
+                return "ERROR: Invalid format." if self.config.language == "en" else "错误：格式无效。"
+        
+        elif "ask_zero" in parsed_info:
+            zero_elems = self._get_zero_indegree_elements()
+            if zero_elems:
+                elem = zero_elems[0]
+                return f"YES {elem}"
+            else:
+                return "NO"
+        
+        elif "check_sequence" in parsed_info:
+            raw = parsed_info["check_sequence"].strip()
+            try:
+                sequence = [x.strip() for x in raw.split(",") if x.strip()]
+                is_valid, violated_edge = self._check_sequence_validity(sequence)
+                if is_valid:
+                    return "VALID"
+                else:
+                    if violated_edge:
+                        return f"INVALID {violated_edge[0]} {violated_edge[1]}"
+                    else:
+                        return "INVALID"
+            except:
+                return "ERROR: Invalid format." if self.config.language == "en" else "错误：格式无效。"
+        
+        elif "reset" in parsed_info:
+            self.current_sequence = []
+            return "RESET-DONE"
+        
+        else:
+            raise ValueError("No valid operation tag found.")
+
+    def _cf_core_produce(self, parsed_info):
+        return self._core_produce_response(parsed_info)
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct == "OK":
+            return "BLOCKED A"
+        if correct.startswith("BLOCKED "):
+            return "OK"
+
+        if correct.strip().isdigit():
+            return str(int(correct.strip()) + 1)
+
+        if correct == "NO-CONSTRAINT":
+            sorted_elems = sorted(self.elements)
+            if len(sorted_elems) >= 2:
+                return f"{sorted_elems[0]}<{sorted_elems[1]}"
+            return correct + "_WRONG"
+        if "<" in correct and correct != "NO-CONSTRAINT":
+            parts = correct.split("<")
+            if len(parts) == 2:
+                return f"{parts[1]}<{parts[0]}"
+
+        if correct == "NO":
+            sorted_unplaced = [e for e in sorted(self.elements)
+                            if e not in self.current_sequence]
+            if sorted_unplaced:
+                return f"YES {sorted_unplaced[0]}"
+            return "YES X"
+        if correct.startswith("YES "):
+            return "NO"
+
+        if correct == "VALID":
+            return "INVALID A B"
+        if correct.startswith("INVALID"):
+            return "VALID"
+
+        return correct + "_WRONG"

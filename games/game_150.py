@@ -1,712 +1,692 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   删除影响：删除某位置元素后，序列长度及特定位置元素如何变化
-# ============================================================
-
 from .base import Game
 import re
 
-
-class HiddenSequenceRuleGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "序列"
-    enable_counterfactual = False   # 设为 True 时开启反事实干预模式
+class ColoredGraphPathGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"隐藏序列规则"的推理游戏，规则如下：
+我们现在来玩一个"彩色边路径推理"游戏，规则如下：
 
-游戏设定了一个有序序列 S，初始为 [1, 2, ..., {n}]。每个元素的标签等于其初始位置编号。位置索引从左到右为 1 到当前长度 L。
+游戏设定了一个无向图，顶点集为 A, B, C, D, E。边及其颜色标记如下：
+- A—B (红)
+- B—C (蓝)
+- C—D (红)
+- D—E (蓝)
+- E—A (红)
+- B—D (蓝)
+- C—E (红)
+- A—D (蓝)
 
-核心机制：存在一个隐藏的确定性函数 F(p, L')，每当你删除位置 p 的元素后，序列长度变为 L' = L - 1，系统会自动删除位置 q = F(p, L') 的元素，长度再次减 1。删除后，右侧元素会自动左移填补空位。
+我已经秘密选择了一条路径合规性判定规则，用于评估给定的顶点序列是否"合规"。基础要求是：顶点序列中相邻顶点之间必须存在边（无向）。在此基础上，还附加了一条隐藏规则，但我不会告诉你是哪一条。
 
-你的目标是通过交互推断出隐藏函数 F 的规律，并在验证操作中证明你已掌握该规律。
+你的目标是：
+1. 通过查询预设的测试序列来推断隐藏规则；
+2. 判定目标序列 R* = A—D—E 是否合规。
 
-## 可用指令
+你可以查询以下三个预设测试序列（每次查询一个）：
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT：查询当前序列长度
-   格式：<count></count>
-   返回：Length = 具体数字
+对于每次查询，我会告诉你该序列是"合规"还是"不合规"，但不会告诉你违反了哪条规则。
 
-2. PEEK：查询指定位置的元素标签
-   格式：<peek>位置索引</peek>
-   返回：Pos 位置 = 标签 或 Invalid index
+当你收集足够信息后，请提交最终答案。最终答案需要包括：
+1. 你推断出的隐藏规则名称（ALT、SIMPLE、EVEN 或 REDSTART 之一）
+2. 目标序列 R* 的合规性判断（合规或不合规）
 
-3. PLUCK：删除指定位置的元素（触发系统的连锁删除）
-   格式：<pluck>位置索引</pluck>
-   返回：You removed = 标签A; System removed = 标签B; New length = 新长度
-   注意：序列长度必须大于等于 2 才能执行
+若答案错误或格式不符，游戏失败。
 
-4. CHALLENGE：验证性操作，需要预测系统删除的元素及最终状态
-   格式：<challenge>p=位置, system=预测的系统删除标签, pos=位置1:预测标签1,位置2:预测标签2</challenge>
-   说明：
-   - p：你要删除的位置
-   - system：预测系统将删除的元素标签
-   - pos：预测最终序列中至少 2 个位置的标签（用逗号分隔）
-   返回：Check system = Yes/No; Pos 位置 check = Yes/No (多个); Resulting length = 新长度
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. ANSWER：满足所有条件后提交最终答案
-   格式：<answer>完成</answer>
-   系统会检查是否满足成功条件。
+查询测试序列 T1：
+<query_path>T1</query_path>
 
-## 成功条件
+查询测试序列 T2：
+<query_path>T2</query_path>
 
-1. 至少执行过 3 次 PLUCK 操作
-2. 至少一次 CHALLENGE 中：
-   - 系统删除的标签预测正确
-   - 且至少 2 个位置的标签预测全部正确
+查询测试序列 T3：
+<query_path>T3</query_path>
 
-## 失败条件
+提交最终答案时，必须说明规则名称和目标序列的合规性，格式如下：
+<answer>rule=ALT, target=合规</answer>
 
-- 序列长度小于 2 时无法继续操作，且未满足成功条件
-- 指令格式错误
-
-请尽可能少地使用操作次数来完成推理。
+或：
+<answer>rule=SIMPLE, target=不合规</answer>
 """
 
     game_rule_en = """\
-Let's play a "Hidden Sequence Rule" deduction game. Here are the rules:
+Let's play a "Colored Edge Path Reasoning" game. Here are the rules:
 
-The game sets up an ordered sequence S, initially [1, 2, ..., {n}]. Each element's label equals its initial position number. Position indices range from 1 to the current length L, left to right.
+The game has an undirected graph with vertices A, B, C, D, E. The edges and their color labels are:
+- A—B (Red)
+- B—C (Blue)
+- C—D (Red)
+- D—E (Blue)
+- E—A (Red)
+- B—D (Blue)
+- C—E (Red)
+- A—D (Blue)
 
-Core mechanism: There exists a hidden deterministic function F(p, L'). Whenever you remove an element at position p, the sequence length becomes L' = L - 1, then the system automatically removes the element at position q = F(p, L'), reducing the length by 1 again. After removal, elements to the right shift left to fill gaps.
+I have secretly chosen a path compliance rule to evaluate whether a given vertex sequence is "compliant". The basic requirement is: adjacent vertices in the sequence must be connected by an edge (undirected). Additionally, there is a hidden rule applied, but I won't tell you which one.
 
-Your goal is to infer the hidden function F through interaction and prove your understanding in a verification operation.
+Your goal is:
+1. Infer the hidden rule by querying preset test sequences;
+2. Determine whether the target sequence R* = A—D—E is compliant.
 
-## Available Commands
+You can query the following three preset test sequences (one per query):
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT: Query current sequence length
-   Format: <count></count>
-   Returns: Length = number
+For each query, I will tell you whether the sequence is "compliant" or "non-compliant", but I won't tell you which rule it violated.
 
-2. PEEK: Query the element label at a specific position
-   Format: <peek>position_index</peek>
-   Returns: Pos position = label OR Invalid index
+When you have enough information, submit your final answer. The final answer must include:
+1. The hidden rule name you inferred (one of ALT, SIMPLE, EVEN, or REDSTART)
+2. The compliance judgment for target sequence R* (compliant or non-compliant)
 
-3. PLUCK: Remove element at specified position (triggers system's chain removal)
-   Format: <pluck>position_index</pluck>
-   Returns: You removed = labelA; System removed = labelB; New length = new_length
-   Note: Sequence length must be at least 2 to execute
+If the answer is wrong or the format is invalid, the game fails.
 
-4. CHALLENGE: Verification operation, requires predicting system removal and final state
-   Format: <challenge>p=position, system=predicted_system_label, pos=pos1:pred_label1,pos2:pred_label2</challenge>
-   Explanation:
-   - p: position you want to remove
-   - system: predicted label of element system will remove
-   - pos: predict at least 2 positions' labels in final sequence (comma-separated)
-   Returns: Check system = Yes/No; Pos position check = Yes/No (multiple); Resulting length = new_length
+Each query must contain only one tag. Use the following XML format:
 
-5. ANSWER: Submit your final answer after meeting all conditions
-   Format: <answer>done</answer>
-   The game will check if success conditions are met.
+Query test sequence T1:
+<query_path>T1</query_path>
 
-## Success Conditions
+Query test sequence T2:
+<query_path>T2</query_path>
 
-1. At least 3 PLUCK operations executed
-2. At least one CHALLENGE where:
-   - System removal label prediction is correct
-   - AND at least 2 position label predictions are all correct
+Query test sequence T3:
+<query_path>T3</query_path>
 
-## Failure Conditions
+When submitting the final answer, specify the rule name and target compliance:
+<answer>rule=ALT, target=compliant</answer>
 
-- Sequence length less than 2 prevents further operations, and success conditions not met
-- Invalid command format
-
-Please use as few operations as possible to complete the deduction.
+or:
+<answer>rule=SIMPLE, target=non-compliant</answer>
 """
 
     contextualized_rule_zh_1 = """\
-我们现在来玩一个“列车车厢联动调度”推理游戏，规则如下：
+欢迎使用“智能交通路线合规评估系统”。本系统用于校验跨城联运方案。
 
-游戏设定了一列编组为 S 的列车，初始有 [1, 2, ..., {n}] 节车厢。每节车厢的出厂编号等于其初始位置。位置索引从列车头到尾为 1 到当前长度 L。
+系统涵盖了五个核心枢纽城市：A, B, C, D, E。枢纽间开通了特定的联运路线，分为高铁（红）和航空（蓝）两种：
+- A—B (高铁/红)
+- B—C (航空/蓝)
+- C—D (高铁/红)
+- D—E (航空/蓝)
+- E—A (高铁/红)
+- B—D (航空/蓝)
+- C—E (高铁/红)
+- A—D (航空/蓝)
 
-核心机制：列车控制系统存在一个隐藏的确定性安全函数 F(p, L')。每当你解编（删除）位置 p 的车厢后，列车长度变为 L' = L - 1，系统会自动启动连锁协议，解编位置 q = F(p, L') 的车厢，长度再次减 1。解编后，后方车厢会自动向前补齐连挂。
+我已经秘密启用了一条调度合规性判定规则，用于评估给定的途径城市序列是否"合规"。基础要求是：序列中相邻城市之间必须存在联运路线。在此基础上，还附加了一条隐藏规则（ALT、SIMPLE、EVEN 或 REDSTART 之一），但我不会告诉你是哪一条。
 
-你的目标是通过交互测试推断出隐藏函数 F 的安全调度规律，并在验证操作中证明你已掌握该规律。
+你的目标是：
+1. 通过查询预设的测试路线来推断隐藏的调度规则；
+2.判定目标联运路线 R* = A—D—E 是否合规。
 
-## 可用指令
+你可以查询以下三个预设测试路线（每次查询一个）：
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT：查询当前序列长度
-   格式：<count></count>
-   返回：Length = 具体数字
+对于每次查询，我会告诉你该路线是"合规"还是"不合规"，但不会告诉你违反了哪条规则。
 
-2. PEEK：查询指定位置的车厢编号
-   格式：<peek>位置索引</peek>
-   返回：Pos 位置 = 编号 或 Invalid index
+当你收集足够信息后，请提交最终答案。最终答案需要包括：
+1. 你推断出的隐藏规则名称（ALT、SIMPLE、EVEN 或 REDSTART 之一）
+2. 目标路线 R* 的合规性判断（合规或不合规）
 
-3. PLUCK：解编指定位置的车厢（触发系统的连锁解编）
-   格式：<pluck>位置索引</pluck>
-   返回：You removed = 编号A; System removed = 编号B; New length = 新长度
-   注意：列车长度必须大于等于 2 才能执行
+若答案错误或格式不符，评估失败。
 
-4. CHALLENGE：验证性操作，需要预测系统解编的车厢及最终状态
-   格式：<challenge>p=位置, system=预测的系统解编编号, pos=位置1:预测编号1,位置2:预测编号2</challenge>
-   说明：
-   - p：你要解编的位置
-   - system：预测系统将解编的车厢编号
-   - pos：预测最终列车中至少 2 个位置的编号（用逗号分隔）
-   返回：Check system = Yes/No; Pos 位置 check = Yes/No (多个); Resulting length = 新长度
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. ANSWER：满足所有条件后提交最终答案
-   格式：<answer>完成</answer>
-   系统会检查是否满足成功条件。
+查询测试路线 T1：
+<query_path>T1</query_path>
 
-## 成功条件
+查询测试路线 T2：
+<query_path>T2</query_path>
 
-1. 至少执行过 3 次 PLUCK 操作
-2. 至少一次 CHALLENGE 中：
-   - 系统解编的编号预测正确
-   - 且至少 2 个位置的编号预测全部正确
+查询测试路线 T3：
+<query_path>T3</query_path>
 
-## 失败条件
+提交最终答案时，必须说明规则名称和目标路线的合规性，格式如下：
+<answer>rule=ALT, target=合规</answer>
 
-- 序列长度小于 2 时无法继续操作，且未满足成功条件
-- 指令格式错误
-
-请尽可能少地使用操作次数来完成推理。
+或：
+<answer>rule=SIMPLE, target=不合规</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's play a "Train Car Linked Dispatching" deduction game. Here are the rules:
+Welcome to the "Intelligent Traffic Routing Compliance Assessment System". This system verifies intercity transport plans.
 
-The game sets up a train composition S, initially with [1, 2, ..., {n}] cars. Each car's factory ID equals its initial position. Position indices range from head to tail as 1 to the current length L.
+The network covers five core hub cities: A, B, C, D, E. Specific intermodal routes are available between hubs, categorized into High-Speed Rail (Red) and Aviation (Blue):
+- A—B (HSR/Red)
+- B—C (Aviation/Blue)
+- C—D (HSR/Red)
+- D—E (Aviation/Blue)
+- E—A (HSR/Red)
+- B—D (Aviation/Blue)
+- C—E (HSR/Red)
+- A—D (Aviation/Blue)
 
-Core mechanism: The train control system has a hidden deterministic safety function F(p, L'). Whenever you uncouple (remove) the car at position p, the length becomes L' = L - 1, and the system automatically triggers a chain protocol to uncouple the car at position q = F(p, L'), reducing the length by 1 again. After removal, rear cars automatically shift forward to couple and fill gaps.
+I have secretly enabled a routing compliance rule to evaluate whether a given sequence of cities is "compliant". The basic requirement is: adjacent cities in the sequence must be connected by a valid route. Additionally, a hidden rule is applied (one of ALT, SIMPLE, EVEN, or REDSTART), but I won't tell you which one.
 
-Your goal is to infer the hidden safety function F through interaction and prove your understanding in a verification operation.
+Your goal is:
+1. Infer the hidden scheduling rule by querying preset test routes;
+2. Determine whether the target routing plan R* = A—D—E is compliant.
 
-## Available Commands
+You can query the following three preset test routes (one per query):
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT: Query current sequence length
-   Format: <count></count>
-   Returns: Length = number
+For each query, I will tell you whether the route is "compliant" or "non-compliant", but I won't specify which rule it violated.
 
-2. PEEK: Query the car's factory ID at a specific position
-   Format: <peek>position_index</peek>
-   Returns: Pos position = ID OR Invalid index
+When you have enough information, submit your final answer. The final answer must include:
+1. The inferred hidden rule name (ALT, SIMPLE, EVEN, or REDSTART)
+2. The compliance judgment for target route R* (compliant or non-compliant)
 
-3. PLUCK: Uncouple car at specified position (triggers system's chain uncoupling)
-   Format: <pluck>position_index</pluck>
-   Returns: You removed = ID_A; System removed = ID_B; New length = new_length
-   Note: Sequence length must be at least 2 to execute
+If the answer is wrong or the format is invalid, the assessment fails.
 
-4. CHALLENGE: Verification operation, requires predicting system uncoupling and final state
-   Format: <challenge>p=position, system=predicted_system_ID, pos=pos1:pred_ID1,pos2:pred_ID2</challenge>
-   Explanation:
-   - p: position you want to uncouple
-   - system: predicted ID of car system will uncouple
-   - pos: predict at least 2 positions' IDs in final sequence (comma-separated)
-   Returns: Check system = Yes/No; Pos position check = Yes/No (multiple); Resulting length = new_length
+Each query must contain only one tag. Use the following XML format:
 
-5. ANSWER: Submit your final answer after meeting all conditions
-   Format: <answer>done</answer>
-   The game will check if success conditions are met.
+Query test route T1:
+<query_path>T1</query_path>
 
-## Success Conditions
+Query test route T2:
+<query_path>T2</query_path>
 
-1. At least 3 PLUCK operations executed
-2. At least one CHALLENGE where:
-   - System uncoupling ID prediction is correct
-   - AND at least 2 position ID predictions are all correct
+Query test route T3:
+<query_path>T3</query_path>
 
-## Failure Conditions
+When submitting the final answer, specify the rule name and target compliance:
+<answer>rule=ALT, target=compliant</answer>
 
-- Sequence length less than 2 prevents further operations, and success conditions not met
-- Invalid command format
-
-Please use as few operations as possible to complete the deduction.
+or:
+<answer>rule=SIMPLE, target=non-compliant</answer>
 """
 
     contextualized_rule_zh_2 = """\
-我们现在来玩一个“试剂联动损耗”推理游戏，规则如下：
+欢迎使用“医疗转诊路径合规审查系统”。本系统用于校验院内患者流转的规范性。
 
-游戏设定了一批排列在检测槽 S 中的试剂管，初始为 [1, 2, ..., {n}]。每管试剂的批次号等于其初始位置编号。槽位索引从左到右为 1 到当前剩余数量 L。
+系统涵盖了五个核心科室：A, B, C, D, E。科室间设有特定的转诊通道，分为急诊通道（红）和常规通道（蓝）：
+- A—B (急诊通道/红)
+- B—C (常规通道/蓝)
+- C—D (急诊通道/红)
+- D—E (常规通道/蓝)
+- E—A (急诊通道/红)
+- B—D (常规通道/蓝)
+- C—E (急诊通道/红)
+- A—D (常规通道/蓝)
 
-核心机制：检测台内嵌了一个隐藏的确定性防污染函数 F(p, L')。每当你移出（删除）位置 p 的试剂管后，剩余总数变为 L' = L - 1，系统会自动销毁位置 q = F(p, L') 的试剂管以防交叉污染，总数再次减 1。移出后，右侧试剂管会自动被机械臂左移填补空位。
+我已经秘密选择了一条临床路径合规性判定规则，用于评估给定的科室流转序列是否"合规"。基础要求是：序列中相邻科室之间必须存在转诊通道。在此基础上，还附加了一条隐藏规则（ALT、SIMPLE、EVEN 或 REDSTART 之一），但我不会告诉你是哪一条。
 
-你的目标是通过交互推断出隐藏函数 F 的防污染规律，并在验证操作中证明你已掌握该规律。
+你的目标是：
+1. 通过查询预设的测试转诊序列来推断隐藏的医疗规则；
+2. 判定目标转诊序列 R* = A—D—E 是否合规。
 
-## 可用指令
+你可以查询以下三个预设测试序列（每次查询一个）：
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT：查询当前试剂管总数
-   格式：<count></count>
-   返回：Length = 具体数字
+对于每次查询，我会告诉你该序列是"合规"还是"不合规"，但不会告诉你违反了哪条规则。
 
-2. PEEK：查询指定槽位的试剂批次号
-   格式：<peek>槽位索引</peek>
-   返回：Pos 槽位 = 批次号 或 Invalid index
+当你收集足够信息后，请提交最终答案。最终答案需要包括：
+1. 你推断出的隐藏规则名称（ALT、SIMPLE、EVEN 或 REDSTART 之一）
+2. 目标序列 R* 的合规性判断（合规或不合规）
 
-3. PLUCK：移出指定槽位的试剂管（触发系统的连锁销毁）
-   格式：<pluck>槽位索引</pluck>
-   返回：You removed = 批次号A; System removed = 批次号B; New length = 新总数
-   注意：试剂管总数必须大于等于 2 才能执行
+若答案错误或格式不符，审查失败。
 
-4. CHALLENGE：验证性操作，需要预测系统销毁的试剂管及最终状态
-   格式：<challenge>p=槽位, system=预测的系统销毁批次号, pos=槽位1:预测批次号1,槽位2:预测批次号2</challenge>
-   说明：
-   - p：你要移出的槽位
-   - system：预测系统将销毁的试剂批次号
-   - pos：预测最终检测槽中至少 2 个槽位的批次号（用逗号分隔）
-   返回：Check system = Yes/No; Pos 槽位 check = Yes/No (多个); Resulting length = 新总数
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. ANSWER：满足所有条件后提交最终答案
-   格式：<answer>完成</answer>
-   系统会检查是否满足成功条件。
+查询测试序列 T1：
+<query_path>T1</query_path>
 
-## 成功条件
+查询测试序列 T2：
+<query_path>T2</query_path>
 
-1. 至少执行过 3 次 PLUCK 操作
-2. 至少一次 CHALLENGE 中：
-   - 系统销毁的批次号预测正确
-   - 且至少 2 个槽位的批次号预测全部正确
+查询测试序列 T3：
+<query_path>T3</query_path>
 
-## 失败条件
+提交最终答案时，必须说明规则名称和目标序列的合规性，格式如下：
+<answer>rule=ALT, target=合规</answer>
 
-- 试剂管总数小于 2 时无法继续操作，且未满足成功条件
-- 指令格式错误
-
-请尽可能少地使用操作次数来完成推理。
+或：
+<answer>rule=SIMPLE, target=不合规</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's play a "Reagent Linked Depletion" deduction game. Here are the rules:
+Welcome to the "Medical Referral Path Compliance Review System". This system verifies the standardization of patient workflows within the hospital.
 
-The game sets up a batch of reagent tubes in detection slots S, initially [1, 2, ..., {n}]. Each tube's batch number equals its initial position number. Slot indices range from left to right as 1 to the current remaining quantity L.
+The network covers five core departments: A, B, C, D, E. Specific referral channels exist between departments, categorized into Emergency Channels (Red) and Routine Channels (Blue):
+- A—B (Emergency/Red)
+- B—C (Routine/Blue)
+- C—D (Emergency/Red)
+- D—E (Routine/Blue)
+- E—A (Emergency/Red)
+- B—D (Routine/Blue)
+- C—E (Emergency/Red)
+- A—D (Routine/Blue)
 
-Core mechanism: The detection platform embeds a hidden deterministic anti-contamination function F(p, L'). Whenever you extract (remove) the tube at position p, the remaining total becomes L' = L - 1, and the system automatically destroys the tube at position q = F(p, L') to prevent cross-contamination, reducing the total by 1 again. After extraction, tubes to the right are automatically shifted left by robotic arms to fill gaps.
+I have secretly selected a clinical path compliance rule to evaluate whether a given sequence of departments is "compliant". The basic requirement is: adjacent departments in the sequence must be connected by a valid channel. Additionally, a hidden rule is applied (one of ALT, SIMPLE, EVEN, or REDSTART), but I won't tell you which one.
 
-Your goal is to infer the hidden anti-contamination function F through interaction and prove your understanding in a verification operation.
+Your goal is:
+1. Infer the hidden medical rule by querying preset test referral sequences;
+2. Determine whether the target referral sequence R* = A—D—E is compliant.
 
-## Available Commands
+You can query the following three preset test sequences (one per query):
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT: Query current remaining quantity of tubes
-   Format: <count></count>
-   Returns: Length = number
+For each query, I will tell you whether the sequence is "compliant" or "non-compliant", but I won't specify which rule it violated.
 
-2. PEEK: Query the tube's batch number at a specific slot
-   Format: <peek>slot_index</peek>
-   Returns: Pos slot = batch_number OR Invalid index
+When you have enough information, submit your final answer. The final answer must include:
+1. The inferred hidden rule name (ALT, SIMPLE, EVEN, or REDSTART)
+2. The compliance judgment for target sequence R* (compliant or non-compliant)
 
-3. PLUCK: Extract tube at specified slot (triggers system's chain destruction)
-   Format: <pluck>slot_index</pluck>
-   Returns: You removed = batch_number_A; System removed = batch_number_B; New length = new_length
-   Note: Remaining quantity must be at least 2 to execute
+If the answer is wrong or the format is invalid, the review fails.
 
-4. CHALLENGE: Verification operation, requires predicting system destruction and final state
-   Format: <challenge>p=slot, system=predicted_system_batch_number, pos=slot1:pred_batch_number1,slot2:pred_batch_number2</challenge>
-   Explanation:
-   - p: slot you want to extract
-   - system: predicted batch number of tube system will destroy
-   - pos: predict at least 2 slots' batch numbers in final sequence (comma-separated)
-   Returns: Check system = Yes/No; Pos slot check = Yes/No (multiple); Resulting length = new_length
+Each query must contain only one tag. Use the following XML format:
 
-5. ANSWER: Submit your final answer after meeting all conditions
-   Format: <answer>done</answer>
-   The game will check if success conditions are met.
+Query test sequence T1:
+<query_path>T1</query_path>
 
-## Success Conditions
+Query test sequence T2:
+<query_path>T2</query_path>
 
-1. At least 3 PLUCK operations executed
-2. At least one CHALLENGE where:
-   - System destruction batch number prediction is correct
-   - AND at least 2 slot batch number predictions are all correct
+Query test sequence T3:
+<query_path>T3</query_path>
 
-## Failure Conditions
+When submitting the final answer, specify the rule name and target compliance:
+<answer>rule=ALT, target=compliant</answer>
 
-- Remaining quantity less than 2 prevents further operations, and success conditions not met
-- Invalid command format
-
-Please use as few operations as possible to complete the deduction.
+or:
+<answer>rule=SIMPLE, target=non-compliant</answer>
 """
 
     contextualized_rule_zh_3 = """\
-我们现在来玩一个“智能考位联动”推理游戏，规则如下：
+欢迎来到“自适应学习路径诊断系统”。本系统用于校验课程模块的递进关系。
 
-游戏设定了一排按序就坐的考生 S，初始考号为 [1, 2, ..., {n}]。每个考生的考号等于其初始座位编号。座位索引从前到后为 1 到当前人数 L。
+系统内设五个核心知识模块：A, B, C, D, E。模块间存在特定的学习依赖路径，分为必修关联（红）和拓展关联（蓝）：
+- A—B (必修关联/红)
+- B—C (拓展关联/蓝)
+- C—D (必修关联/红)
+- D—E (拓展关联/蓝)
+- E—A (必修关联/红)
+- B—D (拓展关联/蓝)
+- C—E (必修关联/红)
+- A—D (拓展关联/蓝)
 
-核心机制：考务系统存在一个隐藏的确定性防作弊函数 F(p, L')。每当你取消（删除）位置 p 考生的资格后，剩余人数变为 L' = L - 1，系统会自动按防作弊规则取消位置 q = F(p, L') 考生的资格，人数再次减 1。空位产生后，后方考生会自动向前挪动填补座位。
+我已经秘密选择了一条课程规划判定规则，用于评估给定的模块学习序列是否"合规"。基础要求是：序列中相邻模块之间必须存在依赖路径。在此基础上，还附加了一条隐藏规则（ALT、SIMPLE、EVEN 或 REDSTART 之一），但我不会告诉你是哪一条。
 
-你的目标是通过交互推断出隐藏函数 F 的联动取消规律，并在验证操作中证明你已掌握该规律。
+你的目标是：
+1. 通过查询预设的测试学习序列来推断隐藏的教学规则；
+2. 判定目标学习序列 R* = A—D—E 是否合规。
 
-## 可用指令
+你可以查询以下三个预设测试序列（每次查询一个）：
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT：查询当前剩余考生人数
-   格式：<count></count>
-   返回：Length = 具体数字
+对于每次查询，我会告诉你该序列是"合规"还是"不合规"，但不会告诉你违反了哪条规则。
 
-2. PEEK：查询指定座位的考生考号
-   格式：<peek>座位索引</peek>
-   返回：Pos 座位 = 考号 或 Invalid index
+当你收集足够信息后，请提交最终答案。最终答案需要包括：
+1. 你推断出的隐藏规则名称（ALT、SIMPLE、EVEN 或 REDSTART 之一）
+2. 目标序列 R* 的合规性判断（合规或不合规）
 
-3. PLUCK：取消指定座位考生的资格（触发系统的连锁取消）
-   格式：<pluck>座位索引</pluck>
-   返回：You removed = 考号A; System removed = 考号B; New length = 新人数
-   注意：考生人数必须大于等于 2 才能执行
+若答案错误或格式不符，诊断失败。
 
-4. CHALLENGE：验证性操作，需要预测系统取消资格的考生及最终状态
-   格式：<challenge>p=座位, system=预测的系统取消考号, pos=座位1:预测考号1,座位2:预测考号2</challenge>
-   说明：
-   - p：你要取消资格的座位
-   - system：预测系统将取消的考生考号
-   - pos：预测最终队列中至少 2 个座位的考号（用逗号分隔）
-   返回：Check system = Yes/No; Pos 座位 check = Yes/No (多个); Resulting length = 新人数
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. ANSWER：满足所有条件后提交最终答案
-   格式：<answer>完成</answer>
-   系统会检查是否满足成功条件。
+查询测试序列 T1：
+<query_path>T1</query_path>
 
-## 成功条件
+查询测试序列 T2：
+<query_path>T2</query_path>
 
-1. 至少执行过 3 次 PLUCK 操作
-2. 至少一次 CHALLENGE 中：
-   - 系统取消的考号预测正确
-   - 且至少 2 个座位的考号预测全部正确
+查询测试序列 T3：
+<query_path>T3</query_path>
 
-## 失败条件
+提交最终答案时，必须说明规则名称和目标序列的合规性，格式如下：
+<answer>rule=ALT, target=合规</answer>
 
-- 考生人数小于 2 时无法继续操作，且未满足成功条件
-- 指令格式错误
-
-请尽可能少地使用操作次数来完成推理。
+或：
+<answer>rule=SIMPLE, target=不合规</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Smart Seat Linked Cancellation" deduction game. Here are the rules:
+Welcome to the "Adaptive Learning Path Diagnostic System". This system verifies the progression of curriculum modules.
 
-The game sets up a row of sequentially seated candidates S, with initial exam numbers [1, 2, ..., {n}]. Each candidate's exam number equals their initial seat number. Seat indices range from front to back as 1 to the current number of people L.
+The system contains five core knowledge modules: A, B, C, D, E. Specific learning dependencies exist between modules, categorized into Compulsory Links (Red) and Extension Links (Blue):
+- A—B (Compulsory/Red)
+- B—C (Extension/Blue)
+- C—D (Compulsory/Red)
+- D—E (Extension/Blue)
+- E—A (Compulsory/Red)
+- B—D (Extension/Blue)
+- C—E (Compulsory/Red)
+- A—D (Extension/Blue)
 
-Core mechanism: The exam administration system has a hidden deterministic anti-cheating function F(p, L'). Whenever you cancel (remove) the qualification of the candidate at position p, the remaining count becomes L' = L - 1, and the system automatically cancels the candidate at position q = F(p, L') based on anti-cheating rules, reducing the count by 1 again. Once a gap appears, candidates behind automatically move forward to fill the seats.
+I have secretly selected a curriculum planning rule to evaluate whether a given sequence of study modules is "compliant". The basic requirement is: adjacent modules in the sequence must be connected by a dependency path. Additionally, a hidden rule is applied (one of ALT, SIMPLE, EVEN, or REDSTART), but I won't tell you which one.
 
-Your goal is to infer the hidden linked cancellation function F through interaction and prove your understanding in a verification operation.
+Your goal is:
+1. Infer the hidden pedagogical rule by querying preset test study sequences;
+2. Determine whether the target study sequence R* = A—D—E is compliant.
 
-## Available Commands
+You can query the following three preset test sequences (one per query):
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT: Query current remaining number of candidates
-   Format: <count></count>
-   Returns: Length = number
+For each query, I will tell you whether the sequence is "compliant" or "non-compliant", but I won't specify which rule it violated.
 
-2. PEEK: Query the candidate's exam number at a specific seat
-   Format: <peek>seat_index</peek>
-   Returns: Pos seat = exam_number OR Invalid index
+When you have enough information, submit your final answer. The final answer must include:
+1. The inferred hidden rule name (ALT, SIMPLE, EVEN, or REDSTART)
+2. The compliance judgment for target sequence R* (compliant or non-compliant)
 
-3. PLUCK: Cancel candidate at specified seat (triggers system's chain cancellation)
-   Format: <pluck>seat_index</pluck>
-   Returns: You removed = exam_number_A; System removed = exam_number_B; New length = new_count
-   Note: Number of candidates must be at least 2 to execute
+If the answer is wrong or the format is invalid, the diagnostic fails.
 
-4. CHALLENGE: Verification operation, requires predicting system cancellation and final state
-   Format: <challenge>p=seat, system=predicted_system_exam_number, pos=seat1:pred_exam_number1,seat2:pred_exam_number2</challenge>
-   Explanation:
-   - p: seat of the candidate you want to cancel
-   - system: predicted exam number of candidate system will cancel
-   - pos: predict at least 2 seats' exam numbers in final row (comma-separated)
-   Returns: Check system = Yes/No; Pos seat check = Yes/No (multiple); Resulting length = new_count
+Each query must contain only one tag. Use the following XML format:
 
-5. ANSWER: Submit your final answer after meeting all conditions
-   Format: <answer>done</answer>
-   The game will check if success conditions are met.
+Query test sequence T1:
+<query_path>T1</query_path>
 
-## Success Conditions
+Query test sequence T2:
+<query_path>T2</query_path>
 
-1. At least 3 PLUCK operations executed
-2. At least one CHALLENGE where:
-   - System cancellation exam number prediction is correct
-   - AND at least 2 seat exam number predictions are all correct
+Query test sequence T3:
+<query_path>T3</query_path>
 
-## Failure Conditions
+When submitting the final answer, specify the rule name and target compliance:
+<answer>rule=ALT, target=compliant</answer>
 
-- Number of candidates less than 2 prevents further operations, and success conditions not met
-- Invalid command format
-
-Please use as few operations as possible to complete the deduction.
+or:
+<answer>rule=SIMPLE, target=non-compliant</answer>
 """
 
     contextualized_rule_zh_4 = """\
-我们现在来玩一个“流水线零件联动剔除”推理游戏，规则如下：
+欢迎进入“工业物联网物料流转校验系统”。本系统用于排查生产线工艺路径的合规性。
 
-游戏设定了一条组装流水线上的零件序列 S，初始批号为 [1, 2, ..., {n}]。每个零件的批号等于其初始位置编号。位置索引从上游到下游为 1 到当前零件数 L。
+工厂内设有五个核心加工车间：A, B, C, D, E。车间之间通过物理传送带连接，分为加急传送带（红）和标准传送带（蓝）：
+- A—B (加急传送带/红)
+- B—C (标准传送带/蓝)
+- C—D (加急传送带/红)
+- D—E (标准传送带/蓝)
+- E—A (加急传送带/红)
+- B—D (标准传送带/蓝)
+- C—E (加急传送带/红)
+- A—D (标准传送带/蓝)
 
-核心机制：品控系统内置了一个隐藏的确定性算法 F(p, L')。每当你人工剔除（删除）位置 p 的零件后，剩余零件数变为 L' = L - 1，自动机械臂会依据算法联动剔除位置 q = F(p, L') 的零件，零件数再次减 1。剔除后，传送带会将右侧零件左移填补空缺。
+我已经秘密应用了一条工艺约束规则，用于评估给定的物料流转序列是否"合规"。基础要求是：序列中相邻车间之间必须存在物理连通的传送带。在此基础上，还附加了一条隐藏规则（ALT、SIMPLE、EVEN 或 REDSTART 之一），但我不会告诉你是哪一条。
 
-你的目标是通过抽样交互推断出隐藏算法 F 的联动剔除规律，并在验证操作中证明你已掌握该规律。
+你的目标是：
+1. 通过查询预设的测试流转序列来推断隐藏的工艺规则；
+2. 判定目标流转序列 R* = A—D—E 是否合规。
 
-## 可用指令
+你可以查询以下三个预设测试序列（每次查询一个）：
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT：查询当前流水线上零件总数
-   格式：<count></count>
-   返回：Length = 具体数字
+对于每次查询，我会告诉你该序列是"合规"还是"不合规"，但不会告诉你违反了哪条规则。
 
-2. PEEK：查询指定位置的零件批号
-   格式：<peek>位置索引</peek>
-   返回：Pos 位置 = 批号 或 Invalid index
+当你收集足够信息后，请提交最终答案。最终答案需要包括：
+1. 你推断出的隐藏规则名称（ALT、SIMPLE、EVEN 或 REDSTART 之一）
+2. 目标序列 R* 的合规性判断（合规或不合规）
 
-3. PLUCK：剔除指定位置的零件（触发系统的联动剔除）
-   格式：<pluck>位置索引</pluck>
-   返回：You removed = 批号A; System removed = 批号B; New length = 新零件数
-   注意：零件总数必须大于等于 2 才能执行
+若答案错误或格式不符，校验失败。
 
-4. CHALLENGE：验证性操作，需要预测系统联动剔除的零件及最终状态
-   格式：<challenge>p=位置, system=预测的系统剔除批号, pos=位置1:预测批号1,位置2:预测批号2</challenge>
-   说明：
-   - p：你要人工剔除的位置
-   - system：预测系统将联动剔除的零件批号
-   - pos：预测最终流水线上至少 2 个位置的批号（用逗号分隔）
-   返回：Check system = Yes/No; Pos 位置 check = Yes/No (多个); Resulting length = 新零件数
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. ANSWER：满足所有条件后提交最终答案
-   格式：<answer>完成</answer>
-   系统会检查是否满足成功条件。
+查询测试序列 T1：
+<query_path>T1</query_path>
 
-## 成功条件
+查询测试序列 T2：
+<query_path>T2</query_path>
 
-1. 至少执行过 3 次 PLUCK 操作
-2. 至少一次 CHALLENGE 中：
-   - 系统剔除的批号预测正确
-   - 且至少 2 个位置的批号预测全部正确
+查询测试序列 T3：
+<query_path>T3</query_path>
 
-## 失败条件
+提交最终答案时，必须说明规则名称和目标序列的合规性，格式如下：
+<answer>rule=ALT, target=合规</answer>
 
-- 零件总数小于 2 时无法继续操作，且未满足成功条件
-- 指令格式错误
-
-请尽可能少地使用操作次数来完成推理。
+或：
+<answer>rule=SIMPLE, target=不合规</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Let's play an "Assembly Line Linked Rejection" deduction game. Here are the rules:
+Welcome to the "IIoT Material Flow Validation System". This system inspects the compliance of production line routing.
 
-The game sets up a sequence of parts S on an assembly line, with initial batch numbers [1, 2, ..., {n}]. Each part's batch number equals its initial position number. Position indices range from upstream to downstream as 1 to the current number of parts L.
+The factory consists of five core processing workshops: A, B, C, D, E. They are connected by physical conveyor belts, categorized into Expedited Belts (Red) and Standard Belts (Blue):
+- A—B (Expedited/Red)
+- B—C (Standard/Blue)
+- C—D (Expedited/Red)
+- D—E (Standard/Blue)
+- E—A (Expedited/Red)
+- B—D (Standard/Blue)
+- C—E (Expedited/Red)
+- A—D (Standard/Blue)
 
-Core mechanism: The quality control system incorporates a hidden deterministic algorithm F(p, L'). Whenever you manually reject (remove) the part at position p, the remaining parts count becomes L' = L - 1, and the automated robotic arm correspondingly rejects the part at position q = F(p, L') based on the algorithm, reducing the count by 1 again. After rejection, the conveyor belt shifts parts on the right to the left to fill gaps.
+I have secretly applied a process constraint rule to evaluate whether a given sequence of material flow is "compliant". The basic requirement is: adjacent workshops in the sequence must be physically connected by a conveyor belt. Additionally, a hidden rule is applied (one of ALT, SIMPLE, EVEN, or REDSTART), but I won't tell you which one.
 
-Your goal is to infer the hidden algorithm F's linked rejection rule through interaction and prove your understanding in a verification operation.
+Your goal is:
+1. Infer the hidden routing rule by querying preset test flow sequences;
+2. Determine whether the target flow sequence R* = A—D—E is compliant.
 
-## Available Commands
+You can query the following three preset test sequences (one per query):
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT: Query current total number of parts on the line
-   Format: <count></count>
-   Returns: Length = number
+For each query, I will tell you whether the sequence is "compliant" or "non-compliant", but I won't specify which rule it violated.
 
-2. PEEK: Query the part's batch number at a specific position
-   Format: <peek>position_index</peek>
-   Returns: Pos position = batch_number OR Invalid index
+When you have enough information, submit your final answer. The final answer must include:
+1. The inferred hidden rule name (ALT, SIMPLE, EVEN, or REDSTART)
+2. The compliance judgment for target sequence R* (compliant or non-compliant)
 
-3. PLUCK: Reject part at specified position (triggers system's linked rejection)
-   Format: <pluck>position_index</pluck>
-   Returns: You removed = batch_number_A; System removed = batch_number_B; New length = new_count
-   Note: Total parts must be at least 2 to execute
+If the answer is wrong or the format is invalid, the validation fails.
 
-4. CHALLENGE: Verification operation, requires predicting system linked rejection and final state
-   Format: <challenge>p=position, system=predicted_system_batch_number, pos=position1:pred_batch_number1,position2:pred_batch_number2</challenge>
-   Explanation:
-   - p: position of the part you want to manually reject
-   - system: predicted batch number of part the system will reject
-   - pos: predict at least 2 positions' batch numbers in final sequence (comma-separated)
-   Returns: Check system = Yes/No; Pos position check = Yes/No (multiple); Resulting length = new_count
+Each query must contain only one tag. Use the following XML format:
 
-5. ANSWER: Submit your final answer after meeting all conditions
-   Format: <answer>done</answer>
-   The game will check if success conditions are met.
+Query test sequence T1:
+<query_path>T1</query_path>
 
-## Success Conditions
+Query test sequence T2:
+<query_path>T2</query_path>
 
-1. At least 3 PLUCK operations executed
-2. At least one CHALLENGE where:
-   - System rejection batch number prediction is correct
-   - AND at least 2 position batch number predictions are all correct
+Query test sequence T3:
+<query_path>T3</query_path>
 
-## Failure Conditions
+When submitting the final answer, specify the rule name and target compliance:
+<answer>rule=ALT, target=compliant</answer>
 
-- Total parts less than 2 prevents further operations, and success conditions not met
-- Invalid command format
-
-Please use as few operations as possible to complete the deduction.
+or:
+<answer>rule=SIMPLE, target=non-compliant</answer>
 """
 
     contextualized_rule_zh_5 = """\
-我们现在来玩一个“连带证据排除”推理游戏，规则如下：
+欢迎使用“司法程序流转合规审计系统”。本系统用于审查案件在各审批节点间的流转是否合法。
 
-游戏设定了一组呈堂的有序证据链 S，初始编号为 [1, 2, ..., {n}]。每项证据的标识码等于其初始顺位编号。证据索引从主要到次要为 1 到当前剩余数量 L。
+系统内涉及五个核心司法环节：A, B, C, D, E。环节间存在法定的流转渠道，分为简易程序通道（红）和普通程序通道（蓝）：
+- A—B (简易程序/红)
+- B—C (普通程序/蓝)
+- C—D (简易程序/红)
+- D—E (普通程序/蓝)
+- E—A (简易程序/红)
+- B—D (普通程序/蓝)
+- C—E (简易程序/红)
+- A—D (普通程序/蓝)
 
-核心机制：法庭采信程序中存在一个隐藏的确定性排除法则 F(p, L')。每当你撤回（删除）位置 p 的证据后，剩余证据数变为 L' = L - 1，法庭会自动依据法则排除位置 q = F(p, L') 的连带证据，数量再次减 1。排除后，后置证据的顺位会自动向前递补。
+我已经秘密载入了一条程序法判定规则，用于评估给定的案件流转序列是否"合规"。基础要求是：序列中相邻环节之间必须存在法定的流转渠道。在此基础上，还附加了一条隐藏规则（ALT、SIMPLE、EVEN 或 REDSTART 之一），但我不会告诉你是哪一条。
 
-你的目标是通过质证交互推断出隐藏法则 F 的连带排除规律，并在验证操作中证明你已掌握该规律。
+你的目标是：
+1. 通过查询预设的测试流转序列来推断隐藏的法律程序规则；
+2. 判定目标流转序列 R* = A—D—E 是否合规。
 
-## 可用指令
+你可以查询以下三个预设测试序列（每次查询一个）：
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT：查询当前剩余证据数量
-   格式：<count></count>
-   返回：Length = 具体数字
+对于每次查询，我会告诉你该序列是"合规"还是"不合规"，但不会告诉你违反了哪条规则。
 
-2. PEEK：查询指定顺位的证据标识码
-   格式：<peek>顺位索引</peek>
-   返回：Pos 顺位 = 标识码 或 Invalid index
+当你收集足够信息后，请提交最终答案。最终答案需要包括：
+1. 你推断出的隐藏规则名称（ALT、SIMPLE、EVEN 或 REDSTART 之一）
+2. 目标序列 R* 的合规性判断（合规或不合规）
 
-3. PLUCK：撤回指定顺位的证据（触发法庭的连带排除）
-   格式：<pluck>顺位索引</pluck>
-   返回：You removed = 标识码A; System removed = 标识码B; New length = 新数量
-   注意：证据数量必须大于等于 2 才能执行
+若答案错误或格式不符，审计失败。
 
-4. CHALLENGE：验证性操作，需要预测法庭连带排除的证据及最终状态
-   格式：<challenge>p=顺位, system=预测的法庭排除标识码, pos=顺位1:预测标识码1,顺位2:预测标识码2</challenge>
-   说明：
-   - p：你要撤回的证据顺位
-   - system：预测法庭将连带排除的证据标识码
-   - pos：预测最终证据链中至少 2 个顺位的标识码（用逗号分隔）
-   返回：Check system = Yes/No; Pos 顺位 check = Yes/No (多个); Resulting length = 新数量
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-5. ANSWER：满足所有条件后提交最终答案
-   格式：<answer>完成</answer>
-   系统会检查是否满足成功条件。
+查询测试序列 T1：
+<query_path>T1</query_path>
 
-## 成功条件
+查询测试序列 T2：
+<query_path>T2</query_path>
 
-1. 至少执行过 3 次 PLUCK 操作
-2. 至少一次 CHALLENGE 中：
-   - 法庭排除的标识码预测正确
-   - 且至少 2 个顺位的标识码预测全部正确
+查询测试序列 T3：
+<query_path>T3</query_path>
 
-## 失败条件
+提交最终答案时，必须说明规则名称和目标序列的合规性，格式如下：
+<answer>rule=ALT, target=合规</answer>
 
-- 证据数量小于 2 时无法继续操作，且未满足成功条件
-- 指令格式错误
-
-请尽可能少地使用质证次数来完成推理。
+或：
+<answer>rule=SIMPLE, target=不合规</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's play a "Joint Evidence Exclusion" deduction game. Here are the rules:
+[Legal Scenario]
+Welcome to the "Judicial Process Flow Compliance Audit System". This system reviews whether the routing of cases between approval nodes is legally valid.
 
-The game sets up an ordered chain of presented evidence S, with initial ID codes [1, 2, ..., {n}]. Each evidence's ID code equals its initial ranking number. Evidence indices range from primary to secondary as 1 to the current remaining quantity L.
+The system involves five core judicial nodes: A, B, C, D, E. Statutory routing channels exist between these nodes, categorized into Summary Procedure Channels (Red) and Ordinary Procedure Channels (Blue):
+- A—B (Summary Procedure/Red)
+- B—C (Ordinary Procedure/Blue)
+- C—D (Summary Procedure/Red)
+- D—E (Ordinary Procedure/Blue)
+- E—A (Summary Procedure/Red)
+- B—D (Ordinary Procedure/Blue)
+- C—E (Summary Procedure/Red)
+- A—D (Ordinary Procedure/Blue)
 
-Core mechanism: The court's evidence admission procedure contains a hidden deterministic exclusion rule F(p, L'). Whenever you withdraw (remove) the evidence at position p, the remaining evidence count becomes L' = L - 1, and the court automatically excludes the joint evidence at position q = F(p, L') according to the rule, reducing the count by 1 again. After exclusion, the ranking of subsequent evidence automatically advances to fill gaps.
+I have secretly loaded a procedural law rule to evaluate whether a given sequence of case routing is "compliant". The basic requirement is: adjacent nodes in the sequence must be connected by a statutory routing channel. Additionally, a hidden rule is applied (one of ALT, SIMPLE, EVEN, or REDSTART), but I won't tell you which one.
 
-Your goal is to infer the hidden joint exclusion rule F through cross-examination interactions and prove your understanding in a verification operation.
+Your goal is:
+1. Infer the hidden legal procedural rule by querying preset test routing sequences;
+2. Determine whether the target routing sequence R* = A—D—E is compliant.
 
-## Available Commands
+You can query the following three preset test sequences (one per query):
+- T1: B—C—D—E
+- T2: A—D—B
+- T3: C—E—A—B
 
-1. COUNT: Query current remaining quantity of evidence
-   Format: <count></count>
-   Returns: Length = number
+For each query, I will tell you whether the sequence is "compliant" or "non-compliant", but I won't specify which rule it violated.
 
-2. PEEK: Query the evidence ID code at a specific ranking
-   Format: <peek>ranking_index</peek>
-   Returns: Pos ranking = ID_code OR Invalid index
+When you have enough information, submit your final answer. The final answer must include:
+1. The inferred hidden rule name (ALT, SIMPLE, EVEN, or REDSTART)
+2. The compliance judgment for target sequence R* (compliant or non-compliant)
 
-3. PLUCK: Withdraw evidence at specified ranking (triggers court's joint exclusion)
-   Format: <pluck>ranking_index</pluck>
-   Returns: You removed = ID_code_A; System removed = ID_code_B; New length = new_count
-   Note: Evidence quantity must be at least 2 to execute
+If the answer is wrong or the format is invalid, the audit fails.
 
-4. CHALLENGE: Verification operation, requires predicting court's joint exclusion and final state
-   Format: <challenge>p=ranking, system=predicted_court_exclusion_ID_code, pos=ranking1:pred_ID_code1,ranking2:pred_ID_code2</challenge>
-   Explanation:
-   - p: ranking of the evidence you want to withdraw
-   - system: predicted ID code of evidence the court will exclude
-   - pos: predict at least 2 rankings' ID codes in final chain (comma-separated)
-   Returns: Check system = Yes/No; Pos ranking check = Yes/No (multiple); Resulting length = new_count
+Each query must contain only one tag. Use the following XML format:
 
-5. ANSWER: Submit your final answer after meeting all conditions
-   Format: <answer>done</answer>
-   The game will check if success conditions are met.
+Query test sequence T1:
+<query_path>T1</query_path>
 
-## Success Conditions
+Query test sequence T2:
+<query_path>T2</query_path>
 
-1. At least 3 PLUCK operations executed
-2. At least one CHALLENGE where:
-   - Court exclusion ID code prediction is correct
-   - AND at least 2 ranking ID code predictions are all correct
+Query test sequence T3:
+<query_path>T3</query_path>
 
-## Failure Conditions
+When submitting the final answer, specify the rule name and target compliance:
+<answer>rule=ALT, target=compliant</answer>
 
-- Evidence quantity less than 2 prevents further operations, and success conditions not met
-- Invalid command format
-
-Please use as few operations as possible to complete the deduction.
+or:
+<answer>rule=SIMPLE, target=non-compliant</answer>
 """
 
-    tags = ["count", "peek", "pluck", "challenge", "answer"]
+    tags = ["answer", "query_path"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "图"
 
-    # 难度配置
-    # 规则说明：
-    # 1 (简单) - F(p, L') = 1 (总是删除第一个)
-    # 2 (中等偏下) - F(p, L') = L' (总是删除最后一个)
-    # 3 (中等偏上) - F(p, L') = p (删除同一位置，如果p>L'则删除L')
-    # 4 (较难) - F(p, L') = (p % L') + 1 (取模后的位置)
-    # 5 (难) - F(p, L') = L' - p + 1 (镜像位置，如果超出则取L')
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 10,
-                "rule_type": "constant_first",
-                "rule_desc": "F(p, L') = 1"
+                "rule": "REDSTART",
+                "target_compliant": False,
             },
             2: {
-                "n": 12,
-                "rule_type": "constant_last",
-                "rule_desc": "F(p, L') = L'"
+                "rule": "EVEN",
+                "target_compliant": True,
             },
             3: {
-                "n": 14,
-                "rule_type": "same_position",
-                "rule_desc": "F(p, L') = min(p, L')"
+                "rule": "SIMPLE",
+                "target_compliant": True,
             },
             4: {
-                "n": 15,
-                "rule_type": "modulo",
-                "rule_desc": "F(p, L') = (p % L') + 1"
+                "rule": "ALT",
+                "target_compliant": False,
             },
             5: {
-                "n": 16,
-                "rule_type": "mirror",
-                "rule_desc": "F(p, L') = min(L' - p + 1, L')"
+                "rule": "EVEN",
+                "target_compliant": True,
             },
         },
         "en": {
             1: {
-                "n": 10,
-                "rule_type": "constant_first",
-                "rule_desc": "F(p, L') = 1"
+                "rule": "REDSTART",
+                "target_compliant": False,
             },
             2: {
-                "n": 12,
-                "rule_type": "constant_last",
-                "rule_desc": "F(p, L') = L'"
+                "rule": "EVEN",
+                "target_compliant": True,
             },
             3: {
-                "n": 14,
-                "rule_type": "same_position",
-                "rule_desc": "F(p, L') = min(p, L')"
+                "rule": "SIMPLE",
+                "target_compliant": True,
             },
             4: {
-                "n": 15,
-                "rule_type": "modulo",
-                "rule_desc": "F(p, L') = (p % L') + 1"
+                "rule": "ALT",
+                "target_compliant": False,
             },
             5: {
-                "n": 16,
-                "rule_type": "mirror",
-                "rule_desc": "F(p, L') = min(L' - p + 1, L')"
+                "rule": "EVEN",
+                "target_compliant": True,
             },
         },
     }
 
     def __init__(self, config):
-        # 初始化游戏状态追踪
-        self.pluck_count = 0
-        self.challenge_success = False
+        self.edges = {
+            frozenset(['A', 'B']): 'Red',
+            frozenset(['B', 'C']): 'Blue',
+            frozenset(['C', 'D']): 'Red',
+            frozenset(['D', 'E']): 'Blue',
+            frozenset(['E', 'A']): 'Red',
+            frozenset(['B', 'D']): 'Blue',
+            frozenset(['C', 'E']): 'Red',
+            frozenset(['A', 'D']): 'Blue',
+        }
+        
+        self.test_sequences = {
+            'T1': ['B', 'C', 'D', 'E'],
+            'T2': ['A', 'D', 'B'],
+            'T3': ['C', 'E', 'A', 'B'],
+        }
+        
+        self.target_sequence = ['A', 'D', 'E']
+        
+        self.query_count = 0
+        
         super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -714,261 +694,138 @@ Please use as few operations as possible to complete the deduction.
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
+        self.rule = cfg["rule"]
+        self.target_compliant = cfg["target_compliant"]
         
-        # 初始化序列：标签等于初始位置
-        n = cfg["n"]
-        self.sequence = list(range(1, n + 1))
-        
-        # 保存规则类型
-        self.rule_type = cfg["rule_type"]
+        self._game_info = {}
 
-        # Counterfactual attributes
-        self._cf_round_counter = 0          # produce_response 调用轮次计数
-        self._cf_correct_resp  = None       # 第 2 轮的正确答案（暂存）
-        self._cf_wrong_resp    = None       # 第 2 轮注入的错误答案（暂存）
+    def _check_path_basic(self, path):
+        for i in range(len(path) - 1):
+            edge = frozenset([path[i], path[i+1]])
+            if edge not in self.edges:
+                return False
+        return True
 
-    def _apply_rule(self, p, L_prime):
-        """根据规则类型计算系统删除位置"""
-        if self.rule_type == "constant_first":
-            return 1
-        elif self.rule_type == "constant_last":
-            return L_prime
-        elif self.rule_type == "same_position":
-            return min(p, L_prime)
-        elif self.rule_type == "modulo":
-            return (p % L_prime) + 1 if L_prime > 0 else 1
-        elif self.rule_type == "mirror":
-            mirror_pos = L_prime - p + 1
-            return max(1, min(mirror_pos, L_prime))
+    def _get_path_colors(self, path):
+        colors = []
+        for i in range(len(path) - 1):
+            edge = frozenset([path[i], path[i+1]])
+            colors.append(self.edges[edge])
+        return colors
+
+    def _check_rule_alt(self, path):
+        if not self._check_path_basic(path):
+            return False
+        colors = self._get_path_colors(path)
+        for i in range(len(colors) - 1):
+            if colors[i] == colors[i+1]:
+                return False
+        return True
+
+    def _check_rule_simple(self, path):
+        if not self._check_path_basic(path):
+            return False
+        return len(path) == len(set(path))
+
+    def _check_rule_even(self, path):
+        if not self._check_path_basic(path):
+            return False
+        steps = len(path) - 1
+        return steps % 2 == 0
+
+    def _check_rule_redstart(self, path):
+        if not self._check_path_basic(path):
+            return False
+        colors = self._get_path_colors(path)
+        return colors[0] == 'Red' if colors else False
+
+    def _check_compliance(self, path):
+        if self.rule == "ALT":
+            return self._check_rule_alt(path)
+        elif self.rule == "SIMPLE":
+            return self._check_rule_simple(path)
+        elif self.rule == "EVEN":
+            return self._check_rule_even(path)
+        elif self.rule == "REDSTART":
+            return self._check_rule_redstart(path)
         else:
-            raise ValueError(f"Unknown rule type: {self.rule_type}")
-
-    def _remove_and_chain(self, p):
-        """执行删除操作：先删除p位置，再根据规则删除系统位置"""
-        if p < 1 or p > len(self.sequence):
-            raise ValueError("Invalid position")
-        
-        # 删除用户指定的位置
-        removed_user = self.sequence.pop(p - 1)
-        L_prime = len(self.sequence)
-        
-        # 计算系统删除位置
-        q = self._apply_rule(p, L_prime)
-        
-        # 删除系统指定的位置
-        if q < 1 or q > L_prime:
-            q = min(max(1, q), L_prime)
-        removed_system = self.sequence.pop(q - 1)
-        
-        return removed_user, removed_system, len(self.sequence)
+            raise ValueError(f"Unknown rule: {self.rule}")
 
     def evaluate(self, parsed_info):
-        """评估是否达成成功条件"""
-        # 成功需要：至少3次PLUCK + 至少一次成功的CHALLENGE
-        return self.pluck_count >= 3 and self.challenge_success
-
-    def produce_response(self, parsed_info):
-        if self.enable_counterfactual:
-            self._cf_round_counter += 1
-
-            if self._cf_round_counter == 2:
-                # 先用原逻辑得到正确答案，暂存后返回错误答案
-                correct = self._cf_core_produce(parsed_info)
-                self._cf_correct_resp = correct
-                self._cf_wrong_resp = self._cf_make_wrong(correct)
-                return self._cf_wrong_resp
-
-            elif self._cf_round_counter == 3:
-                # 本轮不执行原逻辑，只返回纠正说明
-                return self._cf_correction_message()
-
-        return self._cf_core_produce(parsed_info)
+        raw_ans = parsed_info.get("answer", "")
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip().lower()] = v.strip()
+        
+        if "rule" not in ans_dict or "target" not in ans_dict:
+            return False
+        
+        if ans_dict["rule"].upper() != self.rule.upper():
+            return False
+        
+        target_str = ans_dict["target"]
+        
+        if self.config.language == "zh":
+            user_says_compliant = (target_str == "合规")
+        else:
+            user_says_compliant = (target_str.lower() == "compliant")
+        
+        return user_says_compliant == self.target_compliant
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑"""
-        lang = self.config.language
-        
-        # COUNT 指令
-        if "count" in parsed_info:
-            return f"Length = {len(self.sequence)}"
-        
-        # PEEK 指令
-        elif "peek" in parsed_info:
-            try:
-                idx = int(parsed_info["peek"].strip())
-                if idx < 1 or idx > len(self.sequence):
-                    return "Invalid index" if lang == "en" else "无效索引"
-                return f"Pos {idx} = {self.sequence[idx - 1]}"
-            except:
-                return "Invalid index" if lang == "en" else "无效索引"
-        
-        # PLUCK 指令
-        elif "pluck" in parsed_info:
-            if len(self.sequence) < 2:
-                return "Not enough elements" if lang == "en" else "元素不足"
+        if "query_path" in parsed_info:
+            test_id = parsed_info["query_path"].strip().upper()
             
-            try:
-                p = int(parsed_info["pluck"].strip())
-                removed_user, removed_system, new_length = self._remove_and_chain(p)
-                self.pluck_count += 1
-                return f"You removed = {removed_user}; System removed = {removed_system}; New length = {new_length}"
-            except Exception as e:
-                return f"Error: {str(e)}" if lang == "en" else f"错误：{str(e)}"
-        
-        # CHALLENGE 指令
-        elif "challenge" in parsed_info:
-            if len(self.sequence) < 2:
-                return "Not enough elements" if lang == "en" else "元素不足"
+            if test_id not in self.test_sequences:
+                if self.config.language == "zh":
+                    return "错误：无效的测试序列编号。请使用 T1、T2 或 T3。"
+                else:
+                    return "Error: Invalid test sequence ID. Please use T1, T2, or T3."
             
-            try:
-                raw = parsed_info["challenge"]
-                parts = {}
-                p_match = re.search(r'\bp\s*=\s*(\d+)', raw)
-                system_match = re.search(r'\bsystem\s*=\s*(\d+)', raw)
-                pos_match = re.search(r'\bpos\s*=\s*(.+)$', raw.strip())
-                
-                if p_match:
-                    parts["p"] = p_match.group(1).strip()
-                if system_match:
-                    parts["system"] = system_match.group(1).strip()
-                if pos_match:
-                    parts["pos"] = pos_match.group(1).strip()
-                
-                if "p" not in parts or "system" not in parts or "pos" not in parts:
-                    return "Invalid challenge format" if lang == "en" else "挑战格式无效"
-                
-                p = int(parts["p"])
-                system_pred = int(parts["system"])
-                
-                # 解析位置预测
-                pos_preds = {}
-                for pair in parts["pos"].split(","):
-                    pair = pair.strip()
-                    if ":" in pair:
-                        pos_str, label_str = pair.split(":", 1)
-                        pos_preds[int(pos_str.strip())] = int(label_str.strip())
-                
-                # 执行删除操作
-                removed_user, removed_system, new_length = self._remove_and_chain(p)
-                self.pluck_count += 1
-                
-                # 检查系统删除预测
-                system_check = "Yes" if removed_system == system_pred else "No"
-                
-                # 检查位置预测
-                pos_checks = []
-                all_pos_correct = True
-                for pos, pred_label in pos_preds.items():
-                    if pos < 1 or pos > len(self.sequence):
-                        pos_checks.append(f"Pos {pos} check = No")
-                        all_pos_correct = False
-                    else:
-                        actual_label = self.sequence[pos - 1]
-                        is_correct = actual_label == pred_label
-                        pos_checks.append(f"Pos {pos} check = {'Yes' if is_correct else 'No'}")
-                        if not is_correct:
-                            all_pos_correct = False
-                
-                # 判断是否满足成功条件
-                if system_check == "Yes" and all_pos_correct and len(pos_preds) >= 2:
-                    self.challenge_success = True
-                
-                result = f"Check system = {system_check}; " + "; ".join(pos_checks) + f"; Resulting length = {new_length}"
-                return result
-                
-            except Exception as e:
-                return f"Error: {str(e)}" if lang == "en" else f"错误：{str(e)}"
-        
+            self.query_count += 1
+            
+            path = self.test_sequences[test_id]
+            is_compliant = self._check_compliance(path)
+            
+            if self.config.language == "zh":
+                return "合规" if is_compliant else "不合规"
+            else:
+                return "compliant" if is_compliant else "non-compliant"
         else:
             raise ValueError("No valid query tag found.")
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        lang = self.config.language
-        current_len = len(self.sequence)
-
-        # 1. COUNT
-        q_count = "<count></count>"
-        ans_count = f"Length = {current_len}"
-        queries.append({"query": q_count, "answer": ans_count})
-
-        # 2. PEEK
-        for i in range(1, current_len + 1):
-            q_peek = f"<peek>{i}</peek>"
-            ans_peek = f"Pos {i} = {self.sequence[i - 1]}"
-            queries.append({"query": q_peek, "answer": ans_peek})
-
-        # 3. PLUCK (需要 sequence 长度 >= 2)
-        if current_len >= 2:
-            # 备份原始序列，因为 _remove_and_chain 会修改 self.sequence
-            original_sequence = list(self.sequence)
-
-            for i in range(1, current_len + 1):
-                try:
-                    # 每次操作前恢复状态
-                    self.sequence = list(original_sequence)
-                    
-                    removed_user, removed_system, new_length = self._remove_and_chain(i)
-                    
-                    q_pluck = f"<pluck>{i}</pluck>"
-                    ans_pluck = f"You removed = {removed_user}; System removed = {removed_system}; New length = {new_length}"
-                    queries.append({"query": q_pluck, "answer": ans_pluck})
-                except Exception:
-                    # 忽略无效操作（理论上 range 内的都是有效的）
-                    pass
-            
-            # 循环结束后，彻底恢复状态，确保不污染游戏实例
-            self.sequence = original_sequence
-
-        return queries
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        # 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        lang = self.config.language
-        wrong = correct
-        changed = False
-
-        if lang == "zh":
-            if "是" in wrong or "否" in wrong:
-                # 使用临时token防止重复替换
-                wrong = wrong.replace("是", "___TEMP___").replace("否", "是").replace("___TEMP___", "否")
-                changed = True
-        elif lang == "en":
-            # 查找并替换 Yes/No (忽略大小写，保持原始风格)
-            def swap_match(m):
-                text = m.group(0)
-                if text == "Yes": return "No"
-                if text == "No": return "Yes"
-                if text == "yes": return "no"
-                if text == "no": return "yes"
-                if text == "YES": return "NO"
-                if text == "NO": return "YES"
-                return "No" # 默认 fallback
-
-            if re.search(r'(?i)\b(yes|no)\b', wrong):
-                wrong = re.sub(r'(?i)\b(yes|no)\b', swap_match, wrong)
-                changed = True
-
-        # 若都不匹配：在字符串末尾追加 "_WRONG"
-        if not changed:
-            return correct + "_WRONG"
-        
-        return wrong
-
-    def _cf_correction_message(self) -> str:
-        wrong = self._cf_wrong_resp
-        correct = self._cf_correct_resp
-        
+    def _cf_make_wrong(self, correct):
         if self.config.language == "zh":
-            return (f"【纠正】上一轮的回复有误。错误答案为：{wrong}，正确答案应为：{correct}。\n"
-                    f"请基于正确信息重新开始提问。")
+            if correct == "合规":
+                return "不合规"
+            elif correct == "不合规":
+                return "合规"
+            else:
+                return "不合规"
         else:
-            return (f"[Correction] The previous response was incorrect. Wrong answer: {wrong}; Correct answer: {correct}.\n"
-                    f"Please restart your questioning based on the correct information.")
+            if correct == "compliant":
+                return "non-compliant"
+            elif correct == "non-compliant":
+                return "compliant"
+            else:
+                return "non-compliant"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        for test_id in ['T1', 'T2', 'T3']:
+            path = self.test_sequences[test_id]
+            is_compliant = self._check_compliance(path)
+            
+            if self.config.language == "zh":
+                ans = "合规" if is_compliant else "不合规"
+            else:
+                ans = "compliant" if is_compliant else "non-compliant"
+            
+            results.append({
+                "query": f"<query_path>{test_id}</query_path>",
+                "answer": ans
+            })
+        return results
+

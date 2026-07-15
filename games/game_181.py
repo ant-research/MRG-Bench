@@ -1,1112 +1,852 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   层序遍历层内容：层序遍历中第k层包含哪些节点
-# ============================================================
-
+import re
+from typing import Dict, Set, Tuple, List
 from .base import Game
-import random
+import heapq
 
-
-class HiddenTreeLayerGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "树"
+class UnknownEdgeWeightGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"隐藏层映射"的推理游戏，规则如下：
+我们现在来玩一个"未知边权推理"游戏，规则如下：
 
-游戏设定了一棵无向、连通、无环的树，节点编号为 1 到 {n}，根节点为 {root}。树的边集合为：{edges}。
+游戏设定了一张无向连通图，有 {n} 个顶点（编号 1 到 {n}）和 {m} 条边。除了一条特殊边 {special_edge} 之外，所有边的权重都是已知的正整数，位于区间 [1,20]。特殊边的权重 X 是未知的正整数，且已知 X 位于区间 [{lower},{upper}]。
 
-定义树的高度 H 为从根节点出发的最大最短路径长度。定义第 k 层为距离根节点的最短路径长度为 k 的所有节点集合（k 从 0 到 H）。
+已知图的结构信息：
+{edges_info}
 
-**核心机制：隐藏排列**
-存在一个固定但未知的排列规则，它将索引 0 到 H 进行了重新映射。当你使用索引 k 进行查询时，系统实际返回的是被重映射后的那一层的信息。
+特殊边 {special_edge} 是一条割边，移除它后图被分为两个连通分量。你的目标是通过提问推断出 X 的唯一值。
 
-**交互阶段（排练）**
-你可以反复进行以下查询来推断这个隐藏的映射关系：
+你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-1. 展示查询：询问索引 k 对应的层包含哪些节点。返回升序排列的节点编号列表。
-2. 计数查询：询问索引 k 对应的层有多少个节点。返回一个非负整数。
-3. 成员查询：询问节点 x 是否属于索引 k 对应的层。返回"是"或"否"。
-4. 比较查询：比较索引 k1 和 k2 对应的层的节点数量大小。返回"大于"、"等于"或"小于"。
-5. 读取树查询：获取树的基本信息（节点数、根节点、边集合）。
-6. 高度查询：获取树的高度 H。
+1. 最短路比较查询：询问顶点对 (i,j) 和 (p,q) 之间，哪一对的最短路距离更短。
+   我会回答："第一对更短"、"第二对更短"或"两对相等"。
 
-注意：如果输入的索引 k 不在有效范围内，或节点编号 x 无效，系统将返回"无效参数"。
+2. 必经性查询：询问顶点对 (i,j) 之间的任意最短路径是否都必须经过特殊边。
+   我会回答："是"或"否"。
 
-**最终提交阶段**
-当你完成至少两次有效查询后，系统会给出一个目标索引 K。此时你必须立即提交答案，不得再进行任何查询。你需要提交真实的第 K 层（未经映射）的所有节点编号，按升序排列。
+当你收集足够信息后，请提交最终答案，给出 X 的具体数值。若答案错误或格式不符，游戏失败。
 
-**查询格式（使用 XML 标签）**
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 展示查询（例如查询索引 2）：
-<query_show>2</query_show>
+- 最短路比较查询（例如比较顶点对 1,2 和 3,4）：
+<query_compare>1,2,3,4</query_compare>
 
-- 计数查询（例如查询索引 1）：
-<query_count>1</query_count>
+- 必经性查询（例如询问顶点对 1,5）：
+<query_necessary>1,5</query_necessary>
 
-- 成员查询（例如查询节点 5 是否在索引 3 对应的层）：
-<query_member>5,3</query_member>
+提交最终答案时，直接给出 X 的数值，格式如下：
+<answer>X</answer>
 
-- 比较查询（例如比较索引 0 和索引 2）：
-<query_compare>0,2</query_compare>
-
-- 读取树查询（无参数）：
-<query_tree></query_tree>
-
-- 高度查询（无参数）：
-<query_height></query_height>
-
-**提交答案格式**
-
-当系统给出目标索引 K 后，你需要提交真实第 K 层的节点列表（升序，逗号分隔）：
-
-<answer>1,3,5</answer>
-
-**胜利条件**
-提交的节点列表与真实第 K 层完全一致（集合内容和顺序都正确），且在最终阶段没有发起查询。
-
-**失败条件**
-答案错误、格式错误、在最终阶段发起查询、或排练阶段有效查询不足两次。
+例如：<answer>7</answer>
 """
 
     game_rule_en = """\
-Let's play a "Hidden Layer Mapping" deduction game. Here are the rules:
+Let's play an "Unknown Edge Weight Deduction" game. Here are the rules:
 
-The game features an undirected, connected, acyclic tree with nodes numbered 1 to {n}, and root node {root}. The edge set is: {edges}.
+The game features an undirected connected graph with {n} vertices (numbered 1 to {n}) and {m} edges. Except for one special edge {special_edge}, all edge weights are known positive integers in the range [1,20]. The weight X of the special edge is an unknown positive integer, and it is known that X is in the range [{lower},{upper}].
 
-Define the tree height H as the maximum shortest path length from the root. Define layer k as the set of all nodes whose shortest path distance from the root is k (k ranges from 0 to H).
+Known graph structure:
+{edges_info}
 
-**Core Mechanism: Hidden Permutation**
-There exists a fixed but unknown permutation that remaps indices 0 to H. When you query using index k, the system actually returns information about the remapped layer.
+The special edge {special_edge} is a bridge; removing it splits the graph into two connected components. Your goal is to deduce the unique value of X through queries.
 
-**Interaction Phase (Rehearsal)**
-You can repeatedly make the following queries to infer the hidden mapping:
+You can repeatedly ask me the following two types of questions (one per turn), and I will answer truthfully:
 
-1. Show Query: Ask which nodes are in the layer corresponding to index k. Returns an ascending list of node IDs.
-2. Count Query: Ask how many nodes are in the layer corresponding to index k. Returns a non-negative integer.
-3. Member Query: Ask if node x belongs to the layer corresponding to index k. Returns "Yes" or "No".
-4. Compare Query: Compare the sizes of layers corresponding to indices k1 and k2. Returns "Greater", "Equal", or "Less".
-5. Tree Query: Get basic tree information (number of nodes, root, edge set).
-6. Height Query: Get tree height H.
+1. Shortest Path Comparison Query: Ask which pair has a shorter shortest path distance between vertex pairs (i,j) and (p,q).
+   I will answer: "First pair shorter", "Second pair shorter", or "Both equal".
 
-Note: Invalid index k or node ID x will return "Invalid parameter".
+2. Necessity Query: Ask whether any shortest path between vertex pair (i,j) must pass through the special edge.
+   I will answer: "Yes" or "No".
 
-**Final Submission Phase**
-After completing at least two valid queries, the system will provide a target index K. You must immediately submit your answer without making any more queries. You need to submit all node IDs in the true layer K (unmapped), in ascending order.
+When you have enough information, submit your final answer with the specific value of X. If the answer is wrong or the format is invalid, the game fails.
 
-**Query Format (using XML tags)**
+Each query must contain only one tag. Use the following XML format:
 
-- Show Query (e.g., querying index 2):
-<query_show>2</query_show>
+- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
+<query_compare>1,2,3,4</query_compare>
 
-- Count Query (e.g., querying index 1):
-<query_count>1</query_count>
+- Necessity Query (e.g., asking about pair 1,5):
+<query_necessary>1,5</query_necessary>
 
-- Member Query (e.g., checking if node 5 is in layer corresponding to index 3):
-<query_member>5,3</query_member>
+When submitting the final answer, directly provide the value of X in this format:
+<answer>X</answer>
 
-- Compare Query (e.g., comparing indices 0 and 2):
-<query_compare>0,2</query_compare>
-
-- Tree Query (no parameters):
-<query_tree></query_tree>
-
-- Height Query (no parameters):
-<query_height></query_height>
-
-**Answer Submission Format**
-
-When the system provides target index K, submit the true layer K node list (ascending, comma-separated):
-
-<answer>1,3,5</answer>
-
-**Victory Condition**
-The submitted node list matches the true layer K exactly (both content and order), and no queries were made in the final phase.
-
-**Failure Condition**
-Wrong answer, invalid format, querying in final phase, or fewer than two valid queries in rehearsal phase.
+For example: <answer>7</answer>
 """
 
     contextualized_rule_zh_1 = """\
-我们现在来进行一项"隐藏路由映射"的交通网络分析任务，规则如下：
+欢迎进入“城市路网通行分析”系统。
 
-系统设定了一个无向、连通、无环的交通网络结构，站点编号为 1 到 {n}，核心枢纽站为 {root}。网络的直达路线集合为：{edges}。
+本系统模拟了一个包含 {n} 个关键交通枢纽（编号 1 到 {n}）及 {m} 条连接道路的城市路网。除了一条特殊的跨区大桥 {special_edge} 之外，所有道路的通行时间（分钟）均是已知的正整数，范围在 [1,20] 内。大桥 {special_edge} 的通行时间 X 是未知的正整数，目前仅知 X 位于区间 [{lower},{upper}]。
 
-定义网络的换乘深度 H 为从核心枢纽站出发的最大最少换乘次数。定义第 k 级换乘圈为距离核心枢纽站最少换乘次数为 k 的所有站点集合（k 从 0 到 H）。
+路网结构与已知通行时间如下：
+{edges_info}
 
-**核心机制：加密别名映射**
-网络系统中存在一个固定但未知的映射规则，它将真实换乘级数 0 到 H 的索引进行了重新分配。当你使用索引 k 进行查询时，系统实际返回的是被重映射后的那个换乘圈的信息。
+经勘测，大桥 {special_edge} 是一条唯一的跨区通道（图论中的割边），若将其封闭，整个城市路网将分裂为两个无法互通的区域。您的任务是通过查询系统，精确推断出大桥通行时间 X 的唯一真实值。
 
-**交互阶段（排练）**
-你可以反复进行以下查询来推断这个隐藏的映射关系：
+您可以反复进行以下两类查询（每次限查一类），系统将根据底层数据如实反馈：
 
-1. 展示查询：询问索引 k 对应的换乘圈包含哪些站点。返回升序排列的站点编号列表。
-2. 计数查询：询问索引 k 对应的换乘圈有多少个站点。返回一个非负整数。
-3. 成员查询：询问站点 x 是否属于索引 k 对应的换乘圈。返回"是"或"否"。
-4. 比较查询：比较索引 k1 和 k2 对应的换乘圈的站点数量大小。返回"大于"、"等于"或"小于"。
-5. 读取树查询：获取交通网络的基本信息（站点总数、核心枢纽站、路线集合）。
-6. 高度查询：获取网络的换乘深度 H。
+1. 最短路比较查询：询问 (i,j) 枢纽对与 (p,q) 枢纽对，哪一对的最小通行时间更短。
+   系统将返回："第一对更短"、"第二对更短"或"两对相等"。
 
-注意：如果输入的索引 k 不在有效范围内，或站点编号 x 无效，系统将返回"无效参数"。
+2. 必经性查询：询问 (i,j) 枢纽对之间的任意最快通行路线，是否都必定经过大桥。
+   系统将返回："是"或"否"。
 
-**最终提交阶段**
-当你完成至少两次有效查询后，系统会给出一个目标真实层级 K。此时你必须立即提交答案，不得再进行任何查询。你需要提交真实的第 K 级换乘圈（未经映射的）的所有站点编号，按升序排列。
+收集充足情报后，请提交 X 的具体数值。若提交错误或格式不符，分析将宣告失败。
 
-**查询格式（使用 XML 标签）**
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 展示查询（例如查询索引 2）：
-<query_show>2</query_show>
+- 最短路比较查询（例如比较枢纽对 1,2 和 3,4）：
+<query_compare>1,2,3,4</query_compare>
 
-- 计数查询（例如查询索引 1）：
-<query_count>1</query_count>
+- 必经性查询（例如询问枢纽对 1,5）：
+<query_necessary>1,5</query_necessary>
 
-- 成员查询（例如查询站点 5 是否在索引 3 对应的换乘圈）：
-<query_member>5,3</query_member>
+提交最终答案时，直接给出 X 的数值，格式如下：
+<answer>X</answer>
 
-- 比较查询（例如比较索引 0 和索引 2）：
-<query_compare>0,2</query_compare>
-
-- 读取树查询（无参数）：
-<query_tree></query_tree>
-
-- 高度查询（无参数）：
-<query_height></query_height>
-
-**提交答案格式**
-
-当系统给出目标层级 K 后，你需要提交真实第 K 级的站点列表（升序，逗号分隔）：
-
-<answer>1,3,5</answer>
-
-**胜利条件**
-提交的站点列表与真实第 K 级换乘圈完全一致（集合内容和顺序都正确），且在最终阶段没有发起查询。
-
-**失败条件**
-答案错误、格式错误、在最终阶段发起查询、或排练阶段有效查询不足两次。
+例如：<answer>7</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Let's perform a "Hidden Route Mapping" transport network analysis task. Here are the rules:
+[Traffic Scenario]
+Welcome to the "Urban Road Network Transit Analysis" system.
 
-The system defines an undirected, connected, acyclic transport network, with stations numbered 1 to {n}, and the central hub station being {root}. The set of direct routes is: {edges}.
+This system models a city road network with {n} key traffic hubs (numbered 1 to {n}) and {m} connecting roads. Except for one special cross-district bridge {special_edge}, the transit times (in minutes) of all roads are known positive integers in the range [1,20]. The transit time X of the bridge {special_edge} is an unknown positive integer, but it is known that X is in the range [{lower},{upper}].
 
-Define the network transfer depth H as the maximum minimum number of transfers from the central hub. Define transfer tier k as the set of all stations whose minimum transfer distance from the central hub is k (k ranges from 0 to H).
+Network structure and known transit times:
+{edges_info}
 
-**Core Mechanism: Encrypted Alias Mapping**
-There exists a fixed but unknown permutation rule in the system that remaps the true transfer tier indices 0 to H. When you query using index k, the system actually returns information about the remapped transfer tier.
+Surveys show that the bridge {special_edge} is the only cross-district corridor (a bridge in graph theory); closing it would split the network into two disconnected regions. Your goal is to deduce the exact value of X through system queries.
 
-**Interaction Phase (Rehearsal)**
-You can repeatedly make the following queries to infer the hidden mapping:
+You can repeatedly make the following two types of queries (one per turn), and the system will answer truthfully based on the underlying data:
 
-1. Show Query: Ask which stations are in the tier corresponding to index k. Returns an ascending list of station IDs.
-2. Count Query: Ask how many stations are in the tier corresponding to index k. Returns a non-negative integer.
-3. Member Query: Ask if station x belongs to the tier corresponding to index k. Returns "Yes" or "No".
-4. Compare Query: Compare the sizes of tiers corresponding to indices k1 and k2. Returns "Greater", "Equal", or "Less".
-5. Tree Query: Get basic network information (total stations, central hub, route set).
-6. Height Query: Get the network transfer depth H.
+1. Shortest Path Comparison Query: Ask which pair has a shorter minimum transit time between hub pair (i,j) and pair (p,q).
+   The system will answer: "First pair shorter", "Second pair shorter", or "Both equal".
 
-Note: Invalid index k or station ID x will return "Invalid parameter".
+2. Necessity Query: Ask whether any fastest route between hub pair (i,j) must pass through the bridge.
+   The system will answer: "Yes" or "No".
 
-**Final Submission Phase**
-After completing at least two valid queries, the system will provide a target true tier K. You must immediately submit your answer without making any more queries. You need to submit all station IDs in the true transfer tier K (unmapped), in ascending order.
+Once you have gathered enough information, submit the specific value of X. If the answer is incorrect or the format is invalid, the analysis fails.
 
-**Query Format (using XML tags)**
+Each query must contain only one tag. Use the following XML format:
 
-- Show Query (e.g., querying index 2):
-<query_show>2</query_show>
+- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
+<query_compare>1,2,3,4</query_compare>
 
-- Count Query (e.g., querying index 1):
-<query_count>1</query_count>
+- Necessity Query (e.g., asking about pair 1,5):
+<query_necessary>1,5</query_necessary>
 
-- Member Query (e.g., checking if station 5 is in tier corresponding to index 3):
-<query_member>5,3</query_member>
+When submitting the final answer, directly provide the value of X in this format:
+<answer>X</answer>
 
-- Compare Query (e.g., comparing indices 0 and 2):
-<query_compare>0,2</query_compare>
-
-- Tree Query (no parameters):
-<query_tree></query_tree>
-
-- Height Query (no parameters):
-<query_height></query_height>
-
-**Answer Submission Format**
-
-When the system provides target tier K, submit the true tier K station list (ascending, comma-separated):
-
-<answer>1,3,5</answer>
-
-**Victory Condition**
-The submitted station list matches the true tier K exactly (both content and order), and no queries were made in the final phase.
-
-**Failure Condition**
-Wrong answer, invalid format, querying in final phase, or fewer than two valid queries in rehearsal phase.
+For example: <answer>7</answer>
 """
 
     contextualized_rule_zh_2 = """\
-我们现在来进行一项"隐匿传播链映射"的流行病学流调任务，规则如下：
+欢迎使用“人体血液给药动力学”推演系统。
 
-系统记录了一起无向、连通、无环的疾病传播网络，人员编号为 1 到 {n}，零号病人（初始感染源）为 {root}。已确认的密接传播路径集合为：{edges}。
+系统构建了一个包含 {n} 个关键器官/组织节点（编号 1 到 {n}）和 {m} 条主要血管通路的微循环网络。除了一条特殊的门静脉导管 {special_edge} 之外，所有血管的药物传递阻力指数均是已知的正整数，范围在 [1,20] 内。门静脉导管 {special_edge} 的传递阻力 X 是未知的正整数，已知 X 的范围处于 [{lower},{upper}] 之间。
 
-定义传播网络的最大世代数 H 为从零号病人出发的最长传播路径长度。定义第 k 世代为距离零号病人传播路径长度为 k 的所有人员集合（k 从 0 到 H）。
+微循环网络结构如下：
+{edges_info}
 
-**核心机制：隐私代号映射**
-为了保护患者隐私，系统采用了一个固定但未知的映射规则，将真实的世代索引 0 到 H 重新分配了代号。当你使用索引 k 进行查询时，系统实际返回的是被重映射后的那个世代的信息。
+医学影像显示，门静脉导管 {special_edge} 是一条至关重要的唯一连通体（割边），若发生完全栓塞，整个微循环网络将分裂为两个相互隔离的系统。您的目标是通过临床模拟查询，精确推导出传递阻力 X 的值。
 
-**交互阶段（排练）**
-你可以反复进行以下查询来推断这个隐藏的映射关系：
+您可以发起以下两类动力学查询（每次限查一类），系统会给出精准回复：
 
-1. 展示查询：询问索引 k 对应的世代包含哪些人员。返回升序排列的人员编号列表。
-2. 计数查询：询问索引 k 对应的世代有多少个人员。返回一个非负整数。
-3. 成员查询：询问人员 x 是否属于索引 k 对应的世代。返回"是"或"否"。
-4. 比较查询：比较索引 k1 和 k2 对应的世代的人员数量大小。返回"大于"、"等于"或"小于"。
-5. 读取树查询：获取传播网络的基本信息（人员总数、零号病人、传播路径集合）。
-6. 高度查询：获取最大传播世代数 H。
+1. 最短路比较查询：对比靶节点对 (i,j) 和 (p,q) 之间，哪一对器官间的最小给药阻力更低（即起效更快）。
+   系统回复："第一对更短"、"第二对更短"或"两对相等"。
 
-注意：如果输入的索引 k 不在有效范围内，或人员编号 x 无效，系统将返回"无效参数"。
+2. 必经性查询：询问在节点对 (i,j) 之间建立的任意最低阻力给药路径，是否必定经过门静脉导管。
+   系统回复："是"或"否"。
 
-**最终提交阶段**
-当你完成至少两次有效查询后，系统会给出一个目标真实世代 K。此时你必须立即提交答案，不得再进行任何查询。你需要提交真实的第 K 世代（未经映射的）的所有人员编号，按升序排列。
+在确认结论后，请提交 X 的具体数值。若推演错误或格式违规，系统将中止。
 
-**查询格式（使用 XML 标签）**
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 展示查询（例如查询索引 2）：
-<query_show>2</query_show>
+- 最短路比较查询（例如比较节点对 1,2 和 3,4）：
+<query_compare>1,2,3,4</query_compare>
 
-- 计数查询（例如查询索引 1）：
-<query_count>1</query_count>
+- 必经性查询（例如询问节点对 1,5）：
+<query_necessary>1,5</query_necessary>
 
-- 成员查询（例如查询人员 5 是否在索引 3 对应的世代）：
-<query_member>5,3</query_member>
+提交最终答案时，直接给出 X 的数值，格式如下：
+<answer>X</answer>
 
-- 比较查询（例如比较索引 0 和索引 2）：
-<query_compare>0,2</query_compare>
-
-- 读取树查询（无参数）：
-<query_tree></query_tree>
-
-- 高度查询（无参数）：
-<query_height></query_height>
-
-**提交答案格式**
-
-当系统给出目标世代 K 后，你需要提交真实第 K 世代的人员列表（升序，逗号分隔）：
-
-<answer>1,3,5</answer>
-
-**胜利条件**
-提交的人员列表与真实第 K 世代完全一致（集合内容和顺序都正确），且在最终阶段没有发起查询。
-
-**失败条件**
-答案错误、格式错误、在最终阶段发起查询、或排练阶段有效查询不足两次。
+例如：<answer>7</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Let's perform an epidemiological contact tracing task regarding a "Hidden Transmission Chain Mapping". Here are the rules:
+[Medical Scenario]
+Welcome to the "Pharmacokinetics of Blood Delivery" deduction system.
 
-The system records an undirected, connected, acyclic disease transmission network, with individuals numbered 1 to {n}, and Patient Zero (initial source) being {root}. The set of confirmed close contact transmission paths is: {edges}.
+The system constructs a microcirculation network containing {n} key organ/tissue nodes (numbered 1 to {n}) and {m} main vascular pathways. Except for a special portal vein catheter {special_edge}, the drug delivery resistance indices of all vessels are known positive integers in the range [1,20]. The resistance index X of the portal vein catheter {special_edge} is an unknown positive integer, but it is known to be in the range [{lower},{upper}].
 
-Define the maximum transmission generation H as the longest transmission path length from Patient Zero. Define generation k as the set of all individuals whose transmission path distance from Patient Zero is k (k ranges from 0 to H).
+Microcirculation network structure:
+{edges_info}
 
-**Core Mechanism: Privacy Code Mapping**
-To protect patient privacy, the system uses a fixed but unknown permutation rule that remaps the true generation indices 0 to H with privacy codes. When you query using index k, the system actually returns information about the remapped generation.
+Medical imaging indicates that the portal vein catheter {special_edge} is a crucial unique connector (a bridge); complete embolism would split the network into two isolated systems. Your goal is to deduce the exact value of X through clinical simulation queries.
 
-**Interaction Phase (Rehearsal)**
-You can repeatedly make the following queries to infer the hidden mapping:
+You can initiate the following two types of pharmacokinetic queries (one per turn), and the system will reply accurately:
 
-1. Show Query: Ask which individuals are in the generation corresponding to index k. Returns an ascending list of individual IDs.
-2. Count Query: Ask how many individuals are in the generation corresponding to index k. Returns a non-negative integer.
-3. Member Query: Ask if individual x belongs to the generation corresponding to index k. Returns "Yes" or "No".
-4. Compare Query: Compare the sizes of generations corresponding to indices k1 and k2. Returns "Greater", "Equal", or "Less".
-5. Tree Query: Get basic network information (total individuals, Patient Zero, transmission path set).
-6. Height Query: Get the maximum transmission generation H.
+1. Shortest Path Comparison Query: Compare which pair has a lower minimum delivery resistance (i.e., faster onset) between target node pairs (i,j) and (p,q).
+   The system replies: "First pair shorter", "Second pair shorter", or "Both equal".
 
-Note: Invalid index k or individual ID x will return "Invalid parameter".
+2. Necessity Query: Ask whether any path with the lowest resistance established between node pair (i,j) inevitably passes through the portal vein catheter.
+   The system replies: "Yes" or "No".
 
-**Final Submission Phase**
-After completing at least two valid queries, the system will provide a target true generation K. You must immediately submit your answer without making any more queries. You need to submit all individual IDs in the true generation K (unmapped), in ascending order.
+Upon confirming your conclusion, submit the exact value of X. Incorrect deductions or formatting violations will abort the system.
 
-**Query Format (using XML tags)**
+Each query must contain only one tag. Use the following XML format:
 
-- Show Query (e.g., querying index 2):
-<query_show>2</query_show>
+- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
+<query_compare>1,2,3,4</query_compare>
 
-- Count Query (e.g., querying index 1):
-<query_count>1</query_count>
+- Necessity Query (e.g., asking about pair 1,5):
+<query_necessary>1,5</query_necessary>
 
-- Member Query (e.g., checking if individual 5 is in generation corresponding to index 3):
-<query_member>5,3</query_member>
+When submitting the final answer, directly provide the value of X in this format:
+<answer>X</answer>
 
-- Compare Query (e.g., comparing indices 0 and 2):
-<query_compare>0,2</query_compare>
-
-- Tree Query (no parameters):
-<query_tree></query_tree>
-
-- Height Query (no parameters):
-<query_height></query_height>
-
-**Answer Submission Format**
-
-When the system provides target generation K, submit the true generation K individual list (ascending, comma-separated):
-
-<answer>1,3,5</answer>
-
-**Victory Condition**
-The submitted individual list matches the true generation K exactly (both content and order), and no queries were made in the final phase.
-
-**Failure Condition**
-Wrong answer, invalid format, querying in final phase, or fewer than two valid queries in rehearsal phase.
+For example: <answer>7</answer>
 """
 
     contextualized_rule_zh_3 = """\
-我们现在来进行一项"隐式先决条件映射"的知识图谱构建任务，规则如下：
+欢迎使用“学科知识图谱与学习路径”优化引擎。
 
-系统包含一棵无向、连通、无环的知识模块依赖树，模块编号为 1 到 {n}，核心基础模块为 {root}。模块间的直接关联边集合为：{edges}。
+本引擎包含 {n} 个核心知识点（编号 1 到 {n}）和 {m} 条跨学科学习路径。除了一门特殊的桥梁课程 {special_edge} 外，所有学习路径所需的前置学习时长（小时）均是已知的正整数，范围在 [1,20] 内。桥梁课程 {special_edge} 的学习时长 X 是未知的正整数，已知 X 介于 [{lower},{upper}] 之间。
 
-定义知识体系的最大深度 H 为从核心基础模块出发的最长学习路径长度。定义第 k 学习阶段为距离核心基础模块路径长度为 k 的所有知识模块集合（k 从 0 到 H）。
+知识图谱网络结构如下：
+{edges_info}
 
-**核心机制：乱序结构映射**
-系统出于评测目的，采用了一个固定但未知的映射规则，将真实的学习阶段索引 0 到 H 进行了重新打乱。当你使用索引 k 进行查询时，系统实际返回的是被重映射后的那个学习阶段的信息。
+教研组指出，桥梁课程 {special_edge} 具有不可替代的学术地位（即图论中的割边），若跳过它，整个知识图谱将断裂为两个无法建立认知的独立模块。您的任务是通过探究提问，准确测算出桥梁课程的学习时长 X。
 
-**交互阶段（排练）**
-你可以反复进行以下查询来推断这个隐藏的映射关系：
+您可以反复提出以下两类排课查询（每次限查一类），引擎将返回客观事实：
 
-1. 展示查询：询问索引 k 对应的学习阶段包含哪些模块。返回升序排列的模块编号列表。
-2. 计数查询：询问索引 k 对应的学习阶段有多少个模块。返回一个非负整数。
-3. 成员查询：询问模块 x 是否属于索引 k 对应的学习阶段。返回"是"或"否"。
-4. 比较查询：比较索引 k1 和 k2 对应的学习阶段的模块数量大小。返回"大于"、"等于"或"小于"。
-5. 读取树查询：获取知识图谱的基本信息（模块总数、核心基础模块、关联边集合）。
-6. 高度查询：获取最大学习深度 H。
+1. 最短路比较查询：比较知识点组合 (i,j) 与组合 (p,q)，哪一对的最小前置学习总时长更短。
+   引擎反馈："第一对更短"、"第二对更短"或"两对相等"。
 
-注意：如果输入的索引 k 不在有效范围内，或模块编号 x 无效，系统将返回"无效参数"。
+2. 必经性查询：询问若要以最快速度从知识点 i 掌握到知识点 j，其所有可能的最优学习路线是否都必须包含该桥梁课程。
+   引擎反馈："是"或"否"。
 
-**最终提交阶段**
-当你完成至少两次有效查询后，系统会给出一个目标真实阶段 K。此时你必须立即提交答案，不得再进行任何查询。你需要提交真实的第 K 学习阶段（未经映射的）的所有模块编号，按升序排列。
+完成逻辑推导后，请提交 X 的确切小时数。计算错误或格式不当将导致排课失败。
 
-**查询格式（使用 XML 标签）**
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 展示查询（例如查询索引 2）：
-<query_show>2</query_show>
+- 最短路比较查询（例如比较知识点对 1,2 和 3,4）：
+<query_compare>1,2,3,4</query_compare>
 
-- 计数查询（例如查询索引 1）：
-<query_count>1</query_count>
+- 必经性查询（例如询问知识点对 1,5）：
+<query_necessary>1,5</query_necessary>
 
-- 成员查询（例如查询模块 5 是否在索引 3 对应的学习阶段）：
-<query_member>5,3</query_member>
+提交最终答案时，直接给出 X 的数值，格式如下：
+<answer>X</answer>
 
-- 比较查询（例如比较索引 0 和索引 2）：
-<query_compare>0,2</query_compare>
-
-- 读取树查询（无参数）：
-<query_tree></query_tree>
-
-- 高度查询（无参数）：
-<query_height></query_height>
-
-**提交答案格式**
-
-当系统给出目标阶段 K 后，你需要提交真实第 K 阶段的模块列表（升序，逗号分隔）：
-
-<answer>1,3,5</answer>
-
-**胜利条件**
-提交的模块列表与真实第 K 学习阶段完全一致（集合内容和顺序都正确），且在最终阶段没有发起查询。
-
-**失败条件**
-答案错误、格式错误、在最终阶段发起查询、或排练阶段有效查询不足两次。
+例如：<answer>7</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's perform a knowledge graph construction task regarding an "Implicit Prerequisite Mapping". Here are the rules:
+Welcome to the "Subject Knowledge Graph and Learning Path" optimization engine.
 
-The system contains an undirected, connected, acyclic knowledge module dependency tree, with modules numbered 1 to {n}, and the core fundamental module being {root}. The set of direct association edges between modules is: {edges}.
+This engine includes {n} core knowledge points (numbered 1 to {n}) and {m} interdisciplinary learning paths. Except for a special bridge course {special_edge}, the required prerequisite learning time (in hours) for all paths are known positive integers in the range [1,20]. The learning time X for the bridge course {special_edge} is an unknown positive integer, known to be between [{lower},{upper}].
 
-Define the maximum depth H of the knowledge system as the longest learning path length from the core fundamental module. Define learning stage k as the set of all knowledge modules whose path distance from the core fundamental module is k (k ranges from 0 to H).
+Knowledge graph network structure:
+{edges_info}
 
-**Core Mechanism: Shuffled Structure Mapping**
-For assessment purposes, the system uses a fixed but unknown permutation rule that shuffles and remaps the true learning stage indices 0 to H. When you query using index k, the system actually returns information about the remapped learning stage.
+The teaching research group points out that the bridge course {special_edge} holds an irreplaceable academic status (a bridge in graph theory); skipping it would fracture the knowledge graph into two independent modules where cognitive links cannot be established. Your task is to accurately calculate the learning time X of the bridge course through inquiry.
 
-**Interaction Phase (Rehearsal)**
-You can repeatedly make the following queries to infer the hidden mapping:
+You can repeatedly propose the following two types of scheduling queries (one per turn), and the engine will return objective facts:
 
-1. Show Query: Ask which modules are in the learning stage corresponding to index k. Returns an ascending list of module IDs.
-2. Count Query: Ask how many modules are in the learning stage corresponding to index k. Returns a non-negative integer.
-3. Member Query: Ask if module x belongs to the learning stage corresponding to index k. Returns "Yes" or "No".
-4. Compare Query: Compare the sizes of learning stages corresponding to indices k1 and k2. Returns "Greater", "Equal", or "Less".
-5. Tree Query: Get basic knowledge graph information (total modules, core fundamental module, association edge set).
-6. Height Query: Get the maximum learning depth H.
+1. Shortest Path Comparison Query: Compare which pair requires a shorter minimum total prerequisite learning time between knowledge point pairs (i,j) and (p,q).
+   The engine replies: "First pair shorter", "Second pair shorter", or "Both equal".
 
-Note: Invalid index k or module ID x will return "Invalid parameter".
+2. Necessity Query: Ask if all possible optimal learning routes to master knowledge from point i to point j as quickly as possible must include the bridge course.
+   The engine replies: "Yes" or "No".
 
-**Final Submission Phase**
-After completing at least two valid queries, the system will provide a target true learning stage K. You must immediately submit your answer without making any more queries. You need to submit all module IDs in the true learning stage K (unmapped), in ascending order.
+After completing the logical deduction, submit the exact hours for X. Miscalculations or improper formats will cause scheduling failure.
 
-**Query Format (using XML tags)**
+Each query must contain only one tag. Use the following XML format:
 
-- Show Query (e.g., querying index 2):
-<query_show>2</query_show>
+- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
+<query_compare>1,2,3,4</query_compare>
 
-- Count Query (e.g., querying index 1):
-<query_count>1</query_count>
+- Necessity Query (e.g., asking about pair 1,5):
+<query_necessary>1,5</query_necessary>
 
-- Member Query (e.g., checking if module 5 is in stage corresponding to index 3):
-<query_member>5,3</query_member>
+When submitting the final answer, directly provide the value of X in this format:
+<answer>X</answer>
 
-- Compare Query (e.g., comparing indices 0 and 2):
-<query_compare>0,2</query_compare>
-
-- Tree Query (no parameters):
-<query_tree></query_tree>
-
-- Height Query (no parameters):
-<query_height></query_height>
-
-**Answer Submission Format**
-
-When the system provides target stage K, submit the true stage K module list (ascending, comma-separated):
-
-<answer>1,3,5</answer>
-
-**Victory Condition**
-The submitted module list matches the true stage K exactly (both content and order), and no queries were made in the final phase.
-
-**Failure Condition**
-Wrong answer, invalid format, querying in final phase, or fewer than two valid queries in rehearsal phase.
+For example: <answer>7</answer>
 """
 
     contextualized_rule_zh_4 = """\
-我们现在来进行一项"隐藏物料层级映射"的供应链结构解析任务，规则如下：
+欢迎登录“智能工厂物料流转”监测终端。
 
-系统记录了一个无向、连通、无环的产品装配BOM（物料清单）树，零件编号为 1 到 {n}，最终成品为 {root}。装配依赖关系的边集合为：{edges}。
+目前工厂生产线包含 {n} 个加工工序节点（编号 1 到 {n}）以及 {m} 条自动化传送带。除了一条作为主干枢纽的跨车间传送带 {special_edge} 之外，所有传送带的物料搬运耗时均是已知的正整数，范围在 [1,20] 内。枢纽传送带 {special_edge} 的搬运耗时 X 未知，仅知其实际耗时必定位于区间 [{lower},{upper}] 内。
 
-定义供应链最大纵深 H 为从最终成品出发的最长依赖路径长度。定义第 k 级物料层为距离最终成品依赖路径长度为 k 的所有零件集合（k 从 0 到 H）。
+流水线与已知搬运耗时清单：
+{edges_info}
 
-**核心机制：供应商代码映射**
-为了保密供应链结构，系统采用了一个固定但未知的映射规则，将真实的物料层级索引 0 到 H 替换为匿名供应商代码。当你使用索引 k 进行查询时，系统实际返回的是被重映射后的那个物料层的信息。
+工程规划表明，枢纽传送带 {special_edge} 是一条不可或缺的单点连接（割边），若将其停机检修，整个生产网络将被切断为两个无法协同作业的厂区。您的任务是通过调用监测数据，推导得出 X 的准确耗时。
 
-**交互阶段（排练）**
-你可以反复进行以下查询来推断这个隐藏的映射关系：
+您可向系统下达以下两类比对指令（每次限下达一类），系统将反馈精准监测结果：
 
-1. 展示查询：询问索引 k 对应的物料层包含哪些零件。返回升序排列的零件编号列表。
-2. 计数查询：询问索引 k 对应的物料层有多少个零件。返回一个非负整数。
-3. 成员查询：询问零件 x 是否属于索引 k 对应的物料层。返回"是"或"否"。
-4. 比较查询：比较索引 k1 和 k2 对应的物料层的零件数量大小。返回"大于"、"等于"或"小于"。
-5. 读取树查询：获取BOM树的基本信息（零件总数、最终成品、依赖关系边集合）。
-6. 高度查询：获取供应链最大纵深 H。
+1. 最短路比较查询：比对工序对 (i,j) 与工序对 (p,q)，评估哪一对工序之间的最低物料周转耗时更短。
+   系统反馈："第一对更短"、"第二对更短"或"两对相等"。
 
-注意：如果输入的索引 k 不在有效范围内，或零件编号 x 无效，系统将返回"无效参数"。
+2. 必经性查询：询问工序对 (i,j) 之间任何能实现最低耗时的物料传输方案，是否都必定经过该枢纽传送带。
+   系统反馈："是"或"否"。
 
-**最终提交阶段**
-当你完成至少两次有效查询后，系统会给出一个目标真实物料层级 K。此时你必须立即提交答案，不得再进行任何查询。你需要提交真实的第 K 级物料层（未经映射的）的所有零件编号，按升序排列。
+当数据支撑充分时，请上报 X 的耗时参数。若参数有误或格式非法，将触发工艺异常警报。
 
-**查询格式（使用 XML 标签）**
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 展示查询（例如查询索引 2）：
-<query_show>2</query_show>
+- 最短路比较查询（例如比较工序对 1,2 和 3,4）：
+<query_compare>1,2,3,4</query_compare>
 
-- 计数查询（例如查询索引 1）：
-<query_count>1</query_count>
+- 必经性查询（例如询问工序对 1,5）：
+<query_necessary>1,5</query_necessary>
 
-- 成员查询（例如查询零件 5 是否在索引 3 对应的物料层）：
-<query_member>5,3</query_member>
+提交最终答案时，直接给出 X 的数值，格式如下：
+<answer>X</answer>
 
-- 比较查询（例如比较索引 0 和索引 2）：
-<query_compare>0,2</query_compare>
-
-- 读取树查询（无参数）：
-<query_tree></query_tree>
-
-- 高度查询（无参数）：
-<query_height></query_height>
-
-**提交答案格式**
-
-当系统给出目标层级 K 后，你需要提交真实第 K 级的零件列表（升序，逗号分隔）：
-
-<answer>1,3,5</answer>
-
-**胜利条件**
-提交的零件列表与真实第 K 级物料层完全一致（集合内容和顺序都正确），且在最终阶段没有发起查询。
-
-**失败条件**
-答案错误、格式错误、在最终阶段发起查询、或排练阶段有效查询不足两次。
+例如：<answer>7</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Let's perform a supply chain structure resolution task regarding a "Hidden BOM Tier Mapping". Here are the rules:
+[Manufacturing / Industry Scenario]
+Welcome to the "Smart Factory Material Flow" monitoring terminal.
 
-The system records an undirected, connected, acyclic product assembly BOM (Bill of Materials) tree, with parts numbered 1 to {n}, and the final product being {root}. The set of assembly dependency edges is: {edges}.
+The current factory production line includes {n} processing procedure nodes (numbered 1 to {n}) and {m} automated conveyor belts. Except for a cross-workshop conveyor belt {special_edge} acting as the main hub, the material handling times for all conveyors are known positive integers in the range [1,20]. The handling time X of the hub conveyor {special_edge} is unknown, but its actual time is guaranteed to be within the interval [{lower},{upper}].
 
-Define the maximum supply chain depth H as the longest dependency path length from the final product. Define BOM tier k as the set of all parts whose dependency path distance from the final product is k (k ranges from 0 to H).
+Assembly line and known handling times inventory:
+{edges_info}
 
-**Core Mechanism: Supplier Code Mapping**
-To keep the supply chain structure confidential, the system uses a fixed but unknown permutation rule that replaces the true BOM tier indices 0 to H with anonymous supplier codes. When you query using index k, the system actually returns information about the remapped BOM tier.
+Engineering planning shows that the hub conveyor {special_edge} is an indispensable single-point connection (a bridge); if shut down for maintenance, the entire production network would be severed into two plant areas incapable of collaborative operation. Your task is to deduce the exact handling time X by calling monitoring data.
 
-**Interaction Phase (Rehearsal)**
-You can repeatedly make the following queries to infer the hidden mapping:
+You can issue the following two types of comparative commands to the system (one per turn), and the system will return precise monitoring results:
 
-1. Show Query: Ask which parts are in the BOM tier corresponding to index k. Returns an ascending list of part IDs.
-2. Count Query: Ask how many parts are in the BOM tier corresponding to index k. Returns a non-negative integer.
-3. Member Query: Ask if part x belongs to the BOM tier corresponding to index k. Returns "Yes" or "No".
-4. Compare Query: Compare the sizes of BOM tiers corresponding to indices k1 and k2. Returns "Greater", "Equal", or "Less".
-5. Tree Query: Get basic BOM tree information (total parts, final product, dependency edge set).
-6. Height Query: Get the maximum supply chain depth H.
+1. Shortest Path Comparison Query: Compare procedure pairs (i,j) and (p,q) to evaluate which pair has a shorter minimum material turnover time.
+   The system reports: "First pair shorter", "Second pair shorter", or "Both equal".
 
-Note: Invalid index k or part ID x will return "Invalid parameter".
+2. Necessity Query: Ask whether any material transfer scheme achieving the minimum handling time between procedure pair (i,j) inevitably passes through the hub conveyor.
+   The system reports: "Yes" or "No".
 
-**Final Submission Phase**
-After completing at least two valid queries, the system will provide a target true BOM tier K. You must immediately submit your answer without making any more queries. You need to submit all part IDs in the true BOM tier K (unmapped), in ascending order.
+When fully supported by data, report the time parameter X. Erroneous parameters or invalid formats will trigger a process anomaly alarm.
 
-**Query Format (using XML tags)**
+Each query must contain only one tag. Use the following XML format:
 
-- Show Query (e.g., querying index 2):
-<query_show>2</query_show>
+- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
+<query_compare>1,2,3,4</query_compare>
 
-- Count Query (e.g., querying index 1):
-<query_count>1</query_count>
+- Necessity Query (e.g., asking about pair 1,5):
+<query_necessary>1,5</query_necessary>
 
-- Member Query (e.g., checking if part 5 is in tier corresponding to index 3):
-<query_member>5,3</query_member>
+When submitting the final answer, directly provide the value of X in this format:
+<answer>X</answer>
 
-- Compare Query (e.g., comparing indices 0 and 2):
-<query_compare>0,2</query_compare>
-
-- Tree Query (no parameters):
-<query_tree></query_tree>
-
-- Height Query (no parameters):
-<query_height></query_height>
-
-**Answer Submission Format**
-
-When the system provides target tier K, submit the true tier K part list (ascending, comma-separated):
-
-<answer>1,3,5</answer>
-
-**Victory Condition**
-The submitted part list matches the true tier K exactly (both content and order), and no queries were made in the final phase.
-
-**Failure Condition**
-Wrong answer, invalid format, querying in final phase, or fewer than two valid queries in rehearsal phase.
+For example: <answer>7</answer>
 """
 
     contextualized_rule_zh_5 = """\
-我们现在来进行一项"隐蔽股权架构映射"的资本穿透调查任务，规则如下：
+欢迎登录“司法案件流转与审核推进”推演平台。
 
-系统调取了一张无向、连通、无环的企业控制权网络，实体（公司/个人）编号为 1 到 {n}，实际控制人/最终母公司为 {root}。股权控制关系的边集合为：{edges}。
+平台现存 {n} 个司法审核程序或部门节点（编号 1 到 {n}）以及 {m} 条案件流转渠道。除了一项核心复核程序 {special_edge} 外，所有渠道的常规流转审核天数均是已知的正整数，范围在 [1,20] 内。核心复核程序 {special_edge} 的流转天数 X 未知，仅明确 X 落在区间 [{lower},{upper}] 之间。
 
-定义控制权网络的最大穿透层数 H 为从实际控制人出发的最长控制链长度。定义第 k 级投资主体层为距离实际控制人控制链长度为 k 的所有实体集合（k 从 0 到 H）。
+流转网络与各渠道耗时如下：
+{edges_info}
 
-**核心机制：空壳代持映射**
-为了掩盖真实的资金流向，该网络采用了一个固定但未知的映射规则，将真实的投资层级索引 0 到 H 替换为了混淆的代持层级代码。当你使用索引 k 进行查询时，系统实际返回的是被重映射后的那个混淆主体层的信息。
+卷宗表明，核心复核程序 {special_edge} 是一道跨部门的强制性关卡（割边），若缺少该程序授权，整个司法系统将分离为两个无法互相移交案件的独立体系。您的任务是通过质询平台，准确推算出该核心程序的办理天数 X。
 
-**交互阶段（排练）**
-你可以反复进行以下查询来推断这个隐藏的映射关系：
+您可以交替使用以下两类法务质询（每次限用一类），平台将提供确切的司法统计：
 
-1. 展示查询：询问索引 k 对应的投资主体层包含哪些实体。返回升序排列的实体编号列表。
-2. 计数查询：询问索引 k 对应的投资主体层有多少个实体。返回一个非负整数。
-3. 成员查询：询问实体 x 是否属于索引 k 对应的投资主体层。返回"是"或"否"。
-4. 比较查询：比较索引 k1 和 k2 对应的投资主体层的实体数量大小。返回"大于"、"等于"或"小于"。
-5. 读取树查询：获取企业控制权网络的基本信息（实体总数、实际控制人、控制关系边集合）。
-6. 高度查询：获取最大穿透层数 H。
+1. 最短路比较查询：对比部门节点对 (i,j) 和 (p,q)，审查哪一对之间的案件最快流转总天数更短。
+   平台答复："第一对更短"、"第二对更短"或"两对相等"。
 
-注意：如果输入的索引 k 不在有效范围内，或实体编号 x 无效，系统将返回"无效参数"。
+2. 必经性查询：质询在节点对 (i,j) 之间达成最快流转要求的所有合法推进路径，是否都必须包含核心复核程序。
+   平台答复："是"或"否"。
 
-**最终提交阶段**
-当你完成至少两次有效查询后，系统会给出一个目标真实的投资主体层 K。此时你必须立即提交答案，不得再进行任何查询。你需要提交真实的第 K 级投资主体层（未经映射的）的所有实体编号，按升序排列。
+在完成证据链闭环后，请提交 X 的确切天数。若推算错误或违反格式，推演即告失效。
 
-**查询格式（使用 XML 标签）**
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 展示查询（例如查询索引 2）：
-<query_show>2</query_show>
+- 最短路比较查询（例如比较节点对 1,2 和 3,4）：
+<query_compare>1,2,3,4</query_compare>
 
-- 计数查询（例如查询索引 1）：
-<query_count>1</query_count>
+- 必经性查询（例如询问节点对 1,5）：
+<query_necessary>1,5</query_necessary>
 
-- 成员查询（例如查询实体 5 是否在索引 3 对应的投资主体层）：
-<query_member>5,3</query_member>
+提交最终答案时，直接给出 X 的数值，格式如下：
+<answer>X</answer>
 
-- 比较查询（例如比较索引 0 和索引 2）：
-<query_compare>0,2</query_compare>
-
-- 读取树查询（无参数）：
-<query_tree></query_tree>
-
-- 高度查询（无参数）：
-<query_height></query_height>
-
-**提交答案格式**
-
-当系统给出目标投资主体层 K 后，你需要提交真实第 K 层的实体列表（升序，逗号分隔）：
-
-<answer>1,3,5</answer>
-
-**胜利条件**
-提交的实体列表与真实第 K 级投资主体层完全一致（集合内容和顺序都正确），且在最终阶段没有发起查询。
-
-**失败条件**
-答案错误、格式错误、在最终阶段发起查询、或排练阶段有效查询不足两次。
+例如：<answer>7</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's perform a capital penetration investigation task regarding a "Hidden Equity Structure Mapping". Here are the rules:
+[Law / Legal Scenario]
+Welcome to the "Judicial Case Circulation and Review Advancement" deduction platform.
 
-The system has retrieved an undirected, connected, acyclic corporate control network, with entities (companies/individuals) numbered 1 to {n}, and the ultimate controller/parent company being {root}. The set of equity control relationship edges is: {edges}.
+The platform currently features {n} judicial review procedures or department nodes (numbered 1 to {n}) and {m} case circulation channels. Except for a core review procedure {special_edge}, the routine circulation and review days for all channels are known positive integers in the range [1,20]. The circulation days X for the core review procedure {special_edge} is unknown, though it is explicitly situated within the interval [{lower},{upper}].
 
-Define the maximum penetration depth H of the control network as the longest control chain length from the ultimate controller. Define investment tier k as the set of all entities whose control chain length from the ultimate controller is k (k ranges from 0 to H).
+Circulation network and channel durations:
+{edges_info}
 
-**Core Mechanism: Shell Holding Mapping**
-To conceal the true flow of capital, the network uses a fixed but unknown permutation rule that replaces the true investment tier indices 0 to H with obfuscated holding tier codes. When you query using index k, the system actually returns information about the remapped obfuscated entity tier.
+Dossiers indicate that the core review procedure {special_edge} is a mandatory cross-departmental checkpoint (a bridge); without its authorization, the judicial system would split into two independent frameworks unable to transfer cases to each other. Your task is to accurately calculate the processing days X of this core procedure by interrogating the platform.
 
-**Interaction Phase (Rehearsal)**
-You can repeatedly make the following queries to infer the hidden mapping:
+You may alternately utilize the following two types of legal interrogations (one per turn), and the platform will provide exact judicial statistics:
 
-1. Show Query: Ask which entities are in the investment tier corresponding to index k. Returns an ascending list of entity IDs.
-2. Count Query: Ask how many entities are in the investment tier corresponding to index k. Returns a non-negative integer.
-3. Member Query: Ask if entity x belongs to the investment tier corresponding to index k. Returns "Yes" or "No".
-4. Compare Query: Compare the sizes of investment tiers corresponding to indices k1 and k2. Returns "Greater", "Equal", or "Less".
-5. Tree Query: Get basic corporate control network information (total entities, ultimate controller, control relationship edge set).
-6. Height Query: Get the maximum penetration depth H.
+1. Shortest Path Comparison Query: Compare department node pairs (i,j) and (p,q) to review which pair has a shorter minimum total case circulation days.
+   The platform replies: "First pair shorter", "Second pair shorter", or "Both equal".
 
-Note: Invalid index k or entity ID x will return "Invalid parameter".
+2. Necessity Query: Inquire whether all legal advancement paths satisfying the fastest circulation requirement between node pair (i,j) must include the core review procedure.
+   The platform replies: "Yes" or "No".
 
-**Final Submission Phase**
-After completing at least two valid queries, the system will provide a target true investment tier K. You must immediately submit your answer without making any more queries. You need to submit all entity IDs in the true investment tier K (unmapped), in ascending order.
+Upon closing the loop of the evidence chain, submit the exact days for X. Erroneous calculations or format violations will render the deduction invalid.
 
-**Query Format (using XML tags)**
+Each query must contain only one tag. Use the following XML format:
 
-- Show Query (e.g., querying index 2):
-<query_show>2</query_show>
+- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
+<query_compare>1,2,3,4</query_compare>
 
-- Count Query (e.g., querying index 1):
-<query_count>1</query_count>
+- Necessity Query (e.g., asking about pair 1,5):
+<query_necessary>1,5</query_necessary>
 
-- Member Query (e.g., checking if entity 5 is in investment tier corresponding to index 3):
-<query_member>5,3</query_member>
+When submitting the final answer, directly provide the value of X in this format:
+<answer>X</answer>
 
-- Compare Query (e.g., comparing indices 0 and 2):
-<query_compare>0,2</query_compare>
-
-- Tree Query (no parameters):
-<query_tree></query_tree>
-
-- Height Query (no parameters):
-<query_height></query_height>
-
-**Answer Submission Format**
-
-When the system provides target investment tier K, submit the true investment tier K entity list (ascending, comma-separated):
-
-<answer>1,3,5</answer>
-
-**Victory Condition**
-The submitted entity list matches the true investment tier K exactly (both content and order), and no queries were made in the final phase.
-
-**Failure Condition**
-Wrong answer, invalid format, querying in final phase, or fewer than two valid queries in rehearsal phase.
+For example: <answer>7</answer>
 """
 
-    tags = ["answer", "query_show", "query_count", "query_member", "query_compare", "query_tree", "query_height"]
-
-    # 难度配置
-    # 1 (简单)        - 树高2，3层，简单结构
-    # 2 (中等偏下)    - 树高3，4层，对称结构
-    # 3 (中等偏上)    - 树高3，4层，非对称
-    # 4 (较难)        - 树高4，5层，复杂结构
-    # 5 (难)          - 树高4，5层，高度复杂
+    tags = ["answer", "query_compare", "query_necessary"]
+    reasoning_type = "演绎推理"
+    data_structure = "图"
+    enable_counterfactual = False
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "n": 7,
-            "root": 1,
-            "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
-            "permutation": [0, 2, 1],  # 索引0->层0, 索引1->层2, 索引2->层1
+        "zh": {
+            1: {
+                "n": 4,
+                "edges": [
+                    (1, 2, 3),
+                    (2, 3, "X"),
+                    (3, 4, 5),
+                ],
+                "special_edge": (2, 3),
+                "lower": 1,
+                "upper": 10,
+                "answer": 4,
+            },
+            2: {
+                "n": 6,
+                "edges": [
+                    (1, 2, 2),
+                    (1, 3, 4),
+                    (2, 3, 3),
+                    (3, 4, "X"),
+                    (4, 5, 2),
+                    (4, 6, 5),
+                    (5, 6, 1),
+                ],
+                "special_edge": (3, 4),
+                "lower": 1,
+                "upper": 15,
+                "answer": 6,
+            },
+            3: {
+                "n": 8,
+                "edges": [
+                    (1, 2, 1),
+                    (1, 3, 3),
+                    (2, 3, 2),
+                    (2, 4, 4),
+                    (3, 4, "X"),
+                    (4, 5, 2),
+                    (4, 6, 3),
+                    (5, 6, 1),
+                    (5, 7, 5),
+                    (6, 8, 4),
+                    (7, 8, 2),
+                ],
+                "special_edge": (3, 4),
+                "lower": 2,
+                "upper": 18,
+                "answer": 8,
+            },
+            4: {
+                "n": 10,
+                "edges": [
+                    (1, 2, 2),
+                    (1, 3, 5),
+                    (2, 3, 3),
+                    (2, 4, 1),
+                    (3, 5, 2),
+                    (4, 5, 4),
+                    (5, 6, "X"),
+                    (6, 7, 3),
+                    (6, 8, 2),
+                    (7, 8, 1),
+                    (7, 9, 4),
+                    (8, 9, 3),
+                    (8, 10, 5),
+                    (9, 10, 2),
+                ],
+                "special_edge": (5, 6),
+                "lower": 3,
+                "upper": 20,
+                "answer": 11,
+            },
+            5: {
+                "n": 12,
+                "edges": [
+                    (1, 2, 1),
+                    (1, 3, 4),
+                    (2, 3, 2),
+                    (2, 4, 3),
+                    (3, 4, 1),
+                    (3, 5, 5),
+                    (4, 6, 2),
+                    (5, 6, 3),
+                    (6, 7, "X"),
+                    (7, 8, 2),
+                    (7, 9, 4),
+                    (8, 9, 1),
+                    (8, 10, 3),
+                    (9, 10, 2),
+                    (9, 11, 5),
+                    (10, 11, 3),
+                    (10, 12, 4),
+                    (11, 12, 1),
+                ],
+                "special_edge": (6, 7),
+                "lower": 5,
+                "upper": 20,
+                "answer": 13,
+            },
         },
-        2: {
-            "n": 10,
-            "root": 1,
-            "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (5, 9), (6, 10)],
-            "permutation": [3, 1, 2, 0],  # 索引0->层3, 索引1->层1, 索引2->层2, 索引3->层0
-        },
-        3: {
-            "n": 11,
-            "root": 1,
-            "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (4, 8), (5, 9), (6, 10), (6, 11)],
-            "permutation": [2, 3, 0, 1],  # 索引0->层2, 索引1->层3, 索引2->层0, 索引3->层1
-        },
-        4: {
-            "n": 15,
-            "root": 1,
-            "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (5, 9), (6, 10), (7, 11), (8, 12), (9, 13), (10, 14), (11, 15)],
-            "permutation": [4, 2, 0, 3, 1],  # 索引0->层4, 索引1->层2, 索引2->层0, 索引3->层3, 索引4->层1
-        },
-        5: {
-            "n": 16,
-            "root": 1,
-            "edges": [(1, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 7), (4, 8), (5, 9), (6, 10), (7, 11), (8, 12), (9, 13), (10, 14), (11, 15), (12, 16)],
-            "permutation": [3, 4, 1, 0, 2],  # 索引0->层3, 索引1->层4, 索引2->层1, 索引3->层0, 索引4->层2
+        "en": {
+            1: {
+                "n": 4,
+                "edges": [
+                    (1, 2, 3),
+                    (2, 3, "X"),
+                    (3, 4, 5),
+                ],
+                "special_edge": (2, 3),
+                "lower": 1,
+                "upper": 10,
+                "answer": 4,
+            },
+            2: {
+                "n": 6,
+                "edges": [
+                    (1, 2, 2),
+                    (1, 3, 4),
+                    (2, 3, 3),
+                    (3, 4, "X"),
+                    (4, 5, 2),
+                    (4, 6, 5),
+                    (5, 6, 1),
+                ],
+                "special_edge": (3, 4),
+                "lower": 1,
+                "upper": 15,
+                "answer": 6,
+            },
+            3: {
+                "n": 8,
+                "edges": [
+                    (1, 2, 1),
+                    (1, 3, 3),
+                    (2, 3, 2),
+                    (2, 4, 4),
+                    (3, 4, "X"),
+                    (4, 5, 2),
+                    (4, 6, 3),
+                    (5, 6, 1),
+                    (5, 7, 5),
+                    (6, 8, 4),
+                    (7, 8, 2),
+                ],
+                "special_edge": (3, 4),
+                "lower": 2,
+                "upper": 18,
+                "answer": 8,
+            },
+            4: {
+                "n": 10,
+                "edges": [
+                    (1, 2, 2),
+                    (1, 3, 5),
+                    (2, 3, 3),
+                    (2, 4, 1),
+                    (3, 5, 2),
+                    (4, 5, 4),
+                    (5, 6, "X"),
+                    (6, 7, 3),
+                    (6, 8, 2),
+                    (7, 8, 1),
+                    (7, 9, 4),
+                    (8, 9, 3),
+                    (8, 10, 5),
+                    (9, 10, 2),
+                ],
+                "special_edge": (5, 6),
+                "lower": 3,
+                "upper": 20,
+                "answer": 11,
+            },
+            5: {
+                "n": 12,
+                "edges": [
+                    (1, 2, 1),
+                    (1, 3, 4),
+                    (2, 3, 2),
+                    (2, 4, 3),
+                    (3, 4, 1),
+                    (3, 5, 5),
+                    (4, 6, 2),
+                    (5, 6, 3),
+                    (6, 7, "X"),
+                    (7, 8, 2),
+                    (7, 9, 4),
+                    (8, 9, 1),
+                    (8, 10, 3),
+                    (9, 10, 2),
+                    (9, 11, 5),
+                    (10, 11, 3),
+                    (10, 12, 4),
+                    (11, 12, 1),
+                ],
+                "special_edge": (6, 7),
+                "lower": 5,
+                "upper": 20,
+                "answer": 13,
+            },
         },
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 有效查询计数
-        self.final_phase = False  # 是否进入最终阶段
-        self.target_index = None  # 最终阶段的目标索引
-        self._rng = random.Random(42)  # 确定性随机数生成器
         super().__init__(config)
 
     def _initialize_game(self):
-        diff = int(self.config.difficulty)  # 确保是整数类型
+        lang = self.config.language
+        diff = self.config.difficulty
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
-        self.n = cfg["n"]
-        self.root = cfg["root"]
-        self.edges = cfg["edges"]
-        self.permutation = cfg["permutation"]  # 隐藏排列：索引i -> 层permutation[i]
-
-        # 构建邻接表
-        self.adj = {i: [] for i in range(1, self.n + 1)}
-        for u, v in self.edges:
-            self.adj[u].append(v)
-            self.adj[v].append(u)
-
-        # 计算每个节点到根的距离（BFS）
-        self.distances = self._compute_distances()
-
-        # 计算树的高度
-        self.height = max(self.distances.values())
-
-        # 构建每一层的节点集合（真实层）
-        self.layers = {k: [] for k in range(self.height + 1)}
-        for node, dist in self.distances.items():
-            self.layers[dist].append(node)
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 对每层进行升序排序
-        for k in self.layers:
-            self.layers[k].sort()
-
-        # 格式化边集合用于显示
-        edges_str = ", ".join([f"({u},{v})" for u, v in self.edges])
+        self._game_info["n"] = cfg["n"]
+        self._game_info["m"] = len(cfg["edges"])
+        self.special_edge = cfg["special_edge"]
+        self.lower_bound = cfg["lower"]
+        self.upper_bound = cfg["upper"]
+        self.true_x = cfg["answer"]
         
-        # 设置游戏信息
-        self._game_info = {
-            "n": self.n,
-            "root": self.root,
-            "edges": edges_str,
-        }
-
-    def _compute_distances(self):
-        """使用BFS计算每个节点到根的最短距离"""
-        from collections import deque
-        distances = {}
-        queue = deque([self.root])
-        distances[self.root] = 0
+        self._game_info["special_edge"] = f"{{{self.special_edge[0]},{self.special_edge[1]}}}"
+        self._game_info["lower"] = self.lower_bound
+        self._game_info["upper"] = self.upper_bound
         
-        while queue:
-            node = queue.popleft()
-            for neighbor in self.adj[node]:
-                if neighbor not in distances:
-                    distances[neighbor] = distances[node] + 1
-                    queue.append(neighbor)
+        self.graph_without_x = {}
+        self.graph_with_x = {}
         
-        return distances
+        for i in range(1, cfg["n"] + 1):
+            self.graph_without_x[i] = []
+            self.graph_with_x[i] = []
+        
+        edges_info_lines = []
+        for u, v, w in cfg["edges"]:
+            if w == "X":
+                self.graph_with_x[u].append((v, self.true_x))
+                self.graph_with_x[v].append((u, self.true_x))
+                if lang == "zh":
+                    edges_info_lines.append(f"- 边 {{{u},{v}}}：权重 X（未知）")
+                else:
+                    edges_info_lines.append(f"- Edge {{{u},{v}}}: weight X (unknown)")
+            else:
+                self.graph_without_x[u].append((v, w))
+                self.graph_without_x[v].append((u, w))
+                self.graph_with_x[u].append((v, w))
+                self.graph_with_x[v].append((u, w))
+                if lang == "zh":
+                    edges_info_lines.append(f"- 边 {{{u},{v}}}：权重 {w}")
+                else:
+                    edges_info_lines.append(f"- Edge {{{u},{v}}}: weight {w}")
+        
+        self._game_info["edges_info"] = "\n".join(edges_info_lines)
+        
+        self._compute_components()
 
-    def _get_mapped_layer(self, index):
-        """根据索引返回映射后的层"""
-        if index < 0 or index > self.height:
-            return None
-        true_layer = self.permutation[index]
-        return self.layers[true_layer]
+    def _compute_components(self):
+        visited = set()
+        self.component = {}
+        
+        def bfs(start, comp_id):
+            queue = [start]
+            visited.add(start)
+            self.component[start] = comp_id
+            
+            while queue:
+                u = queue.pop(0)
+                for v, w in self.graph_without_x[u]:
+                    if v not in visited:
+                        visited.add(v)
+                        self.component[v] = comp_id
+                        queue.append(v)
+        
+        bfs(self.special_edge[0], 0)
+        bfs(self.special_edge[1], 1)
+
+    def _dijkstra(self, graph: Dict, start: int) -> Dict[int, int]:
+        dist = {v: float('inf') for v in graph}
+        dist[start] = 0
+        pq = [(0, start)]
+        
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist[u]:
+                continue
+            for v, w in graph[u]:
+                if dist[u] + w < dist[v]:
+                    dist[v] = dist[u] + w
+                    heapq.heappush(pq, (dist[v], v))
+        
+        return dist
+
+    def _shortest_distance(self, u: int, v: int) -> int:
+        if u == v:
+            return 0
+        dist = self._dijkstra(self.graph_with_x, u)
+        return dist[v]
+
+    def _is_necessary(self, u: int, v: int) -> bool:
+        if self.component[u] == self.component[v]:
+            dist_without_x = self._dijkstra(self.graph_without_x, u)[v]
+            dist_with_x = self._shortest_distance(u, v)
+            return dist_with_x < dist_without_x
+        else:
+            return True
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
-        if not self.final_phase:
-            return False
-        
-        raw_ans = parsed_info["answer"].strip()
-        
         try:
-            # 解析提交的节点列表
-            submitted_nodes = [int(x.strip()) for x in raw_ans.split(",") if x.strip()]
-            submitted_nodes.sort()
-            
-            # 获取真实的目标层
-            true_layer = sorted(self.layers[self.target_index])
-            
-            return submitted_nodes == true_layer
+            raw_ans = parsed_info["answer"].strip()
+            predicted_x = int(raw_ans)
+            return predicted_x == self.true_x
         except:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑：处理各类查询并返回响应"""
-        # 检查是否在最终阶段进行查询（违规）——此处作为防御性检查
-        if self.final_phase:
-            raise ValueError("Queries are not allowed in the final phase.")
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            first_shorter = "第一对更短"
+            second_shorter = "第二对更短"
+            both_equal = "两对相等"
+            error_format = "错误：格式无效或顶点编号超出范围。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            first_shorter = "First pair shorter"
+            second_shorter = "Second pair shorter"
+            both_equal = "Both equal"
+            error_format = "Error: Invalid format or vertex ID out of range."
 
-        yes_res = "是" if self.config.language == "zh" else "Yes"
-        no_res = "否" if self.config.language == "zh" else "No"
-        invalid_res = "无效参数" if self.config.language == "zh" else "Invalid parameter"
-        greater_res = "大于" if self.config.language == "zh" else "Greater"
-        equal_res = "等于" if self.config.language == "zh" else "Equal"
-        less_res = "小于" if self.config.language == "zh" else "Less"
-
-        # 处理展示查询
-        if "query_show" in parsed_info:
+        if "query_compare" in parsed_info:
             try:
-                k = int(parsed_info["query_show"].strip())
-                layer = self._get_mapped_layer(k)
-                if layer is None:
-                    return invalid_res
-                self.query_count += 1
-                return ",".join(map(str, layer))
-            except:
-                return invalid_res
-
-        # 处理计数查询
-        elif "query_count" in parsed_info:
-            try:
-                k = int(parsed_info["query_count"].strip())
-                layer = self._get_mapped_layer(k)
-                if layer is None:
-                    return invalid_res
-                self.query_count += 1
-                return str(len(layer))
-            except:
-                return invalid_res
-
-        # 处理成员查询
-        elif "query_member" in parsed_info:
-            try:
-                parts = [x.strip() for x in parsed_info["query_member"].split(",")]
-                x = int(parts[0])
-                k = int(parts[1])
+                raw = parsed_info["query_compare"].strip()
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 4:
+                    return error_format
                 
-                if x < 1 or x > self.n:
-                    return invalid_res
+                i, j, p, q = map(int, parts)
                 
-                layer = self._get_mapped_layer(k)
-                if layer is None:
-                    return invalid_res
+                if not all(1 <= v <= self._game_info["n"] for v in [i, j, p, q]):
+                    return error_format
                 
-                self.query_count += 1
-                return yes_res if x in layer else no_res
-            except:
-                return invalid_res
-
-        # 处理比较查询
-        elif "query_compare" in parsed_info:
-            try:
-                parts = [x.strip() for x in parsed_info["query_compare"].split(",")]
-                k1 = int(parts[0])
-                k2 = int(parts[1])
+                dist1 = self._shortest_distance(i, j)
+                dist2 = self._shortest_distance(p, q)
                 
-                layer1 = self._get_mapped_layer(k1)
-                layer2 = self._get_mapped_layer(k2)
-                
-                if layer1 is None or layer2 is None:
-                    return invalid_res
-                
-                self.query_count += 1
-                size1, size2 = len(layer1), len(layer2)
-                
-                if size1 > size2:
-                    return greater_res
-                elif size1 == size2:
-                    return equal_res
+                if dist1 < dist2:
+                    return first_shorter
+                elif dist1 > dist2:
+                    return second_shorter
                 else:
-                    return less_res
+                    return both_equal
+                    
             except:
-                return invalid_res
+                return error_format
 
-        # 处理读取树查询
-        elif "query_tree" in parsed_info:
-            self.query_count += 1
-            edges_str = "; ".join([f"({u},{v})" for u, v in self.edges])
-            if self.config.language == "zh":
-                return f"节点数: {self.n}, 根节点: {self.root}, 边集合: {edges_str}"
-            else:
-                return f"Nodes: {self.n}, Root: {self.root}, Edges: {edges_str}"
-
-        # 处理高度查询
-        elif "query_height" in parsed_info:
-            self.query_count += 1
-            return str(self.height)
+        elif "query_necessary" in parsed_info:
+            try:
+                raw = parsed_info["query_necessary"].strip()
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                
+                i, j = map(int, parts)
+                
+                if not (1 <= i <= self._game_info["n"] and 1 <= j <= self._game_info["n"]):
+                    return error_format
+                
+                is_necessary = self._is_necessary(i, j)
+                return yes_res if is_necessary else no_res
+                
+            except:
+                return error_format
 
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct):
-        """根据正确答案生成一个明显不同的错误答案"""
-        # 1. 若 correct 是纯整数字符串
+    def get_all_possible_queries(self) -> List[Dict]:
+        results = []
+        n = self._game_info["n"]
+        
+        for i in range(1, n + 1):
+            for j in range(i + 1, n + 1):
+                content = f"{i},{j}"
+                parsed_info = {"query_necessary": content}
+                answer = self._cf_core_produce(parsed_info)
+                
+                results.append({
+                    "query": f"<query_necessary>{content}</query_necessary>",
+                    "answer": answer
+                })
+
+        
+        pairs = []
+        for u in range(1, n + 1):
+            for v in range(u + 1, n + 1):
+                pairs.append((u, v))
+        
+        for p1 in pairs:
+            for p2 in pairs:
+                content = f"{p1[0]},{p1[1]},{p2[0]},{p2[1]}"
+                parsed_info = {"query_compare": content}
+                answer = self._cf_core_produce(parsed_info)
+                
+                results.append({
+                    "query": f"<query_compare>{content}</query_compare>",
+                    "answer": answer
+                })
+                
+        return results
+
+    def _cf_make_wrong(self, correct: str) -> str:
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        # 2. 否则按规则替换关键词
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-        if correct.lower() == "yes":
-            return "No" if correct == "Yes" else "no"
-        if correct.lower() == "no":
-            return "Yes" if correct == "No" else "yes"
-            
-        # 3. 若都不匹配：在字符串末尾追加 "_WRONG"
+        replacements = {
+            "是": "否",
+            "否": "是",
+            "Yes": "No",
+            "No": "Yes",
+            "yes": "no",
+            "no": "yes"
+        }
+        
+        if correct in replacements:
+            return replacements[correct]
+        
         return correct + "_WRONG"
-
-    def get_all_possible_queries(self):
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        
-        # 预先准备部分常量
-        yes_res = "是" if self.config.language == "zh" else "Yes"
-        no_res = "否" if self.config.language == "zh" else "No"
-        greater_res = "大于" if self.config.language == "zh" else "Greater"
-        equal_res = "等于" if self.config.language == "zh" else "Equal"
-        less_res = "小于" if self.config.language == "zh" else "Less"
-
-        # 1. 展示查询: <query_show>k</query_show>
-        for k in range(self.height + 1):
-            layer = self._get_mapped_layer(k)
-            if layer is not None:
-                ans = ",".join(map(str, layer))
-                queries.append({
-                    "query": f"<query_show>{k}</query_show>",
-                    "answer": ans
-                })
-
-        # 2. 计数查询: <query_count>k</query_count>
-        for k in range(self.height + 1):
-            layer = self._get_mapped_layer(k)
-            if layer is not None:
-                ans = str(len(layer))
-                queries.append({
-                    "query": f"<query_count>{k}</query_count>",
-                    "answer": ans
-                })
-
-        # 3. 成员查询: <query_member>x,k</query_member>
-        # x: 1..n, k: 0..H
-        for x in range(1, self.n + 1):
-            for k in range(self.height + 1):
-                layer = self._get_mapped_layer(k)
-                if layer is not None:
-                    ans = yes_res if x in layer else no_res
-                    queries.append({
-                        "query": f"<query_member>{x},{k}</query_member>",
-                        "answer": ans
-                    })
-
-        # 4. 比较查询: <query_compare>k1,k2</query_compare>
-        for k1 in range(self.height + 1):
-            for k2 in range(self.height + 1):
-                layer1 = self._get_mapped_layer(k1)
-                layer2 = self._get_mapped_layer(k2)
-                
-                if layer1 is not None and layer2 is not None:
-                    size1, size2 = len(layer1), len(layer2)
-                    if size1 > size2:
-                        ans = greater_res
-                    elif size1 == size2:
-                        ans = equal_res
-                    else:
-                        ans = less_res
-                    
-                    queries.append({
-                        "query": f"<query_compare>{k1},{k2}</query_compare>",
-                        "answer": ans
-                    })
-
-        # 5. 读取树查询: <query_tree></query_tree>
-        edges_str = "; ".join([f"({u},{v})" for u, v in self.edges])
-        if self.config.language == "zh":
-            ans_tree = f"节点数: {self.n}, 根节点: {self.root}, 边集合: {edges_str}"
-        else:
-            ans_tree = f"Nodes: {self.n}, Root: {self.root}, Edges: {edges_str}"
-        queries.append({
-            "query": "<query_tree></query_tree>",
-            "answer": ans_tree
-        })
-
-        # 6. 高度查询: <query_height></query_height>
-        queries.append({
-            "query": "<query_height></query_height>",
-            "answer": str(self.height)
-        })
-
-        return queries
-
-    def step(self, response: str):
-        """重写step方法以支持两阶段逻辑"""
-        try:
-            parsed_info = self.parse(response)
-            
-            # 如果是答案提交
-            if "answer" in parsed_info:
-                # 检查是否满足至少两次查询的要求
-                if self.query_count < 2:
-                    if self.config.language == "zh":
-                        res = "失败：排练阶段有效查询不足两次。"
-                    else:
-                        res = "Failed: Fewer than two valid queries in rehearsal phase."
-                    self.state.set_state("failed", "insufficient queries")
-                    self.state.add_message("user", res)
-                    return self.state
-                
-                # 如果还未进入最终阶段，先触发最终阶段（丢弃此次answer，要求重新提交）
-                if not self.final_phase:
-                    self.final_phase = True
-                    self.target_index = self._rng.randint(0, self.height)
-                    
-                    if self.config.language == "zh":
-                        prompt = f"排练阶段结束。现在请提交真实第 {self.target_index} 层的节点列表（升序，逗号分隔）："
-                    else:
-                        prompt = f"Rehearsal phase ended. Now submit the true layer {self.target_index} node list (ascending, comma-separated):"
-                    
-                    self.state.add_message("user", prompt)
-                    return self.state
-                
-                # 已在最终阶段，评估答案
-                is_success = self.evaluate(parsed_info)
-                if is_success:
-                    res = "答案正确" if self.config.language == "zh" else "Correct answer."
-                    self.state.set_state("success", "success")
-                    self.state.add_message("user", res)
-                else:
-                    res = "答案错误" if self.config.language == "zh" else "Incorrect answer."
-                    self.state.set_state("failed", "incorrect answer")
-                    self.state.add_message("user", res)
-            
-            # 如果是查询
-            else:
-                # 如果在最终阶段发起查询，应直接失败
-                if self.final_phase:
-                    if self.config.language == "zh":
-                        res = "失败：最终阶段不允许进行查询。"
-                    else:
-                        res = "Failed: Queries are not allowed in the final phase."
-                    self.state.set_state("failed", "query in final phase")
-                    self.state.add_message("user", res)
-                    return self.state
-                
-                game_response = self.produce_response(parsed_info)
-                self.state.add_message("user", game_response)
-                
-        except Exception as e:
-            self.state.set_state("failed", str(e))
-        
-        return self.state

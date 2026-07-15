@@ -1,558 +1,550 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   后缀统计：序列后k个元素的某统计特征是什么
-# ============================================================
-
-import random
 from .base import Game
+import random
 
-class ThresholdBinarySearchGame(Game):
+class HiddenSequenceReconstructionGame(Game):
 
-    reasoning_type = "演绎推理"
+    reasoning_type = "归纳推理"
     data_structure = "序列"
 
-    game_rule_zh = """\
-我们现在来玩一个"阈值推理"游戏，规则如下：
-
-游戏设定了四个参数：
-- N：序列长度
-- k：后缀长度
-- B：序列元素的上界
-- Q：最大操作次数
-
-我已秘密生成了一个长度为 N 的有序序列 S，其中每个元素都是 0 到 B 之间的整数。你的目标是推断出一个特定的目标值 H，它等于序列 S 的最后 k 个元素之和。显然，H 的取值范围在 0 到 k·B 之间。
-
-你可以进行以下两种操作：
-
-1. 阈值比较查询：选择一个整数 T，我会告诉你目标值 H 是否大于等于 T。
-2. 最终断言：当你认为已经收集到足够信息时，提交一个整数 V 作为你对 H 的最终判断。
-
-注意：
-- 每次查询和最终断言都会计入操作次数，总操作次数不能超过 Q 次。
-- 一旦提交最终断言，游戏立即结束。
-- 如果最终断言正确（V 等于 H），你获胜；否则失败。
-- 如果超过 Q 次操作仍未提交最终断言，游戏失败。
-
-当前游戏参数：
-- N = {N}
-- k = {k}
-- B = {B}
-- Q = {Q}
-
-## 操作格式（必须严格遵守）
-
-每次只能进行一种操作。请使用以下 XML 格式：
-
-- 阈值比较查询（例如询问 H 是否大于等于 10）：
-<query_threshold>10</query_threshold>
-
-- 提交最终断言（例如断言 H 等于 15）：
-<answer>15</answer>
-
-请尽可能用少的操作次数找出正确答案。
-"""
-
-    game_rule_en = """\
-Let's play a "Threshold Inference" game. Here are the rules:
-
-The game has four parameters:
-- N: Sequence length
-- k: Suffix length
-- B: Upper bound for sequence elements
-- Q: Maximum number of operations
-
-I have secretly generated an ordered sequence S of length N, where each element is an integer between 0 and B. Your goal is to infer a specific target value H, which equals the sum of the last k elements of sequence S. Clearly, H ranges from 0 to k·B.
-
-You can perform the following two types of operations:
-
-1. Threshold Comparison Query: Choose an integer T, and I will tell you whether the target value H is greater than or equal to T.
-2. Final Assertion: When you believe you have gathered enough information, submit an integer V as your final judgment of H.
-
-Notes:
-- Each query and final assertion counts toward the operation limit, and the total cannot exceed Q operations.
-- Once you submit a final assertion, the game ends immediately.
-- If the final assertion is correct (V equals H), you win; otherwise, you fail.
-- If you exceed Q operations without submitting a final assertion, the game fails.
-
-Current game parameters:
-- N = {N}
-- k = {k}
-- B = {B}
-- Q = {Q}
-
-## Operation Format (must be strictly followed)
-
-You can only perform one operation at a time. Use the following XML format:
-
-- Threshold Comparison Query (e.g., asking if H is greater than or equal to 10):
-<query_threshold>10</query_threshold>
-
-- Submit Final Assertion (e.g., asserting H equals 15):
-<answer>15</answer>
-
-Try to find the correct answer with as few operations as possible.
-"""
-
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-智能交通控制中心正在运行路网拥堵评估协议。
+欢迎使用城市智能交通路网诊断系统。
+本系统记录了一条干道上连续的 {n} 个路口（按顺序编号）在特定高峰时段的交通流状态评级。每个路口的状态从集合 {{A, B, C, D}} 中取值（分别代表通畅、缓行、拥堵、严重拥堵）。系统已自动记录了这些固定状态，且整条干道并非单一状态。
 
-系统已接入一条主干道的连续 {N} 个路口的流量历史数据，并重点监控末端最核心的 {k} 个路口。每个路口的拥堵指数最高为 {B}。
-你的任务是推算出这 {k} 个核心路口的累计拥堵总指数 H。该指数关系到是否启动全市分流预案，显然 H 的取值范围在 0 到 {k}·{B} 之间。
+你的任务是推断出关键路口 {k} 的交通流状态。为了防止直接干预该路口的数据流，你不能直接查询路口 {k}，也不能在任何操作中包含路口 {k}。
 
-为节约算力，你最多拥有 {Q} 次系统调用权限，可执行以下操作：
+你有 {budget} 次系统调用机会，可以使用以下五种分析指令（每次仅限一种）：
 
-1. 负荷预警查询：输入一个预警阈值 T，系统会反馈累计指数 H 是否大于等于 T。
-2. 最终定级报告：当你确认了 H 的精确值时，提交整数 V 作为最终的评估结果。
+1. 单点观察：查询特定路口 i 的状态（i 不能等于 {k}）
+2. 相等比较：对比路口 i 和路口 j 的状态是否相同（i 和 j 均不能等于 {k}）
+3. 区间计数：统计路段 [L, R] 中特定状态出现的次数（路段范围内不能包含路口 {k}）
+4. 周期检验：检测路段 [L, R] 是否存在空间周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，路口 i 和路口 i+p 的状态完全一致，且这些路口都不能等于 {k}）
+5. 镜像检验：检测路段 [L, R] 的状态分布是否呈镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，路口 L+t 和路口 R-t 的状态相同，且涉及路口不能等于 {k}）
 
-注意：
-- 每次查询和报告提交都会消耗调用次数，上限为 {Q} 次。
-- 提交报告后评估立即终止。
-- 若报告的 V 等于真实指数 H，路网调度成功；否则将引发大面积拥堵，评估失败。
-- 耗尽 {Q} 次权限未出结果也会导致系统超时失败。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-当前评估参数：
-- 监测路口总数 N = {N}
-- 核心路口数 k = {k}
-- 单路口指数上限 B = {B}
-- 可调用次数 Q = {Q}
+- 单点观察（例如查询路口 3）：
+<query_observe>3</query_observe>
 
-## 操作格式（必须严格遵守）
+- 相等比较（例如对比路口 2 和路口 5）：
+<query_compare>2,5</query_compare>
 
-每次仅限执行一次指令。请使用以下 XML 格式：
+- 区间计数（例如统计路段 [1, 4] 中状态 A 的数量）：
+<query_count>1,4,A</query_count>
 
-- 负荷预警查询（例如查明 H 是否大于等于 10）：
-<query_threshold>10</query_threshold>
+- 周期检验（例如测试路段 [1, 6] 的空间周期 2）：
+<query_period>1,6,2</query_period>
 
-- 提交最终定级报告（例如断定 H 等于 15）：
-<answer>15</answer>
+- 镜像检验（例如测试路段 [2, 5] 是否镜像对称）：
+<query_mirror>2,5</query_mirror>
 
-请以最优的策略尽快完成调度评估。
+提交最终诊断结论时，直接说明路口 {k} 的状态，格式如下：
+
+<answer>A</answer>
+
+注意：答案必须是 A、B、C、D 中的一个。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-The Intelligent Traffic Control Center is running a network congestion assessment protocol.
+Welcome to the Urban Intelligent Traffic Network Diagnostic System.
+The system has recorded the traffic flow state ratings for {n} consecutive intersections (numbered sequentially) along a main arterial road during a specific peak period. The state of each intersection takes a value from the set {{A, B, C, D}} (representing Smooth, Slow, Congested, and Severely Congested, respectively). The system has secretly logged these fixed states, forming a sequence (not all intersections share the same state).
 
-The system has integrated historical traffic data from a sequence of {N} intersections along a main arterial road, focusing heavily on the {k} core intersections at the terminal end. The congestion index for each intersection is capped at {B}.
-Your task is to deduce the cumulative congestion index H for these {k} core intersections. This index determines whether to activate the city-wide diversion contingency plan. Clearly, H ranges from 0 to {k}·{B}.
+Your objective is to infer the traffic state at the critical intersection {k}. To prevent direct interference with the data stream of this node, you cannot query intersection {k} directly, nor can you involve intersection {k} in any operations.
 
-To conserve computational resources, you have a maximum of {Q} system API calls to perform the following operations:
+You have {budget} system call opportunities and can use the following five analytical commands (one per turn):
 
-1. Load Warning Query: Submit a warning threshold T, and the system will report whether the cumulative index H is greater than or equal to T.
-2. Final Grading Report: Once you determine the exact value of H, submit an integer V as the final assessment.
+1. Single Observation: Query the state of specific intersection i (i cannot equal {k})
+2. Equality Comparison: Check if intersections i and j share the same state (neither i nor j can equal {k})
+3. Range Count: Count how many times a specific state appears in the road segment [L, R] (the segment cannot include intersection {k})
+4. Period Check: Test if the road segment [L, R] exhibits a spatial period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, intersections i and i+p have the identical state, and these intersections cannot equal {k})
+5. Mirror Check: Verify if the state distribution in the road segment [L, R] is mirror-symmetric (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, intersections L+t and R-t have the same state, and these intersections cannot equal {k})
 
-Notes:
-- Each query and final report submission counts towards the call limit, which cannot exceed {Q} operations.
-- Once the final report is submitted, the assessment terminates immediately.
-- If the submitted V equals the actual H, traffic routing succeeds; otherwise, it triggers massive gridlock, and the assessment fails.
-- Exceeding {Q} calls without a result leads to a system timeout failure.
+Each query must contain only one tag. Use the following XML format:
 
-Current assessment parameters:
-- Total monitored intersections N = {N}
-- Core intersections k = {k}
-- Single intersection index cap B = {B}
-- Maximum API calls Q = {Q}
+- Single Observation (e.g., query intersection 3):
+<query_observe>3</query_observe>
 
-## Operation Format (must be strictly followed)
+- Equality Comparison (e.g., compare intersections 2 and 5):
+<query_compare>2,5</query_compare>
 
-You may only execute one command at a time. Use the following XML format:
+- Range Count (e.g., count state A in segment [1, 4]):
+<query_count>1,4,A</query_count>
 
-- Load Warning Query (e.g., asking if H is greater than or equal to 10):
-<query_threshold>10</query_threshold>
+- Period Check (e.g., test period 2 in segment [1, 6]):
+<query_period>1,6,2</query_period>
 
-- Submit Final Grading Report (e.g., asserting H equals 15):
-<answer>15</answer>
+- Mirror Check (e.g., test if segment [2, 5] is mirror-symmetric):
+<query_mirror>2,5</query_mirror>
 
-Please complete the routing assessment efficiently.
+When submitting the final diagnostic conclusion, directly specify the state at intersection {k}, using this format:
+
+<answer>A</answer>
+
+Note: The answer must be one of A, B, C, or D.
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-重症监护室(ICU)患者生命体征监测系统已启动风险排查程序。
+欢迎使用临床基因组学序列推演辅助系统。
+系统对某异常基因链的 {n} 个连续位点进行了靶向测序。每个位点的核苷酸由集合 {{A, B, C, D}} 表示（分别代表腺嘌呤、胸腺嘧啶、胞嘧啶和鸟嘌呤的突变分型）。系统已锁定了一个固定的核苷酸序列（并非完全纯合）。
 
-系统连续记录了患者的 {N} 个时间节点的生理特征数据，并聚焦于近期最危险的 {k} 个观察期。每个节点的单次异常血液指标峰值上限为 {B}。
-你的任务是推断这 {k} 个近期观察期内的累计异常指标总值 H，以此决定是否需要介入紧急手术。显然，H 的取值范围在 0 到 {k}·{B} 之间。
+你的临床推断目标是确定靶点突变位点 {k} 的核苷酸类型。由于测序盲区限制，你无法直接读取位点 {k} 的信息，也严禁在任何探针查询中覆盖位点 {k}。
 
-为了抢救时间，你最多只能进行 {Q} 次系统交互操作：
+你有 {budget} 次测序探针调用机会，可使用以下五种测序分析策略（每次限用一种）：
 
-1. 风险阈值排查：输入一个风险阈值 T，系统会反馈累计异常总值 H 是否大于等于 T。
-2. 最终病理诊断：当你确认了 H 的精确值时，提交整数 V 作为最终的风险诊断结论。
+1. 单点观察：检测特定位点 i 的核苷酸类型（i 不能等于 {k}）
+2. 相等比较：比对位点 i 和位点 j 的核苷酸是否相同（i 和 j 均不能等于 {k}）
+3. 区间计数：统计基因片段 [L, R] 中某种特定核苷酸的数量（片段区间不能包含位点 {k}）
+4. 周期检验：分析基因片段 [L, R] 是否具备重复序列周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，位点 i 和位点 i+p 核苷酸相同，且不能涉及位点 {k}）
+5. 镜像检验：验证基因片段 [L, R] 是否构成回文镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，位点 L+t 和位点 R-t 核苷酸相同，且不能涉及位点 {k}）
 
-注意：
-- 每次排查和诊断提交均计入操作次数，总操作不可超过 {Q} 次。
-- 提交最终病理诊断后，排查程序立即结束。
-- 若诊断正确（V 等于 H），患者得到有效救治；否则延误病情，排查失败。
-- 若操作超过 {Q} 次仍未得出结论，患者将错过最佳干预窗口。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-当前系统参数：
-- 监测节点总数 N = {N}
-- 关键观察期数 k = {k}
-- 指标峰值上限 B = {B}
-- 最大操作次数 Q = {Q}
+- 单点观察（例如检测位点 3）：
+<query_observe>3</query_observe>
 
-## 操作格式（必须严格遵守）
+- 相等比较（例如比对位点 2 和位点 5）：
+<query_compare>2,5</query_compare>
 
-每次仅能执行一项操作。请使用以下 XML 格式：
+- 区间计数（例如统计片段 [1, 4] 中核苷酸 A 的数量）：
+<query_count>1,4,A</query_count>
 
-- 风险阈值排查（例如查明 H 是否大于等于 10）：
-<query_threshold>10</query_threshold>
+- 周期检验（例如测试片段 [1, 6] 的串联重复周期 2）：
+<query_period>1,6,2</query_period>
 
-- 提交最终病理诊断（例如断言 H 等于 15）：
-<answer>15</answer>
+- 镜像检验（例如测试片段 [2, 5] 是否回文对称）：
+<query_mirror>2,5</query_mirror>
 
-请尽快完成排查，锁定正确的异常总值。
+提交最终临床推断结论时，直接说明位点 {k} 的核苷酸，格式如下：
+
+<answer>A</answer>
+
+注意：答案必须是 A、B、C、D 中的一个。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-The Intensive Care Unit (ICU) patient vital signs monitoring system has initiated a risk screening procedure.
+Welcome to the Clinical Genomics Sequence Inference Assistant.
+The system has performed targeted sequencing on {n} consecutive loci of an abnormal genetic chain. The nucleotide at each locus is represented by the set {{A, B, C, D}} (indicating mutation subtypes of Adenine, Thymine, Cytosine, and Guanine). The system has locked in a fixed sequence (not entirely homozygous).
 
-The system has continuously recorded physiological data across {N} sequential time nodes, zooming in on the {k} most critical recent observation periods. The maximum abnormal blood indicator peak for a single node is {B}.
-Your objective is to infer the cumulative abnormal indicator total H during these {k} observation periods, which dictates whether emergency surgical intervention is required. Naturally, H ranges from 0 to {k}·{B}.
+Your clinical inference objective is to determine the nucleotide type at the target mutation locus {k}. Due to sequencing blind spots, you cannot directly read locus {k}, nor can you cover locus {k} in any probe queries.
 
-To save precious time, you are permitted a maximum of {Q} system interactions:
+You have {budget} sequencing probe calls available, utilizing the following five analytical strategies (one per turn):
 
-1. Risk Threshold Screening: Input a risk threshold T, and the system will verify if the cumulative total H is greater than or equal to T.
-2. Final Pathological Diagnosis: When you are certain of the exact value of H, submit an integer V as the ultimate diagnostic conclusion.
+1. Single Observation: Detect the nucleotide type at specific locus i (i cannot equal {k})
+2. Equality Comparison: Compare if the nucleotides at locus i and locus j are identical (neither i nor j can equal {k})
+3. Range Count: Count the occurrences of a specific nucleotide in the gene segment [L, R] (the segment cannot include locus {k})
+4. Period Check: Analyze if the gene segment [L, R] has a tandem repeat period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, loci i and i+p share the same nucleotide, and these loci cannot equal {k})
+5. Mirror Check: Verify if the gene segment [L, R] forms a palindromic mirror symmetry (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, loci L+t and R-t have the same nucleotide, and these loci cannot equal {k})
 
-Notes:
-- Every screening query and diagnostic submission counts toward your limit of {Q} operations.
-- Submitting the final diagnosis immediately ends the screening procedure.
-- If the diagnosis is correct (V equals H), the patient receives proper care; otherwise, treatment is delayed, and the screening fails.
-- Exceeding {Q} operations without a diagnosis means the optimal intervention window is lost.
+Each query must contain only one tag. Use the following XML format:
 
-Current system parameters:
-- Total monitored nodes N = {N}
-- Critical observation periods k = {k}
-- Indicator peak upper bound B = {B}
-- Maximum operations Q = {Q}
+- Single Observation (e.g., detect locus 3):
+<query_observe>3</query_observe>
 
-## Operation Format (must be strictly followed)
+- Equality Comparison (e.g., compare loci 2 and 5):
+<query_compare>2,5</query_compare>
 
-Execute only one operation at a time. Use the following XML format:
+- Range Count (e.g., count nucleotide A in segment [1, 4]):
+<query_count>1,4,A</query_count>
 
-- Risk Threshold Screening (e.g., asking if H is greater than or equal to 10):
-<query_threshold>10</query_threshold>
+- Period Check (e.g., test tandem repeat period 2 in segment [1, 6]):
+<query_period>1,6,2</query_period>
 
-- Submit Final Pathological Diagnosis (e.g., asserting H equals 15):
-<answer>15</answer>
+- Mirror Check (e.g., test if segment [2, 5] is palindromic):
+<query_mirror>2,5</query_mirror>
 
-Please complete the screening promptly and pinpoint the exact indicator total.
+When submitting the final clinical inference, directly specify the nucleotide at locus {k}, using this format:
+
+<answer>A</answer>
+
+Note: The answer must be one of A, B, C, or D.
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-自适应学习平台正在进行学情追踪与知识点漏洞分析。
+欢迎进入学生学情轨迹纵向追踪平台。
+本平台收录了某学生在特定学科上的 {n} 次连续随堂测评结果。每次测评的知识掌握评级取自集合 {{A, B, C, D}}（分别对应优秀、良好、及格、待达标）。系统生成了一组反映其学习波动的固有测评序列（并非所有次成绩均一致）。
 
-系统收录了学生本学期的 {N} 次标准化测试成绩，并聚焦于期末冲刺阶段的最后 {k} 次测试。单次测试中，知识点遗漏最高数量为 {B}。
-你需要计算出冲刺阶段的累计知识点遗漏总数 H，以便生成个性化的复习方案。显然，H 的取值范围在 0 到 {k}·{B} 之间。
+你的教学干预目标是推断出关键的第 {k} 次测评评级。受限于防作弊与盲测机制，你无法直接调取第 {k} 次的成绩档案，且任何学情数据查询均不可涵盖该次测评。
 
-为避免过度占用诊断资源，你最多允许进行 {Q} 次交互：
+你有 {budget} 次学情检索额度，可以使用以下五种学情分析工具（每次仅限一项）：
 
-1. 短板阈值评估：输入一个评估阈值 T，平台会反馈累计遗漏总数 H 是否大于等于 T。
-2. 学情定位报告：当你准确定位了 H 的数值时，提交整数 V 作为最终的知识漏洞报告。
+1. 单点观察：查阅第 i 次测评的成绩评级（i 不能等于 {k}）
+2. 相等比较：对比第 i 次和第 j 次测评的评级是否一致（i 和 j 均不能等于 {k}）
+3. 区间计数：统计在第 [L, R] 次测评区间内某项评级获得的次数（测评区间不能包含第 {k} 次）
+4. 周期检验：分析测评区间 [L, R] 是否存在成绩波动的周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，第 i 次和第 i+p 次评级完全相同，且不能涉及第 {k} 次）
+5. 镜像检验：检验测评区间 [L, R] 的成绩走势是否呈现镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，第 L+t 次和第 R-t 次评级相同，且不能涉及第 {k} 次）
 
-注意：
-- 每次评估查询和报告提交均计入限额，总操作不得超过 {Q} 次。
-- 提交学情定位报告后，诊断会立即结束。
-- 如果报告的数据准确（V 等于 H），复习方案生成成功；否则分析偏离，诊断失败。
-- 若达到 {Q} 次操作仍未定位问题，分析进程将强制中止。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-当前学情参数：
-- 标准测试总次数 N = {N}
-- 冲刺阶段测试数 k = {k}
-- 单次测试遗漏上限 B = {B}
-- 允许交互次数 Q = {Q}
+- 单点观察（例如查阅第 3 次测评）：
+<query_observe>3</query_observe>
 
-## 操作格式（必须严格遵守）
+- 相等比较（例如对比第 2 和第 5 次测评）：
+<query_compare>2,5</query_compare>
 
-每次仅可进行一种交互。请使用以下 XML 格式：
+- 区间计数（例如统计第 [1, 4] 次测评中获得评级 A 的次数）：
+<query_count>1,4,A</query_count>
 
-- 短板阈值评估（例如查明 H 是否大于等于 10）：
-<query_threshold>10</query_threshold>
+- 周期检验（例如测试区间 [1, 6] 的波动周期 2）：
+<query_period>1,6,2</query_period>
 
-- 提交学情定位报告（例如断定 H 等于 15）：
-<answer>15</answer>
+- 镜像检验（例如测试区间 [2, 5] 成绩走势是否镜像对称）：
+<query_mirror>2,5</query_mirror>
 
-请运用严谨的逻辑推导，找出最精确的遗漏总数。
+提交最终学情推断结论时，直接说明第 {k} 次测评的评级，格式如下：
+
+<answer>A</answer>
+
+注意：答案必须是 A、B、C、D 中的一个。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-The Adaptive Learning Platform is tracking academic progress and analyzing knowledge gaps.
+Welcome to the Student Academic Trajectory Longitudinal Tracking Platform.
+This platform has recorded {n} consecutive quiz results for a specific student in a subject. The knowledge mastery rating for each quiz is drawn from the set {{A, B, C, D}} (representing Excellent, Good, Pass, and Needs Improvement). The system holds a fixed inherent sequence reflecting their learning fluctuations (not all quiz ratings are identical).
 
-The system has logged scores from {N} standardized tests taken this semester, placing particular emphasis on the final {k} tests during the sprint period. The maximum number of missing knowledge points in a single test is {B}.
-You must calculate the cumulative number of missing knowledge points H during this sprint phase to generate a personalized review plan. Clearly, H ranges from 0 to {k}·{B}.
+Your pedagogical intervention goal is to infer the mastery rating of the critical {k}-th quiz. Restricted by blind-test and anti-cheating mechanisms, you cannot directly access the record for the {k}-th quiz, and no academic data queries may encompass this quiz.
 
-To prevent overloading the diagnostic server, you are limited to {Q} interactions:
+You have {budget} academic retrieval quotas and can utilize the following five learning analysis tools (one per turn):
 
-1. Weakness Threshold Assessment: Input an evaluation threshold T, and the platform will state whether the cumulative missing points H is greater than or equal to T.
-2. Academic Gap Report: Once you have pinpointed the exact value of H, submit an integer V as your final knowledge gap report.
+1. Single Observation: Review the rating of the i-th quiz (i cannot equal {k})
+2. Equality Comparison: Check if the ratings of the i-th and j-th quizzes are consistent (neither i nor j can equal {k})
+3. Range Count: Count how many times a specific rating was achieved within the quiz interval [L, R] (the interval cannot include the {k}-th quiz)
+4. Period Check: Analyze if the quiz interval [L, R] exhibits a performance fluctuation period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, the i-th and (i+p)-th quiz ratings are completely identical, and these cannot involve the {k}-th quiz)
+5. Mirror Check: Verify if the performance trend in quiz interval [L, R] presents a mirror symmetry (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, the (L+t)-th and (R-t)-th quiz ratings are identical, and these cannot involve the {k}-th quiz)
 
-Notes:
-- Both threshold assessments and report submissions consume your interaction quota of {Q} operations.
-- The diagnostic process terminates immediately after submitting the gap report.
-- If the report is perfectly accurate (V equals H), the review plan is successfully generated; otherwise, the analysis derails, and the diagnosis fails.
-- Failing to resolve the gap within {Q} operations forces an abort of the analysis.
+Each query must contain only one tag. Use the following XML format:
 
-Current academic parameters:
-- Total standardized tests N = {N}
-- Sprint phase tests k = {k}
-- Missing points cap per test B = {B}
-- Allowed interactions Q = {Q}
+- Single Observation (e.g., review the 3rd quiz):
+<query_observe>3</query_observe>
 
-## Operation Format (must be strictly followed)
+- Equality Comparison (e.g., compare the 2nd and 5th quizzes):
+<query_compare>2,5</query_compare>
 
-You may perform only one interaction at a time. Use the following XML format:
+- Range Count (e.g., count the occurrences of rating A in the interval [1, 4]):
+<query_count>1,4,A</query_count>
 
-- Weakness Threshold Assessment (e.g., asking if H is greater than or equal to 10):
-<query_threshold>10</query_threshold>
+- Period Check (e.g., test fluctuation period 2 in interval [1, 6]):
+<query_period>1,6,2</query_period>
 
-- Submit Academic Gap Report (e.g., asserting H equals 15):
-<answer>15</answer>
+- Mirror Check (e.g., test if the trend in interval [2, 5] is mirror-symmetric):
+<query_mirror>2,5</query_mirror>
 
-Please employ strict deductive logic to uncover the exact total of missing points.
+When submitting your final pedagogical inference, directly specify the rating of the {k}-th quiz, using this format:
+
+<answer>A</answer>
+
+Note: The answer must be one of A, B, C, or D.
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-自动化精密零件生产线的质量控制模块正在进行例行排查。
+欢迎登录智能制造质量控制与缺陷溯源系统。
+我们的自动化产线刚完成了 {n} 个连续批次（按生产顺序编号）的组件制造。每个批次的质检等级从集合 {{A, B, C, D}} 中评定（分别代表优等品、一等品、合格品和残次品）。系统后台记录了这组固定的质量分布序列（各批次质量并非完全一样）。
 
-质检系统抽检了流水线上的 {N} 个生产批次，当前需要重点评估最新下线的 {k} 个关键批次。单批次允许的最大微小瑕疵数为 {B}。
-你的任务是推算出这 {k} 个核心批次的累计瑕疵总数 H，以此决定是否需要触发停机维护程序。显然，H 的范围在 0 到 {k}·{B} 之间。
+你的品控任务是推断出核心批次 {k} 的质检等级。由于核心批次样本正处于隔离封存状态，你不能直接调取批次 {k} 的品控参数，也不能在任何抽检指令中包含批次 {k}。
 
-为保证生产节奏，你最多只能进行 {Q} 次检测指令下达：
+你有 {budget} 次质量检验操作权限，可使用以下五种工业分析指令（每次限用一种）：
 
-1. 公差阈值检测：输入一个公差阈值 T，控制模块会反馈累计瑕疵总数 H 是否大于等于 T。
-2. 批次检验结论：当你确认了 H 的精确总数时，提交整数 V 作为最终的质量检验结果。
+1. 单点观察：提取特定批次 i 的质检等级（i 不能等于 {k}）
+2. 相等比较：对比批次 i 和批次 j 的质检等级是否相同（i 和 j 均不能等于 {k}）
+3. 区间计数：统计生产批次区间 [L, R] 内某特定等级出现的频次（区间内不能包含批次 {k}）
+4. 周期检验：检测批次区间 [L, R] 中是否存在工艺偏差周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，批次 i 和批次 i+p 的等级完全一致，且均不能涉及批次 {k}）
+5. 镜像检验：验证批次区间 [L, R] 的质量分布是否呈镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，批次 L+t 和批次 R-t 等级相同，且均不能涉及批次 {k}）
 
-注意：
-- 每次阈值检测和结论提交都会计入指令消耗，总指令不得超过 {Q} 次。
-- 提交结论后，质检流程立即终止。
-- 如果检验结果吻合（V 等于 H），质检任务圆满完成；否则将引发严重良品率危机，质检失败。
-- 如果超过 {Q} 次指令仍未输出结论，系统默认判定批次失效。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-当前质检参数：
-- 抽检批次总数 N = {N}
-- 关键评估批次 k = {k}
-- 单批次瑕疵上限 B = {B}
-- 最大检测指令数 Q = {Q}
+- 单点观察（例如提取批次 3）：
+<query_observe>3</query_observe>
 
-## 操作格式（必须严格遵守）
+- 相等比较（例如对比批次 2 和批次 5）：
+<query_compare>2,5</query_compare>
 
-每次仅可下达一项指令。请使用以下 XML 格式：
+- 区间计数（例如统计区间 [1, 4] 中等级 A 的批次数量）：
+<query_count>1,4,A</query_count>
 
-- 公差阈值检测（例如查明 H 是否大于等于 10）：
-<query_threshold>10</query_threshold>
+- 周期检验（例如测试区间 [1, 6] 的工艺周期 2）：
+<query_period>1,6,2</query_period>
 
-- 提交批次检验结论（例如断定 H 等于 15）：
-<answer>15</answer>
+- 镜像检验（例如测试区间 [2, 5] 的质量分布是否镜像对称）：
+<query_mirror>2,5</query_mirror>
 
-请用最少的操作找出真实的瑕疵数据。
+提交最终缺陷溯源结论时，直接说明批次 {k} 的质检等级，格式如下：
+
+<answer>A</answer>
+
+注意：答案必须是 A、B、C、D 中的一个。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-The Quality Control Module of the automated precision parts production line is conducting a routine audit.
+[Manufacturing/Industrial Scenario]
+Welcome to the Smart Manufacturing Quality Control and Defect Traceability System.
+Our automated production line has just completed manufacturing {n} consecutive batches of components (numbered by production sequence). The quality inspection grade for each batch is assessed from the set {{A, B, C, D}} (representing Premium, First-Class, Qualified, and Defective, respectively). The system backend has recorded this fixed quality distribution sequence (the batches are not all of uniform quality).
 
-The inspection system has sampled {N} production batches from the assembly line and now needs to evaluate the {k} most critical batches that recently rolled off. The maximum number of minor defects allowed per batch is {B}.
-Your task is to deduce the cumulative total of defects H across these {k} core batches, which determines whether to trigger a halt for maintenance. Naturally, H ranges from 0 to {k}·{B}.
+Your quality control task is to infer the inspection grade of the core batch {k}. Because the core batch samples are currently isolated and sealed, you cannot directly retrieve the QA parameters for batch {k}, nor can you include batch {k} in any sampling instructions.
 
-To maintain the production cadence, you are permitted a maximum of {Q} diagnostic commands:
+You have {budget} quality inspection operation privileges and can use the following five industrial analysis commands (one per turn):
 
-1. Tolerance Threshold Check: Enter a tolerance threshold T, and the module will indicate whether the cumulative defect total H is greater than or equal to T.
-2. Batch Inspection Conclusion: Upon confirming the exact value of H, submit an integer V as the final quality inspection result.
+1. Single Observation: Extract the inspection grade of specific batch i (i cannot equal {k})
+2. Equality Comparison: Compare if batch i and batch j share the same inspection grade (neither i nor j can equal {k})
+3. Range Count: Count the frequency of a specific grade within the production batch interval [L, R] (the interval cannot include batch {k})
+4. Period Check: Detect if there is a process deviation period p in the batch interval [L, R] (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, batches i and i+p have identical grades, and neither can involve batch {k})
+5. Mirror Check: Verify if the quality distribution in the batch interval [L, R] is mirror-symmetric (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, batches L+t and R-t share the same grade, and neither can involve batch {k})
 
-Notes:
-- Both threshold checks and the conclusion submission consume your command quota of {Q} operations.
-- The inspection workflow stops the moment you submit your conclusion.
-- If the result matches reality (V equals H), the quality audit is a success; otherwise, it sparks a severe yield rate crisis, resulting in failure.
-- Failing to output a conclusion within {Q} commands causes the system to automatically flag the batches as invalid.
+Each query must contain only one tag. Use the following XML format:
 
-Current inspection parameters:
-- Total sampled batches N = {N}
-- Critical evaluation batches k = {k}
-- Single batch defect cap B = {B}
-- Maximum diagnostic commands Q = {Q}
+- Single Observation (e.g., extract batch 3):
+<query_observe>3</query_observe>
 
-## Operation Format (must be strictly followed)
+- Equality Comparison (e.g., compare batches 2 and 5):
+<query_compare>2,5</query_compare>
 
-Issue only one command per turn. Use the following XML format:
+- Range Count (e.g., count grade A batches in interval [1, 4]):
+<query_count>1,4,A</query_count>
 
-- Tolerance Threshold Check (e.g., asking if H is greater than or equal to 10):
-<query_threshold>10</query_threshold>
+- Period Check (e.g., test process period 2 in interval [1, 6]):
+<query_period>1,6,2</query_period>
 
-- Submit Batch Inspection Conclusion (e.g., asserting H equals 15):
-<answer>15</answer>
+- Mirror Check (e.g., test if quality distribution in interval [2, 5] is mirror-symmetric):
+<query_mirror>2,5</query_mirror>
 
-Use as few operations as possible to pinpoint the true defect count.
+When submitting the final defect traceability conclusion, directly specify the inspection grade of batch {k}, using this format:
+
+<answer>A</answer>
+
+Note: The answer must be one of A, B, C, or D.
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-知识产权商业维权系统正在清算一起侵权案件的损害赔偿金。
+欢迎使用司法判例类型化分析与类案检索系统。
+本系统整理了按时间顺序归档的 {n} 个关联历史判例。每个判例的法理适用类型被严格归入集合 {{A, B, C, D}} 中（分别代表驳回诉讼、部分支持、全部支持和发回重审）。系统已内置了这组确定的裁判链条（并非所有判例判决均一致）。
 
-系统追踪到侵权方的 {N} 个非法活动周期，并锁定了近期最恶劣的 {k} 个核心侵权周期。单周期内查实的非法获利指数上限为 {B}。
-你的任务是推演这 {k} 个核心周期内的累计非法获利总指数 H，以此作为判定惩罚性赔偿金的法理基数。显然，H 的取值在 0 到 {k}·{B} 之间。
+你的司法研判任务是推断出关键的第 {k} 号争议判例的适用类型。为保证研判程序的独立性，你被禁止直接查阅第 {k} 号判例的卷宗，同时任何卷宗批量检索条件中均不可包含第 {k} 号判例。
 
-为了符合法定取证程序的时限要求，你最多只有 {Q} 次质证操作权限：
+你有 {budget} 次司法数据库检索配额，可以使用以下五种法理分析工具（每次仅限一种）：
 
-1. 立案标准质证：提出一个指数阈值 T，维权系统将核对累计侵权指数 H 是否大于等于 T。
-2. 损害赔偿核算定论：当你掌握了 H 的确切数值时，提交整数 V 作为最终的法定索赔定论。
+1. 单点观察：调阅第 i 号判例的适用类型（i 不能等于 {k}）
+2. 相等比较：对比第 i 号和第 j 号判例的适用类型是否一致（i 和 j 均不能等于 {k}）
+3. 区间计数：统计在第 [L, R] 号判例区间中，特定适用类型作出的次数（卷宗区间不能包含第 {k} 号判例）
+4. 周期检验：审查第 [L, R] 号判例区间内是否具有裁判尺度波动的周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，第 i 号和第 i+p 号判例适用类型完全相同，且不可涉及第 {k} 号判例）
+5. 镜像检验：验证第 [L, R] 号判例区间的裁判演化是否呈现镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，第 L+t 号和第 R-t 号判例适用类型相同，且不可涉及第 {k} 号判例）
 
-注意：
-- 每次质证和最终定论提交都计入取证次数，总次数不得逾越 {Q} 次。
-- 一旦提交定论，法庭取证环节即告结案。
-- 若核算完全一致（V 等于 H），原告胜诉并获得足额赔偿；否则证据链断裂，维权败诉。
-- 取证达到 {Q} 次却无法给出定论，法庭将驳回诉讼请求。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-当前案件参数：
-- 追踪周期总数 N = {N}
-- 核心侵权周期 k = {k}
-- 单周期获利指数上限 B = {B}
-- 法定质证权限 Q = {Q}
+- 单点观察（例如调阅第 3 号判例）：
+<query_observe>3</query_observe>
 
-## 操作格式（必须严格遵守）
+- 相等比较（例如对比第 2 和第 5 号判例）：
+<query_compare>2,5</query_compare>
 
-每次质证环节仅限进行一种操作。请使用以下 XML 格式：
+- 区间计数（例如统计在第 [1, 4] 号判例区间中类型 A 的数量）：
+<query_count>1,4,A</query_count>
 
-- 立案标准质证（例如查实 H 是否大于等于 10）：
-<query_threshold>10</query_threshold>
+- 周期检验（例如测试判例区间 [1, 6] 的裁判波动周期 2）：
+<query_period>1,6,2</query_period>
 
-- 提交损害赔偿核算定论（例如断言 H 等于 15）：
-<answer>15</answer>
+- 镜像检验（例如测试判例区间 [2, 5] 裁判演化是否镜像对称）：
+<query_mirror>2,5</query_mirror>
 
-请步步为营，以最小的司法资源消耗完成索赔核算。
+提交最终司法研判结论时，直接说明第 {k} 号判例的适用类型，格式如下：
+
+<answer>A</answer>
+
+注意：答案必须是 A、B、C、D 中的一个。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-The Intellectual Property Commercial Protection System is liquidating damages for an infringement case.
+[Legal Scenario]
+Welcome to the Judicial Precedent Typological Analysis and Case Retrieval System.
+This system has curated {n} chronologically archived, interconnected historical precedents. The jurisprudential application type for each precedent is strictly classified into the set {{A, B, C, D}} (representing Case Dismissed, Partially Supported, Fully Supported, and Remanded for Retrial, respectively). The system has embedded this fixed chain of judgments (the precedents are not uniformly judged).
 
-The system has tracked the infringing party's illicit activities over {N} periods, zeroing in on the {k} most egregious recent core infringement cycles. The verified illegal profit index ceiling for a single cycle is {B}.
-Your task is to deduce the cumulative illegal profit index H for these {k} core cycles, which will serve as the legal baseline for punitive damages. Obviously, H falls between 0 and {k}·{B}.
+Your judicial deliberation task is to infer the application type of the critical disputed precedent No. {k}. To ensure the independence of the deliberation procedure, you are prohibited from directly reviewing the dossier of precedent No. {k}, and no bulk dossier retrieval criteria may encompass precedent No. {k}.
 
-To comply with the statutory time limits for evidence collection, you have a maximum of {Q} cross-examination privileges:
+You have {budget} judicial database retrieval quotas and can use the following five jurisprudential analysis tools (one per turn):
 
-1. Filing Standard Cross-Examination: Propose an index threshold T, and the protection system will verify if the cumulative infringement index H is greater than or equal to T.
-2. Final Damages Assessment: Once you possess the exact figure for H, submit an integer V as the definitive legal claim conclusion.
+1. Single Observation: Access the application type of precedent No. i (i cannot equal {k})
+2. Equality Comparison: Check if the application types of precedents No. i and No. j are identical (neither i nor j can equal {k})
+3. Range Count: Count the frequency of a specific application type within the precedent interval [L, R] (the dossier interval cannot include precedent No. {k})
+4. Period Check: Examine if the precedent interval [L, R] exhibits a judgment standard fluctuation period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, precedents No. i and No. i+p share the identical application type, and neither can involve precedent No. {k})
+5. Mirror Check: Verify if the evolution of judgments in the precedent interval [L, R] demonstrates mirror symmetry (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, precedents No. L+t and No. R-t share the same application type, and neither can involve precedent No. {k})
 
-Notes:
-- Every cross-examination query and the final assessment submission draws from your quota of {Q} total operations.
-- The evidentiary phase closes immediately upon submitting the final assessment.
-- If the calculation is perfectly accurate (V equals H), the plaintiff wins full compensation; otherwise, the chain of evidence breaks, and the lawsuit is lost.
-- Exhausting all {Q} privileges without a definitive conclusion results in the court dismissing the claim.
+Each query must contain only one tag. Use the following XML format:
 
-Current case parameters:
-- Total tracked periods N = {N}
-- Core infringement cycles k = {k}
-- Single-cycle profit index cap B = {B}
-- Legal cross-examination privileges Q = {Q}
+- Single Observation (e.g., access precedent No. 3):
+<query_observe>3</query_observe>
 
-## Operation Format (must be strictly followed)
+- Equality Comparison (e.g., compare precedents No. 2 and No. 5):
+<query_compare>2,5</query_compare>
 
-Perform only one action per evidentiary round. Use the following XML format:
+- Range Count (e.g., count type A in precedent interval [1, 4]):
+<query_count>1,4,A</query_count>
 
-- Filing Standard Cross-Examination (e.g., verifying if H is greater than or equal to 10):
-<query_threshold>10</query_threshold>
+- Period Check (e.g., test judgment fluctuation period 2 in interval [1, 6]):
+<query_period>1,6,2</query_period>
 
-- Submit Final Damages Assessment (e.g., asserting H equals 15):
-<answer>15</answer>
+- Mirror Check (e.g., test if judgment evolution in interval [2, 5] is mirror-symmetric):
+<query_mirror>2,5</query_mirror>
 
-Tread carefully and complete the damages calculation with minimal expenditure of judicial resources.
+When submitting your final judicial deliberation conclusion, directly specify the application type of precedent No. {k}, using this format:
+
+<answer>A</answer>
+
+Note: The answer must be one of A, B, C, or D.
 """
 
-    tags = ["answer", "query_threshold"]
+    game_rule_zh = """\
+我们现在来玩一个"隐藏序列推断"游戏，规则如下：
 
-    # 难度配置
+游戏设定了一个长度为 {n} 的有序序列，每个位置的元素从符号集合 {{A, B, C, D}} 中取值。我已经秘密为每个位置分配了一个符号，构成了一个固定的序列（不是所有位置都相同）。
+
+你的目标是推断出目标位置 {k} 的符号。但是，你不能直接询问位置 {k}，也不能在任何查询中涉及位置 {k}。
+
+你有 {budget} 次查询机会，可以使用以下五种查询方式（每次只能使用一种）：
+
+1. 单点观察：询问某个位置 i 的符号是什么（i 不能等于 {k}）
+2. 相等比较：询问位置 i 和位置 j 的符号是否相同（i 和 j 都不能等于 {k}）
+3. 区间计数：询问区间 [L, R] 中某个符号出现的次数（区间内不能包含位置 {k}）
+4. 周期检验：询问区间 [L, R] 是否存在周期 p（即对于所有满足 L 小于等于 i 小于等于 R-p 的 i，位置 i 和位置 i+p 的符号都相同，且这些位置都不能等于 {k}）
+5. 镜像检验：询问区间 [L, R] 是否镜像对称（即对于所有满足 0 小于等于 t 小于等于 R-L 的 t，位置 L+t 和位置 R-t 的符号都相同，且这些位置都不能等于 {k}）
+
+每次查询只能包含一个标签。请使用以下 XML 格式：
+
+- 单点观察（例如询问位置 3）：
+<query_observe>3</query_observe>
+
+- 相等比较（例如比较位置 2 和位置 5）：
+<query_compare>2,5</query_compare>
+
+- 区间计数（例如统计区间 [1, 4] 中符号 A 的数量）：
+<query_count>1,4,A</query_count>
+
+- 周期检验（例如测试区间 [1, 6] 的周期 2）：
+<query_period>1,6,2</query_period>
+
+- 镜像检验（例如测试区间 [2, 5] 是否镜像对称）：
+<query_mirror>2,5</query_mirror>
+
+提交最终答案时，直接说明位置 {k} 的符号，格式如下：
+
+<answer>A</answer>
+
+注意：答案必须是 A、B、C、D 中的一个。
+"""
+
+    game_rule_en = """\
+Let's play a "Hidden Sequence Reconstruction" game. Here are the rules:
+
+A sequence of length {n} has been set up, where each position contains a symbol from the set {{A, B, C, D}}. I have secretly assigned a symbol to each position, forming a fixed sequence (not all positions are the same).
+
+Your goal is to infer the symbol at target position {k}. However, you cannot directly query position {k}, nor can you involve position {k} in any query.
+
+You have {budget} query opportunities and can use the following five query types (one per turn):
+
+1. Single Observation: Ask what symbol is at position i (i cannot equal {k})
+2. Equality Comparison: Ask if positions i and j have the same symbol (neither i nor j can equal {k})
+3. Range Count: Ask how many times a symbol appears in range [L, R] (the range cannot include position {k})
+4. Period Check: Ask if range [L, R] has period p (i.e., for all i satisfying L less than or equal to i less than or equal to R-p, positions i and i+p have the same symbol, and these positions cannot equal {k})
+5. Mirror Check: Ask if range [L, R] is mirror-symmetric (i.e., for all t satisfying 0 less than or equal to t less than or equal to R-L, positions L+t and R-t have the same symbol, and these positions cannot equal {k})
+
+Each query must contain only one tag. Use the following XML format:
+
+- Single Observation (e.g., query position 3):
+<query_observe>3</query_observe>
+
+- Equality Comparison (e.g., compare positions 2 and 5):
+<query_compare>2,5</query_compare>
+
+- Range Count (e.g., count symbol A in range [1, 4]):
+<query_count>1,4,A</query_count>
+
+- Period Check (e.g., test period 2 in range [1, 6]):
+<query_period>1,6,2</query_period>
+
+- Mirror Check (e.g., test if range [2, 5] is mirror-symmetric):
+<query_mirror>2,5</query_mirror>
+
+When submitting the final answer, directly specify the symbol at position {k}, using this format:
+
+<answer>A</answer>
+
+Note: The answer must be one of A, B, C, or D.
+"""
+
+    tags = ["answer", "query_observe", "query_compare", "query_count", "query_period", "query_mirror"]
+
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "N": 5,
-                "k": 2,
-                "B": 3,
-                "Q": 5,
-                "sequence": [1, 2, 0, 3, 2],
+                "n": 5,
+                "k": 3,
+                "budget": 10,
+                "sequence": "A,B,A,B,A",
             },
             2: {
-                "N": 8,
-                "k": 3,
-                "B": 5,
-                "Q": 7,
-                "sequence": [2, 4, 1, 3, 0, 5, 4, 2],
+                "n": 7,
+                "k": 4,
+                "budget": 12,
+                "sequence": "A,B,C,D,C,B,A",
             },
             3: {
-                "N": 10,
-                "k": 4,
-                "B": 7,
-                "Q": 8,
-                "sequence": [3, 1, 6, 2, 5, 4, 7, 3, 6, 5],
+                "n": 9,
+                "k": 5,
+                "budget": 14,
+                "sequence": "A,B,C,A,B,C,A,B,C",
             },
             4: {
-                "N": 12,
-                "k": 5,
-                "B": 10,
-                "Q": 9,
-                "sequence": [5, 8, 2, 9, 1, 6, 3, 10, 7, 4, 9, 8],
+                "n": 11,
+                "k": 6,
+                "budget": 16,
+                "sequence": "A,A,B,B,C,D,C,B,B,A,A",
             },
             5: {
-                "N": 15,
-                "k": 6,
-                "B": 15,
-                "Q": 10,
-                "sequence": [7, 12, 3, 8, 14, 5, 11, 2, 9, 13, 6, 15, 10, 8, 12],
+                "n": 13,
+                "k": 7,
+                "budget": 18,
+                "sequence": "A,B,A,C,B,C,D,C,B,C,A,B,A",
             },
         },
         "en": {
             1: {
-                "N": 5,
-                "k": 2,
-                "B": 3,
-                "Q": 5,
-                "sequence": [1, 2, 0, 3, 2],
+                "n": 5,
+                "k": 3,
+                "budget": 10,
+                "sequence": "A,B,A,B,A",
             },
             2: {
-                "N": 8,
-                "k": 3,
-                "B": 5,
-                "Q": 7,
-                "sequence": [2, 4, 1, 3, 0, 5, 4, 2],
+                "n": 7,
+                "k": 4,
+                "budget": 12,
+                "sequence": "A,B,C,D,C,B,A",
             },
             3: {
-                "N": 10,
-                "k": 4,
-                "B": 7,
-                "Q": 8,
-                "sequence": [3, 1, 6, 2, 5, 4, 7, 3, 6, 5],
+                "n": 9,
+                "k": 5,
+                "budget": 14,
+                "sequence": "A,B,C,A,B,C,A,B,C",
             },
             4: {
-                "N": 12,
-                "k": 5,
-                "B": 10,
-                "Q": 9,
-                "sequence": [5, 8, 2, 9, 1, 6, 3, 10, 7, 4, 9, 8],
+                "n": 11,
+                "k": 6,
+                "budget": 16,
+                "sequence": "A,A,B,B,C,D,C,B,B,A,A",
             },
             5: {
-                "N": 15,
-                "k": 6,
-                "B": 15,
-                "Q": 10,
-                "sequence": [7, 12, 3, 8, 14, 5, 11, 2, 9, 13, 6, 15, 10, 8, 12],
+                "n": 13,
+                "k": 7,
+                "budget": 18,
+                "sequence": "A,B,A,C,B,C,D,C,B,C,A,B,A",
             },
         },
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 操作计数器
         super().__init__(config)
+        self.query_count = 0
 
     def _initialize_game(self):
-        """初始化游戏参数和计算目标值"""
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -560,126 +552,256 @@ Tread carefully and complete the damages calculation with minimal expenditure of
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 设置游戏参数
-        self._game_info["N"] = cfg["N"]
+        self._game_info["n"] = cfg["n"]
         self._game_info["k"] = cfg["k"]
-        self._game_info["B"] = cfg["B"]
-        self._game_info["Q"] = cfg["Q"]
+        self._game_info["budget"] = cfg["budget"]
         
-        # 保存序列
-        self.sequence = cfg["sequence"]
-        
-        # 计算目标值 H（序列最后 k 个元素的和）
-        self.target_H = sum(self.sequence[-cfg["k"]:])
-        
-        # 保存参数供后续使用
-        self.N = cfg["N"]
-        self.k = cfg["k"]
-        self.B = cfg["B"]
-        self.Q = cfg["Q"]
+        symbols = cfg["sequence"].split(",")
+        self.sequence = {str(i+1): sym.strip() for i, sym in enumerate(symbols)}
+        self.target_k = str(cfg["k"])
+        self.budget = cfg["budget"]
+        self.answer = self.sequence[self.target_k]
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确，同时计入操作次数"""
-        self.query_count += 1
-
-        if self.query_count > self.Q:
+        submitted_answer = parsed_info["answer"].strip().upper()
+        
+        if submitted_answer not in ["A", "B", "C", "D"]:
             return False
-
-        try:
-            # 解析答案
-            answer_str = parsed_info["answer"].strip()
-            submitted_value = int(answer_str)
-            
-            # 检查是否等于目标值
-            return submitted_value == self.target_H
-        except:
-            return False
+        
+        return submitted_answer == self.answer
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑：处理阈值比较查询"""
-        # 增加操作计数
         self.query_count += 1
-        
-        # 检查是否超过操作次数限制
-        if self.query_count > self.Q:
-            if self.config.language == "zh":
-                msg = "操作次数超限，游戏失败。"
-            else:
-                msg = "Exceeded maximum operations, game failed."
-            self.state.set_state("failed", "exceeded maximum operations")
-            return msg
-        
+        if self.query_count > self.budget:
+            raise ValueError(
+                f"Query budget exceeded: {self.query_count} > {self.budget}" 
+                if self.config.language == "en" 
+                else f"查询次数超出预算：{self.query_count} > {self.budget}"
+            )
+
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_msg = "错误：无效的阈值格式。"
+            same_res, diff_res = "相同", "不同"
+            valid_res, invalid_res = "成立", "不成立"
+            error_range = "错误：位置超出范围。"
+            error_involve_k = "错误：查询涉及目标位置 {k}。".format(k=self.target_k)
+            error_format = "错误：格式无效。"
         else:
             yes_res, no_res = "Yes", "No"
-            error_msg = "Error: Invalid threshold format."
+            same_res, diff_res = "Same", "Different"
+            valid_res, invalid_res = "Valid", "Invalid"
+            error_range = "Error: Position out of range."
+            error_involve_k = f"Error: Query involves target position {self.target_k}."
+            error_format = "Error: Invalid format."
 
-        # 处理阈值比较查询
-        if "query_threshold" in parsed_info:
+        if "query_observe" in parsed_info:
             try:
-                threshold = int(parsed_info["query_threshold"].strip())
-                # 返回 H >= T 的结果
-                return yes_res if self.target_H >= threshold else no_res
+                pos = parsed_info["query_observe"].strip()
+                if pos not in self.sequence:
+                    return error_range
+                if pos == self.target_k:
+                    return error_involve_k
+                return self.sequence[pos]
             except:
-                return error_msg
+                return error_format
+
+        elif "query_compare" in parsed_info:
+            try:
+                parts = [x.strip() for x in parsed_info["query_compare"].split(",")]
+                if len(parts) != 2:
+                    return error_format
+                pos1, pos2 = parts
+                if pos1 not in self.sequence or pos2 not in self.sequence:
+                    return error_range
+                if pos1 == self.target_k or pos2 == self.target_k:
+                    return error_involve_k
+                return same_res if self.sequence[pos1] == self.sequence[pos2] else diff_res
+            except:
+                return error_format
+
+        elif "query_count" in parsed_info:
+            try:
+                parts = [x.strip() for x in parsed_info["query_count"].split(",")]
+                if len(parts) != 3:
+                    return error_format
+                L, R, symbol = parts
+                L_int, R_int = int(L), int(R)
+                
+                if L_int < 1 or R_int > int(self._game_info["n"]) or L_int > R_int:
+                    return error_range
+                if symbol not in ["A", "B", "C", "D"]:
+                    return error_format
+                
+                target_k_int = int(self.target_k)
+                if L_int <= target_k_int <= R_int:
+                    return error_involve_k
+                
+                count = 0
+                for i in range(L_int, R_int + 1):
+                    if self.sequence[str(i)] == symbol:
+                        count += 1
+                return str(count)
+            except:
+                return error_format
+
+        elif "query_period" in parsed_info:
+            try:
+                parts = [x.strip() for x in parsed_info["query_period"].split(",")]
+                if len(parts) != 3:
+                    return error_format
+                L, R, p = parts
+                L_int, R_int, p_int = int(L), int(R), int(p)
+                
+                if L_int < 1 or R_int > int(self._game_info["n"]) or L_int > R_int or p_int <= 0:
+                    return error_range
+                
+                target_k_int = int(self.target_k)
+                
+                for i in range(L_int, R_int - p_int + 1):
+                    if i == target_k_int or i + p_int == target_k_int:
+                        return error_involve_k
+                    if self.sequence[str(i)] != self.sequence[str(i + p_int)]:
+                        return invalid_res
+                return valid_res
+            except:
+                return error_format
+
+        elif "query_mirror" in parsed_info:
+            try:
+                parts = [x.strip() for x in parsed_info["query_mirror"].split(",")]
+                if len(parts) != 2:
+                    return error_format
+                L, R = parts
+                L_int, R_int = int(L), int(R)
+                
+                if L_int < 1 or R_int > int(self._game_info["n"]) or L_int > R_int:
+                    return error_range
+                
+                target_k_int = int(self.target_k)
+                
+                for t in range(R_int - L_int + 1):
+                    left_pos = L_int + t
+                    right_pos = R_int - t
+                    if left_pos == target_k_int or right_pos == target_k_int:
+                        return error_involve_k
+                    if self.sequence[str(left_pos)] != self.sequence[str(right_pos)]:
+                        return invalid_res
+                return valid_res
+            except:
+                return error_format
+
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个明显不同的错误答案"""
-        # 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
+        symbols = ["A", "B", "C", "D"]
+        if correct.strip().upper() in symbols:
+            wrong_choices = [s for s in symbols if s != correct.strip().upper()]
+            return random.choice(wrong_choices)
         
-        # 否则按规则替换关键词
-        if self.config.language == "zh":
-            if correct == "是":
-                return "否"
-            elif correct == "否":
-                return "是"
-        else:
-            # 英文：忽略大小写，保持原始大小写风格
-            lower_correct = correct.lower()
-            if lower_correct == "yes":
-                return "No" if correct[0].isupper() else "no"
-            elif lower_correct == "no":
-                return "Yes" if correct[0].isupper() else "yes"
-
-        # 若都不匹配
-        return correct + "_WRONG"
+        if correct.lstrip('-').isdigit():
+            val = int(correct)
+            return str(val + 1)
+        
+        zh_flip = {"是": "否", "否": "是", "相同": "不同", "不同": "相同",
+                   "成立": "不成立", "不成立": "成立"}
+        if correct in zh_flip:
+            return zh_flip[correct]
+        
+        en_flip = {"Yes": "No", "No": "Yes", "Same": "Different", "Different": "Same",
+                   "Valid": "Invalid", "Invalid": "Valid"}
+        if correct in en_flip:
+            return en_flip[correct]
+        for k_word, v_word in en_flip.items():
+            if correct.lower() == k_word.lower():
+                return v_word
+        
+        return f"{correct}_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
-        # H 的取值范围是 [0, k*B]
-        # 理论上查询阈值 T 可以是任意整数，但有意义的范围通常在 [0, k*B + 1]
-        max_possible_sum = self.k * self.B
+        queries = []
+        n = int(self._game_info["n"])
+        k = int(self.target_k)
         
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
+            same_res, diff_res = "相同", "不同"
+            valid_res, invalid_res = "成立", "不成立"
         else:
-            yes_res, no_res = "Yes", "No"
-            
-        # 遍历有意义的阈值范围
-        # 例如范围是 0-51，我们查询 0 到 52
-        for t in range(0, max_possible_sum + 2):
-            # 逻辑：H >= T
-            ans = yes_res if self.target_H >= t else no_res
-            results.append({
-                "query": f"<query_threshold>{t}</query_threshold>",
-                "answer": ans
-            })
-            
-        return results
+            same_res, diff_res = "Same", "Different"
+            valid_res, invalid_res = "Valid", "Invalid"
+
+        for i in range(1, n + 1):
+            if i == k:
+                continue
+            q_str = f"<query_observe>{i}</query_observe>"
+            ans = self.sequence[str(i)]
+            queries.append({"query": q_str, "answer": ans})
+
+        for i in range(1, n + 1):
+            for j in range(i + 1, n + 1):
+                if i == k or j == k:
+                    continue
+                q_str = f"<query_compare>{i},{j}</query_compare>"
+                ans = same_res if self.sequence[str(i)] == self.sequence[str(j)] else diff_res
+                queries.append({"query": q_str, "answer": ans})
+
+        for L in range(1, n + 1):
+            for R in range(L, n + 1):
+                if L <= k <= R:
+                    continue
+                for sym in ["A", "B", "C", "D"]:
+                    q_str = f"<query_count>{L},{R},{sym}</query_count>"
+                    count = 0
+                    for i in range(L, R + 1):
+                        if self.sequence[str(i)] == sym:
+                            count += 1
+                    queries.append({"query": q_str, "answer": str(count)})
+
+        for L in range(1, n + 1):
+            for R in range(L, n + 1):
+                max_p = R - L
+                if max_p < 1:
+                    continue
+                
+                for p in range(1, max_p + 1):
+                    involved = False
+                    is_periodic = True
+                    
+                    for i in range(L, R - p + 1):
+                        if i == k or (i + p) == k:
+                            involved = True
+                            break
+                        if self.sequence[str(i)] != self.sequence[str(i + p)]:
+                            is_periodic = False
+                            break
+                    
+                    if involved:
+                        continue
+                    
+                    q_str = f"<query_period>{L},{R},{p}</query_period>"
+                    ans = valid_res if is_periodic else invalid_res
+                    queries.append({"query": q_str, "answer": ans})
+
+        for L in range(1, n + 1):
+            for R in range(L, n + 1):
+                involved = False
+                is_mirror = True
+                
+                for t in range(R - L + 1):
+                    left_pos = L + t
+                    right_pos = R - t
+                    if left_pos == k or right_pos == k:
+                        involved = True
+                        break
+                    if self.sequence[str(left_pos)] != self.sequence[str(right_pos)]:
+                        is_mirror = False
+                        break
+                
+                if involved:
+                    continue
+                
+                q_str = f"<query_mirror>{L},{R}</query_mirror>"
+                ans = valid_res if is_mirror else invalid_res
+                queries.append({"query": q_str, "answer": ans})
+
+        return queries

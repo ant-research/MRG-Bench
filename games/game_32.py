@@ -1,732 +1,538 @@
-# -*- coding: utf-8 -*-
-
 import random
 from .base import Game
 
-class SequencePeriodGame(Game):
+class CutVertexDetectionGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"序列周期推理"游戏，规则如下：
+我们现在来玩一个"割点判定"的推理游戏，规则如下：
 
-游戏设定了一条长度为 N = {n} 的未知序列 S，索引范围为 [1, N]。序列中的每个元素都是四种符号之一（用 A、B、C、D 表示，仅作为可区分的符号）。
+游戏设定了一个连通无向简单图，顶点集合为 {vertices}，共 {n} 个顶点。我已秘密确定了该图的所有边的连接关系。现在指定顶点 {k} 作为待判定的目标顶点。
 
-你的目标是判定这条序列是否存在周期性：
-- 若存在整数 k（1 小于等于 k 小于 N），使得对所有位置 i（1 小于等于 i 小于等于 N-k），都有 S[i] = S[i+k]，则称序列存在周期性。
-- 若存在周期性，你需要找出最小的这样的 k；若不存在周期性，你需要给出否定结论。
+你的目标是判断顶点 {k} 是否为割点（即删除该顶点及其所有关联边后，图是否会分裂成多个连通分量）。
 
-你可以通过以下五种方式向我提问（每轮可提出一个问题），我会根据真实序列如实回答：
+你可以向我提出以下三类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-1. 单点查看（整个游戏中最多使用 3 次）：询问位置 i 的具体符号是什么。
-2. 两点相同性判断：询问位置 i 和位置 j 的符号是否相同。
-3. 窗口一致性判断：询问从位置 i 开始长度为 w 的区间，与从位置 j 开始长度为 w 的区间，是否逐位完全一致。
-4. 窗口差异计数：询问从位置 i 开始长度为 w 的区间，与从位置 j 开始长度为 w 的区间，逐位比较有多少个位置不同（汉明距离）。
-5. 周期候选验证（使用次数不限）：询问某个整数 k 是否为序列的一个周期。
+1. 边查询：询问两个顶点 u 和 v 之间是否存在边。回答"是"或"否"。
+2. 删K连通查询：询问在删除顶点 {k} 及其所有邻接边后，两个顶点 a 和 b 是否仍然连通。回答"是"或"否"。
+
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 边查询（例如询问顶点 A 和 B 之间是否有边）：
+<query_edge>A,B</query_edge>
+
+- 删K连通查询（例如询问删除 {k} 后顶点 A 和 B 是否连通）：
+<query_connected>A,B</query_connected>
+
+提交最终答案时，请根据你的判断选择以下两种格式之一：
+
+- 如果判断 {k} 是割点，需要提供两个见证顶点 a 和 b（在删除 {k} 后它们不连通）：
+<answer>type=CUT, witnesses=A,B</answer>
+
+- 如果判断 {k} 不是割点，需要提供从某个锚点 s 到所有其他顶点（除 {k} 和 s 外）的路径，所有路径不经过 {k}：
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
 注意：
-- 所有位置索引必须在 [1, {n}] 范围内。
-- 窗口查询时，窗口不能越界，即 i + w - 1 和 j + w - 1 都必须小于等于 {n}。
-- 周期候选验证中，k 必须满足 1 小于等于 k 小于 {n}。
-- 越界或格式错误的提问会得到错误提示，但不计入单点查看次数。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次只能提一个问题，使用以下 XML 格式：
-
-- 单点查看（例如查看位置 5）：
-<query_view>5</query_view>
-
-- 两点相同性判断（例如询问位置 2 和位置 7）：
-<query_same>2,7</query_same>
-
-- 窗口一致性判断（例如询问位置 1 开始长度 3 的窗口与位置 4 开始长度 3 的窗口）：
-<query_window>1,4,3</query_window>
-
-- 窗口差异计数（例如询问位置 1 开始长度 5 的窗口与位置 6 开始长度 5 的窗口）：
-<query_diff>1,6,5</query_diff>
-
-- 周期候选验证（例如验证 k=3 是否为周期）：
-<query_period>3</query_period>
-
-当你收集到足够信息后，提交最终结论，格式如下：
-
-- 若存在周期性（例如最小周期为 4）：
-<answer>periodic=yes,min_period=4</answer>
-
-- 若不存在周期性：
-<answer>periodic=no,min_period=none</answer>
-
-请使用尽可能少的提问次数找出答案。若答案错误、格式不符或单点查看超过 3 次，游戏失败。
+- 对于 NOT_CUT 类型，paths 格式为用分号分隔的多条路径，每条路径用箭头连接顶点。
+- 提交的证据必须基于你已查询过的信息。
+- 请尽可能用最少的查询次数完成判定。
 """
 
     game_rule_en = """\
-Let's play a "Sequence Periodicity Inference" game. Here are the rules:
+Let's play a "Cut Vertex Detection" deduction game. Here are the rules:
 
-There is a hidden sequence S of length N = {n}, indexed from 1 to N. Each element in the sequence is one of four symbols (represented as A, B, C, D).
+A connected undirected simple graph has been set up with vertex set {vertices}, containing {n} vertices in total. I have secretly determined all edge connections in this graph. Now vertex {k} is specified as the target vertex to be determined.
 
-Your goal is to determine whether the sequence has periodicity:
-- If there exists an integer k (1 less than or equal to k less than N) such that for all positions i (1 less than or equal to i less than or equal to N-k), we have S[i] = S[i+k], then the sequence is periodic.
-- If periodic, find the minimum such k; otherwise, conclude that it is not periodic.
+Your goal is to determine whether vertex {k} is a cut vertex (i.e., whether removing this vertex and all its incident edges would split the graph into multiple connected components).
 
-You can ask me questions using the following five types (one question per turn), and I will answer truthfully based on the real sequence:
+You can ask me the following three types of questions (one per turn), and I will answer truthfully based on the actual setup:
 
-1. View Single Position (at most 3 times in total): Ask for the specific symbol at position i.
-2. Check Two Positions: Ask whether positions i and j have the same symbol.
-3. Window Equality Check: Ask whether the window [i, i+w-1] is identical to the window [j, j+w-1] position by position.
-4. Window Difference Count: Ask for the Hamming distance between windows [i, i+w-1] and [j, j+w-1].
-5. Period Candidate Verification (unlimited): Ask whether a given integer k is a period of the sequence.
+1. Edge Query: Ask whether there is an edge between two vertices u and v. Answer "Yes" or "No".
+2. Connected-Without-K Query: Ask whether two vertices a and b are still connected after removing vertex {k} and all its incident edges. Answer "Yes" or "No".
 
-Notes:
-- All position indices must be in the range [1, {n}].
-- For window queries, windows must not exceed bounds: i + w - 1 and j + w - 1 must both be less than or equal to {n}.
-- For period verification, k must satisfy 1 less than or equal to k less than {n}.
-- Out-of-bounds or malformed queries will receive error messages but won't count toward the single-view limit.
+When you have gathered enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following XML format:
 
-Each turn allows only one question. Use the following XML format:
+- Edge Query (e.g., asking if there is an edge between vertex A and B):
+<query_edge>A,B</query_edge>
 
-- View Single Position (e.g., position 5):
-<query_view>5</query_view>
+- Connected-Without-K Query (e.g., asking if A and B are connected after removing {k}):
+<query_connected>A,B</query_connected>
 
-- Check Two Positions (e.g., positions 2 and 7):
-<query_same>2,7</query_same>
+When submitting the final answer, choose one of the following two formats based on your judgment:
 
-- Window Equality Check (e.g., window starting at 1 with length 3 vs. window starting at 4 with length 3):
-<query_window>1,4,3</query_window>
+- If you judge {k} is a cut vertex, provide two witness vertices a and b (which are not connected after removing {k}):
+<answer>type=CUT, witnesses=A,B</answer>
 
-- Window Difference Count (e.g., window starting at 1 with length 5 vs. window starting at 6 with length 5):
-<query_diff>1,6,5</query_diff>
+- If you judge {k} is not a cut vertex, provide paths from an anchor vertex s to all other vertices (excluding {k} and s) without going through {k}:
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
-- Period Candidate Verification (e.g., check if k=3 is a period):
-<query_period>3</query_period>
-
-When you have enough information, submit your final conclusion:
-
-- If periodic (e.g., minimum period is 4):
-<answer>periodic=yes,min_period=4</answer>
-
-- If not periodic:
-<answer>periodic=no,min_period=none</answer>
-
-Try to use as few queries as possible. The game fails if the answer is incorrect, format is invalid, or single-view queries exceed 3 times.
+Note:
+- For NOT_CUT type, paths format uses semicolons to separate multiple paths, each path connects vertices with arrows.
+- Submitted evidence must be based on information you have already queried.
+- Try to complete the determination with as few queries as possible.
 """
 
-    # ================= 场景1：交通 =================
     contextualized_rule_zh_1 = """\
-“交通信号波浪模式分析”系统已启动。
+交通路网瓶颈分析：
+我们现在来进行一项"交通路网瓶颈"排查任务，规则如下：
 
-系统正在监测一条主干道上的 N = {n} 个连续路口，索引范围为 [1, {n}]。每个路口的交通流状态呈现四种相位特征之一（用 A、B、C、D 表示，仅作为可区分的符号）。
+系统设定了一个连通的无向交通路网，路口（或城市）集合为 {vertices}，共 {n} 个节点。我已秘密确定了该路网所有直接连通的道路。现在指定路口 {k} 作为待排查的目标节点。
 
-你的目标是判定该干道的交通流是否形成了周期性：
-- 若存在整数 k（1 小于等于 k 小于 {n}），使得对所有路口 i（1 小于等于 i 小于等于 {n}-k），都有 S[i] = S[i+k]，则称系统存在周期性。
-- 若存在周期性，你需要找出最小的这样的 k；若不存在周期性，你需要给出否定结论。
+你的目标是判断路口 {k} 是否为路网瓶颈（即完全封闭该路口及其所有相连道路后，整个交通路网是否会分裂成多个无法互通的区域）。
 
-你可以通过以下五种方式向我提问（每轮可提出一个问题），我会根据真实序列如实回答：
+你可以向我提出以下三类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-1. 单点查看（整个排查中最多使用 3 次）：询问路口 i 的具体状态是什么。
-2. 两点相同性判断：询问路口 i 和路口 j 的状态是否相同。
-3. 窗口一致性判断：询问从路口 i 开始长度为 w 的路段，与从路口 j 开始长度为 w 的路段，是否逐个路口完全一致。
-4. 窗口差异计数：询问从路口 i 开始长度为 w 的路段，与从路口 j 开始长度为 w 的路段，逐个路口比较有多少个状态不同（汉明距离）。
-5. 周期候选验证（使用次数不限）：询问某个整数 k 是否为该干道交通状态的一个周期。
+1. 道路查询：询问两个路口 u 和 v 之间是否存在直接相连的道路。回答"是"或"否"。
+2. 封闭K连通查询：询问在封闭路口 {k} 及其所有相连道路后，两个路口 a 和 b 之间是否依然有路可通。回答"是"或"否"。
+
+当你收集足够信息后，请提交最终排查结果。若排查结果错误或格式不符，任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 道路查询（例如询问路口 A 和 B 之间是否有直接道路）：
+<query_edge>A,B</query_edge>
+
+- 封闭K连通查询（例如询问封闭 {k} 后路口 A 和 B 是否仍可互通）：
+<query_connected>A,B</query_connected>
+
+提交最终结果时，请根据你的排查结论选择以下两种格式之一：
+
+- 如果判断 {k} 是路网瓶颈，需要提供两个见证路口 a 和 b（在封闭 {k} 后它们无法互通）：
+<answer>type=CUT, witnesses=A,B</answer>
+
+- 如果判断 {k} 不是路网瓶颈，需要提供从某个锚点路口 s 到所有其他路口（除 {k} 和 s外）的通行路径，所有路径均不得经过 {k}：
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
 注意：
-- 所有路口索引必须在 [1, {n}] 范围内。
-- 窗口查询时，窗口不能越界，即 i + w - 1 和 j + w - 1 都必须小于等于 {n}。
-- 周期候选验证中，k 必须满足 1 小于等于 k 小于 {n}。
-- 越界或格式错误的提问会得到错误提示，但不计入单点查看次数。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次只能提一个问题，使用以下 XML 格式：
-
-- 单点查看（例如查看路口 5）：
-<query_view>5</query_view>
-
-- 两点相同性判断（例如询问路口 2 和路口 7）：
-<query_same>2,7</query_same>
-
-- 窗口一致性判断（例如询问路口 1 开始长度 3 的路段与路口 4 开始长度 3 的路段）：
-<query_window>1,4,3</query_window>
-
-- 窗口差异计数（例如询问路口 1 开始长度 5 的路段与路口 6 开始长度 5 的路段）：
-<query_diff>1,6,5</query_diff>
-
-- 周期候选验证（例如验证 k=3 是否为周期）：
-<query_period>3</query_period>
-
-当你收集到足够信息后，提交最终结论，格式如下：
-
-- 若存在周期性（例如最小周期为 4）：
-<answer>periodic=yes,min_period=4</answer>
-
-- 若不存在周期性：
-<answer>periodic=no,min_period=none</answer>
-
-请使用尽可能少的提问次数找出答案。若答案错误、格式不符或单点查看超过 3 次，排查失败。
+- 对于 NOT_CUT 类型，paths 格式为用分号分隔的多条路径，每条路径用箭头连接路口。
+- 提交的证据必须基于你已查询过的信息。
+- 请尽可能用最少的查询次数完成判定。
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-The "Traffic Signal Wave Pattern Analysis" system is online.
+[Traffic Scenario]
+Traffic Network Bottleneck Analysis:
+Let's perform a "Traffic Network Bottleneck" detection task. Here are the rules:
 
-There is a sequence S representing N = {n} consecutive intersections along an arterial road, indexed from 1 to {n}. The traffic flow state at each intersection exhibits one of four phase characteristics (represented as A, B, C, D, purely as distinguishable symbols).
+A connected undirected traffic network has been set up with an intersection (or city) set {vertices}, containing {n} nodes in total. I have secretly determined all direct road connections in this network. Now intersection {k} is specified as the target node to be investigated.
 
-Your goal is to determine whether the sequence of traffic states has periodicity:
-- If there exists an integer k (1 less than or equal to k less than {n}) such that for all positions i (1 less than or equal to i less than or equal to {n}-k), we have S[i] = S[i+k], then the traffic sequence is periodic.
-- If periodic, find the minimum such k; otherwise, conclude that it is not periodic.
+Your goal is to determine whether intersection {k} is a network bottleneck (i.e., whether completely closing this intersection and all its connected roads would split the traffic network into multiple disconnected regions).
 
-You can ask me questions using the following five types (one question per turn), and I will answer truthfully based on the real sequence:
+You can ask me the following three types of questions (one per turn), and I will answer truthfully based on the actual setup:
 
-1. View Single Position (at most 3 times in total): Ask for the specific phase characteristic at intersection i.
-2. Check Two Positions: Ask whether intersections i and j have the same state.
-3. Window Equality Check: Ask whether the road segment starting at i with length w is identical to the road segment starting at j with length w, intersection by intersection.
-4. Window Difference Count: Ask for the Hamming distance (number of differing intersections) between the road segment starting at i with length w and the road segment starting at j with length w.
-5. Period Candidate Verification (unlimited): Ask whether a given integer k is a period of the traffic sequence.
+1. Road Query: Ask whether there is a direct road between two intersections u and v. Answer "Yes" or "No".
+2. Connected-Without-K Query: Ask whether two intersections a and b are still reachable from each other after closing intersection {k} and all its connected roads. Answer "Yes" or "No".
 
-Notes:
-- All intersection indices must be in the range [1, {n}].
-- For window queries, segments must not exceed bounds: i + w - 1 and j + w - 1 must both be less than or equal to {n}.
-- For period verification, k must satisfy 1 less than or equal to k less than {n}.
-- Out-of-bounds or malformed queries will receive error messages but won't count toward the single-view limit.
+When you have gathered enough information, submit your final analysis. If the analysis is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following XML format:
 
-Each turn allows only one question. Use the following XML format:
+- Road Query (e.g., asking if there is a direct road between intersection A and B):
+<query_edge>A,B</query_edge>
 
-- View Single Position (e.g., view intersection 5):
-<query_view>5</query_view>
+- Connected-Without-K Query (e.g., asking if A and B are still reachable after closing {k}):
+<query_connected>A,B</query_connected>
 
-- Check Two Positions (e.g., check intersections 2 and 7):
-<query_same>2,7</query_same>
+When submitting the final answer, choose one of the following two formats based on your conclusion:
 
-- Window Equality Check (e.g., segment starting at 1 with length 3 vs. segment starting at 4 with length 3):
-<query_window>1,4,3</query_window>
+- If you determine {k} is a network bottleneck, provide two witness intersections a and b (which cannot reach each other after closing {k}):
+<answer>type=CUT, witnesses=A,B</answer>
 
-- Window Difference Count (e.g., segment starting at 1 with length 5 vs. segment starting at 6 with length 5):
-<query_diff>1,6,5</query_diff>
+- If you determine {k} is not a network bottleneck, provide travel paths from an anchor intersection s to all other intersections (excluding {k} and s) without passing through {k}:
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
-- Period Candidate Verification (e.g., check if k=3 is a period):
-<query_period>3</query_period>
-
-When you have enough information, submit your final conclusion:
-
-- If periodic (e.g., minimum period is 4):
-<answer>periodic=yes,min_period=4</answer>
-
-- If not periodic:
-<answer>periodic=no,min_period=none</answer>
-
-Try to use as few queries as possible. The task fails if the answer is incorrect, format is invalid, or single-view queries exceed 3 times.
+Note:
+- For NOT_CUT type, paths format uses semicolons to separate multiple paths, each path connects intersections with arrows.
+- Submitted evidence must be based on information you have already queried.
+- Try to complete the determination with as few queries as possible.
 """
 
-    # ================= 场景2：医疗 =================
     contextualized_rule_zh_2 = """\
-“基因序列微卫星重复检测”任务已建立。
+传染病传播阻断分析：
+我们现在来进行一项"传播链关键节点"排查任务，规则如下：
 
-你面对的是一条长度为 N = {n} 的未知 DNA 标志物序列 S，索引范围为 [1, {n}]。序列上的每个位点表现为四种碱基多态性状态之一（用 A、B、C、D 表示，仅作为可区分的符号）。
+系统设定了一个连通的无向接触传播网络，人群个体集合为 {vertices}，共 {n} 个人。我已秘密确定了该网络中所有存在直接密切接触关系的人员对。现在指定个体 {k} 作为待排查的目标人员。
 
-你的目标是判定该基因序列是否存在周期性（串联重复）：
-- 若存在整数 k（1 小于等于 k 小于 {n}），使得对所有位点 i（1 小于等于 i 小于等于 {n}-k），都有 S[i] = S[i+k]，则称序列存在周期性。
-- 若存在周期性，你需要找出最小的这样的 k；若不存在周期性，你需要给出否定结论。
+你的目标是判断个体 {k} 是否为超级传播枢纽（即隔离该人员并切断其所有接触途径后，传播网络是否会断裂成多个无法互相传染的孤立群体）。
 
-你可以通过以下五种方式向我提问（每轮可提出一个问题），我会根据真实序列如实回答：
+你可以向我提出以下三类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-1. 单点查看（整个诊断中最多使用 3 次）：询问位点 i 的具体多态性状态是什么。
-2. 两点相同性判断：询问位点 i 和位点 j 的状态是否相同。
-3. 窗口一致性判断：询问从位点 i 开始长度为 w 的基因片段，与从位点 j 开始长度为 w 的基因片段，是否逐个位点完全一致。
-4. 窗口差异计数：询问从位点 i 开始长度为 w 的基因片段，与从位点 j 开始长度为 w 的基因片段，逐个位点比较有多少个状态不同（汉明距离）。
-5. 周期候选验证（使用次数不限）：询问某个整数 k 是否为该基因序列的一个重复周期。
+1. 接触查询：询问两个个体 u 和 v 之间是否存在直接的接触关系。回答"是"或"否"。
+2. 隔离K连通查询：询问在完全隔离个体 {k} 之后，两个个体 a 和 b 之间是否依然存在间接的传播路径。回答"是"或"否"。
+
+当你收集足够信息后，请提交最终排查结果。若排查结果错误或格式不符，任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 接触查询（例如询问个体 A 和 B 之间是否有直接接触）：
+<query_edge>A,B</query_edge>
+
+- 隔离K连通查询（例如询问隔离 {k} 后个体 A 和 B 是否仍可通过他人发生交叉感染）：
+<query_connected>A,B</query_connected>
+
+提交最终结果时，请根据你的排查结论选择以下两种格式之一：
+
+- 如果判断 {k} 是超级传播枢纽，需要提供两个见证个体 a 和 b（在隔离 {k} 后它们之间的传播链完全断裂）：
+<answer>type=CUT, witnesses=A,B</answer>
+
+- 如果判断 {k} 不是超级传播枢纽，需要提供从某个零号病人 s 到所有其他个体（除 {k} 和 s 外）的传播路径，所有路径均不得经过 {k}：
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
 注意：
-- 所有位点索引必须在 [1, {n}] 范围内。
-- 窗口查询时，片段不能越界，即 i + w - 1 和 j + w - 1 都必须小于等于 {n}。
-- 周期候选验证中，k 必须满足 1 小于等于 k 小于 {n}。
-- 越界或格式错误的提问会得到错误提示，但不计入单点查看次数。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次只能提一个问题，使用以下 XML 格式：
-
-- 单点查看（例如测序位点 5）：
-<query_view>5</query_view>
-
-- 两点相同性判断（例如比对位点 2 和位点 7）：
-<query_same>2,7</query_same>
-
-- 窗口一致性判断（例如比对位点 1 开始长度 3 的片段与位点 4 开始长度 3 的片段）：
-<query_window>1,4,3</query_window>
-
-- 窗口差异计数（例如比对位点 1 开始长度 5 的片段与位点 6 开始长度 5 的片段）：
-<query_diff>1,6,5</query_diff>
-
-- 周期候选验证（例如验证 k=3 是否为重复周期）：
-<query_period>3</query_period>
-
-当你收集到足够信息后，提交最终诊断结论，格式如下：
-
-- 若存在周期性（例如最小周期为 4）：
-<answer>periodic=yes,min_period=4</answer>
-
-- 若不存在周期性：
-<answer>periodic=no,min_period=none</answer>
-
-请使用尽可能少的提问次数找出答案。若答案错误、格式不符或单点查看超过 3 次，诊断失败。
+- 对于 NOT_CUT 类型，paths 格式为用分号分隔的多条路径，每条路径用箭头连接个体。
+- 提交的证据必须基于你已查询过的信息。
+- 请尽可能用最少的查询次数完成判定。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-The "Gene Sequence Microsatellite Repeat Detection" task is established.
+Infectious Disease Transmission Blockade Analysis:
+Let's perform a "Critical Transmission Node" detection task. Here are the rules:
 
-You are analyzing an unknown DNA marker sequence S of length N = {n}, indexed from 1 to {n}. Each locus on the sequence exhibits one of four base polymorphism states (represented as A, B, C, D, purely as distinguishable symbols).
+A connected undirected contact transmission network has been set up with an individual set {vertices}, containing {n} people in total. I have secretly determined all direct close contacts in this network. Now individual {k} is specified as the target person to be investigated.
 
-Your goal is to determine whether the genetic sequence has periodicity (tandem repeats):
-- If there exists an integer k (1 less than or equal to k less than {n}) such that for all loci i (1 less than or equal to i less than or equal to {n}-k), we have S[i] = S[i+k], then the sequence is periodic.
-- If periodic, find the minimum such k; otherwise, conclude that it is not periodic.
+Your goal is to determine whether individual {k} is a super-spreading hub (i.e., whether quarantining this person and cutting all their contact routes would break the transmission network into multiple isolated groups).
 
-You can ask me questions using the following five types (one question per turn), and I will answer truthfully based on the real sequence:
+You can ask me the following three types of questions (one per turn), and I will answer truthfully based on the actual setup:
 
-1. View Single Position (at most 3 times in total): Ask for the specific polymorphism state at locus i.
-2. Check Two Positions: Ask whether loci i and j have the same state.
-3. Window Equality Check: Ask whether the gene fragment starting at i with length w is identical to the gene fragment starting at j with length w, locus by locus.
-4. Window Difference Count: Ask for the Hamming distance (number of differing loci) between the gene fragment starting at i with length w and the gene fragment starting at j with length w.
-5. Period Candidate Verification (unlimited): Ask whether a given integer k is a repeat period of the genetic sequence.
+1. Contact Query: Ask whether there is a direct contact relationship between two individuals u and v. Answer "Yes" or "No".
+2. Connected-Without-K Query: Ask whether two individuals a and b still have an indirect transmission path after individual {k} is completely quarantined. Answer "Yes" or "No".
 
-Notes:
-- All locus indices must be in the range [1, {n}].
-- For window queries, fragments must not exceed bounds: i + w - 1 and j + w - 1 must both be less than or equal to {n}.
-- For period verification, k must satisfy 1 less than or equal to k less than {n}.
-- Out-of-bounds or malformed queries will receive error messages but won't count toward the single-view limit.
+When you have gathered enough information, submit your final analysis. If the analysis is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following XML format:
 
-Each turn allows only one question. Use the following XML format:
+- Contact Query (e.g., asking if there is a direct contact between individual A and B):
+<query_edge>A,B</query_edge>
 
-- View Single Position (e.g., sequence locus 5):
-<query_view>5</query_view>
+- Connected-Without-K Query (e.g., asking if A and B can still cross-infect after quarantining {k}):
+<query_connected>A,B</query_connected>
 
-- Check Two Positions (e.g., match loci 2 and 7):
-<query_same>2,7</query_same>
+When submitting the final answer, choose one of the following two formats based on your conclusion:
 
-- Window Equality Check (e.g., fragment starting at 1 with length 3 vs. fragment starting at 4 with length 3):
-<query_window>1,4,3</query_window>
+- If you determine {k} is a super-spreading hub, provide two witness individuals a and b (whose transmission chain is completely broken after quarantining {k}):
+<answer>type=CUT, witnesses=A,B</answer>
 
-- Window Difference Count (e.g., fragment starting at 1 with length 5 vs. fragment starting at 6 with length 5):
-<query_diff>1,6,5</query_diff>
+- If you determine {k} is not a super-spreading hub, provide transmission paths from an index case s to all other individuals (excluding {k} and s) without passing through {k}:
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
-- Period Candidate Verification (e.g., check if k=3 is a repeat period):
-<query_period>3</query_period>
-
-When you have enough information, submit your final diagnosis:
-
-- If periodic (e.g., minimum period is 4):
-<answer>periodic=yes,min_period=4</answer>
-
-- If not periodic:
-<answer>periodic=no,min_period=none</answer>
-
-Try to use as few queries as possible. The task fails if the answer is incorrect, format is invalid, or single-view queries exceed 3 times.
+Note:
+- For NOT_CUT type, paths format uses semicolons to separate multiple paths, each path connects individuals with arrows.
+- Submitted evidence must be based on information you have already queried.
+- Try to complete the determination with as few queries as possible.
 """
 
-    # ================= 场景3：教育 =================
     contextualized_rule_zh_3 = """\
-“学生行为状态周期性评估”系统已启动。
+学术协作网络分析：
+我们现在来进行一项"学术协作关键联络人"判定任务，规则如下：
 
-系统记录了某学生连续 N = {n} 周的学习行为数据 S，索引范围为 [1, {n}]。每周的学习状态被归类为四种效能等级之一（用 A、B、C、D 表示，仅作为可区分的符号）。
+系统设定了一个连通的无向学术协作网络，学者集合为 {vertices}，共 {n} 名学者。我已秘密确定了该网络中所有存在直接合作关系的学者对。现在指定学者 {k} 作为待判定的目标学者。
 
-你的目标是判定该学生的学习状态是否存在周期性循环：
-- 若存在整数 k（1 小于等于 k 小于 {n}），使得对所有周次 i（1 小于等于 i 小于等于 {n}-k），都有 S[i] = S[i+k]，则称学习状态存在周期性。
-- 若存在周期性，你需要找出最小的这样的 k；若不存在周期性，你需要给出否定结论。
+你的目标是判断学者 {k} 是否为协作网的关键联络人（即如果该学者退出研究并切断其所有合作关系，整个学术协作网是否会分裂成多个无法交流的孤立团队）。
 
-你可以通过以下五种方式向我提问（每轮可提出一个问题），我会根据真实数据如实回答：
+你可以向我提出以下三类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-1. 单点查看（整个评估中最多使用 3 次）：询问第 i 周的具体效能等级是什么。
-2. 两点相同性判断：询问第 i 周和第 j 周的效能等级是否相同。
-3. 窗口一致性判断：询问从第 i 周开始长度为 w 的学习阶段，与从第 j 周开始长度为 w 的学习阶段，是否逐周完全一致。
-4. 窗口差异计数：询问从第 i 周开始长度为 w 的学习阶段，与从第 j 周开始长度为 w 的学习阶段，逐周比较有多少个效能等级不同（汉明距离）。
-5. 周期候选验证（使用次数不限）：询问某个整数 k 是否为该学生学习状态的一个循环周期。
+1. 合作查询：询问两位学者 u 和 v 之间是否存在直接的学术合作关系。回答"是"或"否"。
+2. 退出K连通查询：询问在学者 {k} 退出研究后，两位学者 a 和 b 之间是否依然存在由他人构成的间接沟通路径。回答"是"或"否"。
+
+当你收集足够信息后，请提交最终判定结果。若判定结果错误或格式不符，任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 合作查询（例如询问学者 A 和 B 之间是否有直接合作）：
+<query_edge>A,B</query_edge>
+
+- 退出K连通查询（例如询问学者 {k} 退出后，学者 A 和 B 是否仍可通过他人沟通）：
+<query_connected>A,B</query_connected>
+
+提交最终结果时，请根据你的判定结论选择以下两种格式之一：
+
+- 如果判断 {k} 是关键联络人，需要提供两位见证学者 a 和 b（在 {k} 退出后他们所在的团队无法相互交流）：
+<answer>type=CUT, witnesses=A,B</answer>
+
+- 如果判断 {k} 不是关键联络人，需要提供从某位发起学者 s 到所有其他学者（除 {k} 和 s 外）的合作传导路径，所有路径均不得经过 {k}：
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
 注意：
-- 所有周次索引必须在 [1, {n}] 范围内。
-- 窗口查询时，学习阶段不能越界，即 i + w - 1 和 j + w - 1 都必须小于等于 {n}。
-- 周期候选验证中，k 必须满足 1 小于等于 k 小于 {n}。
-- 越界或格式错误的提问会得到错误提示，但不计入单点查看次数。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次只能提一个问题，使用以下 XML 格式：
-
-- 单点查看（例如查看第 5 周）：
-<query_view>5</query_view>
-
-- 两点相同性判断（例如询问第 2 周和第 7 周）：
-<query_same>2,7</query_same>
-
-- 窗口一致性判断（例如询问第 1 周开始长度 3 的阶段与第 4 周开始长度 3 的阶段）：
-<query_window>1,4,3</query_window>
-
-- 窗口差异计数（例如询问第 1 周开始长度 5 的阶段与第 6 周开始长度 5 的阶段）：
-<query_diff>1,6,5</query_diff>
-
-- 周期候选验证（例如验证 k=3 是否为循环周期）：
-<query_period>3</query_period>
-
-当你收集到足够信息后，提交最终评估结论，格式如下：
-
-- 若存在周期性（例如最小周期为 4）：
-<answer>periodic=yes,min_period=4</answer>
-
-- 若不存在周期性：
-<answer>periodic=no,min_period=none</answer>
-
-请使用尽可能少的提问次数找出答案。若答案错误、格式不符或单点查看超过 3 次，评估失败。
+- 对于 NOT_CUT 类型，paths 格式为用分号分隔的多条路径，每条路径用箭头连接学者。
+- 提交的证据必须基于你已查询过的信息。
+- 请尽可能用最少的查询次数完成判定。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-The "Student Behavior Periodicity Assessment" system is initialized.
+Academic Collaboration Network Analysis:
+Let's perform an "Academic Key Liaison" determination task. Here are the rules:
 
-The system recorded a student's learning behavior data S for N = {n} consecutive weeks, indexed from 1 to {n}. Each week's learning state is classified into one of four efficacy levels (represented as A, B, C, D, purely as distinguishable symbols).
+A connected undirected academic collaboration network has been set up with a scholar set {vertices}, containing {n} scholars in total. I have secretly determined all direct collaboration relationships in this network. Now scholar {k} is specified as the target to be evaluated.
 
-Your goal is to determine whether the student's learning state sequence has periodicity:
-- If there exists an integer k (1 less than or equal to k less than {n}) such that for all weeks i (1 less than or equal to i less than or equal to {n}-k), we have S[i] = S[i+k], then the learning sequence is periodic.
-- If periodic, find the minimum such k; otherwise, conclude that it is not periodic.
+Your goal is to determine whether scholar {k} is a key liaison in the network (i.e., whether the entire academic collaboration network would split into multiple isolated teams unable to communicate if this scholar drops out of the research and all their collaborations are cut).
 
-You can ask me questions using the following five types (one question per turn), and I will answer truthfully based on the real data:
+You can ask me the following three types of questions (one per turn), and I will answer truthfully based on the actual setup:
 
-1. View Single Position (at most 3 times in total): Ask for the specific efficacy level at week i.
-2. Check Two Positions: Ask whether week i and week j have the same level.
-3. Window Equality Check: Ask whether the learning phase starting at i with length w is identical to the phase starting at j with length w, week by week.
-4. Window Difference Count: Ask for the Hamming distance (number of differing weeks) between the learning phase starting at i with length w and the phase starting at j with length w.
-5. Period Candidate Verification (unlimited): Ask whether a given integer k is a cycle period of the learning state.
+1. Collaboration Query: Ask whether there is a direct academic collaboration between two scholars u and v. Answer "Yes" or "No".
+2. Connected-Without-K Query: Ask whether two scholars a and b still have an indirect communication path via others after scholar {k} drops out. Answer "Yes" or "No".
 
-Notes:
-- All week indices must be in the range [1, {n}].
-- For window queries, phases must not exceed bounds: i + w - 1 and j + w - 1 must both be less than or equal to {n}.
-- For period verification, k must satisfy 1 less than or equal to k less than {n}.
-- Out-of-bounds or malformed queries will receive error messages but won't count toward the single-view limit.
+When you have gathered enough information, submit your final analysis. If the analysis is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following XML format:
 
-Each turn allows only one question. Use the following XML format:
+- Collaboration Query (e.g., asking if there is a direct collaboration between scholar A and B):
+<query_edge>A,B</query_edge>
 
-- View Single Position (e.g., view week 5):
-<query_view>5</query_view>
+- Connected-Without-K Query (e.g., asking if scholars A and B can still communicate after {k} drops out):
+<query_connected>A,B</query_connected>
 
-- Check Two Positions (e.g., check week 2 and week 7):
-<query_same>2,7</query_same>
+When submitting the final answer, choose one of the following two formats based on your conclusion:
 
-- Window Equality Check (e.g., phase starting at 1 with length 3 vs. phase starting at 4 with length 3):
-<query_window>1,4,3</query_window>
+- If you determine {k} is a key liaison, provide two witness scholars a and b (whose teams cannot communicate after {k} drops out):
+<answer>type=CUT, witnesses=A,B</answer>
 
-- Window Difference Count (e.g., phase starting at 1 with length 5 vs. phase starting at 6 with length 5):
-<query_diff>1,6,5</query_diff>
+- If you determine {k} is not a key liaison, provide collaboration propagation paths from a lead scholar s to all other scholars (excluding {k} and s) without passing through {k}:
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
-- Period Candidate Verification (e.g., check if k=3 is a cycle period):
-<query_period>3</query_period>
-
-When you have enough information, submit your final assessment:
-
-- If periodic (e.g., minimum period is 4):
-<answer>periodic=yes,min_period=4</answer>
-
-- If not periodic:
-<answer>periodic=no,min_period=none</answer>
-
-Try to use as few queries as possible. The task fails if the answer is incorrect, format is invalid, or single-view queries exceed 3 times.
+Note:
+- For NOT_CUT type, paths format uses semicolons to separate multiple paths, each path connects scholars with arrows.
+- Submitted evidence must be based on information you have already queried.
+- Try to complete the determination with as few queries as possible.
 """
 
-    # ================= 场景4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-“自动化流水线缺陷周期排查”任务已分配。
+工业物联网单点故障排查：
+我们现在来进行一项"工业网络关键中继"排查任务，规则如下：
 
-当前批次生产了 N = {n} 个连续的精密部件 S，索引范围为 [1, {n}]。每个部件经过质检，被判定为四种质量特征类型之一（用 A、B、C、D 表示，仅作为可区分的符号）。
+系统设定了一个连通的无向工业物联网架构，设备终端集合为 {vertices}，共 {n} 个节点。我已秘密确定了该网络中所有设备的直连通信链路。现在指定终端 {k} 作为待排查的测试节点。
 
-你的目标是查明该流水线机器的质量特征是否存在周期性偏差：
-- 若存在整数 k（1 小于等于 k 小于 {n}），使得对所有部件 i（1 小于等于 i 小于等于 {n}-k），都有 S[i] = S[i+k]，则称生产质量存在周期性。
-- 若存在周期性，你需要找出最小的这样的 k；若不存在周期性，你需要给出否定结论。
+你的目标是判断终端 {k} 是否为网络中的单点故障节点（即如果该终端宕机断网，整个工业网络是否会分裂成多个无法互传指令的孤立子网）。
 
-你可以通过以下五种方式向我提问（每轮可提出一个问题），我会根据真实批次如实回答：
+你可以向我提出以下三类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-1. 单点查看（整个排查中最多使用 3 次）：询问部件 i 的具体质量特征是什么。
-2. 两点相同性判断：询问部件 i 和部件 j 的质量特征是否相同。
-3. 窗口一致性判断：询问从部件 i 开始长度为 w 的连续生产段，与从部件 j 开始长度为 w 的连续生产段，是否逐件完全一致。
-4. 窗口差异计数：询问从部件 i 开始长度为 w 的连续生产段，与从部件 j 开始长度为 w 的连续生产段，逐件比较有多少个质量特征不同（汉明距离）。
-5. 周期候选验证（使用次数不限）：询问某个整数 k 是否为该流水线生产特征的一个周期。
+1. 链路查询：询问两个终端 u 和 v 之间是否存在物理直连链路。回答"是"或"否"。
+2. 宕机K连通查询：询问在终端 {k} 宕机下线后，两个终端 a 和 b 之间是否依然能够通过其他节点路由传输数据。回答"是"或"否"。
+
+当你收集足够信息后，请提交最终排查结果。若排查结果错误或格式不符，任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 链路查询（例如询问终端 A 和 B 之间是否有直连链路）：
+<query_edge>A,B</query_edge>
+
+- 宕机K连通查询（例如询问终端 {k} 宕机后，终端 A 和 B 是否仍可互传数据）：
+<query_connected>A,B</query_connected>
+
+提交最终结果时，请根据你的排查结论选择以下两种格式之一：
+
+- 如果判断 {k} 是单点故障节点，需要提供两个见证终端 a 和 b（在 {k} 宕机后它们之间的数据传输彻底中断）：
+<answer>type=CUT, witnesses=A,B</answer>
+
+- 如果判断 {k} 不是单点故障节点，需要提供从某个主控终端 s 到所有其他在线终端（除 {k} 和 s 外）的数据路由路径，所有路径均不得经过 {k}：
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
 注意：
-- 所有部件索引必须在 [1, {n}] 范围内。
-- 窗口查询时，连续生产段不能越界，即 i + w - 1 和 j + w - 1 都必须小于等于 {n}。
-- 周期候选验证中，k 必须满足 1 小于等于 k 小于 {n}。
-- 越界或格式错误的提问会得到错误提示，但不计入单点查看次数。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次只能提一个问题，使用以下 XML 格式：
-
-- 单点查看（例如抽检部件 5）：
-<query_view>5</query_view>
-
-- 两点相同性判断（例如询问部件 2 和部件 7）：
-<query_same>2,7</query_same>
-
-- 窗口一致性判断（例如询问部件 1 开始长度 3 的生产段与部件 4 开始长度 3 的生产段）：
-<query_window>1,4,3</query_window>
-
-- 窗口差异计数（例如询问部件 1 开始长度 5 的生产段与部件 6 开始长度 5 的生产段）：
-<query_diff>1,6,5</query_diff>
-
-- 周期候选验证（例如验证 k=3 是否为特征周期）：
-<query_period>3</query_period>
-
-当你收集到足够信息后，提交最终排查结论，格式如下：
-
-- 若存在周期性（例如最小周期为 4）：
-<answer>periodic=yes,min_period=4</answer>
-
-- 若不存在周期性：
-<answer>periodic=no,min_period=none</answer>
-
-请使用尽可能少的提问次数找出答案。若答案错误、格式不符或单点查看超过 3 次，排查失败。
+- 对于 NOT_CUT 类型，paths 格式为用分号分隔的多条路径，每条路径用箭头连接终端。
+- 提交的证据必须基于你已查询过的信息。
+- 请尽可能用最少的查询次数完成判定。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-The "Automated Assembly Line Defect Periodicity Troubleshooting" task is assigned.
+[Manufacturing Scenario]
+Industrial IoT Single Point of Failure Detection:
+Let's perform an "Industrial Network Critical Relay" detection task. Here are the rules:
 
-The current batch produced a sequence S of N = {n} consecutive precision components, indexed from 1 to {n}. Each component is inspected and assigned one of four quality characteristic types (represented as A, B, C, D, purely as distinguishable symbols).
+A connected undirected Industrial IoT architecture has been set up with an equipment terminal set {vertices}, containing {n} nodes in total. I have secretly determined all direct communication links among devices in this network. Now terminal {k} is specified as the test node to be investigated.
 
-Your goal is to determine whether the assembly line's quality characteristics exhibit periodicity:
-- If there exists an integer k (1 less than or equal to k less than {n}) such that for all components i (1 less than or equal to i less than or equal to {n}-k), we have S[i] = S[i+k], then the production quality is periodic.
-- If periodic, find the minimum such k; otherwise, conclude that it is not periodic.
+Your goal is to determine whether terminal {k} is a Single Point of Failure (SPOF) in the network (i.e., whether the entire industrial network would split into multiple isolated subnets unable to transmit commands if this terminal crashes and goes offline).
 
-You can ask me questions using the following five types (one question per turn), and I will answer truthfully based on the real batch:
+You can ask me the following three types of questions (one per turn), and I will answer truthfully based on the actual setup:
 
-1. View Single Position (at most 3 times in total): Ask for the specific quality characteristic of component i.
-2. Check Two Positions: Ask whether components i and j have the same characteristic.
-3. Window Equality Check: Ask whether the production segment starting at i with length w is identical to the segment starting at j with length w, piece by piece.
-4. Window Difference Count: Ask for the Hamming distance (number of differing components) between the segment starting at i with length w and the segment starting at j with length w.
-5. Period Candidate Verification (unlimited): Ask whether a given integer k is a cycle period of the production characteristics.
+1. Link Query: Ask whether there is a direct physical link between two terminals u and v. Answer "Yes" or "No".
+2. Connected-Without-K Query: Ask whether two terminals a and b can still route data to each other via other nodes after terminal {k} crashes. Answer "Yes" or "No".
 
-Notes:
-- All component indices must be in the range [1, {n}].
-- For window queries, segments must not exceed bounds: i + w - 1 and j + w - 1 must both be less than or equal to {n}.
-- For period verification, k must satisfy 1 less than or equal to k less than {n}.
-- Out-of-bounds or malformed queries will receive error messages but won't count toward the single-view limit.
+When you have gathered enough information, submit your final analysis. If the analysis is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following XML format:
 
-Each turn allows only one question. Use the following XML format:
+- Link Query (e.g., asking if there is a direct link between terminal A and B):
+<query_edge>A,B</query_edge>
 
-- View Single Position (e.g., inspect component 5):
-<query_view>5</query_view>
+- Connected-Without-K Query (e.g., asking if terminals A and B can still transmit data after {k} crashes):
+<query_connected>A,B</query_connected>
 
-- Check Two Positions (e.g., check components 2 and 7):
-<query_same>2,7</query_same>
+When submitting the final answer, choose one of the following two formats based on your conclusion:
 
-- Window Equality Check (e.g., segment starting at 1 with length 3 vs. segment starting at 4 with length 3):
-<query_window>1,4,3</query_window>
+- If you determine {k} is a Single Point of Failure, provide two witness terminals a and b (whose data transmission is completely interrupted after {k} crashes):
+<answer>type=CUT, witnesses=A,B</answer>
 
-- Window Difference Count (e.g., segment starting at 1 with length 5 vs. segment starting at 6 with length 5):
-<query_diff>1,6,5</query_diff>
+- If you determine {k} is not a Single Point of Failure, provide data routing paths from a master terminal s to all other online terminals (excluding {k} and s) without passing through {k}:
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
-- Period Candidate Verification (e.g., check if k=3 is a characteristic period):
-<query_period>3</query_period>
-
-When you have enough information, submit your final troubleshooting conclusion:
-
-- If periodic (e.g., minimum period is 4):
-<answer>periodic=yes,min_period=4</answer>
-
-- If not periodic:
-<answer>periodic=no,min_period=none</answer>
-
-Try to use as few queries as possible. The task fails if the answer is incorrect, format is invalid, or single-view queries exceed 3 times.
+Note:
+- For NOT_CUT type, paths format uses semicolons to separate multiple paths, each path connects terminals with arrows.
+- Submitted evidence must be based on information you have already queried.
+- Try to complete the determination with as few queries as possible.
 """
 
-    # ================= 场景5：法律 =================
     contextualized_rule_zh_5 = """\
-“金融交易账户洗钱循环侦测”已启动。
+非法资金网络结构分析：
+我们现在来进行一项"洗钱网络核心中介"的取证任务，规则如下：
 
-反洗钱系统拦截了某可疑账户连续 N = {n} 笔按时间排序的资金交易记录 S，索引范围为 [1, {n}]。每笔交易的操作手法被判定为四种风险标签之一（用 A、B、C、D 表示，仅作为可区分的符号）。
+警方截获了一个连通的无向非法资金网络，涉案账户集合为 {vertices}，共 {n} 个账户。我已秘密查明了该网络中所有存在直接资金往来的账户对。现在指定账户 {k} 作为待排查的目标账户。
 
-你的目标是判定该账户的交易行为是否构成周期性的洗钱循环：
-- 若存在整数 k（1 小于等于 k 小于 {n}），使得对所有交易 i（1 小于等于 i 小于等于 {n}-k），都有 S[i] = S[i+k]，则称交易行为存在周期性。
-- 若存在周期性，你需要找出最小的这样的 k；若不存在周期性，你需要给出否定结论。
+你的目标是判断账户 {k} 是否为洗钱网络的关键阻断点（即如果冻结该账户并切断其所有交易渠道，整个非法资金网络是否会分裂成多个无法进行资金流转的孤立团伙）。
 
-你可以通过以下五种方式向法证系统提问（每轮可提出一个问题），系统会根据真实账本如实回答：
+你可以向我提出以下三类问题（每次仅限一个问题），我会根据真实卷宗如实回答：
 
-1. 单点查看（整个侦测中最多使用 3 次）：询问交易 i 的具体风险标签是什么。
-2. 两点相同性判断：询问交易 i 和交易 j 的风险标签是否相同。
-3. 窗口一致性判断：询问从交易 i 开始长度为 w 的交易区间，与从交易 j 开始长度为 w 的交易区间，是否逐笔完全一致。
-4. 窗口差异计数：询问从交易 i 开始长度为 w 的交易区间，与从交易 j 开始长度为 w 的交易区间，逐笔比较有多少个风险标签不同（汉明距离）。
-5. 周期候选验证（使用次数不限）：询问某个整数 k 是否为该账户交易行为的一个循环周期。
+1. 交易查询：询问两个账户 u 和 v 之间是否存在直接的资金往来记录。回答"是"或"否"。
+2. 冻结K连通查询：询问在全面冻结账户 {k} 后，两个账户 a 和 b 之间是否依然可以通过其他涉案账户进行洗钱流转。回答"是"或"否"。
+
+当你收集足够信息后，请提交最终取证结果。若结论错误或格式不符，任务失败。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 交易查询（例如询问账户 A 和 B 之间是否有直接交易记录）：
+<query_edge>A,B</query_edge>
+
+- 冻结K连通查询（例如询问冻结 {k} 后账户 A 和 B 是否仍可流转资金）：
+<query_connected>A,B</query_connected>
+
+提交最终结果时，请根据你的取证结论选择以下两种格式之一：
+
+- 如果判断 {k} 是关键阻断点，需要提供两个见证账户 a 和 b（在冻结 {k} 后它们之间的资金流转通道彻底断裂）：
+<answer>type=CUT, witnesses=A,B</answer>
+
+- 如果判断 {k} 不是关键阻断点，需要提供从某个源头账户 s 到所有其他活跃账户（除 {k} 和 s 外）的资金流转路径，所有路径均不得经过 {k}：
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
 注意：
-- 所有交易索引必须在 [1, {n}] 范围内。
-- 窗口查询时，交易区间不能越界，即 i + w - 1 和 j + w - 1 都必须小于等于 {n}。
-- 周期候选验证中，k 必须满足 1 小于等于 k 小于 {n}。
-- 越界或格式错误的提问会得到错误提示，但不计入单点查看次数。
-
-## 提问与提交答案的格式（必须严格遵守）
-
-每次只能提一个问题，使用以下 XML 格式：
-
-- 单点查看（例如审查交易 5）：
-<query_view>5</query_view>
-
-- 两点相同性判断（例如比对交易 2 和交易 7）：
-<query_same>2,7</query_same>
-
-- 窗口一致性判断（例如比对交易 1 开始长度 3 的区间与交易 4 开始长度 3 的区间）：
-<query_window>1,4,3</query_window>
-
-- 窗口差异计数（例如比对交易 1 开始长度 5 的区间与交易 6 开始长度 5 的区间）：
-<query_diff>1,6,5</query_diff>
-
-- 周期候选验证（例如验证 k=3 是否为洗钱周期）：
-<query_period>3</query_period>
-
-当你收集到足够信息后，提交法证结论，格式如下：
-
-- 若存在周期性（例如最小周期为 4）：
-<answer>periodic=yes,min_period=4</answer>
-
-- 若不存在周期性：
-<answer>periodic=no,min_period=none</answer>
-
-请使用尽可能少的提问次数找出答案。若答案错误、格式不符或单点查看超过 3 次，侦测失败。
+- 对于 NOT_CUT 类型，paths 格式为用分号分隔的多条路径，每条路径用箭头连接账户。
+- 提交的证据必须基于你已查询过的信息。
+- 请尽可能用最少的查询次数完成判定。
 """
 
     contextualized_rule_en_5 = """\
 [Law Scenario]
-The "Financial Transaction Account Money Laundering Loop Detection" is activated.
+Illicit Financial Network Structure Analysis:
+Let's perform a forensics task on a "Money Laundering Core Intermediary". Here are the rules:
 
-The AML system intercepted a suspicious account's sequence S of N = {n} chronological fund transaction records, indexed from 1 to {n}. The operational methodology of each transaction is classified into one of four risk labels (represented as A, B, C, D, purely as distinguishable symbols).
+The police have intercepted a connected undirected illicit financial network, with an involved account set {vertices}, containing {n} accounts in total. I have secretly investigated all pairs of accounts with direct financial transactions in this network. Now account {k} is specified as the target to be analyzed.
 
-Your goal is to determine whether the account's trading behavior constitutes a periodic money laundering loop:
-- If there exists an integer k (1 less than or equal to k less than {n}) such that for all transactions i (1 less than or equal to i less than or equal to {n}-k), we have S[i] = S[i+k], then the transaction sequence is periodic.
-- If periodic, find the minimum such k; otherwise, conclude that it is not periodic.
+Your goal is to determine whether account {k} is a critical choke point in the money laundering network (i.e., whether freezing this account and cutting all its transaction channels would split the entire illicit financial network into multiple isolated syndicates unable to circulate funds).
 
-You can ask me questions using the following five types (one question per turn), and I will answer truthfully based on the real ledger:
+You can ask me the following three types of questions (one per turn), and I will answer truthfully based on the actual case files:
 
-1. View Single Position (at most 3 times in total): Ask for the specific risk label of transaction i.
-2. Check Two Positions: Ask whether transactions i and j share the same risk label.
-3. Window Equality Check: Ask whether the transaction window starting at i with length w is identical to the window starting at j with length w, transaction by transaction.
-4. Window Difference Count: Ask for the Hamming distance (number of differing transactions) between the window starting at i with length w and the window starting at j with length w.
-5. Period Candidate Verification (unlimited): Ask whether a given integer k is a cycle period of the transaction behavior.
+1. Transaction Query: Ask whether there is a record of direct financial transaction between two accounts u and v. Answer "Yes" or "No".
+2. Connected-Without-K Query: Ask whether two accounts a and b can still circulate laundered funds via other involved accounts after completely freezing account {k}. Answer "Yes" or "No".
 
-Notes:
-- All transaction indices must be in the range [1, {n}].
-- For window queries, windows must not exceed bounds: i + w - 1 and j + w - 1 must both be less than or equal to {n}.
-- For period verification, k must satisfy 1 less than or equal to k less than {n}.
-- Out-of-bounds or malformed queries will receive error messages but won't count toward the single-view limit.
+When you have gathered enough information, submit your final forensic conclusion. If the conclusion is wrong or the format is invalid, the task fails.
 
-## Query and Answer Format (strictly required)
+Each query must contain only one tag. Use the following XML format:
 
-Each turn allows only one question. Use the following XML format:
+- Transaction Query (e.g., asking if there is a direct transaction record between account A and B):
+<query_edge>A,B</query_edge>
 
-- View Single Position (e.g., review transaction 5):
-<query_view>5</query_view>
+- Connected-Without-K Query (e.g., asking if funds can still circulate between accounts A and B after freezing {k}):
+<query_connected>A,B</query_connected>
 
-- Check Two Positions (e.g., check transactions 2 and 7):
-<query_same>2,7</query_same>
+When submitting the final answer, choose one of the following two formats based on your conclusion:
 
-- Window Equality Check (e.g., window starting at 1 with length 3 vs. window starting at 4 with length 3):
-<query_window>1,4,3</query_window>
+- If you determine {k} is a critical choke point, provide two witness accounts a and b (whose fund circulation channel is completely broken after freezing {k}):
+<answer>type=CUT, witnesses=A,B</answer>
 
-- Window Difference Count (e.g., window starting at 1 with length 5 vs. window starting at 6 with length 5):
-<query_diff>1,6,5</query_diff>
+- If you determine {k} is not a critical choke point, provide fund circulation paths from a source account s to all other active accounts (excluding {k} and s) without passing through {k}:
+<answer>type=NOT_CUT, anchor=A, paths=A->B->C;A->D;A->B->E</answer>
 
-- Period Candidate Verification (e.g., check if k=3 is a laundering cycle):
-<query_period>3</query_period>
-
-When you have enough information, submit your final forensic conclusion:
-
-- If periodic (e.g., minimum period is 4):
-<answer>periodic=yes,min_period=4</answer>
-
-- If not periodic:
-<answer>periodic=no,min_period=none</answer>
-
-Try to use as few queries as possible. The detection fails if the answer is incorrect, format is invalid, or single-view queries exceed 3 times.
+Note:
+- For NOT_CUT type, paths format uses semicolons to separate multiple paths, each path connects accounts with arrows.
+- Submitted evidence must be based on information you have already queried.
+- Try to complete the determination with as few queries as possible.
 """
 
-    tags = ["answer", "query_view", "query_same", "query_window", "query_diff", "query_period"]
+    tags = ["answer", "query_edge", "query_connected"]
     
-    # 游戏元数据
     reasoning_type = "演绎推理"
-    data_structure = "序列"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 8,
-                "sequence": "ABABABAB",  
-                "has_period": True,
-                "min_period": 2,
+                "n": 7,
+                "vertices": "A,B,C,D,E,F,G",
+                "edges": "A-B,A-C,A-D,A-E,A-F,A-G",
+                "k": "A",
+                "is_cut": True,
             },
             2: {
-                "n": 10,
-                "sequence": "ABCDAABCDA",  
-                "has_period": True,
-                "min_period": 5,
+                "n": 8,
+                "vertices": "A,B,C,D,E,F,G,H",
+                "edges": "A-B,B-C,C-D,D-E,E-F,F-G,G-H,D-A",
+                "k": "D",
+                "is_cut": True,
             },
             3: {
-                "n": 12,
-                "sequence": "ABCDABCDABCD",  
-                "has_period": True,
-                "min_period": 4,
+                "n": 9,
+                "vertices": "A,B,C,D,E,F,G,H,I",
+                "edges": "A-B,B-C,C-A,A-D,D-E,E-F,F-D,B-E,C-G,G-H,H-I,I-G,F-H",
+                "k": "D",
+                "is_cut": False,
             },
             4: {
-                "n": 15,
-                "sequence": "ABCDABCDABCDABD",  
-                "has_period": False,
-                "min_period": None,
+                "n": 10,
+                "vertices": "A,B,C,D,E,F,G,H,I,J",
+                "edges": "A-B,A-C,B-D,C-D,D-E,E-F,E-G,F-H,G-H,H-I,H-J,I-J",
+                "k": "E",
+                "is_cut": True,
             },
             5: {
-                "n": 16,
-                "sequence": "ABCDABCDABCDABCD",  
-                "has_period": True,
-                "min_period": 4,
+                "n": 12,
+                "vertices": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "edges": "A-B,A-C,A-D,B-C,B-D,C-D,A-E,E-F,F-G,G-H,E-H,F-H,E-I,I-J,J-K,K-L,I-L,J-L,H-I,A-F,D-I",
+                "k": "E",
+                "is_cut": False,
             },
         },
         "en": {
             1: {
-                "n": 8,
-                "sequence": "ABABABAB",
-                "has_period": True,
-                "min_period": 2,
+                "n": 7,
+                "vertices": "A,B,C,D,E,F,G",
+                "edges": "A-B,A-C,A-D,A-E,A-F,A-G",
+                "k": "A",
+                "is_cut": True,
             },
             2: {
-                "n": 10,
-                "sequence": "ABCDAABCDA",
-                "has_period": True,
-                "min_period": 5,
+                "n": 8,
+                "vertices": "A,B,C,D,E,F,G,H",
+                "edges": "A-B,B-C,C-D,D-E,E-F,F-G,G-H,D-A",
+                "k": "D",
+                "is_cut": True,
             },
             3: {
-                "n": 12,
-                "sequence": "ABCDABCDABCD",
-                "has_period": True,
-                "min_period": 4,
+                "n": 9,
+                "vertices": "A,B,C,D,E,F,G,H,I",
+                "edges": "A-B,B-C,C-A,A-D,D-E,E-F,F-D,B-E,C-G,G-H,H-I,I-G,F-H",
+                "k": "D",
+                "is_cut": False,
             },
             4: {
-                "n": 15,
-                "sequence": "ABCDABCDABCDABD",  
-                "has_period": False,
-                "min_period": None,
+                "n": 10,
+                "vertices": "A,B,C,D,E,F,G,H,I,J",
+                "edges": "A-B,A-C,B-D,C-D,D-E,E-F,E-G,F-H,G-H,H-I,H-J,I-J",
+                "k": "E",
+                "is_cut": True,
             },
             5: {
-                "n": 16,
-                "sequence": "ABCDABCDABCDABCD",
-                "has_period": True,
-                "min_period": 4,
+                "n": 12,
+                "vertices": "A,B,C,D,E,F,G,H,I,J,K,L",
+                "edges": "A-B,A-C,A-D,B-C,B-D,C-D,A-E,E-F,F-G,G-H,E-H,F-H,E-I,I-J,J-K,K-L,I-L,J-L,H-I,A-F,D-I",
+                "k": "E",
+                "is_cut": False,
             },
         },
     }
 
     def __init__(self, config):
-        # 初始化查看次数计数器
-        self.view_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
@@ -739,215 +545,259 @@ Try to use as few queries as possible. The detection fails if the answer is inco
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        
+        self.vertices = set(v.strip() for v in cfg["vertices"].split(","))
+        self._game_info["vertices"] = cfg["vertices"]
         self._game_info["n"] = cfg["n"]
+        self._game_info["k"] = cfg["k"]
+        self.k = cfg["k"]
+        self.is_cut = cfg["is_cut"]
         
-        # 处理序列
-        raw_seq = cfg["sequence"]
-        self.sequence = self._normalize_sequence(raw_seq)
+        self.edges = set()
+        for edge_str in cfg["edges"].split(","):
+            u, v = edge_str.strip().split("-")
+            u, v = u.strip(), v.strip()
+            self.edges.add(tuple(sorted([u, v])))
         
-        self.has_period = cfg["has_period"]
-        self.min_period = cfg["min_period"]
-        self.n = cfg["n"]
+        self.edge_query_history = {}
+        self.connected_query_history = {}
+        
+        self._compute_connectivity_without_k()
 
-    def _normalize_sequence(self, seq):
-        """验证序列只包含ABCD"""
-        for ch in seq:
-            if ch not in 'ABCD':
-                raise ValueError(f"Sequence contains invalid character: {ch}")
-        return seq
+    def _compute_connectivity_without_k(self):
+        adj = {v: set() for v in self.vertices if v != self.k}
+        for u, v in self.edges:
+            if u != self.k and v != self.k:
+                adj[u].add(v)
+                adj[v].add(u)
+        
+        self.connectivity_without_k = {}
+        for start in adj:
+            if start not in self.connectivity_without_k:
+                component = set()
+                queue = [start]
+                visited = {start}
+                while queue:
+                    node = queue.pop(0)
+                    component.add(node)
+                    for neighbor in adj[node]:
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            queue.append(neighbor)
+                for u in component:
+                    for v in component:
+                        if u != v:
+                            key = tuple(sorted([u, v]))
+                            self.connectivity_without_k[key] = True
+        
+        vertices_without_k = [v for v in self.vertices if v != self.k]
+        for i, u in enumerate(vertices_without_k):
+            for v in vertices_without_k[i+1:]:
+                key = tuple(sorted([u, v]))
+                if key not in self.connectivity_without_k:
+                    self.connectivity_without_k[key] = False
 
-    def _check_period(self, k):
-        """检查k是否为序列的周期"""
-        if k < 1 or k >= self.n:
-            return False
-        for i in range(1, self.n - k + 1):
-            if self.sequence[i-1] != self.sequence[i+k-1]:
-                return False
-        return True
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+            
+        vertices_list = sorted(list(self.vertices))
+        n = len(vertices_list)
+        
+        for i in range(n):
+            for j in range(i + 1, n):
+                u = vertices_list[i]
+                v = vertices_list[j]
+                
+                query_str = f"<query_edge>{u},{v}</query_edge>"
+                
+                edge_key = tuple(sorted([u, v]))
+                exists = edge_key in self.edges
+                ans = yes_res if exists else no_res
+                
+                results.append({
+                    "query": query_str,
+                    "answer": ans
+                })
+        
+        valid_vertices_for_conn = [v for v in vertices_list if v != self.k]
+        m = len(valid_vertices_for_conn)
+        
+        for i in range(m):
+            for j in range(i + 1, m):
+                a = valid_vertices_for_conn[i]
+                b = valid_vertices_for_conn[j]
+                
+                query_str = f"<query_connected>{a},{b}</query_connected>"
+                
+                conn_key = tuple(sorted([a, b]))
+                is_connected = self.connectivity_without_k.get(conn_key, False)
+                ans = yes_res if is_connected else no_res
+                
+                results.append({
+                    "query": query_str,
+                    "answer": ans
+                })
+                
+        return results
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案是否正确"""
-        raw_ans = parsed_info["answer"]
+        import re
+        raw_ans = parsed_info.get("answer", "")
         
-        try:
-            parts = [x.strip() for x in raw_ans.split(",")]
-            ans_dict = {}
-            for part in parts:
-                if "=" in part:
-                    k, v = part.split("=", 1)
-                    ans_dict[k.strip()] = v.strip()
-            
-            if "periodic" not in ans_dict or "min_period" not in ans_dict:
+        type_match = re.search(r'type\s*=\s*(\S+)', raw_ans)
+        if not type_match:
+            return False
+        answer_type = type_match.group(1).strip().rstrip(',')
+        
+        if answer_type == "CUT":
+            if not self.is_cut:
                 return False
             
-            periodic_ans = ans_dict["periodic"].lower()
-            period_ans = ans_dict["min_period"].lower()
+            witnesses_match = re.search(r'witnesses\s*=\s*(.+)', raw_ans)
+            if not witnesses_match:
+                return False
             
-            if self.has_period:
-                if periodic_ans != "yes":
+            try:
+                witnesses_str = witnesses_match.group(1).strip()
+                witnesses = [w.strip() for w in witnesses_str.split(",")]
+                if len(witnesses) != 2:
                     return False
-                try:
-                    k = int(period_ans)
-                    return k == self.min_period
-                except:
-                    return False
-            else:
-                if periodic_ans != "no":
-                    return False
-                if period_ans != "none":
-                    return False
-                return True
+                a, b = witnesses[0], witnesses[1]
                 
-        except Exception as e:
+                if a not in self.vertices or b not in self.vertices:
+                    return False
+                if a == self.k or b == self.k:
+                    return False
+                if a == b:
+                    return False
+                
+                key = tuple(sorted([a, b]))
+                is_connected = self.connectivity_without_k.get(key, False)
+                return not is_connected
+            except:
+                return False
+        
+        elif answer_type == "NOT_CUT":
+            if self.is_cut:
+                return False
+            
+            anchor_match = re.search(r'anchor\s*=\s*([A-Za-z0-9_]+)', raw_ans)
+            if not anchor_match:
+                return False
+            anchor = anchor_match.group(1).strip()
+            
+            paths_match = re.search(r'paths\s*=\s*(.+)', raw_ans)
+            if not paths_match:
+                return False
+            
+            try:
+                if anchor not in self.vertices or anchor == self.k:
+                    return False
+                
+                paths_str = paths_match.group(1).strip()
+                path_list = [p.strip() for p in paths_str.split(";") if p.strip()]
+                
+                vertices_without_k_and_anchor = {v for v in self.vertices if v != self.k and v != anchor}
+                covered = set()
+                
+                for path_str in path_list:
+                    nodes = [n.strip() for n in path_str.split("->")]
+                    if len(nodes) < 2:
+                        return False
+                    
+                    if nodes[0] != anchor:
+                        return False
+                    
+                    if self.k in nodes:
+                        return False
+                    
+                    for i in range(len(nodes) - 1):
+                        u, v = nodes[i], nodes[i+1]
+                        if u not in self.vertices or v not in self.vertices:
+                            return False
+                        edge_key = tuple(sorted([u, v]))
+                        if edge_key not in self.edges:
+                            return False
+                    
+                    for node in nodes[1:]:
+                        if node != anchor and node != self.k:
+                            covered.add(node)
+                
+                return covered == vertices_without_k_and_anchor
+                
+            except:
+                return False
+        
+        else:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑处理核心"""
-        lang = self.config.language
-        
-        # 处理单点查看
-        if "query_view" in parsed_info:
-            try:
-                i = int(parsed_info["query_view"].strip())
-                if i < 1 or i > self.n:
-                    return "错误：位置越界。" if lang == "zh" else "Error: Position out of bounds."
-            except Exception:
-                return "错误：格式无效。" if lang == "zh" else "Error: Invalid format."
-                
-            self.view_count += 1
-            if self.view_count > 3:
-                raise ValueError(
-                    "单点查看次数超过 3 次限制。" if lang == "zh" 
-                    else "Single-view query limit (3 times) exceeded."
-                )
-            
-            symbol = self.sequence[i-1]
-            return f"符号：{symbol}" if lang == "zh" else f"Symbol: {symbol}"
-        
-        # 处理两点相同性判断
-        elif "query_same" in parsed_info:
-            try:
-                raw = parsed_info["query_same"].strip()
-                i, j = [int(x.strip()) for x in raw.split(",")]
-                if i < 1 or i > self.n or j < 1 or j > self.n:
-                    return "错误：位置越界。" if lang == "zh" else "Error: Position out of bounds."
-                same = self.sequence[i-1] == self.sequence[j-1]
-                if lang == "zh":
-                    return "是" if same else "否"
-                else:
-                    return "Yes" if same else "No"
-            except Exception:
-                return "错误：格式无效。" if lang == "zh" else "Error: Invalid format."
-        
-        # 处理窗口一致性判断
-        elif "query_window" in parsed_info:
-            try:
-                raw = parsed_info["query_window"].strip()
-                i, j, w = [int(x.strip()) for x in raw.split(",")]
-                if i < 1 or j < 1 or w < 1:
-                    return "错误：参数无效。" if lang == "zh" else "Error: Invalid parameters."
-                if i + w - 1 > self.n or j + w - 1 > self.n:
-                    return "错误：窗口越界。" if lang == "zh" else "Error: Window out of bounds."
-                
-                window1 = self.sequence[i-1:i-1+w]
-                window2 = self.sequence[j-1:j-1+w]
-                same = window1 == window2
-                if lang == "zh":
-                    return "是" if same else "否"
-                else:
-                    return "Yes" if same else "No"
-            except Exception:
-                return "错误：格式无效。" if lang == "zh" else "Error: Invalid format."
-        
-        # 处理窗口差异计数
-        elif "query_diff" in parsed_info:
-            try:
-                raw = parsed_info["query_diff"].strip()
-                i, j, w = [int(x.strip()) for x in raw.split(",")]
-                if i < 1 or j < 1 or w < 1:
-                    return "错误：参数无效。" if lang == "zh" else "Error: Invalid parameters."
-                if i + w - 1 > self.n or j + w - 1 > self.n:
-                    return "错误：窗口越界。" if lang == "zh" else "Error: Window out of bounds."
-                
-                window1 = self.sequence[i-1:i-1+w]
-                window2 = self.sequence[j-1:j-1+w]
-                diff_count = sum(1 for a, b in zip(window1, window2) if a != b)
-                return f"差异数：{diff_count}" if lang == "zh" else f"Differences: {diff_count}"
-            except Exception:
-                return "错误：格式无效。" if lang == "zh" else "Error: Invalid format."
-        
-        # 处理周期候选验证
-        elif "query_period" in parsed_info:
-            try:
-                k = int(parsed_info["query_period"].strip())
-                if k < 1 or k >= self.n:
-                    return "错误：k 必须满足 1 <= k < N。" if lang == "zh" else "Error: k must satisfy 1 <= k < N."
-                is_period = self._check_period(k)
-                if lang == "zh":
-                    return "是" if is_period else "否"
-                else:
-                    return "Yes" if is_period else "No"
-            except Exception:
-                return "错误：格式无效。" if lang == "zh" else "Error: Invalid format."
-        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_format = "错误：格式无效或顶点不存在。"
+            error_same = "错误：查询的两个顶点不能相同。"
+            error_k = "错误：查询的顶点不能包含目标顶点 {k}。"
         else:
-            raise ValueError(
-                "未找到有效的查询标签。" if lang == "zh" 
-                else "No valid query tag found."
-            )
+            yes_res, no_res = "Yes", "No"
+            error_format = "Error: Invalid format or vertex does not exist."
+            error_same = "Error: The two queried vertices cannot be the same."
+            error_k = "Error: The queried vertices cannot include target vertex {k}."
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        lang = self.config.language
-        n = self.n
-        
-        # 1. 单点查看 (query_view)
-        for i in range(1, n + 1):
-            query_content = f"<query_view>{i}</query_view>"
-            symbol = self.sequence[i-1]
-            ans = f"符号：{symbol}" if lang == "zh" else f"Symbol: {symbol}"
-            queries.append({"query": query_content, "answer": ans})
+        if "query_edge" in parsed_info:
+            try:
+                raw = parsed_info["query_edge"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                u, v = parts[0], parts[1]
+                
+                if u not in self.vertices or v not in self.vertices:
+                    return error_format
+                if u == v:
+                    return error_same
+                
+                edge_key = tuple(sorted([u, v]))
+                result = edge_key in self.edges
+                
+                self.edge_query_history[edge_key] = result
+                
+                return yes_res if result else no_res
+            except:
+                return error_format
 
-        # 2. 两点相同性判断 (query_same)
-        for i in range(1, n + 1):
-            for j in range(1, n + 1):
-                query_content = f"<query_same>{i},{j}</query_same>"
-                same = (self.sequence[i-1] == self.sequence[j-1])
-                ans = ("是" if same else "否") if lang == "zh" else ("Yes" if same else "No")
-                queries.append({"query": query_content, "answer": ans})
+        elif "query_connected" in parsed_info:
+            try:
+                raw = parsed_info["query_connected"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                a, b = parts[0], parts[1]
+                
+                if a not in self.vertices or b not in self.vertices:
+                    return error_format
+                if a == self.k or b == self.k:
+                    return error_k.format(k=self.k)
+                if a == b:
+                    return error_same
+                
+                conn_key = tuple(sorted([a, b]))
+                result = self.connectivity_without_k.get(conn_key, False)
+                
+                self.connected_query_history[conn_key] = result
+                
+                return yes_res if result else no_res
+            except:
+                return error_format
 
-        # 3. 窗口一致性判断 (query_window) & 4. 窗口差异计数 (query_diff)
-        for w in range(1, n + 1):
-            max_start = n - w + 1
-            for i in range(1, max_start + 1):
-                for j in range(1, max_start + 1):
-                    win1 = self.sequence[i-1 : i-1+w]
-                    win2 = self.sequence[j-1 : j-1+w]
-                    
-                    is_same = (win1 == win2)
-                    q_win = f"<query_window>{i},{j},{w}</query_window>"
-                    a_win = ("是" if is_same else "否") if lang == "zh" else ("Yes" if is_same else "No")
-                    queries.append({"query": q_win, "answer": a_win})
-                    
-                    diff_cnt = sum(1 for a, b in zip(win1, win2) if a != b)
-                    q_diff = f"<query_diff>{i},{j},{w}</query_diff>"
-                    a_diff = (f"差异数：{diff_cnt}" if lang == "zh" else f"Differences: {diff_cnt}")
-                    queries.append({"query": q_diff, "answer": a_diff})
-
-        # 5. 周期候选验证 (query_period)
-        for k in range(1, n):
-            query_content = f"<query_period>{k}</query_period>"
-            is_period = self._check_period(k)
-            ans = ("是" if is_period else "否") if lang == "zh" else ("Yes" if is_period else "No")
-            queries.append({"query": query_content, "answer": ans})
-
-        return queries
+        else:
+            raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct):
-        """生成错误答案"""
         if correct.isdigit():
             return str(int(correct) + 1)
         
@@ -956,34 +806,9 @@ Try to use as few queries as possible. The detection fails if the answer is inco
         if correct == "否":
             return "是"
         
-        lower_correct = correct.lower()
-        if lower_correct == "yes":
+        if correct.lower() == "yes":
             return "No" if correct[0].isupper() else "no"
-        if lower_correct == "no":
+        if correct.lower() == "no":
             return "Yes" if correct[0].isupper() else "yes"
             
-        if correct.startswith("符号："):
-            sym = correct[3:]
-            wrong_sym = "B" if sym == "A" else "A"
-            return f"符号：{wrong_sym}"
-            
-        if correct.startswith("Symbol: "):
-            sym = correct[8:]
-            wrong_sym = "B" if sym == "A" else "A"
-            return f"Symbol: {wrong_sym}"
-            
-        if correct.startswith("差异数："):
-            try:
-                num = int(correct[4:])
-                return f"差异数：{num + 1}"
-            except Exception:
-                pass
-                
-        if correct.startswith("Differences: "):
-            try:
-                num = int(correct[13:])
-                return f"Differences: {num + 1}"
-            except Exception:
-                pass
-                
         return correct + "_WRONG"

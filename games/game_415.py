@@ -1,845 +1,854 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   添加边影响：在两节点间添加一条边后是否产生环
-# ============================================================
-
-import random
-import re
 from .base import Game
+import re
 
-
-class TreeEdgeDeletionGame(Game):
-
-    reasoning_type = "演绎推理"
-    data_structure = "树"
+class SetOperatorInferenceGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"树的边删除推理"游戏，规则如下：
+我们来玩一个"集合算子推理"游戏，规则如下：
 
-游戏设定了 N 个节点，标号为 1 到 {n}。原始结构 T 是一棵树（连通且无环），但在 T 中恰好删除了一条边，得到森林 F，包含且仅包含两个连通分量。
+游戏设定了一个固定的宇宙集合 U = {{甲, 乙, 丙, 丁, 戊, 己, 庚, 辛}}。
 
-已知信息：
-- 节点总数 N = {n}
-- 每个节点在原始树 T 中的度数：{degree_info}
+我已秘密选择了一个集合算子 f，它属于以下四种规则之一：
+- 规则 α：输出 A 去掉 B 的部分
+- 规则 β：输出 B 去掉 A 的部分  
+- 规则 γ：输出 A 和 B 的对称差（恰好在其中一个集合中的元素）
+- 规则 δ：若 A 的元素个数大于等于 B 的元素个数，输出 A 去掉 B 的部分；否则输出 B 去掉 A 的部分
 
-你的目标是通过询问推断出被删除的那条边的两个端点。注意：你无法直接看到任何边的信息，只能通过特定的询问来获取反馈。
+对于任意一对集合 (A, B)，算子 f 会产生一个输出集合 O = f(A, B)。
 
-可用的询问类型（每次仅限一个询问）：
+你的任务是：通过对预设的探测实例提问，推断出真实的算子规则，并将其应用到终局集合对上。
 
-1. 环查询（ASK_LOOP）：询问在当前森林 F 上假设添加边 (u,v) 是否会产生简单环。
-   - 若 u 和 v 在 F 中连通：返回 "YES k"，其中 k 表示产生的环的长度（k 大于等于 3）。
-   - 若 u 和 v 在 F 中不连通：返回 "NO 0"。
+以下是你可以查询的集合对（编号 P1 到 P7）：
+- P1: A={{甲,乙,丙}}, B={{甲,乙,丙}}
+- P2: A={{甲,乙,丙}}, B={{丙,丁,戊}}
+- P3: A={{甲,乙}}, B={{丙,丁}}
+- P4: A={{甲,乙,丙,丁}}, B={{乙,丙}}
+- P5: A={{丁,戊}}, B={{丁,戊,己}}
+- P6: A=∅, B={{庚,辛}}
+- P7: A={{甲,乙,丙}}, B={{丁,戊,己}}
 
-2. 节点在环查询（ASK_ON_LOOP）：询问在假设添加边 (u,v) 产生环的情况下，节点 w 是否位于该环上。
-   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
-   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一路径上，否则返回 "NO"。
+终局集合对 PF: A={{乙,庚,辛}}, B={{甲,乙,丁,庚}}
 
-当你收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，游戏失败。
+你可以对任意探测实例提出以下两类问题之一：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 基数奇偶查询：询问某个探测实例 Pi 上的输出集合 O 的元素个数是奇数还是偶数。我会回答"奇"或"偶"。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. 成员查询：询问某个探测实例 Pi 上的输出集合 O 是否包含指定元素 x（x 必须是 U 中的元素）。我会回答"是"或"否"。
 
-- 环查询（例如询问节点 1 和 3）：
-<ask_loop>1,3</ask_loop>
+注意：你不能直接询问完整的输出集合 O，只能通过上述两种方式间接获取信息。
 
-- 节点在环查询（例如询问添加边 (1,3) 时节点 2 是否在环上）：
-<ask_on_loop>1,3,2</ask_on_loop>
+每次只能提出一个问题，使用以下 XML 格式：
 
-提交最终答案时，列出被删除边的两个端点（用逗号隔开，顺序不限），格式如下：
+- 基数奇偶查询（例如询问 P3）：
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- 成员查询（例如询问 P2 的输出是否包含"甲"）：
+<query_member>P2,甲</query_member>
 
-请尽可能少地使用询问次数来找到正确答案。
+提交最终答案时，必须说明推断出的规则（α、β、γ 或 δ）和终局集合对 PF 上的输出集合元素（用逗号隔开，顺序不限）：
+
+<answer>rule=α, output=甲,丙</answer>
+
+注意：如果输出集合为空集，请写作：
+<answer>rule=α, output=空集</answer>
+
+请尽可能少地提问，推断出正确的算子规则并计算终局输出。
 """
 
     game_rule_en = """\
-Let's play a "Tree Edge Deletion Deduction" game. Here are the rules:
+Let's play a "Set Operator Inference" game. Here are the rules:
 
-There are N nodes numbered from 1 to {n}. The original structure T is a tree (connected and acyclic), but exactly one edge was deleted from T, resulting in a forest F containing exactly two connected components.
+The game defines a fixed universe U = {{Jia, Yi, Bing, Ding, Wu, Ji, Geng, Xin}}.
 
-Known information:
-- Total number of nodes N = {n}
-- Degree of each node in the original tree T: {degree_info}
+I have secretly selected a set operator f, which is one of the following four rules:
+- Rule α: Output A minus B
+- Rule β: Output B minus A
+- Rule γ: Output the symmetric difference of A and B (elements in exactly one set)
+- Rule δ: If the size of A is greater than or equal to the size of B, output A minus B; otherwise output B minus A
 
-Your goal is to deduce the two endpoints of the deleted edge through queries. Note: You cannot directly see any edge information; you can only obtain feedback through specific queries.
+For any pair of sets (A, B), the operator f produces an output set O = f(A, B).
 
-Available query types (one query per turn):
+Your task is: infer the true operator rule by querying preset probe instances, and apply it to the final set pair.
 
-1. Loop Query (ASK_LOOP): Ask whether adding edge (u,v) to the current forest F would create a simple cycle.
-   - If u and v are connected in F: Return "YES k", where k is the length of the cycle created (k is greater than or equal to 3).
-   - If u and v are not connected in F: Return "NO 0".
+Here are the set pairs you can query (numbered P1 to P7):
+- P1: A={{Jia,Yi,Bing}}, B={{Jia,Yi,Bing}}
+- P2: A={{Jia,Yi,Bing}}, B={{Bing,Ding,Wu}}
+- P3: A={{Jia,Yi}}, B={{Bing,Ding}}
+- P4: A={{Jia,Yi,Bing,Ding}}, B={{Yi,Bing}}
+- P5: A={{Ding,Wu}}, B={{Ding,Wu,Ji}}
+- P6: A=∅, B={{Geng,Xin}}
+- P7: A={{Jia,Yi,Bing}}, B={{Ding,Wu,Ji}}
 
-2. Node On Loop Query (ASK_ON_LOOP): Ask whether node w lies on the cycle if adding edge (u,v) creates one.
-   - If u and v are not connected in F: Return "NO-LOOP".
-   - If u and v are connected in F: Return "YES" if w lies on the unique path from u to v in F, otherwise return "NO".
+Final set pair PF: A={{Yi,Geng,Xin}}, B={{Jia,Yi,Ding,Geng}}
 
-When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the game fails.
+You can ask one of the following two types of questions about any probe instance:
 
-## Query and Answer Format (strictly required)
+1. Parity Query: Ask whether the size of the output set O for probe instance Pi is odd or even. I will answer "odd" or "even".
 
-Each query must contain only one tag. Use the following XML format:
+2. Membership Query: Ask whether the output set O for probe instance Pi contains a specified element x (x must be in U). I will answer "yes" or "no".
 
-- Loop Query (e.g., querying nodes 1 and 3):
-<ask_loop>1,3</ask_loop>
+Note: You cannot directly ask for the complete output set O; you can only obtain information indirectly through the above two methods.
 
-- Node On Loop Query (e.g., asking if node 2 is on the cycle when adding edge (1,3)):
-<ask_on_loop>1,3,2</ask_on_loop>
+Each turn you can only ask one question, using the following XML format:
 
-When submitting the final answer, list the two endpoints of the deleted edge (comma-separated, order does not matter), using this format:
+- Parity Query (e.g., asking about P3):
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- Membership Query (e.g., asking if P2's output contains "Jia"):
+<query_member>P2,Jia</query_member>
 
-Please use as few queries as possible to find the correct answer.
+When submitting the final answer, you must specify the inferred rule (α, β, γ, or δ) and the output set elements for the final pair PF (comma-separated, order does not matter):
+
+<answer>rule=α, output=Jia,Bing</answer>
+
+Note: If the output set is empty, write:
+<answer>rule=α, output=empty</answer>
+
+Please use as few queries as possible to infer the correct operator rule and calculate the final output.
 """
 
-    # ========================== 场景 1：交通 ==========================
     contextualized_rule_zh_1 = """\
-交通路网修复推理系统已启动。
+欢迎使用「智能交通枢纽流量分析系统」。
 
-游戏设定了 N 个交通枢纽（城市），标号为 1 到 {n}。原本的路网结构 T 是一棵连通且无环的树，但因突发地质灾害，恰好有一条主干道被阻断（相当于在 T 中删除了一条边），使得目前的可用路网 F 分裂成了两个无法互相到达的连通区域。
+系统监控着固定的路网节点集合 U = {{甲, 乙, 丙, 丁, 戊, 己, 庚, 辛}}。
 
-已知信息：
-- 城市总数 N = {n}
-- 灾前各城市在原路网 T 中的相连干道数（度数）：{degree_info}
+我已秘密配置了一个流量过滤算子 f，它执行以下四种调度规则之一：
+- 规则 α：输出节点组 A 中剔除节点组 B 后的剩余拥堵节点
+- 规则 β：输出节点组 B 中剔除节点组 A 后的剩余拥堵节点
+- 规则 γ：输出节点组 A 和 B 的对称差（即仅在其中一个节点组中发生拥堵的节点）
+- 规则 δ：若节点组 A 的节点数大于等于 B，则输出 A 去掉 B 的部分；否则输出 B 去掉 A 的部分
 
-你的目标是通过勘测询问，推断出被阻断的那条道路连接的两个城市端点。注意：你无法直接观测具体的路况信息，只能通过特定的假设性排查来获取反馈。
+对于任意一对节点组 (A, B)，算子 f 会产生一个输出节点组 O = f(A, B)。
 
-可用的询问类型（每次仅限一个询问）：
+你的任务是：通过对预设的探测实例提问，推断出真实的调度规则，并将其应用到终局节点组对上。
 
-1. 建设新路环线排查（ASK_LOOP）：询问如果在当前断裂的路网 F 中，假设在城市 u 和 v 之间修建一条临时直达通路，是否会形成交通环线。
-   - 若 u 和 v 在目前的 F 中仍能连通：返回 "YES k"，其中 k 表示该环线途径的城市总数（k 大于等于 3）。
-   - 若 u 和 v 在目前的 F 中无法连通：返回 "NO 0"。
+以下是你可以查询的集合对（编号 P1 到 P7）：
+- P1: A={{甲,乙,丙}}, B={{甲,乙,丙}}
+- P2: A={{甲,乙,丙}}, B={{丙,丁,戊}}
+- P3: A={{甲,乙}}, B={{丙,丁}}
+- P4: A={{甲,乙,丙,丁}}, B={{乙,丙}}
+- P5: A={{丁,戊}}, B={{丁,戊,己}}
+- P6: A=∅, B={{庚,辛}}
+- P7: A={{甲,乙,丙}}, B={{丁,戊,己}}
 
-2. 城市在环线排查（ASK_ON_LOOP）：询问在假设修建 (u,v) 临时通路并产生环线的情况下，城市 w 是否位于该环线上。
-   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
-   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一有效路径上，否则返回 "NO"。
+终局集合对 PF: A={{乙,庚,辛}}, B={{甲,乙,丁,庚}}
 
-收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，排查失败。
+你可以对任意探测实例提出以下两类问题之一：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 基数奇偶查询：询问某个探测实例 Pi 上的输出集合 O 的元素个数是奇数还是偶数。我会回答"奇"或"偶"。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. 成员查询：询问某个探测实例 Pi 上的输出集合 O 是否包含指定元素 x（x 必须是 U 中的元素）。我会回答"是"或"否"。
 
-- 建设新路环线排查（例如排查城市 1 和 3）：
-<ask_loop>1,3</ask_loop>
+注意：你不能直接询问完整的输出集合 O，只能通过上述两种方式间接获取信息。
 
-- 城市在环线排查（例如询问修建 (1,3) 临时通路时城市 2 是否在环线上）：
-<ask_on_loop>1,3,2</ask_on_loop>
+每次只能提出一个问题，使用以下 XML 格式：
 
-提交最终答案时，列出被阻断道路的两个端点城市（用逗号隔开，顺序不限），格式如下：
+- 基数奇偶查询（例如询问 P3）：
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- 成员查询（例如询问 P2 的输出是否包含"甲"）：
+<query_member>P2,甲</query_member>
 
-请尽可能少地使用询问次数来找到正确答案。
+提交最终答案时，必须说明推断出的规则（α、β、γ 或 δ）和终局集合对 PF 上的输出集合元素（用逗号隔开，顺序不限）：
+
+<answer>rule=α, output=甲,丙</answer>
+
+注意：如果输出集合为空集，请写作：
+<answer>rule=α, output=空集</answer>
+
+请尽可能少地提问，推断出正确的算子规则并计算终局输出。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Network Repair Scenario]
-The Traffic Network Repair Deduction System is online.
+[Transportation Scenario]
+Welcome to the Intelligent Transit Hub Traffic Analysis System.
 
-There are N traffic hubs (cities) numbered from 1 to {n}. The original road network T was a connected and acyclic tree. However, due to a sudden geological disaster, exactly one main road was destroyed (an edge was deleted from T), resulting in the current road network F splitting into exactly two disconnected regions.
+The system monitors a fixed universe of network nodes U = {{Jia, Yi, Bing, Ding, Wu, Ji, Geng, Xin}}.
 
-Known information:
-- Total number of cities N = {n}
-- The number of connected roads (degree) for each city in the pre-disaster network T: {degree_info}
+I have secretly configured a traffic filtering operator f, which applies one of the following four dispatch rules:
+- Rule α: Output nodes in group A excluding group B
+- Rule β: Output nodes in group B excluding group A
+- Rule γ: Output the symmetric difference of groups A and B (nodes congested in exactly one group)
+- Rule δ: If the size of group A is greater than or equal to group B, output A minus B; otherwise output B minus A
 
-Your goal is to deduce the two endpoint cities of the destroyed road through queries. Note: You cannot directly observe the road statuses; you can only obtain feedback through specific hypothetical queries.
+For any pair of node groups (A, B), the operator f produces an output group O = f(A, B).
 
-Available query types (one query per turn):
+Your task is: infer the true dispatch rule by querying preset probe instances, and apply it to the final node group pair.
 
-1. Proposed Highway Query (ASK_LOOP): Ask whether building a temporary direct highway between city u and v in the current network F would create a traffic loop.
-   - If u and v are connected in F: Return "YES k", where k is the total number of cities on this loop (k is greater than or equal to 3).
-   - If u and v are not connected in F: Return "NO 0".
+Here are the set pairs you can query (numbered P1 to P7):
+- P1: A={{Jia,Yi,Bing}}, B={{Jia,Yi,Bing}}
+- P2: A={{Jia,Yi,Bing}}, B={{Bing,Ding,Wu}}
+- P3: A={{Jia,Yi}}, B={{Bing,Ding}}
+- P4: A={{Jia,Yi,Bing,Ding}}, B={{Yi,Bing}}
+- P5: A={{Ding,Wu}}, B={{Ding,Wu,Ji}}
+- P6: A=∅, B={{Geng,Xin}}
+- P7: A={{Jia,Yi,Bing}}, B={{Ding,Wu,Ji}}
 
-2. City On Loop Query (ASK_ON_LOOP): Ask whether city w lies on the loop if building the temporary highway (u,v) creates one.
-   - If u and v are not connected in F: Return "NO-LOOP".
-   - If u and v are connected in F: Return "YES" if w lies on the unique valid path from u to v in F, otherwise return "NO".
+Final set pair PF: A={{Yi,Geng,Xin}}, B={{Jia,Yi,Ding,Geng}}
 
-When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the deduction fails.
+You can ask one of the following two types of questions about any probe instance:
 
-## Query and Answer Format (strictly required)
+1. Parity Query: Ask whether the size of the output set O for probe instance Pi is odd or even. I will answer "odd" or "even".
 
-Each query must contain only one tag. Use the following XML format:
+2. Membership Query: Ask whether the output set O for probe instance Pi contains a specified element x (x must be in U). I will answer "yes" or "no".
 
-- Proposed Highway Query (e.g., querying cities 1 and 3):
-<ask_loop>1,3</ask_loop>
+Note: You cannot directly ask for the complete output set O; you can only obtain information indirectly through the above two methods.
 
-- City On Loop Query (e.g., asking if city 2 is on the loop when building highway (1,3)):
-<ask_on_loop>1,3,2</ask_on_loop>
+Each turn you can only ask one question, using the following XML format:
 
-When submitting the final answer, list the two endpoint cities of the destroyed road (comma-separated, order does not matter), using this format:
+- Parity Query (e.g., asking about P3):
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- Membership Query (e.g., asking if P2's output contains "Jia"):
+<query_member>P2,Jia</query_member>
 
-Please use as few queries as possible to find the correct answer.
+When submitting the final answer, you must specify the inferred rule (α, β, γ, or δ) and the output set elements for the final pair PF (comma-separated, order does not matter):
+
+<answer>rule=α, output=Jia,Bing</answer>
+
+Note: If the output set is empty, write:
+<answer>rule=α, output=empty</answer>
+
+Please use as few queries as possible to infer the correct operator rule and calculate the final output.
 """
 
-    # ========================== 场景 2：医疗 ==========================
     contextualized_rule_zh_2 = """\
-神经传导通路诊断系统运行中。
+欢迎进入「流行病学病株交叉比对系统」。
 
-患者体内有 N 个神经中枢节点，标号为 1 到 {n}。原始传导网络 T 是一棵健康的神经树（连通且无环），但因局部病变，恰好有一条神经纤维束受损断裂（删除了一条边），导致目前的神经分布 F 变成了两个独立的连通分量。
+系统收录了固定的目标毒株集合 U = {{甲, 乙, 丙, 丁, 戊, 己, 庚, 辛}}。
 
-已知信息：
-- 神经中枢总数 N = {n}
-- 各中枢在健康传导网络 T 中的纤维连接数（度数）：{degree_info}
+我已秘密设定了一个诊断筛查算子 f，它遵循以下四种分离规则之一：
+- 规则 α：输出样本池 A 排除样本池 B 后的特异性毒株
+- 规则 β：输出样本池 B 排除样本池 A 后的特异性毒株
+- 规则 γ：输出样本池 A 和 B 的对称差（恰好仅在其中一个样本池内检出的毒株）
+- 规则 δ：若样本池 A 的检出毒株数大于等于 B，输出 A 去掉 B 的部分；否则输出 B 去掉 A 的部分
 
-你的目标是通过神经电刺激测试，推断出受损断裂的那条神经纤维的两个端点节点。注意：你无法直接扫描出具体的纤维断点，只能通过特定的神经通路排查来获取反馈。
+对于任意一对样本池 (A, B)，算子 f 会产生一个特异性毒株输出集 O = f(A, B)。
 
-可用的询问类型（每次仅限一个询问）：
+你的任务是：通过对预设的探测实例提问，推断出真实的筛查规则，并将其应用到终局样本池对上。
 
-1. 人工突触反馈环测试（ASK_LOOP）：询问如果在当前的传导网络 F 中，利用人工突触将中枢 u 和 v 连接，是否会引发神经信号反馈环。
-   - 若 u 和 v 在目前的 F 中连通：返回 "YES k"，其中 k 表示该反馈环包含的中枢数量（k 大于等于 3）。
-   - 若 u 和 v 在目前的 F 中不连通：返回 "NO 0"。
+以下是你可以查询的集合对（编号 P1 到 P7）：
+- P1: A={{甲,乙,丙}}, B={{甲,乙,丙}}
+- P2: A={{甲,乙,丙}}, B={{丙,丁,戊}}
+- P3: A={{甲,乙}}, B={{丙,丁}}
+- P4: A={{甲,乙,丙,丁}}, B={{乙,丙}}
+- P5: A={{丁,戊}}, B={{丁,戊,己}}
+- P6: A=∅, B={{庚,辛}}
+- P7: A={{甲,乙,丙}}, B={{丁,戊,己}}
 
-2. 途径中枢测试（ASK_ON_LOOP）：询问在假设连接 (u,v) 产生反馈环的情况下，中枢 w 是否被卷入该反馈环。
-   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
-   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一传导通路上，否则返回 "NO"。
+终局集合对 PF: A={{乙,庚,辛}}, B={{甲,乙,丁,庚}}
 
-收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，诊断失败。
+你可以对任意探测实例提出以下两类问题之一：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 基数奇偶查询：询问某个探测实例 Pi 上的输出集合 O 的元素个数是奇数还是偶数。我会回答"奇"或"偶"。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. 成员查询：询问某个探测实例 Pi 上的输出集合 O 是否包含指定元素 x（x 必须是 U 中的元素）。我会回答"是"或"否"。
 
-- 人工突触反馈环测试（例如排查中枢 1 和 3）：
-<ask_loop>1,3</ask_loop>
+注意：你不能直接询问完整的输出集合 O，只能通过上述两种方式间接获取信息。
 
-- 途径中枢测试（例如询问连接 (1,3) 时中枢 2 是否在反馈环上）：
-<ask_on_loop>1,3,2</ask_on_loop>
+每次只能提出一个问题，使用以下 XML 格式：
 
-提交最终答案时，列出受损神经纤维连接的两个端点中枢（用逗号隔开，顺序不限），格式如下：
+- 基数奇偶查询（例如询问 P3）：
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- 成员查询（例如询问 P2 的输出是否包含"甲"）：
+<query_member>P2,甲</query_member>
 
-请尽可能少地使用询问次数来找到正确答案。
+提交最终答案时，必须说明推断出的规则（α、β、γ 或 δ）和终局集合对 PF 上的输出集合元素（用逗号隔开，顺序不限）：
+
+<answer>rule=α, output=甲,丙</answer>
+
+注意：如果输出集合为空集，请写作：
+<answer>rule=α, output=空集</answer>
+
+请尽可能少地提问，推断出正确的算子规则并计算终局输出。
 """
 
     contextualized_rule_en_2 = """\
-[Neural Pathway Diagnostic Scenario]
-The Neural Pathway Diagnostic System is running.
+[Healthcare Scenario]
+Welcome to the Epidemiological Strain Cross-Matching System.
 
-There are N neural centers in the patient numbered from 1 to {n}. The original conduction network T was a healthy neural tree (connected and acyclic). However, due to a localized lesion, exactly one nerve fiber bundle was severed (an edge was deleted from T), causing the current neural distribution F to split into exactly two isolated connected components.
+The system tracks a fixed universe of target virus strains U = {{Jia, Yi, Bing, Ding, Wu, Ji, Geng, Xin}}.
 
-Known information:
-- Total number of neural centers N = {n}
-- The number of nerve connections (degree) for each center in the healthy network T: {degree_info}
+I have secretly configured a diagnostic screening operator f, which follows one of four isolation rules:
+- Rule α: Output sample pool A excluding sample pool B
+- Rule β: Output sample pool B excluding sample pool A
+- Rule γ: Output the symmetric difference of pools A and B (strains detected in exactly one pool)
+- Rule δ: If the size of pool A is greater than or equal to pool B, output A minus B; otherwise output B minus A
 
-Your goal is to deduce the two endpoint centers of the severed nerve fiber through queries. Note: You cannot directly scan the specific breakage; you can only obtain feedback through specific neural pathway tests.
+For any pair of sample pools (A, B), the operator f produces an output strain set O = f(A, B).
 
-Available query types (one query per turn):
+Your task is: infer the true isolation rule by querying preset probe instances, and apply it to the final sample pool pair.
 
-1. Alternative Feedback Loop Test (ASK_LOOP): Ask whether bridging center u and v with an artificial synapse in the current network F would trigger a neural feedback loop.
-   - If u and v are connected in F: Return "YES k", where k is the number of centers involved in the loop (k is greater than or equal to 3).
-   - If u and v are not connected in F: Return "NO 0".
+Here are the set pairs you can query (numbered P1 to P7):
+- P1: A={{Jia,Yi,Bing}}, B={{Jia,Yi,Bing}}
+- P2: A={{Jia,Yi,Bing}}, B={{Bing,Ding,Wu}}
+- P3: A={{Jia,Yi}}, B={{Bing,Ding}}
+- P4: A={{Jia,Yi,Bing,Ding}}, B={{Yi,Bing}}
+- P5: A={{Ding,Wu}}, B={{Ding,Wu,Ji}}
+- P6: A=∅, B={{Geng,Xin}}
+- P7: A={{Jia,Yi,Bing}}, B={{Ding,Wu,Ji}}
 
-2. Center In Loop Test (ASK_ON_LOOP): Ask whether center w is caught in the feedback loop if bridging (u,v) creates one.
-   - If u and v are not connected in F: Return "NO-LOOP".
-   - If u and v are connected in F: Return "YES" if w lies on the unique conduction pathway from u to v in F, otherwise return "NO".
+Final set pair PF: A={{Yi,Geng,Xin}}, B={{Jia,Yi,Ding,Geng}}
 
-When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the diagnosis fails.
+You can ask one of the following two types of questions about any probe instance:
 
-## Query and Answer Format (strictly required)
+1. Parity Query: Ask whether the size of the output set O for probe instance Pi is odd or even. I will answer "odd" or "even".
 
-Each query must contain only one tag. Use the following XML format:
+2. Membership Query: Ask whether the output set O for probe instance Pi contains a specified element x (x must be in U). I will answer "yes" or "no".
 
-- Alternative Feedback Loop Test (e.g., testing centers 1 and 3):
-<ask_loop>1,3</ask_loop>
+Note: You cannot directly ask for the complete output set O; you can only obtain information indirectly through the above two methods.
 
-- Center In Loop Test (e.g., asking if center 2 is in the feedback loop when bridging (1,3)):
-<ask_on_loop>1,3,2</ask_on_loop>
+Each turn you can only ask one question, using the following XML format:
 
-When submitting the final answer, list the two endpoint centers of the severed nerve fiber (comma-separated, order does not matter), using this format:
+- Parity Query (e.g., asking about P3):
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- Membership Query (e.g., asking if P2's output contains "Jia"):
+<query_member>P2,Jia</query_member>
 
-Please use as few queries as possible to find the correct answer.
+When submitting the final answer, you must specify the inferred rule (α, β, γ, or δ) and the output set elements for the final pair PF (comma-separated, order does not matter):
+
+<answer>rule=α, output=Jia,Bing</answer>
+
+Note: If the output set is empty, write:
+<answer>rule=α, output=empty</answer>
+
+Please use as few queries as possible to infer the correct operator rule and calculate the final output.
 """
 
-    # ========================== 场景 3：教育 ==========================
     contextualized_rule_zh_3 = """\
-认知逻辑图谱分析系统已启动。
+欢迎使用「AI自适应学情图谱分析引擎」。
 
-一个学科有 N 个知识概念节点，标号为 1 到 {n}。原本的认知结构 T 是一棵严密的先决条件树（连通且无环），但由于学生缺失了某一条关键的逻辑推导链路（删除了一条边），导致当前的知识结构 F 出现了认知断层，变为两个未关联的模块。
+我们的核心能力知识库设定为固定的知识点集合 U = {{甲, 乙, 丙, 丁, 戊, 己, 庚, 辛}}。
 
-已知信息：
-- 知识概念节点总数 N = {n}
-- 各概念在完整认知树 T 中的关联度（度数）：{degree_info}
+我已秘密调用了一个学情比对算子 f，它属于以下四种评估规则之一：
+- 规则 α：输出掌握图谱 A 中超出目标图谱 B 的冗余知识点
+- 规则 β：输出目标图谱 B 中学生掌握图谱 A 欠缺的薄弱知识点
+- 规则 γ：输出图谱 A 和 B 的对称差（恰好在其中一个图谱中的知识点偏差）
+- 规则 δ：若图谱 A 的知识点个数大于等于 B，输出 A 去掉 B 的部分；否则输出 B 去掉 A 的部分
 
-你的目标是通过启发式提问，推断出学生缺失的那条逻辑链路的两个端点。注意：你无法直接察看学生脑海中的连线结构，只能通过特定的逻辑假设反馈来进行诊断。
+对于任意一对知识图谱 (A, B)，算子 f 会产生一个诊断输出图谱 O = f(A, B)。
 
-可用的询问类型（每次仅限一个询问）：
+你的任务是：通过对预设的探测实例提问，推断出真实的评估规则，并将其应用到终局图谱对上。
 
-1. 跨概念循环论证查询（ASK_LOOP）：询问如果在学生当前的认知结构 F 中，强行将概念 u 和 v 进行逻辑挂钩，是否会产生循环论证。
-   - 若 u 和 v 在目前的 F 中已有推导路径连通：返回 "YES k"，其中 k 表示陷入循环论证的概念总数（k 大于等于 3）。
-   - 若 u 和 v 在目前的 F 中不存在推导关系连通：返回 "NO 0"。
+以下是你可以查询的集合对（编号 P1 到 P7）：
+- P1: A={{甲,乙,丙}}, B={{甲,乙,丙}}
+- P2: A={{甲,乙,丙}}, B={{丙,丁,戊}}
+- P3: A={{甲,乙}}, B={{丙,丁}}
+- P4: A={{甲,乙,丙,丁}}, B={{乙,丙}}
+- P5: A={{丁,戊}}, B={{丁,戊,己}}
+- P6: A=∅, B={{庚,辛}}
+- P7: A={{甲,乙,丙}}, B={{丁,戊,己}}
 
-2. 概念节点在循环中查询（ASK_ON_LOOP）：询问在假设将 (u,v) 挂钩并产生循环论证的情况下，概念 w 是否被卷入该论证循环中。
-   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
-   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一认知推导路径上，否则返回 "NO"。
+终局集合对 PF: A={{乙,庚,辛}}, B={{甲,乙,丁,庚}}
 
-收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，分析失败。
+你可以对任意探测实例提出以下两类问题之一：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 基数奇偶查询：询问某个探测实例 Pi 上的输出集合 O 的元素个数是奇数还是偶数。我会回答"奇"或"偶"。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. 成员查询：询问某个探测实例 Pi 上的输出集合 O 是否包含指定元素 x（x 必须是 U 中的元素）。我会回答"是"或"否"。
 
-- 跨概念循环论证查询（例如挂钩概念 1 和 3）：
-<ask_loop>1,3</ask_loop>
+注意：你不能直接询问完整的输出集合 O，只能通过上述两种方式间接获取信息。
 
-- 概念节点在循环中查询（例如询问挂钩 (1,3) 时概念 2 是否在循环论证中）：
-<ask_on_loop>1,3,2</ask_on_loop>
+每次只能提出一个问题，使用以下 XML 格式：
 
-提交最终答案时，列出缺失的那条逻辑推导链路的两个概念端点（用逗号隔开，顺序不限），格式如下：
+- 基数奇偶查询（例如询问 P3）：
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- 成员查询（例如询问 P2 的输出是否包含"甲"）：
+<query_member>P2,甲</query_member>
 
-请尽可能少地使用询问次数来找到正确答案。
+提交最终答案时，必须说明推断出的规则（α、β、γ 或 δ）和终局集合对 PF 上的输出集合元素（用逗号隔开，顺序不限）：
+
+<answer>rule=α, output=甲,丙</answer>
+
+注意：如果输出集合为空集，请写作：
+<answer>rule=α, output=空集</answer>
+
+请尽可能少地提问，推断出正确的算子规则并计算终局输出。
 """
 
     contextualized_rule_en_3 = """\
-[Cognitive Logic Mapping Scenario]
-The Cognitive Logic Mapping System has been activated.
+[Education Scenario]
+Welcome to the AI Adaptive Learning Profile Analysis Engine.
 
-There are N knowledge concept nodes for a subject, numbered from 1 to {n}. The original cognitive structure T was a strict prerequisite tree (connected and acyclic). However, because a crucial logical deduction link is missing for the student (an edge was deleted from T), the current knowledge structure F has a cognitive gap, splitting into exactly two unassociated modules.
+Our core competency repository is defined by a fixed universe of knowledge modules U = {{Jia, Yi, Bing, Ding, Wu, Ji, Geng, Xin}}.
 
-Known information:
-- Total number of knowledge concept nodes N = {n}
-- The degree of association for each concept in the complete cognitive tree T: {degree_info}
+I have secretly invoked a learning comparison operator f, applying one of the following four assessment rules:
+- Rule α: Output mastered profile A excluding target profile B
+- Rule β: Output target profile B excluding mastered profile A
+- Rule γ: Output the symmetric difference of profiles A and B (modules present in exactly one profile)
+- Rule δ: If the size of profile A is greater than or equal to profile B, output A minus B; otherwise output B minus A
 
-Your goal is to deduce the two endpoints of the missing logical deduction link through heuristic queries. Note: You cannot directly observe the student's internal cognitive connections; you can only obtain feedback through specific logical hypothesis tests.
+For any pair of knowledge profiles (A, B), the operator f produces an output diagnostic profile O = f(A, B).
 
-Available query types (one query per turn):
+Your task is: infer the true assessment rule by querying preset probe instances, and apply it to the final profile pair.
 
-1. Cross-concept Synthesis Query (ASK_LOOP): Ask whether forcefully linking concept u and v in the student's current cognitive structure F would create a circular reasoning loop.
-   - If u and v are connected by a deduction path in F: Return "YES k", where k is the total number of concepts trapped in the circular reasoning (k is greater than or equal to 3).
-   - If u and v are not connected in F: Return "NO 0".
+Here are the set pairs you can query (numbered P1 to P7):
+- P1: A={{Jia,Yi,Bing}}, B={{Jia,Yi,Bing}}
+- P2: A={{Jia,Yi,Bing}}, B={{Bing,Ding,Wu}}
+- P3: A={{Jia,Yi}}, B={{Bing,Ding}}
+- P4: A={{Jia,Yi,Bing,Ding}}, B={{Yi,Bing}}
+- P5: A={{Ding,Wu}}, B={{Ding,Wu,Ji}}
+- P6: A=∅, B={{Geng,Xin}}
+- P7: A={{Jia,Yi,Bing}}, B={{Ding,Wu,Ji}}
 
-2. Concept In Loop Query (ASK_ON_LOOP): Ask whether concept w is caught in the circular reasoning loop if linking (u,v) creates one.
-   - If u and v are not connected in F: Return "NO-LOOP".
-   - If u and v are connected in F: Return "YES" if w lies on the unique cognitive deduction path from u to v in F, otherwise return "NO".
+Final set pair PF: A={{Yi,Geng,Xin}}, B={{Jia,Yi,Ding,Geng}}
 
-When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the mapping fails.
+You can ask one of the following two types of questions about any probe instance:
 
-## Query and Answer Format (strictly required)
+1. Parity Query: Ask whether the size of the output set O for probe instance Pi is odd or even. I will answer "odd" or "even".
 
-Each query must contain only one tag. Use the following XML format:
+2. Membership Query: Ask whether the output set O for probe instance Pi contains a specified element x (x must be in U). I will answer "yes" or "no".
 
-- Cross-concept Synthesis Query (e.g., testing concepts 1 and 3):
-<ask_loop>1,3</ask_loop>
+Note: You cannot directly ask for the complete output set O; you can only obtain information indirectly through the above two methods.
 
-- Concept In Loop Query (e.g., asking if concept 2 is in the circular reasoning loop when linking (1,3)):
-<ask_on_loop>1,3,2</ask_on_loop>
+Each turn you can only ask one question, using the following XML format:
 
-When submitting the final answer, list the two endpoints of the missing logical deduction link (comma-separated, order does not matter), using this format:
+- Parity Query (e.g., asking about P3):
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- Membership Query (e.g., asking if P2's output contains "Jia"):
+<query_member>P2,Jia</query_member>
 
-Please use as few queries as possible to find the correct answer.
+When submitting the final answer, you must specify the inferred rule (α, β, γ, or δ) and the output set elements for the final pair PF (comma-separated, order does not matter):
+
+<answer>rule=α, output=Jia,Bing</answer>
+
+Note: If the output set is empty, write:
+<answer>rule=α, output=empty</answer>
+
+Please use as few queries as possible to infer the correct operator rule and calculate the final output.
 """
 
-    # ========================== 场景 4：工业/制造业 ==========================
     contextualized_rule_zh_4 = """\
-工业流水线故障检测系统已启动。
+欢迎使用「工业产线缺陷隔离诊断系统」。
 
-车间内部有 N 个加工工作站，标号为 1 到 {n}。原始的流水线网络 T 是一棵连通无环的树，但由于突发故障，恰好有一条物料传送带断裂（删除了一条边），导致目前的生产线 F 瘫痪并分裂成了两个隔离的作业区。
+系统预设了固定的核心零部件故障代码集合 U = {{甲, 乙, 丙, 丁, 戊, 己, 庚, 辛}}。
 
-已知信息：
-- 工作站总数 N = {n}
-- 原始各工作站连接的传送带接口数量（度数）：{degree_info}
+我已秘密加载了一个缺陷隔离算子 f，它执行以下四种排查规则之一：
+- 规则 α：输出检验批次 A 中剔除对照批次 B 后的特有故障代码
+- 规则 β：输出对照批次 B 中剔除检验批次 A 后的特有故障代码
+- 规则 γ：输出批次 A 和 B 的对称差（恰好在单一批次中出现的孤立故障）
+- 规则 δ：若批次 A 的故障数大于等于 B，输出 A 剔除 B 的部分；否则输出 B 剔除 A 的部分
 
-你的目标是通过控制台指令排查，推断出发生断裂的那条传送带两端连接的工作站。注意：你无法直接通过监控看到传送带的断点在哪，只能通过特定的调度排查来获取系统反馈。
+对于任意一对检验批次 (A, B)，算子 f 会产生一个核心故障输出集 O = f(A, B)。
 
-可用的排查类型（每次仅限一个排查）：
+你的任务是：通过对预设的探测实例提问，推断出真实的排查规则，并将其应用到终局检验批次对上。
 
-1. 临时传送带闭环测试（ASK_LOOP）：排查如果在当前瘫痪的网络 F 中，架设一条连接工作站 u 和 v 的临时传送带，是否会造成物料的死循环流转。
-   - 若 u 和 v 在目前的 F 中依然在同一个作业区连通：返回 "YES k"，其中 k 表示该死循环涉及的工作站数量（k 大于等于 3）。
-   - 若 u 和 v 在目前的 F 中不连通：返回 "NO 0"。
+以下是你可以查询的集合对（编号 P1 到 P7）：
+- P1: A={{甲,乙,丙}}, B={{甲,乙,丙}}
+- P2: A={{甲,乙,丙}}, B={{丙,丁,戊}}
+- P3: A={{甲,乙}}, B={{丙,丁}}
+- P4: A={{甲,乙,丙,丁}}, B={{乙,丙}}
+- P5: A={{丁,戊}}, B={{丁,戊,己}}
+- P6: A=∅, B={{庚,辛}}
+- P7: A={{甲,乙,丙}}, B={{丁,戊,己}}
 
-2. 工作站处于闭环测试（ASK_ON_LOOP）：排查在假设架设 (u,v) 临时传送带引发死循环的情况下，工作站 w 是否处于该死循环流水线上。
-   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
-   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一物料流转路径上，否则返回 "NO"。
+终局集合对 PF: A={{乙,庚,辛}}, B={{甲,乙,丁,庚}}
 
-收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，故障检测失败。
+你可以对任意探测实例提出以下两类问题之一：
 
-## 排查与提交答案的格式（必须严格遵守）
+1. 基数奇偶查询：询问某个探测实例 Pi 上的输出集合 O 的元素个数是奇数还是偶数。我会回答"奇"或"偶"。
 
-每次排查只能包含一个标签。请使用以下 XML 格式：
+2. 成员查询：询问某个探测实例 Pi 上的输出集合 O 是否包含指定元素 x（x 必须是 U 中的元素）。我会回答"是"或"否"。
 
-- 临时传送带闭环测试（例如排查工作站 1 和 3）：
-<ask_loop>1,3</ask_loop>
+注意：你不能直接询问完整的输出集合 O，只能通过上述两种方式间接获取信息。
 
-- 工作站处于闭环测试（例如询问架设 (1,3) 时工作站 2 是否在死循环流水线上）：
-<ask_on_loop>1,3,2</ask_on_loop>
+每次只能提出一个问题，使用以下 XML 格式：
 
-提交最终答案时，列出断裂传送带两端的两个工作站（用逗号隔开，顺序不限），格式如下：
+- 基数奇偶查询（例如询问 P3）：
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- 成员查询（例如询问 P2 的输出是否包含"甲"）：
+<query_member>P2,甲</query_member>
 
-请尽可能少地使用排查次数来找到正确答案。
+提交最终答案时，必须说明推断出的规则（α、β、γ 或 δ）和终局集合对 PF 上的输出集合元素（用逗号隔开，顺序不限）：
+
+<answer>rule=α, output=甲,丙</answer>
+
+注意：如果输出集合为空集，请写作：
+<answer>rule=α, output=空集</answer>
+
+请尽可能少地提问，推断出正确的算子规则并计算终局输出。
 """
 
     contextualized_rule_en_4 = """\
-[Industrial Assembly Line Diagnostic Scenario]
-The Industrial Assembly Line Fault Detection System is online.
+[Manufacturing/Industry Scenario]
+Welcome to the Industrial Assembly Defect Isolation System.
 
-There are N manufacturing workstations in the factory, numbered from 1 to {n}. The original assembly line network T was a connected and acyclic tree. Due to a sudden malfunction, exactly one material conveyor belt broke (an edge was deleted from T), paralyzing the current production line F and dividing it into two isolated operational zones.
+The system presets a fixed universe of core component fault codes U = {{Jia, Yi, Bing, Ding, Wu, Ji, Geng, Xin}}.
 
-Known information:
-- Total number of workstations N = {n}
-- The number of conveyor belt interfaces (degree) for each workstation in the original network T: {degree_info}
+I have secretly loaded a defect isolation operator f, executing one of the following four diagnostic rules:
+- Rule α: Output inspection batch A excluding control batch B
+- Rule β: Output control batch B excluding inspection batch A
+- Rule γ: Output the symmetric difference of batches A and B (faults isolated to exactly one batch)
+- Rule δ: If the size of batch A is greater than or equal to batch B, output A minus B; otherwise output B minus A
 
-Your goal is to deduce the two workstations connected by the broken conveyor belt through queries. Note: You cannot directly observe the breakage via cameras; you can only obtain feedback through specific routing tests.
+For any pair of inspection batches (A, B), the operator f produces an output fault set O = f(A, B).
 
-Available query types (one query per turn):
+Your task is: infer the true diagnostic rule by querying preset probe instances, and apply it to the final batch pair.
 
-1. Temporary Belt Closed-Loop Test (ASK_LOOP): Test whether installing a temporary conveyor belt between workstation u and v in the current paralyzed network F would cause a material circulation loop.
-   - If u and v are connected in F: Return "YES k", where k is the number of workstations involved in the circulation loop (k is greater than or equal to 3).
-   - If u and v are not connected in F: Return "NO 0".
+Here are the set pairs you can query (numbered P1 to P7):
+- P1: A={{Jia,Yi,Bing}}, B={{Jia,Yi,Bing}}
+- P2: A={{Jia,Yi,Bing}}, B={{Bing,Ding,Wu}}
+- P3: A={{Jia,Yi}}, B={{Bing,Ding}}
+- P4: A={{Jia,Yi,Bing,Ding}}, B={{Yi,Bing}}
+- P5: A={{Ding,Wu}}, B={{Ding,Wu,Ji}}
+- P6: A=∅, B={{Geng,Xin}}
+- P7: A={{Jia,Yi,Bing}}, B={{Ding,Wu,Ji}}
 
-2. Workstation In Loop Test (ASK_ON_LOOP): Test whether workstation w is part of the circulation loop if installing the temporary belt (u,v) creates one.
-   - If u and v are not connected in F: Return "NO-LOOP".
-   - If u and v are connected in F: Return "YES" if w lies on the unique material flow path from u to v in F, otherwise return "NO".
+Final set pair PF: A={{Yi,Geng,Xin}}, B={{Jia,Yi,Ding,Geng}}
 
-When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the detection fails.
+You can ask one of the following two types of questions about any probe instance:
 
-## Query and Answer Format (strictly required)
+1. Parity Query: Ask whether the size of the output set O for probe instance Pi is odd or even. I will answer "odd" or "even".
 
-Each query must contain only one tag. Use the following XML format:
+2. Membership Query: Ask whether the output set O for probe instance Pi contains a specified element x (x must be in U). I will answer "yes" or "no".
 
-- Temporary Belt Closed-Loop Test (e.g., testing workstations 1 and 3):
-<ask_loop>1,3</ask_loop>
+Note: You cannot directly ask for the complete output set O; you can only obtain information indirectly through the above two methods.
 
-- Workstation In Loop Test (e.g., asking if workstation 2 is on the circulation loop when installing belt (1,3)):
-<ask_on_loop>1,3,2</ask_on_loop>
+Each turn you can only ask one question, using the following XML format:
 
-When submitting the final answer, list the two endpoint workstations of the broken conveyor belt (comma-separated, order does not matter), using this format:
+- Parity Query (e.g., asking about P3):
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- Membership Query (e.g., asking if P2's output contains "Jia"):
+<query_member>P2,Jia</query_member>
 
-Please use as few queries as possible to find the correct answer.
+When submitting the final answer, you must specify the inferred rule (α, β, γ, or δ) and the output set elements for the final pair PF (comma-separated, order does not matter):
+
+<answer>rule=α, output=Jia,Bing</answer>
+
+Note: If the output set is empty, write:
+<answer>rule=α, output=empty</answer>
+
+Please use as few queries as possible to infer the correct operator rule and calculate the final output.
 """
 
-    # ========================== 场景 5：法律 ==========================
     contextualized_rule_zh_5 = """\
-合同条款依赖审查系统已启动。
+欢迎使用「智能法务证据链交叉审查系统」。
 
-这份复杂合同涉及 N 个法律实体/核心条款，标号为 1 到 {n}。最初的依赖结构 T 是一棵权责清晰的树（连通且无环），但在近期审查中，恰好有一项关键条款被宣告无效（删除了一条边），导致目前的合同架构 F 拆分成了两个互不干涉的责任区。
+法庭采信了固定的关键证据标号集合 U = {{甲, 乙, 丙, 丁, 戊, 己, 庚, 辛}}。
 
-已知信息：
-- 法律实体/核心条款总数 N = {n}
-- 最初各实体/条款在依赖网络 T 中的权责关联度（度数）：{degree_info}
+我已秘密启用了一个证据核验算子 f，它属于以下四种质证规则之一：
+- 规则 α：输出原告证据集 A 中未被被告证据集 B 覆盖的部分
+- 规则 β：输出被告证据集 B 中未被原告证据集 A 涵盖的部分
+- 规则 γ：输出证据集 A 和 B 的对称差（即仅被单方出示的争议证据）
+- 规则 δ：若证据集 A 的数量大于等于 B，输出 A 排除 B 的部分；否则输出 B 排除 A 的部分
 
-你的目标是通过法务尽职调查提问，推断出被宣告无效的那项关键条款所连接的两个实体端点。注意：你无法直接获取合同修订原文，只能通过排查特定依赖关系的假设性反馈来进行推理。
+对于任意一对证据集 (A, B)，算子 f 会产生一个有效质证输出集 O = f(A, B)。
 
-可用的询问类型（每次仅限一个询问）：
+你的任务是：通过对预设的探测实例提问，推断出真实的质证规则，并将其应用到终局证据集对上。
 
-1. 假设补充协议环查询（ASK_LOOP）：询问如果在当前的合同架构 F 中，假设在实体 u 和 v 之间增补一份连带协议，是否会导致权责循环依赖。
-   - 若 u 和 v 在目前的 F 中仍存在传递依赖：返回 "YES k"，其中 k 表示陷入循环依赖的实体总数（k 大于等于 3）。
-   - 若 u 和 v 在目前的 F 中已完全无依赖关联：返回 "NO 0"。
+以下是你可以查询的集合对（编号 P1 到 P7）：
+- P1: A={{甲,乙,丙}}, B={{甲,乙,丙}}
+- P2: A={{甲,乙,丙}}, B={{丙,丁,戊}}
+- P3: A={{甲,乙}}, B={{丙,丁}}
+- P4: A={{甲,乙,丙,丁}}, B={{乙,丙}}
+- P5: A={{丁,戊}}, B={{丁,戊,己}}
+- P6: A=∅, B={{庚,辛}}
+- P7: A={{甲,乙,丙}}, B={{丁,戊,己}}
 
-2. 实体处于依赖环查询（ASK_ON_LOOP）：询问在假设增补 (u,v) 协议并产生权责循环依赖的情况下，实体 w 是否受困于该循环依赖之中。
-   - 若 u 和 v 在 F 中无依赖关联：返回 "NO-LOOP"。
-   - 若 u 和 v 在 F 中有依赖关联：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一有效依赖链条上，否则返回 "NO"。
+终局集合对 PF: A={{乙,庚,辛}}, B={{甲,乙,丁,庚}}
 
-收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，审查失败。
+你可以对任意探测实例提出以下两类问题之一：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 基数奇偶查询：询问某个探测实例 Pi 上的输出集合 O 的元素个数是奇数还是偶数。我会回答"奇"或"偶"。
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. 成员查询：询问某个探测实例 Pi 上的输出集合 O 是否包含指定元素 x（x 必须是 U 中的元素）。我会回答"是"或"否"。
 
-- 假设补充协议环查询（例如排查实体 1 和 3）：
-<ask_loop>1,3</ask_loop>
+注意：你不能直接询问完整的输出集合 O，只能通过上述两种方式间接获取信息。
 
-- 实体处于依赖环查询（例如询问增补协议 (1,3) 时实体 2 是否在循环依赖中）：
-<ask_on_loop>1,3,2</ask_on_loop>
+每次只能提出一个问题，使用以下 XML 格式：
 
-提交最终答案时，列出被宣告无效的条款所连接的两个实体端点（用逗号隔开，顺序不限），格式如下：
+- 基数奇偶查询（例如询问 P3）：
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- 成员查询（例如询问 P2 的输出是否包含"甲"）：
+<query_member>P2,甲</query_member>
 
-请尽可能少地使用询问次数来找到正确答案。
+提交最终答案时，必须说明推断出的规则（α、β、γ 或 δ）和终局集合对 PF 上的输出集合元素（用逗号隔开，顺序不限）：
+
+<answer>rule=α, output=甲,丙</answer>
+
+注意：如果输出集合为空集，请写作：
+<answer>rule=α, output=空集</answer>
+
+请尽可能少地提问，推断出正确的算子规则并计算终局输出。
 """
 
     contextualized_rule_en_5 = """\
-[Contract Clause Dependency Review Scenario]
-The Contract Clause Dependency Review System is activated.
+[Law Scenario]
+Welcome to the Intelligent Legal Evidence Cross-Examination System.
 
-This complex contract involves N legal entities/clauses numbered from 1 to {n}. The initial dependency structure T was a tree with clear rights and responsibilities (connected and acyclic). However, during a recent review, exactly one key clause was declared void (an edge was deleted from T), causing the current contract framework F to split into exactly two independent domains of responsibility.
+The court admits a fixed universe of key evidence markers U = {{Jia, Yi, Bing, Ding, Wu, Ji, Geng, Xin}}.
 
-Known information:
-- Total number of legal entities/clauses N = {n}
-- The degree of dependency for each entity/clause in the initial network T: {degree_info}
+I have secretly activated an evidence verification operator f, which applies one of the following four cross-examination rules:
+- Rule α: Output plaintiff's evidence set A excluding defendant's set B
+- Rule β: Output defendant's set B excluding plaintiff's set A
+- Rule γ: Output the symmetric difference of sets A and B (disputed evidence presented by exactly one side)
+- Rule δ: If the size of set A is greater than or equal to set B, output A minus B; otherwise output B minus A
 
-Your goal is to deduce the two endpoints of the voided clause through due diligence queries. Note: You cannot directly access the revised contract text; you can only obtain feedback through hypothetical dependency checks.
+For any pair of evidence sets (A, B), the operator f produces an output valid evidence set O = f(A, B).
 
-Available query types (one query per turn):
+Your task is: infer the true cross-examination rule by querying preset probe instances, and apply it to the final evidence set pair.
 
-1. Hypothetical Agreement Loop Query (ASK_LOOP): Ask whether adding a supplementary agreement between entity u and v in the current framework F would create a cyclical dependency of rights and responsibilities.
-   - If u and v still have transitive dependencies in F: Return "YES k", where k is the total number of entities trapped in the cyclical dependency (k is greater than or equal to 3).
-   - If u and v have no dependency connection in F: Return "NO 0".
+Here are the set pairs you can query (numbered P1 to P7):
+- P1: A={{Jia,Yi,Bing}}, B={{Jia,Yi,Bing}}
+- P2: A={{Jia,Yi,Bing}}, B={{Bing,Ding,Wu}}
+- P3: A={{Jia,Yi}}, B={{Bing,Ding}}
+- P4: A={{Jia,Yi,Bing,Ding}}, B={{Yi,Bing}}
+- P5: A={{Ding,Wu}}, B={{Ding,Wu,Ji}}
+- P6: A=∅, B={{Geng,Xin}}
+- P7: A={{Jia,Yi,Bing}}, B={{Ding,Wu,Ji}}
 
-2. Entity In Dependency Loop Query (ASK_ON_LOOP): Ask whether entity w is trapped in the cyclical dependency if adding agreement (u,v) creates one.
-   - If u and v have no dependency connection in F: Return "NO-LOOP".
-   - If u and v have a dependency connection in F: Return "YES" if w lies on the unique valid dependency chain from u to v in F, otherwise return "NO".
+Final set pair PF: A={{Yi,Geng,Xin}}, B={{Jia,Yi,Ding,Geng}}
 
-When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the review fails.
+You can ask one of the following two types of questions about any probe instance:
 
-## Query and Answer Format (strictly required)
+1. Parity Query: Ask whether the size of the output set O for probe instance Pi is odd or even. I will answer "odd" or "even".
 
-Each query must contain only one tag. Use the following XML format:
+2. Membership Query: Ask whether the output set O for probe instance Pi contains a specified element x (x must be in U). I will answer "yes" or "no".
 
-- Hypothetical Agreement Loop Query (e.g., querying entities 1 and 3):
-<ask_loop>1,3</ask_loop>
+Note: You cannot directly ask for the complete output set O; you can only obtain information indirectly through the above two methods.
 
-- Entity In Dependency Loop Query (e.g., asking if entity 2 is in the cyclical dependency when adding agreement (1,3)):
-<ask_on_loop>1,3,2</ask_on_loop>
+Each turn you can only ask one question, using the following XML format:
 
-When submitting the final answer, list the two entity endpoints of the voided clause (comma-separated, order does not matter), using this format:
+- Parity Query (e.g., asking about P3):
+<query_parity>P3</query_parity>
 
-<answer>1,5</answer>
+- Membership Query (e.g., asking if P2's output contains "Jia"):
+<query_member>P2,Jia</query_member>
 
-Please use as few queries as possible to find the correct answer.
+When submitting the final answer, you must specify the inferred rule (α, β, γ, or δ) and the output set elements for the final pair PF (comma-separated, order does not matter):
+
+<answer>rule=α, output=Jia,Bing</answer>
+
+Note: If the output set is empty, write:
+<answer>rule=α, output=empty</answer>
+
+Please use as few queries as possible to infer the correct operator rule and calculate the final output.
 """
 
-    tags = ["answer", "ask_loop", "ask_on_loop"]
+    tags = ["answer", "query_parity", "query_member"]
 
-    # 难度配置：
-    # 1 (简单)       - N=4, 简单路径
-    # 2 (中等偏下)   - N=6, 简单星形
-    # 3 (中等偏上)   - N=8, 较复杂树
-    # 4 (较难)       - N=10, 复杂树
-    # 5 (难)         - N=12, 更复杂树
+    reasoning_type = "溯因推理"
+    data_structure = "集合"
 
     DIFFICULTY_CONFIG = {
-        1: [
-            {
-                "n": 4,
-                "edges_T": [(1,2), (2,3), (3,4)],
-                "deleted_edge": (2, 3),
-                "degree_T": {1: 1, 2: 2, 3: 2, 4: 1},
-            },
-            {
-                "n": 4,
-                "edges_T": [(1,2), (2,3), (3,4)],
-                "deleted_edge": (1, 2),
-                "degree_T": {1: 1, 2: 2, 3: 2, 4: 1},
-            },
-            {
-                "n": 4,
-                "edges_T": [(1,2), (2,3), (3,4)],
-                "deleted_edge": (3, 4),
-                "degree_T": {1: 1, 2: 2, 3: 2, 4: 1},
-            }
-        ],
-        2: [
-            {
-                "n": 6,
-                "edges_T": [(3,1), (3,2), (3,4), (3,5), (3,6)],
-                "deleted_edge": (3, 5),
-                "degree_T": {1: 1, 2: 1, 3: 5, 4: 1, 5: 1, 6: 1},
-            },
-            {
-                "n": 6,
-                "edges_T": [(3,1), (3,2), (3,4), (3,5), (3,6)],
-                "deleted_edge": (3, 1),
-                "degree_T": {1: 1, 2: 1, 3: 5, 4: 1, 5: 1, 6: 1},
-            },
-            {
-                "n": 6,
-                "edges_T": [(3,1), (3,2), (3,4), (3,5), (3,6)],
-                "deleted_edge": (3, 4),
-                "degree_T": {1: 1, 2: 1, 3: 5, 4: 1, 5: 1, 6: 1},
-            }
-        ],
-        3: [
-            {
-                "n": 8,
-                "edges_T": [(1,2), (2,3), (3,4), (2,5), (3,6), (4,7), (7,8)],
-                "deleted_edge": (3, 6),
-                "degree_T": {1: 1, 2: 3, 3: 3, 4: 2, 5: 1, 6: 1, 7: 2, 8: 1},
-            },
-            {
-                "n": 8,
-                "edges_T": [(1,2), (2,3), (3,4), (2,5), (3,6), (4,7), (7,8)],
-                "deleted_edge": (2, 3),
-                "degree_T": {1: 1, 2: 3, 3: 3, 4: 2, 5: 1, 6: 1, 7: 2, 8: 1},
-            },
-            {
-                "n": 8,
-                "edges_T": [(1,2), (2,3), (3,4), (2,5), (3,6), (4,7), (7,8)],
-                "deleted_edge": (4, 7),
-                "degree_T": {1: 1, 2: 3, 3: 3, 4: 2, 5: 1, 6: 1, 7: 2, 8: 1},
-            }
-        ],
-        4: [
-            {
-                "n": 10,
-                "edges_T": [(1,2), (2,3), (3,4), (4,5), (2,6), (3,7), (7,8), (4,9), (9,10)],
-                "deleted_edge": (4, 9),
-                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 1, 6: 1, 7: 2, 8: 1, 9: 2, 10: 1},
-            },
-            {
-                "n": 10,
-                "edges_T": [(1,2), (2,3), (3,4), (4,5), (2,6), (3,7), (7,8), (4,9), (9,10)],
-                "deleted_edge": (3, 7),
-                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 1, 6: 1, 7: 2, 8: 1, 9: 2, 10: 1},
-            },
-            {
-                "n": 10,
-                "edges_T": [(1,2), (2,3), (3,4), (4,5), (2,6), (3,7), (7,8), (4,9), (9,10)],
-                "deleted_edge": (2, 3),
-                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 1, 6: 1, 7: 2, 8: 1, 9: 2, 10: 1},
-            }
-        ],
-        5: [
-            {
-                "n": 12,
-                "edges_T": [(1,2), (2,3), (3,4), (4,5), (5,6), (2,7), (3,8), (8,9), (4,10), (5,11), (11,12)],
-                "deleted_edge": (5, 11),
-                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 2, 9: 1, 10: 1, 11: 2, 12: 1},
-            },
-            {
-                "n": 12,
-                "edges_T": [(1,2), (2,3), (3,4), (4,5), (5,6), (2,7), (3,8), (8,9), (4,10), (5,11), (11,12)],
-                "deleted_edge": (3, 8),
-                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 2, 9: 1, 10: 1, 11: 2, 12: 1},
-            },
-            {
-                "n": 12,
-                "edges_T": [(1,2), (2,3), (3,4), (4,5), (5,6), (2,7), (3,8), (8,9), (4,10), (5,11), (11,12)],
-                "deleted_edge": (4, 5),
-                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 2, 9: 1, 10: 1, 11: 2, 12: 1},
-            }
-        ],
+        "zh": {
+            1: {"rule": "α"},
+            2: {"rule": "β"},
+            3: {"rule": "γ"},
+            4: {"rule": "δ"},
+            5: {"rule": "δ"},
+        },
+        "en": {
+            1: {"rule": "α"},
+            2: {"rule": "β"},
+            3: {"rule": "γ"},
+            4: {"rule": "δ"},
+            5: {"rule": "δ"},
+        },
     }
 
     def __init__(self, config):
+        self.universe_zh = {"甲", "乙", "丙", "丁", "戊", "己", "庚", "辛"}
+        self.universe_en = {"Jia", "Yi", "Bing", "Ding", "Wu", "Ji", "Geng", "Xin"}
+        
+        self.probes_zh = {
+            "P1": ({"甲", "乙", "丙"}, {"甲", "乙", "丙"}),
+            "P2": ({"甲", "乙", "丙"}, {"丙", "丁", "戊"}),
+            "P3": ({"甲", "乙"}, {"丙", "丁"}),
+            "P4": ({"甲", "乙", "丙", "丁"}, {"乙", "丙"}),
+            "P5": ({"丁", "戊"}, {"丁", "戊", "己"}),
+            "P6": (set(), {"庚", "辛"}),
+            "P7": ({"甲", "乙", "丙"}, {"丁", "戊", "己"}),
+            "PF": ({"乙", "庚", "辛"}, {"甲", "乙", "丁", "庚"}),
+        }
+        
+        self.probes_en = {
+            "P1": ({"Jia", "Yi", "Bing"}, {"Jia", "Yi", "Bing"}),
+            "P2": ({"Jia", "Yi", "Bing"}, {"Bing", "Ding", "Wu"}),
+            "P3": ({"Jia", "Yi"}, {"Bing", "Ding"}),
+            "P4": ({"Jia", "Yi", "Bing", "Ding"}, {"Yi", "Bing"}),
+            "P5": ({"Ding", "Wu"}, {"Ding", "Wu", "Ji"}),
+            "P6": (set(), {"Geng", "Xin"}),
+            "P7": ({"Jia", "Yi", "Bing"}, {"Ding", "Wu", "Ji"}),
+            "PF": ({"Yi", "Geng", "Xin"}, {"Jia", "Yi", "Ding", "Geng"}),
+        }
+        
         super().__init__(config)
 
     def _initialize_game(self):
+        lang = self.config.language
         diff = int(self.config.difficulty)
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg_list = self.DIFFICULTY_CONFIG[diff]
-        cfg = random.choice(cfg_list)
-        self._game_info["n"] = cfg["n"]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self.rule = cfg["rule"]
         
-        # 原始树的边和度数
-        self.edges_T = set(tuple(sorted(e)) for e in cfg["edges_T"])
-        self.deleted_edge = tuple(sorted(cfg["deleted_edge"]))
-        self.degree_T = cfg["degree_T"]
+        if lang == "zh":
+            self.universe = self.universe_zh
+            self.probes = self.probes_zh
+            self.empty_word = "空集"
+        else:
+            self.universe = self.universe_en
+            self.probes = self.probes_en
+            self.empty_word = "empty"
         
-        # 构建森林 F（删除一条边后的图）
-        self.edges_F = self.edges_T - {self.deleted_edge}
+        self.outputs = {}
+        for probe_id, (A, B) in self.probes.items():
+            self.outputs[probe_id] = self._apply_rule(A, B, self.rule)
         
-        # 构建邻接表（用于 BFS/DFS）
-        self.adj_F = {i: [] for i in range(1, cfg["n"] + 1)}
-        for u, v in self.edges_F:
-            self.adj_F[u].append(v)
-            self.adj_F[v].append(u)
-        
-        # 格式化度数信息用于显示
-        degree_list = [f"{i}:{self.degree_T[i]}" for i in range(1, cfg["n"] + 1)]
-        self._game_info["degree_info"] = ", ".join(degree_list)
+        self._game_info = {}
 
-    def _find_path_bfs(self, start, end):
-        """使用 BFS 在森林 F 中查找从 start 到 end 的路径，返回路径上的节点列表"""
-        if start == end:
-            return [start]
-        
-        from collections import deque
-        queue = deque([(start, [start])])
-        visited = {start}
-        
-        while queue:
-            node, path = queue.popleft()
-            for neighbor in self.adj_F[node]:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    new_path = path + [neighbor]
-                    if neighbor == end:
-                        return new_path
-                    queue.append((neighbor, new_path))
-        
-        return None  # 不连通
+    def _apply_rule(self, A, B, rule):
+        if rule == "α":
+            return A - B
+        elif rule == "β":
+            return B - A
+        elif rule == "γ":
+            return A.symmetric_difference(B)
+        elif rule == "δ":
+            if len(A) >= len(B):
+                return A - B
+            else:
+                return B - A
+        else:
+            raise ValueError(f"Unknown rule: {rule}")
 
     def evaluate(self, parsed_info):
-        """评估答案是否正确"""
+        raw_ans = parsed_info["answer"].strip()
+        
+        rule_match = re.search(r'rule\s*=\s*([αβγδ])', raw_ans)
+        output_match = re.search(r'output\s*=\s*(.*?)(?=\n|$)', raw_ans)
+        
+        if not rule_match or not output_match:
+            return False
+        
+        ans_rule = rule_match.group(1).strip()
+        ans_output_str = output_match.group(1).strip()
+        
+        if ans_rule != self.rule:
+            return False
+        
+        correct_output = self.outputs["PF"]
+        
         try:
-            raw_ans = parsed_info["answer"].strip()
-            parts = [x.strip() for x in raw_ans.split(",")]
-            if len(parts) != 2:
-                return False
+            ans_output_str = ans_output_str.split("这是")[0].split("This is")[0].strip()
+            ans_output_str = ans_output_str.replace("，", ",")
+            ans_output_str = ans_output_str.rstrip('。.!！ ')
             
-            a, b = int(parts[0]), int(parts[1])
-            submitted = tuple(sorted([a, b]))
-            
-            return submitted == self.deleted_edge
+            if ans_output_str == self.empty_word:
+                model_output = set()
+            else:
+                model_output = set(x.strip() for x in ans_output_str.split(",") if x.strip())
         except:
             return False
+        
+        return model_output == correct_output
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑"""
-        
-        if "ask_loop" in parsed_info:
+        if self.config.language == "zh":
+            odd_word, even_word = "奇", "偶"
+            yes_word, no_word = "是", "否"
+            error_invalid = "错误：无效的探测实例编号。"
+            error_element = "错误：元素不在宇宙集合中。"
+            error_format = "错误：格式无效。"
+            error_pf = "错误：不能直接查询终局集合对 PF，请通过 P1-P7 推断规则后计算。"
+        else:
+            odd_word, even_word = "odd", "even"
+            yes_word, no_word = "yes", "no"
+            error_invalid = "Error: Invalid probe instance ID."
+            error_element = "Error: Element not in universe."
+            error_format = "Error: Invalid format."
+            error_pf = "Error: Cannot query the final pair PF directly. Please infer the rule from P1-P7."
+
+        valid_probe_ids = {pid for pid in self.probes.keys() if pid != "PF"}
+
+        if "query_parity" in parsed_info:
+            probe_id = parsed_info["query_parity"].strip()
+            if probe_id == "PF":
+                return error_pf
+            if probe_id not in valid_probe_ids:
+                return error_invalid
+            
+            output_set = self.outputs[probe_id]
+            size = len(output_set)
+            return odd_word if size % 2 == 1 else even_word
+
+        elif "query_member" in parsed_info:
             try:
-                raw = parsed_info["ask_loop"].strip()
-                parts = [x.strip() for x in raw.split(",")]
+                raw = parsed_info["query_member"]
+                parts = raw.split(",")
                 if len(parts) != 2:
-                    raise ValueError("Invalid format")
+                    return error_format
                 
-                u, v = int(parts[0]), int(parts[1])
-                n = self._game_info["n"]
-                if u < 1 or u > n or v < 1 or v > n:
-                    raise ValueError("Node out of range")
+                probe_id = parts[0].strip()
+                element = parts[1].strip()
                 
-                if u == v:
-                    # 自环不构成简单环
-                    return "NO 0"
+                if probe_id == "PF":
+                    return error_pf
+                if probe_id not in valid_probe_ids:
+                    return error_invalid
                 
-                # 查找路径
-                path = self._find_path_bfs(u, v)
+                if element not in self.universe:
+                    return error_element
                 
-                if path is None:
-                    # 不连通
-                    return "NO 0"
-                else:
-                    # 连通，环的长度（边数） = len(path)
-                    # 因为路径有 len(path) 个节点 -> len(path)-1 条边
-                    # 加上新添加的 (u,v) 边 -> 环的边数 = len(path)
-                    k = len(path)
-                    if k < 3:
-                        # 路径节点数为2意味着u,v直接相邻，
-                        # 添加平行边形成长度为2的"环"，不算简单环
-                        return "NO 0"
-                    return f"YES {k}"
-                    
-            except Exception as e:
-                return "Error: Invalid query format." if self.config.language == "en" else "错误：查询格式无效。"
-        
-        elif "ask_on_loop" in parsed_info:
-            try:
-                raw = parsed_info["ask_on_loop"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 3:
-                    raise ValueError("Invalid format")
-                
-                u, v, w = int(parts[0]), int(parts[1]), int(parts[2])
-                n = self._game_info["n"]
-                if (u < 1 or u > n or 
-                    v < 1 or v > n or 
-                    w < 1 or w > n):
-                    raise ValueError("Node out of range")
-                
-                if u == v:
-                    return "NO-LOOP"
-                
-                # 查找 u 到 v 的路径
-                path = self._find_path_bfs(u, v)
-                
-                if path is None:
-                    # 不连通
-                    return "NO-LOOP"
-                else:
-                    # 连通，检查 w 是否在路径上
-                    if w in path:
-                        return "YES"
-                    else:
-                        return "NO"
-                        
-            except Exception as e:
-                return "Error: Invalid query format." if self.config.language == "en" else "错误：查询格式无效。"
-        
+                output_set = self.outputs[probe_id]
+                return yes_word if element in output_set else no_word
+            except:
+                return error_format
+
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct):
-        """生成错误答案，针对每种实际返回格式做精确替换"""
+        if self.config.language == "zh":
+            swap_map = {"是": "否", "否": "是", "奇": "偶", "偶": "奇"}
+            if correct in swap_map:
+                return swap_map[correct]
+        else:
+            correct_lower = correct.lower()
+            swap_map = {"yes": "no", "no": "yes", "odd": "even", "even": "odd"}
+            if correct_lower in swap_map:
+                return swap_map[correct_lower]
         
-        # 处理 "YES k" 格式（如 "YES 3"）-> 改为 "NO 0"
-        m = re.match(r'^YES\s+(\d+)$', correct)
-        if m:
-            return "NO 0"
-        
-        # 处理 "NO 0" 格式 -> 改为 "YES 3"（构造一个合理的环长度）
-        if correct.strip() == "NO 0":
-            return "YES 3"
-        
-        # 处理 "NO-LOOP" -> 改为 "YES"
-        if correct.strip() == "NO-LOOP":
-            return "YES"
-        
-        # 处理 "YES"（节点在环上）-> "NO"
-        if correct.strip() == "YES":
-            return "NO"
-        
-        # 处理 "NO"（节点不在环上）-> "YES"
-        if correct.strip() == "NO":
-            return "YES"
-        
-        # 处理错误消息等其它情况
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
         queries = []
-        n = self._game_info["n"]
         
-        # 1. 环查询 (ASK_LOOP)
-        for u in range(1, n + 1):
-            for v in range(u + 1, n + 1):
-                query_xml = f"<ask_loop>{u},{v}</ask_loop>"
-                
-                path = self._find_path_bfs(u, v)
-                if path is None:
-                    ans = "NO 0"
-                else:
-                    k = len(path)
-                    if k < 3:
-                        ans = "NO 0"
-                    else:
-                        ans = f"YES {k}"
+        probe_ids = sorted([pid for pid in self.probes.keys() if pid != "PF"])
+        
+        universe_elements = sorted(list(self.universe))
+
+        for pid in probe_ids:
+            parity_query_str = f"<query_parity>{pid}</query_parity>"
+            parity_info = {"query_parity": pid}
+            parity_ans = self._cf_core_produce(parity_info)
+            
+            queries.append({
+                "query": parity_query_str,
+                "answer": parity_ans
+            })
+
+            for elem in universe_elements:
+                member_content = f"{pid},{elem}"
+                member_query_str = f"<query_member>{member_content}</query_member>"
+                member_info = {"query_member": member_content}
+                member_ans = self._cf_core_produce(member_info)
                 
                 queries.append({
-                    "query": query_xml,
-                    "answer": ans
+                    "query": member_query_str,
+                    "answer": member_ans
                 })
-        
-        # 2. 节点在环查询 (ASK_ON_LOOP)
-        for u in range(1, n + 1):
-            for v in range(u + 1, n + 1):
-                path = self._find_path_bfs(u, v)
-                path_set = set(path) if path else set()
                 
-                for w in range(1, n + 1):
-                    query_xml = f"<ask_on_loop>{u},{v},{w}</ask_on_loop>"
-                    
-                    if path is None:
-                        ans = "NO-LOOP"
-                    else:
-                        if w in path_set:
-                            ans = "YES"
-                        else:
-                            ans = "NO"
-                            
-                    queries.append({
-                        "query": query_xml,
-                        "answer": ans
-                    })
-                    
         return queries

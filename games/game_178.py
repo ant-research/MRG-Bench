@@ -1,1100 +1,764 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   子树规模：以某节点为根的子树共有多少个节点
-# ============================================================
-
-from .base import Game
 import random
+import re
+from .base import Game
 
+class TreeEdgeDeletionGame(Game):
 
-class HiddenTreeFunctionGame(Game):
+    reasoning_type = "演绎推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们来玩一个"树结构函数推理"游戏，规则如下：
+我们现在来玩一个"树的边删除推理"游戏，规则如下：
 
-游戏设定了一个包含 {n} 个结点的有根树（连通、无环，每个结点最多一个父结点，根结点无父结点）。结点编号为：{node_list}。
+游戏设定了 N 个节点，标号为 1 到 {n}。原始结构 T 是一棵树（连通且无环），但在 T 中恰好删除了一条边，得到森林 F，包含且仅包含两个连通分量。
 
-我定义了一个隐藏函数 f，它为每个结点赋予一个非负整数值。你的目标是通过交互查询来推断这个函数的规律，并在测试阶段准确预测指定结点的函数值。
+已知信息：
+- 节点总数 N = {n}
+- 每个节点在原始树 T 中的度数：{degree_info}
 
-## 游戏分为两个阶段：
+你的目标是通过询问推断出被删除的那条边的两个端点。注意：你无法直接看到任何边的信息，只能通过特定的询问来获取反馈。
 
-### 探索阶段
-你可以使用以下查询来了解树结构和函数规律（每种查询有配额限制）：
+可用的询问类型（每次仅限一个询问）：
 
-1. **取值查询**（配额 {quota_val} 次）：查询结点 X 的函数值
-2. **子结点查询**（配额 {quota_children} 次）：查询结点 X 的所有直接子结点
-3. **祖先关系判断**（配额 {quota_ancestor} 次）：判断结点 X 是否为结点 Y 的严格祖先（X=Y 时返回"否"）
-4. **父结点查询**（配额 {quota_parent} 次）：查询结点 X 的父结点
+1. 环查询（ASK_LOOP）：询问在当前森林 F 上假设添加边 (u,v) 是否会产生简单环。
+   - 若 u 和 v 在 F 中连通：返回 "YES k"，其中 k 表示产生的环的长度（k 大于等于 3）。
+   - 若 u 和 v 在 F 中不连通：返回 "NO 0"。
 
-### 测试阶段
-我会指定 {test_count} 个目标结点。在此阶段：
-- **禁止**使用取值查询
-- 允许继续使用结构查询（子结点、祖先关系、父结点查询），但总计不超过 {test_quota} 次
-- 你需要一次性提交这些目标结点的函数值预测
+2. 节点在环查询（ASK_ON_LOOP）：询问在假设添加边 (u,v) 产生环的情况下，节点 w 是否位于该环上。
+   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
+   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一路径上，否则返回 "NO"。
 
-## 查询格式（使用 XML 标签）
+当你收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，游戏失败。
 
-每次只能提交一个查询。格式如下：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 取值查询（例如查询结点 5）：
-<query_val>5</query_val>
+- 环查询（例如询问节点 1 和 3）：
+<ask_loop>1,3</ask_loop>
 
-- 子结点查询（例如查询结点 3 的子结点）：
-<query_children>3</query_children>
+- 节点在环查询（例如询问添加边 (1,3) 时节点 2 是否在环上）：
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- 祖先关系判断（例如判断 2 是否为 7 的祖先）：
-<query_ancestor>2,7</query_ancestor>
+提交最终答案时，列出被删除边的两个端点（用逗号隔开，顺序不限），格式如下：
 
-- 父结点查询（例如查询结点 4 的父结点）：
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- 进入测试阶段（当你准备好进入测试阶段时）：
-<enter_test></enter_test>
-
-- 提交最终答案（测试阶段，格式为"结点=值"，用逗号分隔）：
-<answer>1=5,3=8,7=2</answer>
-
-## 注意事项
-- 探索阶段的查询配额用完后会自动进入测试阶段
-- 测试阶段禁止取值查询，结构查询总数不能超过配额
-- 答案必须包含所有测试目标结点，且值必须完全正确
+请尽可能少地使用询问次数来找到正确答案。
 """
 
     game_rule_en = """\
-Let's play a "Tree Structure Function Deduction" game. Here are the rules:
+Let's play a "Tree Edge Deletion Deduction" game. Here are the rules:
 
-The game features a rooted tree with {n} nodes (connected, acyclic, each node has at most one parent, root has no parent). Node IDs are: {node_list}.
+There are N nodes numbered from 1 to {n}. The original structure T is a tree (connected and acyclic), but exactly one edge was deleted from T, resulting in a forest F containing exactly two connected components.
 
-I have defined a hidden function f that assigns a non-negative integer value to each node. Your goal is to infer the pattern of this function through interactive queries and accurately predict the function values for specified nodes in the test phase.
+Known information:
+- Total number of nodes N = {n}
+- Degree of each node in the original tree T: {degree_info}
 
-## The game has two phases:
+Your goal is to deduce the two endpoints of the deleted edge through queries. Note: You cannot directly see any edge information; you can only obtain feedback through specific queries.
 
-### Exploration Phase
-You can use the following queries to learn about the tree structure and function pattern (each query type has a quota):
+Available query types (one query per turn):
 
-1. **Value Query** (quota: {quota_val} times): Query the function value of node X
-2. **Children Query** (quota: {quota_children} times): Query all direct children of node X
-3. **Ancestor Query** (quota: {quota_ancestor} times): Check if node X is a strict ancestor of node Y (returns "No" when X=Y)
-4. **Parent Query** (quota: {quota_parent} times): Query the parent of node X
+1. Loop Query (ASK_LOOP): Ask whether adding edge (u,v) to the current forest F would create a simple cycle.
+   - If u and v are connected in F: Return "YES k", where k is the length of the cycle created (k is greater than or equal to 3).
+   - If u and v are not connected in F: Return "NO 0".
 
-### Test Phase
-I will specify {test_count} target nodes. In this phase:
-- Value queries are **forbidden**
-- Structure queries (children, ancestor, parent) are allowed but total count cannot exceed {test_quota}
-- You must submit predictions for all target nodes at once
+2. Node On Loop Query (ASK_ON_LOOP): Ask whether node w lies on the cycle if adding edge (u,v) creates one.
+   - If u and v are not connected in F: Return "NO-LOOP".
+   - If u and v are connected in F: Return "YES" if w lies on the unique path from u to v in F, otherwise return "NO".
 
-## Query Format (using XML tags)
+When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the game fails.
 
-Only one query per turn. Format:
+Each query must contain only one tag. Use the following XML format:
 
-- Value Query (e.g., query node 5):
-<query_val>5</query_val>
+- Loop Query (e.g., querying nodes 1 and 3):
+<ask_loop>1,3</ask_loop>
 
-- Children Query (e.g., query children of node 3):
-<query_children>3</query_children>
+- Node On Loop Query (e.g., asking if node 2 is on the cycle when adding edge (1,3)):
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- Ancestor Query (e.g., check if 2 is ancestor of 7):
-<query_ancestor>2,7</query_ancestor>
+When submitting the final answer, list the two endpoints of the deleted edge (comma-separated, order does not matter), using this format:
 
-- Parent Query (e.g., query parent of node 4):
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- Enter Test Phase (when ready for test phase):
-<enter_test></enter_test>
-
-- Submit Final Answer (in test phase, format "node=value", comma-separated):
-<answer>1=5,3=8,7=2</answer>
-
-## Notes
-- Exploration phase ends automatically when quotas are exhausted
-- Test phase forbids value queries; structure queries cannot exceed quota
-- Answer must include all test target nodes with exact values
+Please use as few queries as possible to find the correct answer.
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-欢迎使用“交通网络级联覆盖度”分析系统，工作规程如下：
+交通路网修复推理系统已启动。
 
-系统映射了一个包含 {n} 个枢纽节点的层级分发路网（连通、无环，每个枢纽最多一个上游，总根节点无上游）。枢纽编号为：{node_list}。
+游戏设定了 N 个交通枢纽（城市），标号为 1 到 {n}。原本的路网结构 T 是一棵连通且无环的树，但因突发地质灾害，恰好有一条主干道被阻断（相当于在 T 中删除了一条边），使得目前的可用路网 F 分裂成了两个无法互相到达的连通区域。
 
-路网中存在一个隐藏的级联流量函数 f，代表每个枢纽节点所能辐射的总节点数（即包含自身在内的所有下游及分支枢纽总数）。你的目标是通过交互查询推断流量分布模式，并在测试阶段准确预测指定枢纽的流量覆盖值。
+已知信息：
+- 城市总数 N = {n}
+- 灾前各城市在原路网 T 中的相连干道数（度数）：{degree_info}
 
-## 审计分为两个阶段：
+你的目标是通过勘测询问，推断出被阻断的那条道路连接的两个城市端点。注意：你无法直接观测具体的路况信息，只能通过特定的假设性排查来获取反馈。
 
-### 勘探阶段
-你可以使用以下指令来摸排路网结构和流量规律（每种指令有配额限制）：
+可用的询问类型（每次仅限一个询问）：
 
-1. **流量查询**（配额 {quota_val} 次）：查询枢纽 X 的流量覆盖值
-2. **下游查询**（配额 {quota_children} 次）：查询枢纽 X 的所有直接下游枢纽
-3. **上游路径判断**（配额 {quota_ancestor} 次）：判断枢纽 X 是否为枢纽 Y 的严格上游（X=Y 时返回"否"）
-4. **上游查询**（配额 {quota_parent} 次）：查询枢纽 X 的直接上游枢纽
+1. 建设新路环线排查（ASK_LOOP）：询问如果在当前断裂的路网 F 中，假设在城市 u 和 v 之间修建一条临时直达通路，是否会形成交通环线。
+   - 若 u 和 v 在目前的 F 中仍能连通：返回 "YES k"，其中 k 表示该环线途径的城市总数（k 大于等于 3）。
+   - 若 u 和 v 在目前的 F 中无法连通：返回 "NO 0"。
 
-### 测试阶段
-系统会指定 {test_count} 个目标枢纽。在此阶段：
-- **禁止**使用流量查询
-- 允许继续使用结构查询（下游、路径判断、上游查询），但总计不超过 {test_quota} 次
-- 你需要一次性提交这些目标枢纽的流量覆盖值预测
+2. 城市在环线排查（ASK_ON_LOOP）：询问在假设修建 (u,v) 临时通路并产生环线的情况下，城市 w 是否位于该环线上。
+   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
+   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一有效路径上，否则返回 "NO"。
 
-## 查询格式（使用 XML 标签）
+收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，排查失败。
 
-每次只能提交一个查询。格式如下：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 流量查询（例如查询枢纽 5）：
-<query_val>5</query_val>
+- 建设新路环线排查（例如排查城市 1 和 3）：
+<ask_loop>1,3</ask_loop>
 
-- 下游查询（例如查询枢纽 3 的直接下游）：
-<query_children>3</query_children>
+- 城市在环线排查（例如询问修建 (1,3) 临时通路时城市 2 是否在环线上）：
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- 上游路径判断（例如判断 2 是否为 7 的严格上游）：
-<query_ancestor>2,7</query_ancestor>
+提交最终答案时，列出被阻断道路的两个端点城市（用逗号隔开，顺序不限），格式如下：
 
-- 上游查询（例如查询枢纽 4 的直接上游）：
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- 进入测试阶段（当你准备好进入测试阶段时）：
-<enter_test></enter_test>
-
-- 提交最终预测（测试阶段，格式为"枢纽=值"，用逗号分隔）：
-<answer>1=5,3=8,7=2</answer>
-
-## 注意事项
-- 勘探阶段的指令配额用完后会自动进入测试阶段
-- 测试阶段禁止流量查询，结构查询总数不能超过配额
-- 预测结果必须包含所有测试目标枢纽，且数值必须完全正确
+请尽可能少地使用询问次数来找到正确答案。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the "Traffic Network Cascade Coverage" analysis system. The operational protocol is as follows:
+[Traffic Network Repair Scenario]
+The Traffic Network Repair Deduction System is online.
 
-The system has mapped a hierarchical distribution network with {n} hub nodes (connected, acyclic, each hub has at most one upstream, root has no upstream). Hub IDs are: {node_list}.
+There are N traffic hubs (cities) numbered from 1 to {n}. The original road network T was a connected and acyclic tree. However, due to a sudden geological disaster, exactly one main road was destroyed (an edge was deleted from T), resulting in the current road network F splitting into exactly two disconnected regions.
 
-There is a hidden cascade traffic function f that represents the total number of nodes covered by each hub (including itself and all downstream branches). Your goal is to infer the traffic distribution pattern through interactive queries and accurately predict the coverage values for specified hubs in the test phase.
+Known information:
+- Total number of cities N = {n}
+- The number of connected roads (degree) for each city in the pre-disaster network T: {degree_info}
 
-## The audit has two phases:
+Your goal is to deduce the two endpoint cities of the destroyed road through queries. Note: You cannot directly observe the road statuses; you can only obtain feedback through specific hypothetical queries.
 
-### Exploration Phase
-You can use the following queries to learn about the network structure and traffic pattern (each query type has a quota):
+Available query types (one query per turn):
 
-1. **Traffic Query** (quota: {quota_val} times): Query the coverage value of hub X
-2. **Downstream Query** (quota: {quota_children} times): Query all direct downstream hubs of hub X
-3. **Upstream Path Query** (quota: {quota_ancestor} times): Check if hub X is a strict upstream of hub Y (returns "No" when X=Y)
-4. **Upstream Query** (quota: {quota_parent} times): Query the direct upstream of hub X
+1. Proposed Highway Query (ASK_LOOP): Ask whether building a temporary direct highway between city u and v in the current network F would create a traffic loop.
+   - If u and v are connected in F: Return "YES k", where k is the total number of cities on this loop (k is greater than or equal to 3).
+   - If u and v are not connected in F: Return "NO 0".
 
-### Test Phase
-The system will specify {test_count} target hubs. In this phase:
-- Traffic queries are **forbidden**
-- Structure queries (downstream, path, upstream) are allowed but total count cannot exceed {test_quota}
-- You must submit predictions for all target hubs at once
+2. City On Loop Query (ASK_ON_LOOP): Ask whether city w lies on the loop if building the temporary highway (u,v) creates one.
+   - If u and v are not connected in F: Return "NO-LOOP".
+   - If u and v are connected in F: Return "YES" if w lies on the unique valid path from u to v in F, otherwise return "NO".
 
-## Query Format (using XML tags)
+When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the deduction fails.
 
-Only one query per turn. Format:
+Each query must contain only one tag. Use the following XML format:
 
-- Traffic Query (e.g., query hub 5):
-<query_val>5</query_val>
+- Proposed Highway Query (e.g., querying cities 1 and 3):
+<ask_loop>1,3</ask_loop>
 
-- Downstream Query (e.g., query downstream of hub 3):
-<query_children>3</query_children>
+- City On Loop Query (e.g., asking if city 2 is on the loop when building highway (1,3)):
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- Upstream Path Query (e.g., check if 2 is upstream of 7):
-<query_ancestor>2,7</query_ancestor>
+When submitting the final answer, list the two endpoint cities of the destroyed road (comma-separated, order does not matter), using this format:
 
-- Upstream Query (e.g., query upstream of hub 4):
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- Enter Test Phase (when ready for test phase):
-<enter_test></enter_test>
-
-- Submit Final Answer (in test phase, format "hub=value", comma-separated):
-<answer>1=5,3=8,7=2</answer>
-
-## Notes
-- Exploration phase ends automatically when quotas are exhausted
-- Test phase forbids traffic queries; structure queries cannot exceed quota
-- Answer must include all test target hubs with exact values
+Please use as few queries as possible to find the correct answer.
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-欢迎使用“传染病溯源与传播链”流行病学调查系统，工作规程如下：
+神经传导通路诊断系统运行中。
 
-系统记录了一个包含 {n} 个病例节点的病毒传播树（连通、无环，每个病例最多一个直接暴露源，零号病人无暴露源）。病例编号为：{node_list}。
+患者体内有 N 个神经中枢节点，标号为 1 到 {n}。原始传导网络 T 是一棵健康的神经树（连通且无环），但因局部病变，恰好有一条神经纤维束受损断裂（删除了一条边），导致目前的神经分布 F 变成了两个独立的连通分量。
 
-系统内置了一个隐藏的聚集性感染函数 f，代表由病例 X 及其后续传播链引发的总感染人数（包含其自身）。你的目标是通过交互式流调查询来推断传播规律，并在测试阶段准确预测指定病例的聚集性感染规模。
+已知信息：
+- 神经中枢总数 N = {n}
+- 各中枢在健康传导网络 T 中的纤维连接数（度数）：{degree_info}
 
-## 流调分为两个阶段：
+你的目标是通过神经电刺激测试，推断出受损断裂的那条神经纤维的两个端点节点。注意：你无法直接扫描出具体的纤维断点，只能通过特定的神经通路排查来获取反馈。
 
-### 勘探阶段
-你可以使用以下指令来摸排传播链和感染规模（每种指令有配额限制）：
+可用的询问类型（每次仅限一个询问）：
 
-1. **规模查询**（配额 {quota_val} 次）：查询病例 X 的聚集性感染规模
-2. **继发查询**（配额 {quota_children} 次）：查询病例 X 的所有直接继发病例
-3. **溯源路径判断**（配额 {quota_ancestor} 次）：判断病例 X 是否为病例 Y 的传播链严格上游源头（X=Y 时返回"否"）
-4. **暴露源查询**（配额 {quota_parent} 次）：查询病例 X 的直接暴露源
+1. 人工突触反馈环测试（ASK_LOOP）：询问如果在当前的传导网络 F 中，利用人工突触将中枢 u 和 v 连接，是否会引发神经信号反馈环。
+   - 若 u 和 v 在目前的 F 中连通：返回 "YES k"，其中 k 表示该反馈环包含的中枢数量（k 大于等于 3）。
+   - 若 u 和 v 在目前的 F 中不连通：返回 "NO 0"。
 
-### 测试阶段
-系统会指定 {test_count} 个流调目标病例。在此阶段：
-- **禁止**使用规模查询
-- 允许继续使用结构查询（继发、溯源路径、暴露源查询），但总计不超过 {test_quota} 次
-- 你需要一次性提交这些目标病例的聚集性感染规模预测
+2. 途径中枢测试（ASK_ON_LOOP）：询问在假设连接 (u,v) 产生反馈环的情况下，中枢 w 是否被卷入该反馈环。
+   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
+   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一传导通路上，否则返回 "NO"。
 
-## 查询格式（使用 XML 标签）
+收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，诊断失败。
 
-每次只能提交一个查询。格式如下：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 规模查询（例如查询病例 5）：
-<query_val>5</query_val>
+- 人工突触反馈环测试（例如排查中枢 1 和 3）：
+<ask_loop>1,3</ask_loop>
 
-- 继发查询（例如查询病例 3 的直接继发）：
-<query_children>3</query_children>
+- 途径中枢测试（例如询问连接 (1,3) 时中枢 2 是否在反馈环上）：
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- 溯源路径判断（例如判断 2 是否为 7 的源头）：
-<query_ancestor>2,7</query_ancestor>
+提交最终答案时，列出受损神经纤维连接的两个端点中枢（用逗号隔开，顺序不限），格式如下：
 
-- 暴露源查询（例如查询病例 4 的直接暴露源）：
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- 进入测试阶段（当你准备好进入测试阶段时）：
-<enter_test></enter_test>
-
-- 提交最终预测（测试阶段，格式为"病例=值"，用逗号分隔）：
-<answer>1=5,3=8,7=2</answer>
-
-## 注意事项
-- 勘探阶段的指令配额用完后会自动进入测试阶段
-- 测试阶段禁止规模查询，结构查询总数不能超过配额
-- 预测结果必须包含所有测试目标病例，且数值必须完全正确
+请尽可能少地使用询问次数来找到正确答案。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the "Infectious Disease Tracing and Transmission Chains" epidemiological investigation system. The protocol is as follows:
+[Neural Pathway Diagnostic Scenario]
+The Neural Pathway Diagnostic System is running.
 
-The system has logged a virus transmission tree with {n} case nodes (connected, acyclic, each case has at most one direct source of exposure, Patient Zero has no source). Case IDs are: {node_list}.
+There are N neural centers in the patient numbered from 1 to {n}. The original conduction network T was a healthy neural tree (connected and acyclic). However, due to a localized lesion, exactly one nerve fiber bundle was severed (an edge was deleted from T), causing the current neural distribution F to split into exactly two isolated connected components.
 
-There is a hidden cluster infection function f representing the total number of infected individuals caused by Case X and its subsequent transmission chain (including itself). Your goal is to infer the transmission pattern through interactive epidemiological queries and accurately predict the cluster infection sizes for specified cases in the test phase.
+Known information:
+- Total number of neural centers N = {n}
+- The number of nerve connections (degree) for each center in the healthy network T: {degree_info}
 
-## The investigation has two phases:
+Your goal is to deduce the two endpoint centers of the severed nerve fiber through queries. Note: You cannot directly scan the specific breakage; you can only obtain feedback through specific neural pathway tests.
 
-### Exploration Phase
-You can use the following queries to trace transmission chains and cluster sizes (each query has a quota):
+Available query types (one query per turn):
 
-1. **Cluster Size Query** (quota: {quota_val} times): Query the total infection size of Case X
-2. **Secondary Case Query** (quota: {quota_children} times): Query all direct secondary cases of Case X
-3. **Tracing Path Query** (quota: {quota_ancestor} times): Check if Case X is a strict upstream transmission source of Case Y (returns "No" when X=Y)
-4. **Exposure Source Query** (quota: {quota_parent} times): Query the direct exposure source of Case X
+1. Alternative Feedback Loop Test (ASK_LOOP): Ask whether bridging center u and v with an artificial synapse in the current network F would trigger a neural feedback loop.
+   - If u and v are connected in F: Return "YES k", where k is the number of centers involved in the loop (k is greater than or equal to 3).
+   - If u and v are not connected in F: Return "NO 0".
 
-### Test Phase
-The system will specify {test_count} target cases. In this phase:
-- Cluster size queries are **forbidden**
-- Structure queries (secondary case, tracing path, exposure source) are allowed but total count cannot exceed {test_quota}
-- You must submit predictions for all target cases at once
+2. Center In Loop Test (ASK_ON_LOOP): Ask whether center w is caught in the feedback loop if bridging (u,v) creates one.
+   - If u and v are not connected in F: Return "NO-LOOP".
+   - If u and v are connected in F: Return "YES" if w lies on the unique conduction pathway from u to v in F, otherwise return "NO".
 
-## Query Format (using XML tags)
+When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the diagnosis fails.
 
-Only one query per turn. Format:
+Each query must contain only one tag. Use the following XML format:
 
-- Cluster Size Query (e.g., query case 5):
-<query_val>5</query_val>
+- Alternative Feedback Loop Test (e.g., testing centers 1 and 3):
+<ask_loop>1,3</ask_loop>
 
-- Secondary Case Query (e.g., query secondary cases of case 3):
-<query_children>3</query_children>
+- Center In Loop Test (e.g., asking if center 2 is in the feedback loop when bridging (1,3)):
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- Tracing Path Query (e.g., check if 2 is the source of 7):
-<query_ancestor>2,7</query_ancestor>
+When submitting the final answer, list the two endpoint centers of the severed nerve fiber (comma-separated, order does not matter), using this format:
 
-- Exposure Source Query (e.g., query direct source of case 4):
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- Enter Test Phase (when ready for test phase):
-<enter_test></enter_test>
-
-- Submit Final Answer (in test phase, format "case=value", comma-separated):
-<answer>1=5,3=8,7=2</answer>
-
-## Notes
-- Exploration phase ends automatically when quotas are exhausted
-- Test phase forbids cluster size queries; structure queries cannot exceed quota
-- Answer must include all test target cases with exact values
+Please use as few queries as possible to find the correct answer.
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-欢迎使用“学科知识图谱依赖树”系统，工作规程如下：
+认知逻辑图谱分析系统已启动。
 
-系统构建了一个包含 {n} 个知识点的前置依赖图谱（树状结构，连通、无环，每个知识点最多受一个直接前置约束，根知识点无前置）。知识点编号为：{node_list}。
+一个学科有 N 个知识概念节点，标号为 1 到 {n}。原本的认知结构 T 是一棵严密的先决条件树（连通且无环），但由于学生缺失了某一条关键的逻辑推导链路（删除了一条边），导致当前的知识结构 F 出现了认知断层，变为两个未关联的模块。
 
-图谱中存在一个隐藏的衍生权重函数 f，代表以知识点 X 为前置条件的所有衍生知识点总数（包含自身）。你的目标是通过系统指令查询来推断知识体系架构，并在测试阶段准确预测指定知识点的衍生权重。
+已知信息：
+- 知识概念节点总数 N = {n}
+- 各概念在完整认知树 T 中的关联度（度数）：{degree_info}
 
-## 分析分为两个阶段：
+你的目标是通过启发式提问，推断出学生缺失的那条逻辑链路的两个端点。注意：你无法直接察看学生脑海中的连线结构，只能通过特定的逻辑假设反馈来进行诊断。
 
-### 勘探阶段
-你可以使用以下指令来摸排图谱结构和权重规律（每种指令有配额限制）：
+可用的询问类型（每次仅限一个询问）：
 
-1. **权重查询**（配额 {quota_val} 次）：查询知识点 X 的衍生权重值
-2. **衍生查询**（配额 {quota_children} 次）：查询以知识点 X 为直接前置的所有衍生知识点
-3. **前置依赖判断**（配额 {quota_ancestor} 次）：判断知识点 X 是否为知识点 Y 的严格前置条件（X=Y 时返回"否"）
-4. **直接前置查询**（配额 {quota_parent} 次）：查询知识点 X 的直接前置节点
+1. 跨概念循环论证查询（ASK_LOOP）：询问如果在学生当前的认知结构 F 中，强行将概念 u 和 v 进行逻辑挂钩，是否会产生循环论证。
+   - 若 u 和 v 在目前的 F 中已有推导路径连通：返回 "YES k"，其中 k 表示陷入循环论证的概念总数（k 大于等于 3）。
+   - 若 u 和 v 在目前的 F 中不存在推导关系连通：返回 "NO 0"。
 
-### 测试阶段
-系统会指定 {test_count} 个核心知识点。在此阶段：
-- **禁止**使用权重查询
-- 允许继续使用图谱结构查询（衍生、前置依赖、直接前置查询），但总计不超过 {test_quota} 次
-- 你需要一次性提交这些核心知识点的衍生权重预测
+2. 概念节点在循环中查询（ASK_ON_LOOP）：询问在假设将 (u,v) 挂钩并产生循环论证的情况下，概念 w 是否被卷入该论证循环中。
+   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
+   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一认知推导路径上，否则返回 "NO"。
 
-## 查询格式（使用 XML 标签）
+收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，分析失败。
 
-每次只能提交一个查询。格式如下：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 权重查询（例如查询知识点 5）：
-<query_val>5</query_val>
+- 跨概念循环论证查询（例如挂钩概念 1 和 3）：
+<ask_loop>1,3</ask_loop>
 
-- 衍生查询（例如查询知识点 3 的直接衍生）：
-<query_children>3</query_children>
+- 概念节点在循环中查询（例如询问挂钩 (1,3) 时概念 2 是否在循环论证中）：
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- 前置依赖判断（例如判断 2 是否为 7 的前置）：
-<query_ancestor>2,7</query_ancestor>
+提交最终答案时，列出缺失的那条逻辑推导链路的两个概念端点（用逗号隔开，顺序不限），格式如下：
 
-- 直接前置查询（例如查询知识点 4 的前置）：
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- 进入测试阶段（当你准备好进入测试阶段时）：
-<enter_test></enter_test>
-
-- 提交最终预测（测试阶段，格式为"知识点=值"，用逗号分隔）：
-<answer>1=5,3=8,7=2</answer>
-
-## 注意事项
-- 勘探阶段的指令配额用完后会自动进入测试阶段
-- 测试阶段禁止权重查询，结构查询总数不能超过配额
-- 预测结果必须包含所有测试知识点，且数值必须完全正确
+请尽可能少地使用询问次数来找到正确答案。
 """
 
     contextualized_rule_en_3 = """\
-[Education Scenario]
-Welcome to the "Subject Knowledge Graph Dependency Tree" system. The operational protocol is as follows:
+[Cognitive Logic Mapping Scenario]
+The Cognitive Logic Mapping System has been activated.
 
-The system has mapped a prerequisite dependency graph with {n} knowledge points (tree structure, connected, acyclic, each point has at most one direct prerequisite, the root has none). Knowledge point IDs are: {node_list}.
+There are N knowledge concept nodes for a subject, numbered from 1 to {n}. The original cognitive structure T was a strict prerequisite tree (connected and acyclic). However, because a crucial logical deduction link is missing for the student (an edge was deleted from T), the current knowledge structure F has a cognitive gap, splitting into exactly two unassociated modules.
 
-There is a hidden derived weight function f that indicates the total number of knowledge points derived from point X (including itself). Your goal is to infer the architecture of the knowledge system through interactive queries and accurately predict the derived weights for specified points in the test phase.
+Known information:
+- Total number of knowledge concept nodes N = {n}
+- The degree of association for each concept in the complete cognitive tree T: {degree_info}
 
-## The analysis has two phases:
+Your goal is to deduce the two endpoints of the missing logical deduction link through heuristic queries. Note: You cannot directly observe the student's internal cognitive connections; you can only obtain feedback through specific logical hypothesis tests.
 
-### Exploration Phase
-You can use the following queries to learn about the graph structure and weight patterns (each query type has a quota):
+Available query types (one query per turn):
 
-1. **Weight Query** (quota: {quota_val} times): Query the derived weight value of knowledge point X
-2. **Derivative Query** (quota: {quota_children} times): Query all direct derived knowledge points of point X
-3. **Prerequisite Dependency Query** (quota: {quota_ancestor} times): Check if point X is a strict prerequisite of point Y (returns "No" when X=Y)
-4. **Direct Prerequisite Query** (quota: {quota_parent} times): Query the direct prerequisite of point X
+1. Cross-concept Synthesis Query (ASK_LOOP): Ask whether forcefully linking concept u and v in the student's current cognitive structure F would create a circular reasoning loop.
+   - If u and v are connected by a deduction path in F: Return "YES k", where k is the total number of concepts trapped in the circular reasoning (k is greater than or equal to 3).
+   - If u and v are not connected in F: Return "NO 0".
 
-### Test Phase
-The system will specify {test_count} core knowledge points. In this phase:
-- Weight queries are **forbidden**
-- Graph structure queries (derivative, prerequisite dependency, direct prerequisite) are allowed but total count cannot exceed {test_quota}
-- You must submit predictions for all core knowledge points at once
+2. Concept In Loop Query (ASK_ON_LOOP): Ask whether concept w is caught in the circular reasoning loop if linking (u,v) creates one.
+   - If u and v are not connected in F: Return "NO-LOOP".
+   - If u and v are connected in F: Return "YES" if w lies on the unique cognitive deduction path from u to v in F, otherwise return "NO".
 
-## Query Format (using XML tags)
+When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the mapping fails.
 
-Only one query per turn. Format:
+Each query must contain only one tag. Use the following XML format:
 
-- Weight Query (e.g., query point 5):
-<query_val>5</query_val>
+- Cross-concept Synthesis Query (e.g., testing concepts 1 and 3):
+<ask_loop>1,3</ask_loop>
 
-- Derivative Query (e.g., query derivatives of point 3):
-<query_children>3</query_children>
+- Concept In Loop Query (e.g., asking if concept 2 is in the circular reasoning loop when linking (1,3)):
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- Prerequisite Dependency Query (e.g., check if 2 is a prerequisite of 7):
-<query_ancestor>2,7</query_ancestor>
+When submitting the final answer, list the two endpoints of the missing logical deduction link (comma-separated, order does not matter), using this format:
 
-- Direct Prerequisite Query (e.g., query prerequisite of point 4):
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- Enter Test Phase (when ready for test phase):
-<enter_test></enter_test>
-
-- Submit Final Answer (in test phase, format "point=value", comma-separated):
-<answer>1=5,3=8,7=2</answer>
-
-## Notes
-- Exploration phase ends automatically when quotas are exhausted
-- Test phase forbids weight queries; structure queries cannot exceed quota
-- Answer must include all test knowledge points with exact values
+Please use as few queries as possible to find the correct answer.
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-欢迎使用“工业产品BOM（物料清单）”解析系统，工作规程如下：
+工业流水线故障检测系统已启动。
 
-系统导入了一个包含 {n} 个组件节点的BOM装配树（连通、无环，每个组件最多归属一个父装配体，顶层产品无父装配体）。组件编号为：{node_list}。
+车间内部有 N 个加工工作站，标号为 1 到 {n}。原始的流水线网络 T 是一棵连通无环的树，但由于突发故障，恰好有一条物料传送带断裂（删除了一条边），导致目前的生产线 F 瘫痪并分裂成了两个隔离的作业区。
 
-系统中存在一个隐藏的物料统计函数 f，表示装配组件 X 所需的底层及下属零部件总数（包含组件自身构件）。你的目标是通过工艺查询来推断BOM层级规律，并在测试阶段准确预测指定组件的零部件总数。
+已知信息：
+- 工作站总数 N = {n}
+- 原始各工作站连接的传送带接口数量（度数）：{degree_info}
 
-## 解析分为两个阶段：
+你的目标是通过控制台指令排查，推断出发生断裂的那条传送带两端连接的工作站。注意：你无法直接通过监控看到传送带的断点在哪，只能通过特定的调度排查来获取系统反馈。
 
-### 勘探阶段
-你可以使用以下指令来摸排装配结构和物料规模（每种指令有配额限制）：
+可用的排查类型（每次仅限一个排查）：
 
-1. **件数查询**（配额 {quota_val} 次）：查询组件 X 的零部件总数
-2. **子件查询**（配额 {quota_children} 次）：查询组件 X 的所有直接下级子组件
-3. **装配层级判断**（配额 {quota_ancestor} 次）：判断组件 X 是否为组件 Y 的严格上级装配体（X=Y 时返回"否"）
-4. **父件查询**（配额 {quota_parent} 次）：查询组件 X 的直接父级装配体
+1. 临时传送带闭环测试（ASK_LOOP）：排查如果在当前瘫痪的网络 F 中，架设一条连接工作站 u 和 v 的临时传送带，是否会造成物料的死循环流转。
+   - 若 u 和 v 在目前的 F 中依然在同一个作业区连通：返回 "YES k"，其中 k 表示该死循环涉及的工作站数量（k 大于等于 3）。
+   - 若 u 和 v 在目前的 F 中不连通：返回 "NO 0"。
 
-### 测试阶段
-系统会指定 {test_count} 个核心物料组件。在此阶段：
-- **禁止**使用件数查询
-- 允许继续使用结构查询（子件、装配层级、父件查询），但总计不超过 {test_quota} 次
-- 你需要一次性提交这些核心组件的零部件总数预测
+2. 工作站处于闭环测试（ASK_ON_LOOP）：排查在假设架设 (u,v) 临时传送带引发死循环的情况下，工作站 w 是否处于该死循环流水线上。
+   - 若 u 和 v 在 F 中不连通：返回 "NO-LOOP"。
+   - 若 u 和 v 在 F 中连通：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一物料流转路径上，否则返回 "NO"。
 
-## 查询格式（使用 XML 标签）
+收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，故障检测失败。
 
-每次只能提交一个查询。格式如下：
+每次排查只能包含一个标签。请使用以下 XML 格式：
 
-- 件数查询（例如查询组件 5）：
-<query_val>5</query_val>
+- 临时传送带闭环测试（例如排查工作站 1 和 3）：
+<ask_loop>1,3</ask_loop>
 
-- 子件查询（例如查询组件 3 的直接子件）：
-<query_children>3</query_children>
+- 工作站处于闭环测试（例如询问架设 (1,3) 时工作站 2 是否在死循环流水线上）：
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- 装配层级判断（例如判断 2 是否为 7 的上级）：
-<query_ancestor>2,7</query_ancestor>
+提交最终答案时，列出断裂传送带两端的两个工作站（用逗号隔开，顺序不限），格式如下：
 
-- 父件查询（例如查询组件 4 的父级装配体）：
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- 进入测试阶段（当你准备好进入测试阶段时）：
-<enter_test></enter_test>
-
-- 提交最终预测（测试阶段，格式为"组件=值"，用逗号分隔）：
-<answer>1=5,3=8,7=2</answer>
-
-## 注意事项
-- 勘探阶段的指令配额用完后会自动进入测试阶段
-- 测试阶段禁止件数查询，结构查询总数不能超过配额
-- 预测结果必须包含所有测试目标组件，且数值必须完全正确
+请尽可能少地使用排查次数来找到正确答案。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Industrial Product BOM (Bill of Materials)" parsing system. The operational protocol is as follows:
+[Industrial Assembly Line Diagnostic Scenario]
+The Industrial Assembly Line Fault Detection System is online.
 
-The system has loaded a BOM assembly tree with {n} component nodes (connected, acyclic, each component belongs to at most one parent assembly, the top-level product has no parent). Component IDs are: {node_list}.
+There are N manufacturing workstations in the factory, numbered from 1 to {n}. The original assembly line network T was a connected and acyclic tree. Due to a sudden malfunction, exactly one material conveyor belt broke (an edge was deleted from T), paralyzing the current production line F and dividing it into two isolated operational zones.
 
-There is a hidden material statistics function f that represents the total number of sub-parts and components required for assembly X (including the component itself). Your goal is to infer the BOM hierarchy pattern through process queries and accurately predict the total part counts for specified components in the test phase.
+Known information:
+- Total number of workstations N = {n}
+- The number of conveyor belt interfaces (degree) for each workstation in the original network T: {degree_info}
 
-## The analysis has two phases:
+Your goal is to deduce the two workstations connected by the broken conveyor belt through queries. Note: You cannot directly observe the breakage via cameras; you can only obtain feedback through specific routing tests.
 
-### Exploration Phase
-You can use the following queries to investigate the assembly structure and material scales (each query type has a quota):
+Available query types (one query per turn):
 
-1. **Part Count Query** (quota: {quota_val} times): Query the total part count of component X
-2. **Sub-assembly Query** (quota: {quota_children} times): Query all direct sub-assemblies of component X
-3. **Assembly Hierarchy Query** (quota: {quota_ancestor} times): Check if component X is a strict parent/ancestor assembly of component Y (returns "No" when X=Y)
-4. **Parent Assembly Query** (quota: {quota_parent} times): Query the direct parent assembly of component X
+1. Temporary Belt Closed-Loop Test (ASK_LOOP): Test whether installing a temporary conveyor belt between workstation u and v in the current paralyzed network F would cause a material circulation loop.
+   - If u and v are connected in F: Return "YES k", where k is the number of workstations involved in the circulation loop (k is greater than or equal to 3).
+   - If u and v are not connected in F: Return "NO 0".
 
-### Test Phase
-The system will specify {test_count} core components. In this phase:
-- Part count queries are **forbidden**
-- Structure queries (sub-assembly, hierarchy, parent assembly) are allowed but total count cannot exceed {test_quota}
-- You must submit predictions for all core components at once
+2. Workstation In Loop Test (ASK_ON_LOOP): Test whether workstation w is part of the circulation loop if installing the temporary belt (u,v) creates one.
+   - If u and v are not connected in F: Return "NO-LOOP".
+   - If u and v are connected in F: Return "YES" if w lies on the unique material flow path from u to v in F, otherwise return "NO".
 
-## Query Format (using XML tags)
+When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the detection fails.
 
-Only one query per turn. Format:
+Each query must contain only one tag. Use the following XML format:
 
-- Part Count Query (e.g., query component 5):
-<query_val>5</query_val>
+- Temporary Belt Closed-Loop Test (e.g., testing workstations 1 and 3):
+<ask_loop>1,3</ask_loop>
 
-- Sub-assembly Query (e.g., query sub-assemblies of component 3):
-<query_children>3</query_children>
+- Workstation In Loop Test (e.g., asking if workstation 2 is on the circulation loop when installing belt (1,3)):
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- Assembly Hierarchy Query (e.g., check if 2 is an ancestor assembly of 7):
-<query_ancestor>2,7</query_ancestor>
+When submitting the final answer, list the two endpoint workstations of the broken conveyor belt (comma-separated, order does not matter), using this format:
 
-- Parent Assembly Query (e.g., query parent assembly of component 4):
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- Enter Test Phase (when ready for test phase):
-<enter_test></enter_test>
-
-- Submit Final Answer (in test phase, format "component=value", comma-separated):
-<answer>1=5,3=8,7=2</answer>
-
-## Notes
-- Exploration phase ends automatically when quotas are exhausted
-- Test phase forbids part count queries; structure queries cannot exceed quota
-- Answer must include all test target components with exact values
+Please use as few queries as possible to find the correct answer.
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-欢迎使用“企业股权穿透与控制权”司法审计系统，工作规程如下：
+合同条款依赖审查系统已启动。
 
-系统抓取了一个包含 {n} 个企业法人的控制权网络树（连通、无环，每个法人最多受一个直接母公司控股，顶层实控企业无母公司）。法人编号为：{node_list}。
+这份复杂合同涉及 N 个法律实体/核心条款，标号为 1 到 {n}。最初的依赖结构 T 是一棵权责清晰的树（连通且无环），但在近期审查中，恰好有一项关键条款被宣告无效（删除了一条边），导致目前的合同架构 F 拆分成了两个互不干涉的责任区。
 
-系统定义了一个隐藏的控制规模函数 f，反映了法人 X 直接或间接控制的企业实体总数（包含其自身）。你的目标是通过调证查询推断股权穿透规律，并在测试阶段准确预测指定法人的实际控制规模。
+已知信息：
+- 法律实体/核心条款总数 N = {n}
+- 最初各实体/条款在依赖网络 T 中的权责关联度（度数）：{degree_info}
 
-## 审计分为两个阶段：
+你的目标是通过法务尽职调查提问，推断出被宣告无效的那项关键条款所连接的两个实体端点。注意：你无法直接获取合同修订原文，只能通过排查特定依赖关系的假设性反馈来进行推理。
 
-### 勘探阶段
-你可以使用以下指令来摸排股权架构和控制规模（每种指令有配额限制）：
+可用的询问类型（每次仅限一个询问）：
 
-1. **规模查询**（配额 {quota_val} 次）：查询法人 X 的控制规模数值
-2. **子公司查询**（配额 {quota_children} 次）：查询法人 X 的直接控股子公司
-3. **股权穿透判断**（配额 {quota_ancestor} 次）：判断法人 X 是否为法人 Y 的严格上层（间接或直接）控股母公司（X=Y 时返回"否"）
-4. **母公司查询**（配额 {quota_parent} 次）：查询法人 X 的直接母公司
+1. 假设补充协议环查询（ASK_LOOP）：询问如果在当前的合同架构 F 中，假设在实体 u 和 v 之间增补一份连带协议，是否会导致权责循环依赖。
+   - 若 u 和 v 在目前的 F 中仍存在传递依赖：返回 "YES k"，其中 k 表示陷入循环依赖的实体总数（k 大于等于 3）。
+   - 若 u 和 v 在目前的 F 中已完全无依赖关联：返回 "NO 0"。
 
-### 测试阶段
-系统会指定 {test_count} 个审查目标法人。在此阶段：
-- **禁止**使用规模查询
-- 允许继续使用架构查询（子公司、股权穿透、母公司查询），但总计不超过 {test_quota} 次
-- 你需要一次性提交这些审查目标法人的控制规模预测
+2. 实体处于依赖环查询（ASK_ON_LOOP）：询问在假设增补 (u,v) 协议并产生权责循环依赖的情况下，实体 w 是否受困于该循环依赖之中。
+   - 若 u 和 v 在 F 中无依赖关联：返回 "NO-LOOP"。
+   - 若 u 和 v 在 F 中有依赖关联：返回 "YES" 若 w 位于 F 中从 u 到 v 的唯一有效依赖链条上，否则返回 "NO"。
 
-## 查询格式（使用 XML 标签）
+收集足够信息后，请提交最终答案（无序对）。若答案错误或格式不符，审查失败。
 
-每次只能提交一个查询。格式如下：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 规模查询（例如查询法人 5）：
-<query_val>5</query_val>
+- 假设补充协议环查询（例如排查实体 1 和 3）：
+<ask_loop>1,3</ask_loop>
 
-- 子公司查询（例如查询法人 3 的直接子公司）：
-<query_children>3</query_children>
+- 实体处于依赖环查询（例如询问增补协议 (1,3) 时实体 2 是否在循环依赖中）：
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- 股权穿透判断（例如判断 2 是否为 7 的上层母公司）：
-<query_ancestor>2,7</query_ancestor>
+提交最终答案时，列出被宣告无效的条款所连接的两个实体端点（用逗号隔开，顺序不限），格式如下：
 
-- 母公司查询（例如查询法人 4 的直接母公司）：
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- 进入测试阶段（当你准备好进入测试阶段时）：
-<enter_test></enter_test>
-
-- 提交最终预测（测试阶段，格式为"法人=值"，用逗号分隔）：
-<answer>1=5,3=8,7=2</answer>
-
-## 注意事项
-- 勘探阶段的指令配额用完后会自动进入测试阶段
-- 测试阶段禁止规模查询，架构查询总数不能超过配额
-- 预测结果必须包含所有审查目标法人，且数值必须完全正确
+请尽可能少地使用询问次数来找到正确答案。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the "Corporate Equity Penetration and Control" judicial audit system. The operational protocol is as follows:
+[Contract Clause Dependency Review Scenario]
+The Contract Clause Dependency Review System is activated.
 
-The system has scraped a control network tree comprising {n} corporate entities (connected, acyclic, each entity has at most one direct parent holding company, the ultimate holding company has none). Entity IDs are: {node_list}.
+This complex contract involves N legal entities/clauses numbered from 1 to {n}. The initial dependency structure T was a tree with clear rights and responsibilities (connected and acyclic). However, during a recent review, exactly one key clause was declared void (an edge was deleted from T), causing the current contract framework F to split into exactly two independent domains of responsibility.
 
-There is a hidden control scale function f that reflects the total number of corporate entities directly or indirectly controlled by Entity X (including itself). Your goal is to infer the equity penetration structure through evidentiary queries and accurately predict the actual control scale for specified entities in the test phase.
+Known information:
+- Total number of legal entities/clauses N = {n}
+- The degree of dependency for each entity/clause in the initial network T: {degree_info}
 
-## The audit has two phases:
+Your goal is to deduce the two endpoints of the voided clause through due diligence queries. Note: You cannot directly access the revised contract text; you can only obtain feedback through hypothetical dependency checks.
 
-### Exploration Phase
-You can use the following queries to investigate the equity architecture and control scales (each query type has a quota):
+Available query types (one query per turn):
 
-1. **Scale Query** (quota: {quota_val} times): Query the control scale value of Entity X
-2. **Subsidiary Query** (quota: {quota_children} times): Query all direct subsidiaries of Entity X
-3. **Equity Penetration Query** (quota: {quota_ancestor} times): Check if Entity X is a strict upstream (direct or indirect) holding company of Entity Y (returns "No" when X=Y)
-4. **Parent Company Query** (quota: {quota_parent} times): Query the direct parent company of Entity X
+1. Hypothetical Agreement Loop Query (ASK_LOOP): Ask whether adding a supplementary agreement between entity u and v in the current framework F would create a cyclical dependency of rights and responsibilities.
+   - If u and v still have transitive dependencies in F: Return "YES k", where k is the total number of entities trapped in the cyclical dependency (k is greater than or equal to 3).
+   - If u and v have no dependency connection in F: Return "NO 0".
 
-### Test Phase
-The system will specify {test_count} target entities for review. In this phase:
-- Scale queries are **forbidden**
-- Architecture queries (subsidiary, equity penetration, parent company) are allowed but total count cannot exceed {test_quota}
-- You must submit predictions for all target entities at once
+2. Entity In Dependency Loop Query (ASK_ON_LOOP): Ask whether entity w is trapped in the cyclical dependency if adding agreement (u,v) creates one.
+   - If u and v have no dependency connection in F: Return "NO-LOOP".
+   - If u and v have a dependency connection in F: Return "YES" if w lies on the unique valid dependency chain from u to v in F, otherwise return "NO".
 
-## Query Format (using XML tags)
+When you have enough information, submit your final answer (unordered pair). If the answer is wrong or the format is invalid, the review fails.
 
-Only one query per turn. Format:
+Each query must contain only one tag. Use the following XML format:
 
-- Scale Query (e.g., query entity 5):
-<query_val>5</query_val>
+- Hypothetical Agreement Loop Query (e.g., querying entities 1 and 3):
+<ask_loop>1,3</ask_loop>
 
-- Subsidiary Query (e.g., query subsidiaries of entity 3):
-<query_children>3</query_children>
+- Entity In Dependency Loop Query (e.g., asking if entity 2 is in the cyclical dependency when adding agreement (1,3)):
+<ask_on_loop>1,3,2</ask_on_loop>
 
-- Equity Penetration Query (e.g., check if 2 is a holding company of 7):
-<query_ancestor>2,7</query_ancestor>
+When submitting the final answer, list the two entity endpoints of the voided clause (comma-separated, order does not matter), using this format:
 
-- Parent Company Query (e.g., query parent company of entity 4):
-<query_parent>4</query_parent>
+<answer>1,5</answer>
 
-- Enter Test Phase (when ready for test phase):
-<enter_test></enter_test>
-
-- Submit Final Answer (in test phase, format "entity=value", comma-separated):
-<answer>1=5,3=8,7=2</answer>
-
-## Notes
-- Exploration phase ends automatically when quotas are exhausted
-- Test phase forbids scale queries; architecture queries cannot exceed quota
-- Answer must include all review target entities with exact values
+Please use as few queries as possible to find the correct answer.
 """
 
-    tags = ["answer", "query_val", "query_children", "query_ancestor", "query_parent", "enter_test"]
-    
-    reasoning_type = "归纳推理"
-    data_structure = "树"
+    tags = ["answer", "ask_loop", "ask_on_loop"]
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
+        1: [
+            {
+                "n": 4,
+                "edges_T": [(1,2), (2,3), (3,4)],
+                "deleted_edge": (2, 3),
+                "degree_T": {1: 1, 2: 2, 3: 2, 4: 1},
+            },
+            {
+                "n": 4,
+                "edges_T": [(1,2), (2,3), (3,4)],
+                "deleted_edge": (1, 2),
+                "degree_T": {1: 1, 2: 2, 3: 2, 4: 1},
+            },
+            {
+                "n": 4,
+                "edges_T": [(1,2), (2,3), (3,4)],
+                "deleted_edge": (3, 4),
+                "degree_T": {1: 1, 2: 2, 3: 2, 4: 1},
+            }
+        ],
+        2: [
+            {
+                "n": 6,
+                "edges_T": [(3,1), (3,2), (3,4), (3,5), (3,6)],
+                "deleted_edge": (3, 5),
+                "degree_T": {1: 1, 2: 1, 3: 5, 4: 1, 5: 1, 6: 1},
+            },
+            {
+                "n": 6,
+                "edges_T": [(3,1), (3,2), (3,4), (3,5), (3,6)],
+                "deleted_edge": (3, 1),
+                "degree_T": {1: 1, 2: 1, 3: 5, 4: 1, 5: 1, 6: 1},
+            },
+            {
+                "n": 6,
+                "edges_T": [(3,1), (3,2), (3,4), (3,5), (3,6)],
+                "deleted_edge": (3, 4),
+                "degree_T": {1: 1, 2: 1, 3: 5, 4: 1, 5: 1, 6: 1},
+            }
+        ],
+        3: [
+            {
+                "n": 8,
+                "edges_T": [(1,2), (2,3), (3,4), (2,5), (3,6), (4,7), (7,8)],
+                "deleted_edge": (3, 6),
+                "degree_T": {1: 1, 2: 3, 3: 3, 4: 2, 5: 1, 6: 1, 7: 2, 8: 1},
+            },
+            {
+                "n": 8,
+                "edges_T": [(1,2), (2,3), (3,4), (2,5), (3,6), (4,7), (7,8)],
+                "deleted_edge": (2, 3),
+                "degree_T": {1: 1, 2: 3, 3: 3, 4: 2, 5: 1, 6: 1, 7: 2, 8: 1},
+            },
+            {
+                "n": 8,
+                "edges_T": [(1,2), (2,3), (3,4), (2,5), (3,6), (4,7), (7,8)],
+                "deleted_edge": (4, 7),
+                "degree_T": {1: 1, 2: 3, 3: 3, 4: 2, 5: 1, 6: 1, 7: 2, 8: 1},
+            }
+        ],
+        4: [
+            {
+                "n": 10,
+                "edges_T": [(1,2), (2,3), (3,4), (4,5), (2,6), (3,7), (7,8), (4,9), (9,10)],
+                "deleted_edge": (4, 9),
+                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 1, 6: 1, 7: 2, 8: 1, 9: 2, 10: 1},
+            },
+            {
+                "n": 10,
+                "edges_T": [(1,2), (2,3), (3,4), (4,5), (2,6), (3,7), (7,8), (4,9), (9,10)],
+                "deleted_edge": (3, 7),
+                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 1, 6: 1, 7: 2, 8: 1, 9: 2, 10: 1},
+            },
+            {
+                "n": 10,
+                "edges_T": [(1,2), (2,3), (3,4), (4,5), (2,6), (3,7), (7,8), (4,9), (9,10)],
+                "deleted_edge": (2, 3),
+                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 1, 6: 1, 7: 2, 8: 1, 9: 2, 10: 1},
+            }
+        ],
+        5: [
+            {
                 "n": 12,
-                "tree_edges": [(0, 1), (0, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 7), (4, 8), (5, 9), (6, 10), (6, 11)],
-                "quota_val": 6,
-                "quota_children": 10,
-                "quota_ancestor": 60,
-                "quota_parent": 6,
-                "test_count": 5,
-                "test_quota": 20,
-                "test_nodes": [3, 5, 2, 7, 11],
+                "edges_T": [(1,2), (2,3), (3,4), (4,5), (5,6), (2,7), (3,8), (8,9), (4,10), (5,11), (11,12)],
+                "deleted_edge": (5, 11),
+                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 2, 9: 1, 10: 1, 11: 2, 12: 1},
             },
-            2: {
-                "n": 15,
-                "tree_edges": [(0, 1), (0, 2), (0, 3), (1, 4), (1, 5), (2, 6), (2, 7), (3, 8), (4, 9), (5, 10), (6, 11), (7, 12), (8, 13), (8, 14)],
-                "quota_val": 5,
-                "quota_children": 9,
-                "quota_ancestor": 50,
-                "quota_parent": 5,
-                "test_count": 5,
-                "test_quota": 18,
-                "test_nodes": [1, 6, 8, 10, 14],
-            },
-            3: {
-                "n": 18,
-                "tree_edges": [(0, 1), (0, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 7), (3, 8), (4, 9), (5, 10), (5, 11), (6, 12), (7, 13), (8, 14), (9, 15), (11, 16), (12, 17)],
-                "quota_val": 5,
-                "quota_children": 8,
-                "quota_ancestor": 45,
-                "quota_parent": 5,
-                "test_count": 5,
-                "test_quota": 16,
-                "test_nodes": [2, 7, 9, 12, 16],
-            },
-            4: {
-                "n": 22,
-                "tree_edges": [(0, 1), (0, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 7), (3, 8), (4, 9), (4, 10), (5, 11), (6, 12), (6, 13), (7, 14), (8, 15), (9, 16), (10, 17), (11, 18), (13, 19), (14, 20), (15, 21)],
-                "quota_val": 4,
-                "quota_children": 7,
-                "quota_ancestor": 40,
-                "quota_parent": 4,
-                "test_count": 5,
-                "test_quota": 15,
-                "test_nodes": [1, 5, 11, 14, 19],
-            },
-            5: {
-                "n": 25,
-                "tree_edges": [(0, 1), (0, 2), (0, 3), (1, 4), (1, 5), (2, 6), (2, 7), (3, 8), (3, 9), (4, 10), (4, 11), (5, 12), (6, 13), (7, 14), (7, 15), (8, 16), (9, 17), (9, 18), (10, 19), (11, 20), (13, 21), (14, 22), (16, 23), (18, 24)],
-                "quota_val": 4,
-                "quota_children": 6,
-                "quota_ancestor": 35,
-                "quota_parent": 4,
-                "test_count": 5,
-                "test_quota": 12,
-                "test_nodes": [3, 7, 10, 17, 21],
-            },
-        },
-        "en": {
-            1: {
+            {
                 "n": 12,
-                "tree_edges": [(0, 1), (0, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 7), (4, 8), (5, 9), (6, 10), (6, 11)],
-                "quota_val": 6,
-                "quota_children": 10,
-                "quota_ancestor": 60,
-                "quota_parent": 6,
-                "test_count": 5,
-                "test_quota": 20,
-                "test_nodes": [3, 5, 2, 7, 11],
+                "edges_T": [(1,2), (2,3), (3,4), (4,5), (5,6), (2,7), (3,8), (8,9), (4,10), (5,11), (11,12)],
+                "deleted_edge": (3, 8),
+                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 2, 9: 1, 10: 1, 11: 2, 12: 1},
             },
-            2: {
-                "n": 15,
-                "tree_edges": [(0, 1), (0, 2), (0, 3), (1, 4), (1, 5), (2, 6), (2, 7), (3, 8), (4, 9), (5, 10), (6, 11), (7, 12), (8, 13), (8, 14)],
-                "quota_val": 5,
-                "quota_children": 9,
-                "quota_ancestor": 50,
-                "quota_parent": 5,
-                "test_count": 5,
-                "test_quota": 18,
-                "test_nodes": [1, 6, 8, 10, 14],
-            },
-            3: {
-                "n": 18,
-                "tree_edges": [(0, 1), (0, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 7), (3, 8), (4, 9), (5, 10), (5, 11), (6, 12), (7, 13), (8, 14), (9, 15), (11, 16), (12, 17)],
-                "quota_val": 5,
-                "quota_children": 8,
-                "quota_ancestor": 45,
-                "quota_parent": 5,
-                "test_count": 5,
-                "test_quota": 16,
-                "test_nodes": [2, 7, 9, 12, 16],
-            },
-            4: {
-                "n": 22,
-                "tree_edges": [(0, 1), (0, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 7), (3, 8), (4, 9), (4, 10), (5, 11), (6, 12), (6, 13), (7, 14), (8, 15), (9, 16), (10, 17), (11, 18), (13, 19), (14, 20), (15, 21)],
-                "quota_val": 4,
-                "quota_children": 7,
-                "quota_ancestor": 40,
-                "quota_parent": 4,
-                "test_count": 5,
-                "test_quota": 15,
-                "test_nodes": [1, 5, 11, 14, 19],
-            },
-            5: {
-                "n": 25,
-                "tree_edges": [(0, 1), (0, 2), (0, 3), (1, 4), (1, 5), (2, 6), (2, 7), (3, 8), (3, 9), (4, 10), (4, 11), (5, 12), (6, 13), (7, 14), (7, 15), (8, 16), (9, 17), (9, 18), (10, 19), (11, 20), (13, 21), (14, 22), (16, 23), (18, 24)],
-                "quota_val": 4,
-                "quota_children": 6,
-                "quota_ancestor": 35,
-                "quota_parent": 4,
-                "test_count": 5,
-                "test_quota": 12,
-                "test_nodes": [3, 7, 10, 17, 21],
-            },
-        },
+            {
+                "n": 12,
+                "edges_T": [(1,2), (2,3), (3,4), (4,5), (5,6), (2,7), (3,8), (8,9), (4,10), (5,11), (11,12)],
+                "deleted_edge": (4, 5),
+                "degree_T": {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 2, 9: 1, 10: 1, 11: 2, 12: 1},
+            }
+        ],
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        cfg_list = self.DIFFICULTY_CONFIG[diff]
+        cfg = random.choice(cfg_list)
+        self._game_info["n"] = cfg["n"]
         
-        # 基本配置
-        self.n = cfg["n"]
-        self._game_info["n"] = self.n
-        self._game_info["node_list"] = ", ".join(str(i) for i in range(self.n))
-        self._game_info["quota_val"] = cfg["quota_val"]
-        self._game_info["quota_children"] = cfg["quota_children"]
-        self._game_info["quota_ancestor"] = cfg["quota_ancestor"]
-        self._game_info["quota_parent"] = cfg["quota_parent"]
-        self._game_info["test_count"] = cfg["test_count"]
-        self._game_info["test_quota"] = cfg["test_quota"]
+        self.edges_T = set(tuple(sorted(e)) for e in cfg["edges_T"])
+        self.deleted_edge = tuple(sorted(cfg["deleted_edge"]))
+        self.degree_T = cfg["degree_T"]
         
-        # 构建树结构
-        self.tree_edges = cfg["tree_edges"]
-        self.children = {i: [] for i in range(self.n)}
-        self.parent = {i: None for i in range(self.n)}
+        self.edges_F = self.edges_T - {self.deleted_edge}
         
-        for p, c in self.tree_edges:
-            self.children[p].append(c)
-            self.parent[c] = p
+        self.adj_F = {i: [] for i in range(1, cfg["n"] + 1)}
+        for u, v in self.edges_F:
+            self.adj_F[u].append(v)
+            self.adj_F[v].append(u)
         
-        # 找到根结点（无父结点的结点）
-        self.root = None
-        for i in range(self.n):
-            if self.parent[i] is None:
-                self.root = i
-                break
-        
-        # 计算隐藏函数：f(u) = 以u为根的子树的结点总数
-        self.function_values = self._compute_subtree_sizes()
-        
-        # 测试阶段配置
-        self.test_nodes = cfg["test_nodes"]
-        self.test_mode = False
-        
-        # 查询计数器
-        self.query_counts = {
-            "val": 0,
-            "children": 0,
-            "ancestor": 0,
-            "parent": 0,
-            "test_structure": 0,
-        }
-        
-        # 记录已被取值查询过的结点
-        self.queried_val_nodes = set()
+        degree_list = [f"{i}:{self.degree_T[i]}" for i in range(1, cfg["n"] + 1)]
+        self._game_info["degree_info"] = ", ".join(degree_list)
 
-    def _compute_subtree_sizes(self):
-        """计算每个结点的子树大小（包括自身）"""
-        sizes = {}
+    def _find_path_bfs(self, start, end):
+        if start == end:
+            return [start]
         
-        def dfs(node):
-            size = 1  # 包括自身
-            for child in self.children[node]:
-                size += dfs(child)
-            sizes[node] = size
-            return size
+        from collections import deque
+        queue = deque([(start, [start])])
+        visited = {start}
         
-        dfs(self.root)
-        return sizes
-
-    def _is_ancestor(self, ancestor, descendant):
-        """判断ancestor是否为descendant的严格祖先（不包括自身）"""
-        if ancestor == descendant:
-            return False
+        while queue:
+            node, path = queue.popleft()
+            for neighbor in self.adj_F[node]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    new_path = path + [neighbor]
+                    if neighbor == end:
+                        return new_path
+                    queue.append((neighbor, new_path))
         
-        current = self.parent[descendant]
-        while current is not None:
-            if current == ancestor:
-                return True
-            current = self.parent[current]
-        return False
-
-    def _check_quotas(self):
-        """检查是否超出探索阶段配额，如果是则自动进入测试阶段"""
-        if self.test_mode:
-            return
-        
-        if (self.query_counts["val"] >= self._game_info["quota_val"] and
-            self.query_counts["children"] >= self._game_info["quota_children"] and
-            self.query_counts["ancestor"] >= self._game_info["quota_ancestor"] and
-            self.query_counts["parent"] >= self._game_info["quota_parent"]):
-            self.test_mode = True
-            if self.config.language == "zh":
-                return "探索阶段配额已用完，自动进入测试阶段。"
-            else:
-                return "Exploration quotas exhausted, automatically entering test phase."
         return None
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
-        if not self.test_mode:
-            return False
-        
-        # 解析答案: node=value, node=value, ...
-        raw_ans = parsed_info["answer"]
         try:
-            pairs = [x.strip() for x in raw_ans.split(",")]
-            predictions = {}
-            for pair in pairs:
-                if "=" not in pair:
-                    return False
-                node_str, val_str = pair.split("=", 1)
-                node = int(node_str.strip())
-                value = int(val_str.strip())
-                predictions[node] = value
+            raw_ans = parsed_info["answer"].strip()
+            parts = [x.strip() for x in raw_ans.split(",")]
+            if len(parts) != 2:
+                return False
+            
+            a, b = int(parts[0]), int(parts[1])
+            submitted = tuple(sorted([a, b]))
+            
+            return submitted == self.deleted_edge
         except:
             return False
-        
-        # 检查是否包含所有测试结点
-        if set(predictions.keys()) != set(self.test_nodes):
-            return False
-        
-        # 检查每个预测值是否正确
-        for node in self.test_nodes:
-            if predictions[node] != self.function_values[node]:
-                return False
-        
-        return True
 
     def _cf_core_produce(self, parsed_info):
-        lang = self.config.language
         
-        # 处理进入测试阶段的请求
-        if "enter_test" in parsed_info:
-            if self.test_mode:
-                return "已经在测试阶段。" if lang == "zh" else "Already in test phase."
-            self.test_mode = True
-            test_nodes_str = ", ".join(str(n) for n in self.test_nodes)
-            if lang == "zh":
-                return f"进入测试阶段。测试目标结点：{test_nodes_str}。请使用结构查询（总计不超过 {self._game_info['test_quota']} 次）后提交答案。"
-            else:
-                return f"Entering test phase. Test target nodes: {test_nodes_str}. Use structure queries (max {self._game_info['test_quota']} total) then submit answer."
-        
-        # 取值查询
-        if "query_val" in parsed_info:
-            if self.test_mode:
-                return "测试阶段禁止取值查询。" if lang == "zh" else "Value queries forbidden in test phase."
-            
-            if self.query_counts["val"] >= self._game_info["quota_val"]:
-                msg = "取值查询配额已用完。" if lang == "zh" else "Value query quota exhausted."
-                auto_enter = self._check_quotas()
-                return msg if auto_enter is None else f"{msg}\n{auto_enter}"
-            
+        if "ask_loop" in parsed_info:
             try:
-                node = int(parsed_info["query_val"].strip())
-                if node < 0 or node >= self.n:
-                    return "结点编号超出范围。" if lang == "zh" else "Node ID out of range."
-                
-                self.query_counts["val"] += 1
-                self.queried_val_nodes.add(node)
-                result = str(self.function_values[node])
-                
-                auto_enter = self._check_quotas()
-                return result if auto_enter is None else f"{result}\n{auto_enter}"
-            except:
-                return "查询格式错误。" if lang == "zh" else "Invalid query format."
-        
-        # 子结点查询
-        if "query_children" in parsed_info:
-            quota_key = "test_structure" if self.test_mode else "children"
-            max_quota = self._game_info["test_quota"] if self.test_mode else self._game_info["quota_children"]
-            
-            if self.query_counts[quota_key] >= max_quota:
-                msg = "子结点查询配额已用完。" if lang == "zh" else "Children query quota exhausted."
-                if not self.test_mode:
-                    auto_enter = self._check_quotas()
-                    return msg if auto_enter is None else f"{msg}\n{auto_enter}"
-                return msg
-            
-            try:
-                node = int(parsed_info["query_children"].strip())
-                if node < 0 or node >= self.n:
-                    return "结点编号超出范围。" if lang == "zh" else "Node ID out of range."
-                
-                self.query_counts[quota_key] += 1
-                children_list = self.children[node]
-                if not children_list:
-                    result = "无" if lang == "zh" else "None"
-                else:
-                    result = ", ".join(str(c) for c in children_list)
-                
-                if not self.test_mode:
-                    auto_enter = self._check_quotas()
-                    return result if auto_enter is None else f"{result}\n{auto_enter}"
-                return result
-            except:
-                return "查询格式错误。" if lang == "zh" else "Invalid query format."
-        
-        # 祖先关系判断
-        if "query_ancestor" in parsed_info:
-            quota_key = "test_structure" if self.test_mode else "ancestor"
-            max_quota = self._game_info["test_quota"] if self.test_mode else self._game_info["quota_ancestor"]
-            
-            if self.query_counts[quota_key] >= max_quota:
-                msg = "祖先关系查询配额已用完。" if lang == "zh" else "Ancestor query quota exhausted."
-                if not self.test_mode:
-                    auto_enter = self._check_quotas()
-                    return msg if auto_enter is None else f"{msg}\n{auto_enter}"
-                return msg
-            
-            try:
-                parts = [x.strip() for x in parsed_info["query_ancestor"].split(",")]
+                raw = parsed_info["ask_loop"].strip()
+                parts = [x.strip() for x in raw.split(",")]
                 if len(parts) != 2:
-                    return "查询格式错误。" if lang == "zh" else "Invalid query format."
+                    raise ValueError("Invalid format")
                 
-                ancestor = int(parts[0])
-                descendant = int(parts[1])
+                u, v = int(parts[0]), int(parts[1])
+                n = self._game_info["n"]
+                if u < 1 or u > n or v < 1 or v > n:
+                    raise ValueError("Node out of range")
                 
-                if ancestor < 0 or ancestor >= self.n or descendant < 0 or descendant >= self.n:
-                    return "结点编号超出范围。" if lang == "zh" else "Node ID out of range."
+                if u == v:
+                    return "NO 0"
                 
-                self.query_counts[quota_key] += 1
-                is_anc = self._is_ancestor(ancestor, descendant)
-                result = "是" if is_anc else "否" if lang == "zh" else "Yes" if is_anc else "No"
+                path = self._find_path_bfs(u, v)
                 
-                if not self.test_mode:
-                    auto_enter = self._check_quotas()
-                    return result if auto_enter is None else f"{result}\n{auto_enter}"
-                return result
-            except:
-                return "查询格式错误。" if lang == "zh" else "Invalid query format."
-        
-        # 父结点查询
-        if "query_parent" in parsed_info:
-            quota_key = "test_structure" if self.test_mode else "parent"
-            max_quota = self._game_info["test_quota"] if self.test_mode else self._game_info["quota_parent"]
-            
-            if self.query_counts[quota_key] >= max_quota:
-                msg = "父结点查询配额已用完。" if lang == "zh" else "Parent query quota exhausted."
-                if not self.test_mode:
-                    auto_enter = self._check_quotas()
-                    return msg if auto_enter is None else f"{msg}\n{auto_enter}"
-                return msg
-            
-            try:
-                node = int(parsed_info["query_parent"].strip())
-                if node < 0 or node >= self.n:
-                    return "结点编号超出范围。" if lang == "zh" else "Node ID out of range."
-                
-                self.query_counts[quota_key] += 1
-                parent = self.parent[node]
-                if parent is None:
-                    result = "无" if lang == "zh" else "None"
+                if path is None:
+                    return "NO 0"
                 else:
-                    result = str(parent)
+                    k = len(path)
+                    if k < 3:
+                        return "NO 0"
+                    return f"YES {k}"
+                    
+            except Exception as e:
+                return "Error: Invalid query format." if self.config.language == "en" else "错误：查询格式无效。"
+        
+        elif "ask_on_loop" in parsed_info:
+            try:
+                raw = parsed_info["ask_on_loop"].strip()
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 3:
+                    raise ValueError("Invalid format")
                 
-                if not self.test_mode:
-                    auto_enter = self._check_quotas()
-                    return result if auto_enter is None else f"{result}\n{auto_enter}"
-                return result
-            except:
-                return "查询格式错误。" if lang == "zh" else "Invalid query format."
+                u, v, w = int(parts[0]), int(parts[1]), int(parts[2])
+                n = self._game_info["n"]
+                if (u < 1 or u > n or 
+                    v < 1 or v > n or 
+                    w < 1 or w > n):
+                    raise ValueError("Node out of range")
+                
+                if u == v:
+                    return "NO-LOOP"
+                
+                path = self._find_path_bfs(u, v)
+                
+                if path is None:
+                    return "NO-LOOP"
+                else:
+                    if w in path:
+                        return "YES"
+                    else:
+                        return "NO"
+                        
+            except Exception as e:
+                return "Error: Invalid query format." if self.config.language == "en" else "错误：查询格式无效。"
         
-        return "无效的查询类型。" if lang == "zh" else "Invalid query type."
+        else:
+            raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        # 1. 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
+    def _cf_make_wrong(self, correct):
         
-        # 2. 否则按规则替换关键词
-        # 中文
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
+        m = re.match(r'^YES\s+(\d+)$', correct)
+        if m:
+            return "NO 0"
         
-        # 英文 (保持大小写)
-        lower_correct = correct.lower()
-        if lower_correct == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if lower_correct == "no":
-            return "Yes" if correct[0].isupper() else "yes"
-            
-        # 3. 若都不匹配
+        if correct.strip() == "NO 0":
+            return "YES 3"
+        
+        if correct.strip() == "NO-LOOP":
+            return "YES"
+        
+        if correct.strip() == "YES":
+            return "NO"
+        
+        if correct.strip() == "NO":
+            return "YES"
+        
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
         queries = []
-        lang = self.config.language
+        n = self._game_info["n"]
         
-        # 1. 取值查询 / Value Query
-        for node in range(self.n):
-            queries.append({
-                "query": f"<query_val>{node}</query_val>",
-                "answer": str(self.function_values[node])
-            })
-        
-        # 2. 子结点查询 / Children Query
-        for node in range(self.n):
-            children = self.children[node]
-            if not children:
-                ans = "无" if lang == "zh" else "None"
-            else:
-                ans = ", ".join(str(c) for c in children)
-            queries.append({
-                "query": f"<query_children>{node}</query_children>",
-                "answer": ans
-            })
-
-        # 3. 父结点查询 / Parent Query
-        for node in range(self.n):
-            p = self.parent[node]
-            if p is None:
-                ans = "无" if lang == "zh" else "None"
-            else:
-                ans = str(p)
-            queries.append({
-                "query": f"<query_parent>{node}</query_parent>",
-                "answer": ans
-            })
-        
-        # 4. 祖先关系判断 / Ancestor Query
-        for u in range(self.n):
-            for v in range(self.n):
-                is_anc = self._is_ancestor(u, v)
-                if lang == "zh":
-                    ans = "是" if is_anc else "否"
+        for u in range(1, n + 1):
+            for v in range(u + 1, n + 1):
+                query_xml = f"<ask_loop>{u},{v}</ask_loop>"
+                
+                path = self._find_path_bfs(u, v)
+                if path is None:
+                    ans = "NO 0"
                 else:
-                    ans = "Yes" if is_anc else "No"
+                    k = len(path)
+                    if k < 3:
+                        ans = "NO 0"
+                    else:
+                        ans = f"YES {k}"
+                
                 queries.append({
-                    "query": f"<query_ancestor>{u},{v}</query_ancestor>",
+                    "query": query_xml,
                     "answer": ans
                 })
+        
+        for u in range(1, n + 1):
+            for v in range(u + 1, n + 1):
+                path = self._find_path_bfs(u, v)
+                path_set = set(path) if path else set()
                 
+                for w in range(1, n + 1):
+                    query_xml = f"<ask_on_loop>{u},{v},{w}</ask_on_loop>"
+                    
+                    if path is None:
+                        ans = "NO-LOOP"
+                    else:
+                        if w in path_set:
+                            ans = "YES"
+                        else:
+                            ans = "NO"
+                            
+                    queries.append({
+                        "query": query_xml,
+                        "answer": ans
+                    })
+                    
         return queries

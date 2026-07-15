@@ -1,934 +1,681 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   边权查询：两个给定节点之间边的权重/属性是多少
-# ============================================================
-
-import re
-from typing import Dict, Set, Tuple, List
 from .base import Game
-import heapq
+import re
 
-
-class UnknownEdgeWeightGame(Game):
-    """
-    未知边权推理游戏
-    玩家需要通过最短路比较和必经性查询来推断一条未知权重边的精确值
-    """
+class AdjacentRuleGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"未知边权推理"游戏，规则如下：
+我们现在来玩一个"相邻规则推理"游戏，规则如下：
 
-游戏设定了一张无向连通图，有 {n} 个顶点（编号 1 到 {n}）和 {m} 条边。除了一条特殊边 {special_edge} 之外，所有边的权重都是已知的正整数，位于区间 [1,20]。特殊边的权重 X 是未知的正整数，且已知 X 位于区间 [{lower},{upper}]。
+游戏设定了一个长度为 12 的数值序列，索引从 1 到 12。每个位置都有一个固定的数值。我已秘密选择了一个关于相邻元素对的判定规则（称为"真实规则"），该规则用于判断任意相邻对 (i, i+1) 是否满足某种关系。
 
-已知图的结构信息：
-{edges_info}
+真实规则是以下三种之一：
+1. 规则 α：相邻对 (i, i+1) 满足规则，当且仅当位置 i 的数值严格小于位置 i+1 的数值。
+2. 规则 γ：相邻对 (i, i+1) 满足规则，当且仅当位置 i 和位置 i+1 的数值具有相同的奇偶性（都是奇数或都是偶数）。
+3. 规则 δ：相邻对 (i, i+1) 满足规则，当且仅当位置 i 和位置 i+1 的数值除以 3 的余数相同。
 
-特殊边 {special_edge} 是一条割边，移除它后图被分为两个连通分量。你的目标是通过提问推断出 X 的唯一值。
+你的目标是通过提问来推断出真实规则是哪一个，并确定所有满足该规则的相邻对的左索引集合。
 
-你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
+你可以反复向我提出以下三类问题（每次仅限一个问题），我会根据真实设定如实回答：
 
-1. 最短路比较查询：询问顶点对 (i,j) 和 (p,q) 之间，哪一对的最短路距离更短。
-   我会回答："第一对更短"、"第二对更短"或"两对相等"。
+1. 单对判定查询：询问某个相邻对 (i, i+1) 是否满足真实规则。例如询问索引 3，即询问 (3, 4) 这一对。回答"是"或"否"。
+2. 区间计数查询：询问在给定区间 [a, b] 内有多少个相邻对满足真实规则。回答一个非负整数。
+3. 右向首断点查询：从给定位置 k 开始向右检查，返回第一个不满足真实规则的相邻对的左索引；若从 k 到 11 的所有相邻对都满足，则返回"无断点"。
 
-2. 必经性查询：询问顶点对 (i,j) 之间的任意最短路径是否都必须经过特殊边。
-   我会回答："是"或"否"。
+当你收集足够信息后，请提交最终答案，包括：真实规则的类型（α、γ 或 δ）以及所有满足该规则的相邻对的左索引（用逗号隔开）。
 
-当你收集足够信息后，请提交最终答案，给出 X 的具体数值。若答案错误或格式不符，游戏失败。
-
-## 询问与提交答案的格式
+注意：你需要进行至少两次有效查询后才能提交答案。若答案错误、格式不符或查询次数不足，游戏失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 最短路比较查询（例如比较顶点对 1,2 和 3,4）：
-<query_compare>1,2,3,4</query_compare>
+- 单对判定查询（例如询问索引 5，即相邻对 (5,6)）：
+<query_pair>5</query_pair>
 
-- 必经性查询（例如询问顶点对 1,5）：
-<query_necessary>1,5</query_necessary>
+- 区间计数查询（例如询问区间 [2, 7]）：
+<query_range>2,7</query_range>
 
-提交最终答案时，直接给出 X 的数值，格式如下：
-<answer>X</answer>
+- 右向首断点查询（例如从索引 3 开始）：
+<query_break>3</query_break>
 
-例如：<answer>7</answer>
+提交最终答案时，必须说明规则类型（α、γ 或 δ）并列出所有满足规则的相邻对的左索引（用逗号隔开，顺序不限），格式如下：
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     game_rule_en = """\
-Let's play an "Unknown Edge Weight Deduction" game. Here are the rules:
+Let's play an "Adjacent Rule Inference" game. Here are the rules:
 
-The game features an undirected connected graph with {n} vertices (numbered 1 to {n}) and {m} edges. Except for one special edge {special_edge}, all edge weights are known positive integers in the range [1,20]. The weight X of the special edge is an unknown positive integer, and it is known that X is in the range [{lower},{upper}].
+There is a sequence of length 12 with indices from 1 to 12. Each position has a fixed numerical value. I have secretly selected a rule (called the "true rule") that determines whether any adjacent pair (i, i+1) satisfies a certain relationship.
 
-Known graph structure:
-{edges_info}
+The true rule is one of the following three:
+1. Rule α: An adjacent pair (i, i+1) satisfies the rule if and only if the value at position i is strictly less than the value at position i+1.
+2. Rule γ: An adjacent pair (i, i+1) satisfies the rule if and only if the values at positions i and i+1 have the same parity (both odd or both even).
+3. Rule δ: An adjacent pair (i, i+1) satisfies the rule if and only if the values at positions i and i+1 have the same remainder when divided by 3.
 
-The special edge {special_edge} is a bridge; removing it splits the graph into two connected components. Your goal is to deduce the unique value of X through queries.
+Your goal is to infer which rule is the true rule through queries, and determine the set of left indices of all adjacent pairs that satisfy the rule.
 
-You can repeatedly ask me the following two types of questions (one per turn), and I will answer truthfully:
+You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully:
 
-1. Shortest Path Comparison Query: Ask which pair has a shorter shortest path distance between vertex pairs (i,j) and (p,q).
-   I will answer: "First pair shorter", "Second pair shorter", or "Both equal".
+1. Pair Query: Ask whether a specific adjacent pair (i, i+1) satisfies the true rule. For example, asking about index 3 means asking about pair (3, 4). Answer "Yes" or "No".
+2. Range Count Query: Ask how many adjacent pairs in a given range [a, b] satisfy the true rule. Answer a non-negative integer.
+3. Right Break Query: Starting from position k, check rightward and return the left index of the first adjacent pair that does not satisfy the true rule; if all pairs from k to 11 satisfy the rule, return "No break".
 
-2. Necessity Query: Ask whether any shortest path between vertex pair (i,j) must pass through the special edge.
-   I will answer: "Yes" or "No".
+When you have enough information, submit your final answer, including: the type of true rule (α, γ, or δ) and all left indices of adjacent pairs that satisfy the rule (comma-separated).
 
-When you have enough information, submit your final answer with the specific value of X. If the answer is wrong or the format is invalid, the game fails.
-
-## Query and Answer Format
+Note: You must make at least two valid queries before submitting an answer. If the answer is wrong, the format is invalid, or the number of queries is insufficient, the game fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
-<query_compare>1,2,3,4</query_compare>
+- Pair Query (e.g., asking about index 5, i.e., pair (5,6)):
+<query_pair>5</query_pair>
 
-- Necessity Query (e.g., asking about pair 1,5):
-<query_necessary>1,5</query_necessary>
+- Range Count Query (e.g., asking about range [2, 7]):
+<query_range>2,7</query_range>
 
-When submitting the final answer, directly provide the value of X in this format:
-<answer>X</answer>
+- Right Break Query (e.g., starting from index 3):
+<query_break>3</query_break>
 
-For example: <answer>7</answer>
+When submitting the final answer, specify the rule type (α, γ, or δ) and list all left indices of satisfied pairs (comma-separated, order does not matter), using this format:
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎进入“城市路网通行分析”系统。
+欢迎使用“智能路网流量异常诊断系统”。我们现在来进行"相邻路段联动规则推演"。
 
-本系统模拟了一个包含 {n} 个关键交通枢纽（编号 1 到 {n}）及 {m} 条连接道路的城市路网。除了一条特殊的跨区大桥 {special_edge} 之外，所有道路的通行时间（分钟）均是已知的正整数，范围在 [1,20] 内。大桥 {special_edge} 的通行时间 X 是未知的正整数，目前仅知 X 位于区间 [{lower},{upper}]。
+系统接入了一条主干道上连续的 12 个监测路段，编号从 1 到 12。每个路段都记录了一个固定的车流指标数值。系统后台秘密应用了一种关于相邻路段对的判定规则（称为"真实规则"），用于评估任意相邻路段对 (i, i+1) 是否满足某种交通联动模式。
 
-路网结构与已知通行时间如下：
-{edges_info}
+真实规则是以下三种之一：
+1. 规则 α：相邻路段对 (i, i+1) 满足规则，当且仅当路段 i 的车流指标严格小于路段 i+1 的车流指标（即车流量呈递增态势）。
+2. 规则 γ：相邻路段对 (i, i+1) 满足规则，当且仅当路段 i 和路段 i+1 的车流指标具有相同的奇偶性（代表拥堵状态分级相同）。
+3. 规则 δ：相邻路段对 (i, i+1) 满足规则，当且仅当路段 i 和路段 i+1 的车流指标除以 3 的余数相同（代表绿波带相位偏差处于同等水平）。
 
-经勘测，大桥 {special_edge} 是一条唯一的跨区通道（图论中的割边），若将其封闭，整个城市路网将分裂为两个无法互通的区域。您的任务是通过查询系统，精确推断出大桥通行时间 X 的唯一真实值。
+你的目标是通过向系统提问来推断出真实规则是哪一个，并确定所有满足该规则的相邻路段对的左侧路段编号（左索引）集合。
 
-您可以反复进行以下两类查询（每次限查一类），系统将根据底层数据如实反馈：
+你可以反复向系统提出以下三类诊断查询（每次仅限一个问题），系统会根据真实设定如实回答：
 
-1. 最短路比较查询：询问 (i,j) 枢纽对与 (p,q) 枢纽对，哪一对的最小通行时间更短。
-   系统将返回："第一对更短"、"第二对更短"或"两对相等"。
+1. 单对判定查询：询问某对相邻路段 (i, i+1) 是否满足真实规则。例如询问编号 3，即评估路段对 (3, 4)。回答"是"或"否"。
+2. 区间计数查询：询问在给定路段编号区间 [a, b] 内有多少个相邻路段对满足真实规则。回答一个非负整数。
+3. 右向首断点查询：从给定路段位置 k 开始向右检查，返回第一个不满足真实规则的相邻路段对的左侧编号；若从 k 到 11 的所有相邻路段对都满足，则返回"无断点"。
 
-2. 必经性查询：询问 (i,j) 枢纽对之间的任意最快通行路线，是否都必定经过大桥。
-   系统将返回："是"或"否"。
+当你收集到足够信息后，请提交最终诊断报告，包括：真实规则的类型（α、γ 或 δ）以及所有满足该规则的相邻路段对的左侧编号（用逗号隔开）。
 
-收集充足情报后，请提交 X 的具体数值。若提交错误或格式不符，分析将宣告失败。
-
-## 询问与提交答案的格式
+注意：你需要进行至少两次有效查询后才能提交答案。若答案错误、格式不符或查询次数不足，诊断任务失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 最短路比较查询（例如比较枢纽对 1,2 和 3,4）：
-<query_compare>1,2,3,4</query_compare>
+- 单对判定查询（例如询问路段编号 5，即相邻对 (5,6)）：
+<query_pair>5</query_pair>
 
-- 必经性查询（例如询问枢纽对 1,5）：
-<query_necessary>1,5</query_necessary>
+- 区间计数查询（例如询问路段区间 [2, 7]）：
+<query_range>2,7</query_range>
 
-提交最终答案时，直接给出 X 的数值，格式如下：
-<answer>X</answer>
+- 右向首断点查询（例如从路段编号 3 开始）：
+<query_break>3</query_break>
 
-例如：<answer>7</answer>
+提交最终答案时，必须说明规则类型（α、γ 或 δ）并列出所有满足规则的相邻对的左索引（用逗号隔开，顺序不限），格式如下：
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Urban Road Network Transit Analysis" system.
+Welcome to the "Intelligent Road Network Traffic Anomaly Diagnosis System". Let's conduct an "Adjacent Road Segment Linkage Rule Inference".
 
-This system models a city road network with {n} key traffic hubs (numbered 1 to {n}) and {m} connecting roads. Except for one special cross-district bridge {special_edge}, the transit times (in minutes) of all roads are known positive integers in the range [1,20]. The transit time X of the bridge {special_edge} is an unknown positive integer, but it is known that X is in the range [{lower},{upper}].
+The system has connected to 12 consecutive monitoring road segments on a main road, with indices from 1 to 12. Each segment records a fixed traffic flow metric value. The system background has secretly applied a rule (called the "true rule") to determine whether any adjacent segment pair (i, i+1) satisfies a specific traffic linkage pattern.
 
-Network structure and known transit times:
-{edges_info}
+The true rule is one of the following three:
+1. Rule α: An adjacent segment pair (i, i+1) satisfies the rule if and only if the traffic metric at segment i is strictly less than the metric at segment i+1 (indicating an increasing trend in traffic volume).
+2. Rule γ: An adjacent segment pair (i, i+1) satisfies the rule if and only if the traffic metrics at segments i and i+1 have the same parity (both odd or both even, representing the same congestion level category).
+3. Rule δ: An adjacent segment pair (i, i+1) satisfies the rule if and only if the traffic metrics at segments i and i+1 have the same remainder when divided by 3 (representing an identical green wave phase deviation).
 
-Surveys show that the bridge {special_edge} is the only cross-district corridor (a bridge in graph theory); closing it would split the network into two disconnected regions. Your goal is to deduce the exact value of X through system queries.
+Your goal is to infer which rule is the true rule through diagnostic queries, and determine the set of left indices of all adjacent segment pairs that satisfy the rule.
 
-You can repeatedly make the following two types of queries (one per turn), and the system will answer truthfully based on the underlying data:
+You can repeatedly ask the system three types of diagnostic queries (one per turn), and the system will answer truthfully based on the actual settings:
 
-1. Shortest Path Comparison Query: Ask which pair has a shorter minimum transit time between hub pair (i,j) and pair (p,q).
-   The system will answer: "First pair shorter", "Second pair shorter", or "Both equal".
+1. Pair Query: Ask whether a specific adjacent segment pair (i, i+1) satisfies the true rule. For example, asking about index 3 means evaluating pair (3, 4). Answer "Yes" or "No".
+2. Range Count Query: Ask how many adjacent segment pairs in a given range [a, b] satisfy the true rule. Answer a non-negative integer.
+3. Right Break Query: Starting from segment position k, check rightward and return the left index of the first adjacent segment pair that does not satisfy the true rule; if all pairs from k to 11 satisfy the rule, return "No break".
 
-2. Necessity Query: Ask whether any fastest route between hub pair (i,j) must pass through the bridge.
-   The system will answer: "Yes" or "No".
+When you have collected enough information, submit your final diagnostic report, including: the type of true rule (α, γ, or δ) and all left indices of adjacent segment pairs that satisfy the rule (comma-separated).
 
-Once you have gathered enough information, submit the specific value of X. If the answer is incorrect or the format is invalid, the analysis fails.
-
-## Query and Answer Format
+Note: You must make at least two valid diagnostic queries before submitting an answer. If the answer is wrong, the format is invalid, or the number of queries is insufficient, the diagnostic task fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
-<query_compare>1,2,3,4</query_compare>
+- Pair Query (e.g., asking about index 5, i.e., pair (5,6)):
+<query_pair>5</query_pair>
 
-- Necessity Query (e.g., asking about pair 1,5):
-<query_necessary>1,5</query_necessary>
+- Range Count Query (e.g., asking about range [2, 7]):
+<query_range>2,7</query_range>
 
-When submitting the final answer, directly provide the value of X in this format:
-<answer>X</answer>
+- Right Break Query (e.g., starting from index 3):
+<query_break>3</query_break>
 
-For example: <answer>7</answer>
+When submitting the final answer, specify the rule type (α, γ, or δ) and list all left indices of satisfied pairs (comma-separated, order does not matter), using this format:
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“人体血液给药动力学”推演系统。
+欢迎使用“重症监护生命体征分析系统”。我们现在来进行"连续时段生理指征推理"。
 
-系统构建了一个包含 {n} 个关键器官/组织节点（编号 1 到 {n}）和 {m} 条主要血管通路的微循环网络。除了一条特殊的门静脉导管 {special_edge} 之外，所有血管的药物传递阻力指数均是已知的正整数，范围在 [1,20] 内。门静脉导管 {special_edge} 的传递阻力 X 是未知的正整数，已知 X 的范围处于 [{lower},{upper}] 之间。
+系统记录了患者在连续 12 个监测时段（编号从 1 到 12）内的关键生理指标数值。每个时段对应一个固定的数值。系统已在后台秘密设定了一种"临床指征规则"（即真实规则），用于判定任意相邻的两个监测时段对 (i, i+1) 的指标变化是否符合某种生理预警或稳定模式。
 
-微循环网络结构如下：
-{edges_info}
+真实规则是以下三种之一：
+1. 规则 α：相邻时段对 (i, i+1) 满足规则，当且仅当时段 i 的生理指标严格小于时段 i+1 的指标（即指标出现恶化或攀升趋势）。
+2. 规则 γ：相邻时段对 (i, i+1) 满足规则，当且仅当时段 i 和时段 i+1 的生理指标具有相同的奇偶性（代表生理体征的波段类型相同）。
+3. 规则 δ：相邻时段对 (i, i+1) 满足规则，当且仅当时段 i 和时段 i+1 的生理指标除以 3 的余数相同（代表给药代谢周期的相位一致）。
 
-医学影像显示，门静脉导管 {special_edge} 是一条至关重要的唯一连通体（割边），若发生完全栓塞，整个微循环网络将分裂为两个相互隔离的系统。您的目标是通过临床模拟查询，精确推导出传递阻力 X 的值。
+你的目标是通过向系统提问来推断出真实规则是哪一个，并确定所有满足该规则的相邻时段对的左侧时段编号（左索引）集合。
 
-您可以发起以下两类动力学查询（每次限查一类），系统会给出精准回复：
+你可以反复向系统提出以下三类分析查询（每次仅限一个问题），系统会根据真实设定如实回答：
 
-1. 最短路比较查询：对比靶节点对 (i,j) 和 (p,q) 之间，哪一对器官间的最小给药阻力更低（即起效更快）。
-   系统回复："第一对更短"、"第二对更短"或"两对相等"。
+1. 单对判定查询：询问某对相邻时段 (i, i+1) 是否满足真实规则。例如询问编号 3，即评估时段对 (3, 4)。回答"是"或"否"。
+2. 区间计数查询：询问在给定时段编号区间 [a, b] 内有多少个相邻时段对满足真实规则。回答一个非负整数。
+3. 右向首断点查询：从给定时段位置 k 开始向右检查，返回第一个不满足真实规则的相邻时段对的左侧编号；若从 k 到 11 的所有相邻时段对都满足，则返回"无断点"。
 
-2. 必经性查询：询问在节点对 (i,j) 之间建立的任意最低阻力给药路径，是否必定经过门静脉导管。
-   系统回复："是"或"否"。
+当你收集到足够信息后，请提交最终临床评估报告，包括：真实规则的类型（α、γ 或 δ）以及所有满足该规则的相邻时段对的左侧编号（用逗号隔开）。
 
-在确认结论后，请提交 X 的具体数值。若推演错误或格式违规，系统将中止。
-
-## 询问与提交答案的格式
+注意：你需要进行至少两次有效查询后才能提交答案。若答案错误、格式不符或查询次数不足，评估任务失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 最短路比较查询（例如比较节点对 1,2 和 3,4）：
-<query_compare>1,2,3,4</query_compare>
+- 单对判定查询（例如询问时段编号 5，即相邻对 (5,6)）：
+<query_pair>5</query_pair>
 
-- 必经性查询（例如询问节点对 1,5）：
-<query_necessary>1,5</query_necessary>
+- 区间计数查询（例如询问时段区间 [2, 7]）：
+<query_range>2,7</query_range>
 
-提交最终答案时，直接给出 X 的数值，格式如下：
-<answer>X</answer>
+- 右向首断点查询（例如从时段编号 3 开始）：
+<query_break>3</query_break>
 
-例如：<answer>7</answer>
+提交最终答案时，必须说明规则类型（α、γ 或 δ）并列出所有满足规则的相邻对的左索引（用逗号隔开，顺序不限），格式如下：
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Pharmacokinetics of Blood Delivery" deduction system.
+Welcome to the "Intensive Care Vital Signs Analysis System". Let's conduct a "Consecutive Period Physiological Indicator Inference".
 
-The system constructs a microcirculation network containing {n} key organ/tissue nodes (numbered 1 to {n}) and {m} main vascular pathways. Except for a special portal vein catheter {special_edge}, the drug delivery resistance indices of all vessels are known positive integers in the range [1,20]. The resistance index X of the portal vein catheter {special_edge} is an unknown positive integer, but it is known to be in the range [{lower},{upper}].
+The system has recorded critical physiological indicator values of a patient over 12 consecutive monitoring periods, with indices from 1 to 12. Each period corresponds to a fixed numerical value. The system has secretly set a "clinical indicator rule" (the "true rule") to determine whether the indicator changes of any adjacent monitoring period pair (i, i+1) satisfy a specific physiological warning or stability pattern.
 
-Microcirculation network structure:
-{edges_info}
+The true rule is one of the following three:
+1. Rule α: An adjacent period pair (i, i+1) satisfies the rule if and only if the physiological indicator at period i is strictly less than the indicator at period i+1 (indicating a deteriorating or climbing trend).
+2. Rule γ: An adjacent period pair (i, i+1) satisfies the rule if and only if the physiological indicators at periods i and i+1 have the same parity (representing the same band type of physiological signs).
+3. Rule δ: An adjacent period pair (i, i+1) satisfies the rule if and only if the physiological indicators at periods i and i+1 have the same remainder when divided by 3 (representing an identical phase in the medication metabolism cycle).
 
-Medical imaging indicates that the portal vein catheter {special_edge} is a crucial unique connector (a bridge); complete embolism would split the network into two isolated systems. Your goal is to deduce the exact value of X through clinical simulation queries.
+Your goal is to infer which rule is the true rule through queries, and determine the set of left indices of all adjacent period pairs that satisfy the rule.
 
-You can initiate the following two types of pharmacokinetic queries (one per turn), and the system will reply accurately:
+You can repeatedly ask the system three types of analysis queries (one per turn), and the system will answer truthfully:
 
-1. Shortest Path Comparison Query: Compare which pair has a lower minimum delivery resistance (i.e., faster onset) between target node pairs (i,j) and (p,q).
-   The system replies: "First pair shorter", "Second pair shorter", or "Both equal".
+1. Pair Query: Ask whether a specific adjacent period pair (i, i+1) satisfies the true rule. For example, asking about index 3 means evaluating pair (3, 4). Answer "Yes" or "No".
+2. Range Count Query: Ask how many adjacent period pairs in a given range [a, b] satisfy the true rule. Answer a non-negative integer.
+3. Right Break Query: Starting from period position k, check rightward and return the left index of the first adjacent period pair that does not satisfy the true rule; if all pairs from k to 11 satisfy the rule, return "No break".
 
-2. Necessity Query: Ask whether any path with the lowest resistance established between node pair (i,j) inevitably passes through the portal vein catheter.
-   The system replies: "Yes" or "No".
+When you have collected enough information, submit your final clinical evaluation report, including: the type of true rule (α, γ, or δ) and all left indices of adjacent period pairs that satisfy the rule (comma-separated).
 
-Upon confirming your conclusion, submit the exact value of X. Incorrect deductions or formatting violations will abort the system.
-
-## Query and Answer Format
+Note: You must make at least two valid queries before submitting an answer. If the answer is wrong, the format is invalid, or the number of queries is insufficient, the evaluation task fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
-<query_compare>1,2,3,4</query_compare>
+- Pair Query (e.g., asking about index 5, i.e., pair (5,6)):
+<query_pair>5</query_pair>
 
-- Necessity Query (e.g., asking about pair 1,5):
-<query_necessary>1,5</query_necessary>
+- Range Count Query (e.g., asking about range [2, 7]):
+<query_range>2,7</query_range>
 
-When submitting the final answer, directly provide the value of X in this format:
-<answer>X</answer>
+- Right Break Query (e.g., starting from index 3):
+<query_break>3</query_break>
 
-For example: <answer>7</answer>
+When submitting the final answer, specify the rule type (α, γ, or δ) and list all left indices of satisfied pairs (comma-separated, order does not matter), using this format:
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用“学科知识图谱与学习路径”优化引擎。
+欢迎进入“学业水平综合评估系统”。我们现在来进行"班级知识点掌握度相邻规则推演"。
 
-本引擎包含 {n} 个核心知识点（编号 1 到 {n}）和 {m} 条跨学科学习路径。除了一门特殊的桥梁课程 {special_edge} 外，所有学习路径所需的前置学习时长（小时）均是已知的正整数，范围在 [1,20] 内。桥梁课程 {special_edge} 的学习时长 X 是未知的正整数，已知 X 介于 [{lower},{upper}] 之间。
+系统录入了某年级连续 12 个班级（编号从 1 到 12）在某核心知识点上的平均得分。每个班级都有一个固定的得分数值。系统已秘密选定了一种"教学评估规则"（即真实规则），用于判定任意相邻班级对 (i, i+1) 的成绩分布是否符合特定的教学质量关联模式。
 
-知识图谱网络结构如下：
-{edges_info}
+真实规则是以下三种之一：
+1. 规则 α：相邻班级对 (i, i+1) 满足规则，当且仅当班级 i 的平均分严格小于班级 i+1 的平均分（即成绩呈梯次上升趋势）。
+2. 规则 γ：相邻班级对 (i, i+1) 满足规则，当且仅当班级 i 和班级 i+1 的平均分具有相同的奇偶性（代表两个班级的成绩波动类型一致）。
+3. 规则 δ：相邻班级对 (i, i+1) 满足规则，当且仅当班级 i 和班级 i+1 的平均分除以 3 的余数相同（代表两个班级的课时进度处于相同阶段）。
 
-教研组指出，桥梁课程 {special_edge} 具有不可替代的学术地位（即图论中的割边），若跳过它，整个知识图谱将断裂为两个无法建立认知的独立模块。您的任务是通过探究提问，准确测算出桥梁课程的学习时长 X。
+你的目标是通过向系统提问来推断出真实规则是哪一个，并确定所有满足该规则的相邻班级对的左侧班级编号（左索引）集合。
 
-您可以反复提出以下两类排课查询（每次限查一类），引擎将返回客观事实：
+你可以反复向系统提出以下三类教务查询（每次仅限一个问题），系统会根据真实设定如实回答：
 
-1. 最短路比较查询：比较知识点组合 (i,j) 与组合 (p,q)，哪一对的最小前置学习总时长更短。
-   引擎反馈："第一对更短"、"第二对更短"或"两对相等"。
+1. 单对判定查询：询问某对相邻班级 (i, i+1) 是否满足真实规则。例如询问编号 3，即评估班级对 (3, 4)。回答"是"或"否"。
+2. 区间计数查询：询问在给定班级编号区间 [a, b] 内有多少个相邻班级对满足真实规则。回答一个非负整数。
+3. 右向首断点查询：从给定班级位置 k 开始向右检查，返回第一个不满足真实规则的相邻班级对的左侧编号；若从 k 到 11 的所有相邻班级对都满足，则返回"无断点"。
 
-2. 必经性查询：询问若要以最快速度从知识点 i 掌握到知识点 j，其所有可能的最优学习路线是否都必须包含该桥梁课程。
-   引擎反馈："是"或"否"。
+当你收集到足够信息后，请提交最终评估报告，包括：真实规则的类型（α、γ 或 δ）以及所有满足该规则的相邻班级对的左侧编号（用逗号隔开）。
 
-完成逻辑推导后，请提交 X 的确切小时数。计算错误或格式不当将导致排课失败。
-
-## 询问与提交答案的格式
+注意：你需要进行至少两次有效查询后才能提交答案。若答案错误、格式不符或查询次数不足，评估任务失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 最短路比较查询（例如比较知识点对 1,2 和 3,4）：
-<query_compare>1,2,3,4</query_compare>
+- 单对判定查询（例如询问班级编号 5，即相邻对 (5,6)）：
+<query_pair>5</query_pair>
 
-- 必经性查询（例如询问知识点对 1,5）：
-<query_necessary>1,5</query_necessary>
+- 区间计数查询（例如询问班级区间 [2, 7]）：
+<query_range>2,7</query_range>
 
-提交最终答案时，直接给出 X 的数值，格式如下：
-<answer>X</answer>
+- 右向首断点查询（例如从班级编号 3 开始）：
+<query_break>3</query_break>
 
-例如：<answer>7</answer>
+提交最终答案时，必须说明规则类型（α、γ 或 δ）并列出所有满足规则的相邻对的左索引（用逗号隔开，顺序不限），格式如下：
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Subject Knowledge Graph and Learning Path" optimization engine.
+Welcome to the "Comprehensive Academic Proficiency Evaluation System". Let's conduct an "Adjacent Class Knowledge Mastery Rule Inference".
 
-This engine includes {n} core knowledge points (numbered 1 to {n}) and {m} interdisciplinary learning paths. Except for a special bridge course {special_edge}, the required prerequisite learning time (in hours) for all paths are known positive integers in the range [1,20]. The learning time X for the bridge course {special_edge} is an unknown positive integer, known to be between [{lower},{upper}].
+The system has recorded the average scores of 12 consecutive classes in a grade (with indices from 1 to 12) on a core knowledge point. Each class corresponds to a fixed score value. The system has secretly selected a "teaching evaluation rule" (the "true rule") to determine whether the score distribution of any adjacent class pair (i, i+1) satisfies a specific teaching quality correlation pattern.
 
-Knowledge graph network structure:
-{edges_info}
+The true rule is one of the following three:
+1. Rule α: An adjacent class pair (i, i+1) satisfies the rule if and only if the average score of class i is strictly less than that of class i+1 (indicating a stepped upward trend in performance).
+2. Rule γ: An adjacent class pair (i, i+1) satisfies the rule if and only if the average scores of classes i and i+1 have the same parity (representing a consistent performance fluctuation type between the two classes).
+3. Rule δ: An adjacent class pair (i, i+1) satisfies the rule if and only if the average scores of classes i and i+1 have the same remainder when divided by 3 (representing that the two classes are at the same stage in course progress).
 
-The teaching research group points out that the bridge course {special_edge} holds an irreplaceable academic status (a bridge in graph theory); skipping it would fracture the knowledge graph into two independent modules where cognitive links cannot be established. Your task is to accurately calculate the learning time X of the bridge course through inquiry.
+Your goal is to infer which rule is the true rule through queries, and determine the set of left indices of all adjacent class pairs that satisfy the rule.
 
-You can repeatedly propose the following two types of scheduling queries (one per turn), and the engine will return objective facts:
+You can repeatedly ask the system three types of academic queries (one per turn), and the system will answer truthfully based on the actual settings:
 
-1. Shortest Path Comparison Query: Compare which pair requires a shorter minimum total prerequisite learning time between knowledge point pairs (i,j) and (p,q).
-   The engine replies: "First pair shorter", "Second pair shorter", or "Both equal".
+1. Pair Query: Ask whether a specific adjacent class pair (i, i+1) satisfies the true rule. For example, asking about index 3 means evaluating pair (3, 4). Answer "Yes" or "No".
+2. Range Count Query: Ask how many adjacent class pairs in a given range [a, b] satisfy the true rule. Answer a non-negative integer.
+3. Right Break Query: Starting from class position k, check rightward and return the left index of the first adjacent class pair that does not satisfy the true rule; if all pairs from k to 11 satisfy the rule, return "No break".
 
-2. Necessity Query: Ask if all possible optimal learning routes to master knowledge from point i to point j as quickly as possible must include the bridge course.
-   The engine replies: "Yes" or "No".
+When you have collected enough information, submit your final evaluation report, including: the type of true rule (α, γ, or δ) and all left indices of adjacent class pairs that satisfy the rule (comma-separated).
 
-After completing the logical deduction, submit the exact hours for X. Miscalculations or improper formats will cause scheduling failure.
-
-## Query and Answer Format
+Note: You must make at least two valid queries before submitting an answer. If the answer is wrong, the format is invalid, or the number of queries is insufficient, the evaluation task fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
-<query_compare>1,2,3,4</query_compare>
+- Pair Query (e.g., asking about index 5, i.e., pair (5,6)):
+<query_pair>5</query_pair>
 
-- Necessity Query (e.g., asking about pair 1,5):
-<query_necessary>1,5</query_necessary>
+- Range Count Query (e.g., asking about range [2, 7]):
+<query_range>2,7</query_range>
 
-When submitting the final answer, directly provide the value of X in this format:
-<answer>X</answer>
+- Right Break Query (e.g., starting from index 3):
+<query_break>3</query_break>
 
-For example: <answer>7</answer>
+When submitting the final answer, specify the rule type (α, γ, or δ) and list all left indices of satisfied pairs (comma-separated, order does not matter), using this format:
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎登录“智能工厂物料流转”监测终端。
+欢迎登录“工业流水线工艺联调系统”。我们现在来进行"相邻工站运行参数诊断"。
 
-目前工厂生产线包含 {n} 个加工工序节点（编号 1 到 {n}）以及 {m} 条自动化传送带。除了一条作为主干枢纽的跨车间传送带 {special_edge} 之外，所有传送带的物料搬运耗时均是已知的正整数，范围在 [1,20] 内。枢纽传送带 {special_edge} 的搬运耗时 X 未知，仅知其实际耗时必定位于区间 [{lower},{upper}] 内。
+流水线上设有连续 12 个加工工站，编号从 1 到 12。每个工站都记录了一个固定的工艺压力值参数。系统后台配置了一种"工序联动规则"（即真实规则），用于判定任意相邻的两个工站对 (i, i+1) 的参数协同是否满足特定的生产工艺要求。
 
-流水线与已知搬运耗时清单：
-{edges_info}
+真实规则是以下三种之一：
+1. 规则 α：相邻工站对 (i, i+1) 满足规则，当且仅当工站 i 的压力值严格小于工站 i+1 的压力值（即加工压力呈阶梯递增分布）。
+2. 规则 γ：相邻工站对 (i, i+1) 满足规则，当且仅当工站 i 和工站 i+1 的压力值具有相同的奇偶性（代表两工站处于相同的设备运行模式 A 或 B）。
+3. 规则 δ：相邻工站对 (i, i+1) 满足规则，当且仅当工站 i 和工站 i+1 的压力值除以 3 的余数相同（代表两工站的质检批次循环周期完全一致）。
 
-工程规划表明，枢纽传送带 {special_edge} 是一条不可或缺的单点连接（割边），若将其停机检修，整个生产网络将被切断为两个无法协同作业的厂区。您的任务是通过调用监测数据，推导得出 X 的准确耗时。
+你的目标是通过向系统发送诊断指令，推断出当前生效的真实规则是哪一个，并找出所有满足该规则的相邻工站对的左侧工站编号（左索引）集合。
 
-您可向系统下达以下两类比对指令（每次限下达一类），系统将反馈精准监测结果：
+你可以反复发起以下三类参数查询（每次仅限一个指令），系统会如实返回设备联调状态：
 
-1. 最短路比较查询：比对工序对 (i,j) 与工序对 (p,q)，评估哪一对工序之间的最低物料周转耗时更短。
-   系统反馈："第一对更短"、"第二对更短"或"两对相等"。
+1. 单对判定查询：询问某对相邻工站 (i, i+1) 是否满足真实规则。例如询问编号 3，即评估工站对 (3, 4)。回答"是"或"否"。
+2. 区间计数查询：询问在给定工站编号区间 [a, b] 内有多少个相邻工站对满足真实规则。回答一个非负整数。
+3. 右向首断点查询：从给定工站位置 k 开始向右侧排查，返回第一个不满足真实规则的相邻工站对的左侧编号；若从 k 到 11 的所有相邻工站对都满足，则返回"无断点"。
 
-2. 必经性查询：询问工序对 (i,j) 之间任何能实现最低耗时的物料传输方案，是否都必定经过该枢纽传送带。
-   系统反馈："是"或"否"。
+当收集到足够的工艺参数后，请提交最终联调报告，包括：真实规则的类型（α、γ 或 δ）以及所有满足规则的相邻工站对的左侧编号（用逗号隔开）。
 
-当数据支撑充分时，请上报 X 的耗时参数。若参数有误或格式非法，将触发工艺异常警报。
-
-## 询问与提交答案的格式
+注意：你需要进行至少两次有效查询后才能提交报告。若答案错误、格式不符或查询次数不足，联调任务失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 最短路比较查询（例如比较工序对 1,2 和 3,4）：
-<query_compare>1,2,3,4</query_compare>
+- 单对判定查询（例如询问工站编号 5，即相邻对 (5,6)）：
+<query_pair>5</query_pair>
 
-- 必经性查询（例如询问工序对 1,5）：
-<query_necessary>1,5</query_necessary>
+- 区间计数查询（例如询问工站区间 [2, 7]）：
+<query_range>2,7</query_range>
 
-提交最终答案时，直接给出 X 的数值，格式如下：
-<answer>X</answer>
+- 右向首断点查询（例如从工站编号 3 开始）：
+<query_break>3</query_break>
 
-例如：<answer>7</answer>
+提交最终答案时，必须说明规则类型（α、γ 或 δ）并列出所有满足规则的相邻对的左索引（用逗号隔开，顺序不限），格式如下：
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing / Industry Scenario]
-Welcome to the "Smart Factory Material Flow" monitoring terminal.
+[Manufacturing Scenario]
+Welcome to the "Industrial Assembly Line Process Co-adjustment System". Let's conduct an "Adjacent Workstation Operation Parameter Diagnosis".
 
-The current factory production line includes {n} processing procedure nodes (numbered 1 to {n}) and {m} automated conveyor belts. Except for a cross-workshop conveyor belt {special_edge} acting as the main hub, the material handling times for all conveyors are known positive integers in the range [1,20]. The handling time X of the hub conveyor {special_edge} is unknown, but its actual time is guaranteed to be within the interval [{lower},{upper}].
+The assembly line is equipped with 12 consecutive processing workstations, with indices from 1 to 12. Each workstation records a fixed process pressure value parameter. The system background is configured with a "process linkage rule" (the "true rule") to determine whether the parameter synergy of any adjacent workstation pair (i, i+1) satisfies specific production process requirements.
 
-Assembly line and known handling times inventory:
-{edges_info}
+The true rule is one of the following three:
+1. Rule α: An adjacent workstation pair (i, i+1) satisfies the rule if and only if the pressure value at workstation i is strictly less than the value at workstation i+1 (indicating a stepped increasing distribution of processing pressure).
+2. Rule γ: An adjacent workstation pair (i, i+1) satisfies the rule if and only if the pressure values at workstations i and i+1 have the same parity (representing that both workstations are in the same equipment operation mode A or B).
+3. Rule δ: An adjacent workstation pair (i, i+1) satisfies the rule if and only if the pressure values at workstations i and i+1 have the same remainder when divided by 3 (representing that the quality inspection batch cycles of the two workstations are completely consistent).
 
-Engineering planning shows that the hub conveyor {special_edge} is an indispensable single-point connection (a bridge); if shut down for maintenance, the entire production network would be severed into two plant areas incapable of collaborative operation. Your task is to deduce the exact handling time X by calling monitoring data.
+Your goal is to infer which rule is the currently active true rule through diagnostic commands, and determine the set of left indices of all adjacent workstation pairs that satisfy the rule.
 
-You can issue the following two types of comparative commands to the system (one per turn), and the system will return precise monitoring results:
+You can repeatedly initiate the following three types of parameter queries (one command per turn), and the system will truthfully return the equipment co-adjustment status:
 
-1. Shortest Path Comparison Query: Compare procedure pairs (i,j) and (p,q) to evaluate which pair has a shorter minimum material turnover time.
-   The system reports: "First pair shorter", "Second pair shorter", or "Both equal".
+1. Pair Query: Ask whether a specific adjacent workstation pair (i, i+1) satisfies the true rule. For example, asking about index 3 means evaluating pair (3, 4). Answer "Yes" or "No".
+2. Range Count Query: Ask how many adjacent workstation pairs in a given range [a, b] satisfy the true rule. Answer a non-negative integer.
+3. Right Break Query: Starting from workstation position k, check rightward and return the left index of the first adjacent workstation pair that does not satisfy the true rule; if all pairs from k to 11 satisfy the rule, return "No break".
 
-2. Necessity Query: Ask whether any material transfer scheme achieving the minimum handling time between procedure pair (i,j) inevitably passes through the hub conveyor.
-   The system reports: "Yes" or "No".
+When you have collected enough process parameters, submit your final co-adjustment report, including: the type of true rule (α, γ, or δ) and all left indices of adjacent workstation pairs that satisfy the rule (comma-separated).
 
-When fully supported by data, report the time parameter X. Erroneous parameters or invalid formats will trigger a process anomaly alarm.
-
-## Query and Answer Format
+Note: You must make at least two valid queries before submitting the report. If the answer is wrong, the format is invalid, or the number of queries is insufficient, the co-adjustment task fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
-<query_compare>1,2,3,4</query_compare>
+- Pair Query (e.g., asking about index 5, i.e., pair (5,6)):
+<query_pair>5</query_pair>
 
-- Necessity Query (e.g., asking about pair 1,5):
-<query_necessary>1,5</query_necessary>
+- Range Count Query (e.g., asking about range [2, 7]):
+<query_range>2,7</query_range>
 
-When submitting the final answer, directly provide the value of X in this format:
-<answer>X</answer>
+- Right Break Query (e.g., starting from index 3):
+<query_break>3</query_break>
 
-For example: <answer>7</answer>
+When submitting the final answer, specify the rule type (α, γ, or δ) and list all left indices of satisfied pairs (comma-separated, order does not matter), using this format:
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎登录“司法案件流转与审核推进”推演平台。
+欢迎使用“司法卷宗关联分析系统”。我们现在来进行"串并案特征规律推演"。
 
-平台现存 {n} 个司法审核程序或部门节点（编号 1 到 {n}）以及 {m} 条案件流转渠道。除了一项核心复核程序 {special_edge} 外，所有渠道的常规流转审核天数均是已知的正整数，范围在 [1,20] 内。核心复核程序 {special_edge} 的流转天数 X 未知，仅明确 X 落在区间 [{lower},{upper}] 之间。
+系统调取了 12 个已按发生顺序排列的关联案件卷宗，编号从 1 到 12。每个案件都记录了一个确定的量刑月数数值。系统通过大数据比对，秘密提取了一种"类案认定规则"（即真实规则），用于判定任意相邻发生的案件对 (i, i+1) 的量刑特征是否符合特定的司法量刑规律。
 
-流转网络与各渠道耗时如下：
-{edges_info}
+真实规则是以下三种之一：
+1. 规则 α：相邻案件对 (i, i+1) 满足规则，当且仅当案件 i 的量刑月数严格小于案件 i+1 的量刑月数（即法定刑罚呈递增趋势）。
+2. 规则 γ：相邻案件对 (i, i+1) 满足规则，当且仅当案件 i 和案件 i+1 的量刑月数具有相同的奇偶性（代表两案件适用的法定量刑档次属性一致）。
+3. 规则 δ：相邻案件对 (i, i+1) 满足规则，当且仅当案件 i 和案件 i+1 的量刑月数除以 3 的余数相同（代表两案件的诉讼审理管辖区划划分属于同一类别）。
 
-卷宗表明，核心复核程序 {special_edge} 是一道跨部门的强制性关卡（割边），若缺少该程序授权，整个司法系统将分离为两个无法互相移交案件的独立体系。您的任务是通过质询平台，准确推算出该核心程序的办理天数 X。
+你的目标是通过向系统发起检索提问，推断出系统提取的真实规则是哪一个，并确定所有满足该规则的相邻案件对的左侧案件编号（左索引）集合。
 
-您可以交替使用以下两类法务质询（每次限用一类），平台将提供确切的司法统计：
+你可以反复向系统提出以下三类案卷查询（每次仅限一个问题），系统会基于真实卷宗数据如实回答：
 
-1. 最短路比较查询：对比部门节点对 (i,j) 和 (p,q)，审查哪一对之间的案件最快流转总天数更短。
-   平台答复："第一对更短"、"第二对更短"或"两对相等"。
+1. 单对判定查询：询问某对相邻案件 (i, i+1) 是否满足真实规则。例如询问编号 3，即评估案件对 (3, 4)。回答"是"或"否"。
+2. 区间计数查询：询问在给定案件编号区间 [a, b] 内有多少个相邻案件对满足真实规则。回答一个非负整数。
+3. 右向首断点查询：从给定案件位置 k 开始向右检索，返回第一个不满足真实规则的相邻案件对的左侧编号；若从 k 到 11 的所有相邻案件对都满足，则返回"无断点"。
 
-2. 必经性查询：质询在节点对 (i,j) 之间达成最快流转要求的所有合法推进路径，是否都必须包含核心复核程序。
-   平台答复："是"或"否"。
+当你收集到足够线索后，请提交最终类案认定结论，包括：真实规则的类型（α、γ 或 δ）以及所有满足该规则的相邻案件对的左侧编号（用逗号隔开）。
 
-在完成证据链闭环后，请提交 X 的确切天数。若推算错误或违反格式，推演即告失效。
-
-## 询问与提交答案的格式
+注意：你需要进行至少两次有效查询后才能提交结论。若答案错误、格式不符或查询次数不足，案件研判失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 最短路比较查询（例如比较节点对 1,2 和 3,4）：
-<query_compare>1,2,3,4</query_compare>
+- 单对判定查询（例如询问案件编号 5，即相邻对 (5,6)）：
+<query_pair>5</query_pair>
 
-- 必经性查询（例如询问节点对 1,5）：
-<query_necessary>1,5</query_necessary>
+- 区间计数查询（例如询问案件区间 [2, 7]）：
+<query_range>2,7</query_range>
 
-提交最终答案时，直接给出 X 的数值，格式如下：
-<answer>X</answer>
+- 右向首断点查询（例如从案件编号 3 开始）：
+<query_break>3</query_break>
 
-例如：<answer>7</answer>
+提交最终答案时，必须说明规则类型（α、γ 或 δ）并列出所有满足规则的相邻对的左索引（用逗号隔开，顺序不限），格式如下：
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law / Legal Scenario]
-Welcome to the "Judicial Case Circulation and Review Advancement" deduction platform.
+[Legal Scenario]
+Welcome to the "Judicial Case File Correlation Analysis System". Let's conduct a "Serial Case Characteristic Rule Inference".
 
-The platform currently features {n} judicial review procedures or department nodes (numbered 1 to {n}) and {m} case circulation channels. Except for a core review procedure {special_edge}, the routine circulation and review days for all channels are known positive integers in the range [1,20]. The circulation days X for the core review procedure {special_edge} is unknown, though it is explicitly situated within the interval [{lower},{upper}].
+The system has retrieved 12 related case files sorted by chronological order, with indices from 1 to 12. Each case records a definitive sentencing months value. Through big data comparison, the system has secretly extracted a "similar case identification rule" (the "true rule") to determine whether the sentencing characteristics of any adjacent case pair (i, i+1) satisfy a specific judicial sentencing pattern.
 
-Circulation network and channel durations:
-{edges_info}
+The true rule is one of the following three:
+1. Rule α: An adjacent case pair (i, i+1) satisfies the rule if and only if the sentencing months of case i is strictly less than that of case i+1 (indicating an increasing trend in statutory penalties).
+2. Rule γ: An adjacent case pair (i, i+1) satisfies the rule if and only if the sentencing months of cases i and i+1 have the same parity (representing that the statutory sentencing tier attributes applied to the two cases are consistent).
+3. Rule δ: An adjacent case pair (i, i+1) satisfies the rule if and only if the sentencing months of cases i and i+1 have the same remainder when divided by 3 (representing that the jurisdictional zoning of litigation trials for the two cases belongs to the same category).
 
-Dossiers indicate that the core review procedure {special_edge} is a mandatory cross-departmental checkpoint (a bridge); without its authorization, the judicial system would split into two independent frameworks unable to transfer cases to each other. Your task is to accurately calculate the processing days X of this core procedure by interrogating the platform.
+Your goal is to infer which true rule was extracted by the system through retrieval queries, and determine the set of left indices of all adjacent case pairs that satisfy the rule.
 
-You may alternately utilize the following two types of legal interrogations (one per turn), and the platform will provide exact judicial statistics:
+You can repeatedly ask the system three types of case file queries (one per turn), and the system will answer truthfully based on the actual file data:
 
-1. Shortest Path Comparison Query: Compare department node pairs (i,j) and (p,q) to review which pair has a shorter minimum total case circulation days.
-   The platform replies: "First pair shorter", "Second pair shorter", or "Both equal".
+1. Pair Query: Ask whether a specific adjacent case pair (i, i+1) satisfies the true rule. For example, asking about index 3 means evaluating pair (3, 4). Answer "Yes" or "No".
+2. Range Count Query: Ask how many adjacent case pairs in a given range [a, b] satisfy the true rule. Answer a non-negative integer.
+3. Right Break Query: Starting from case position k, retrieve rightward and return the left index of the first adjacent case pair that does not satisfy the true rule; if all pairs from k to 11 satisfy the rule, return "No break".
 
-2. Necessity Query: Inquire whether all legal advancement paths satisfying the fastest circulation requirement between node pair (i,j) must include the core review procedure.
-   The platform replies: "Yes" or "No".
+When you have collected enough clues, submit your final similar case identification conclusion, including: the type of true rule (α, γ, or δ) and all left indices of adjacent case pairs that satisfy the rule (comma-separated).
 
-Upon closing the loop of the evidence chain, submit the exact days for X. Erroneous calculations or format violations will render the deduction invalid.
-
-## Query and Answer Format
+Note: You must make at least two valid queries before submitting a conclusion. If the answer is wrong, the format is invalid, or the number of queries is insufficient, the case analysis fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Shortest Path Comparison Query (e.g., comparing pairs 1,2 and 3,4):
-<query_compare>1,2,3,4</query_compare>
+- Pair Query (e.g., asking about index 5, i.e., pair (5,6)):
+<query_pair>5</query_pair>
 
-- Necessity Query (e.g., asking about pair 1,5):
-<query_necessary>1,5</query_necessary>
+- Range Count Query (e.g., asking about range [2, 7]):
+<query_range>2,7</query_range>
 
-When submitting the final answer, directly provide the value of X in this format:
-<answer>X</answer>
+- Right Break Query (e.g., starting from index 3):
+<query_break>3</query_break>
 
-For example: <answer>7</answer>
+When submitting the final answer, specify the rule type (α, γ, or δ) and list all left indices of satisfied pairs (comma-separated, order does not matter), using this format:
+
+<answer>rule=α, satisfied=1,3,5</answer>
 """
 
-    tags = ["answer", "query_compare", "query_necessary"]
-    reasoning_type = "演绎推理"
-    data_structure = "图"
-    enable_counterfactual = False   # 设为 True 时开启反事实干预模式
+    tags = ["answer", "query_pair", "query_range", "query_break"]
+    
+    reasoning_type = "溯因推理"
+    data_structure = "序列"
 
-    # 难度配置：5个难度等级
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {  # 简单：小图，X范围窄，单条跨分量路径
-                "n": 4,
-                "edges": [
-                    (1, 2, 3),
-                    (2, 3, "X"),  # 特殊边
-                    (3, 4, 5),
-                ],
-                "special_edge": (2, 3),
-                "lower": 1,
-                "upper": 10,
-                "answer": 4,  # 真实X值
-            },
-            2: {  # 中等偏下：稍大图，需要比较分析
-                "n": 6,
-                "edges": [
-                    (1, 2, 2),
-                    (1, 3, 4),
-                    (2, 3, 3),
-                    (3, 4, "X"),  # 特殊边
-                    (4, 5, 2),
-                    (4, 6, 5),
-                    (5, 6, 1),
-                ],
-                "special_edge": (3, 4),
-                "lower": 1,
-                "upper": 15,
-                "answer": 6,
-            },
-            3: {  # 中等偏上：更多路径选择
-                "n": 8,
-                "edges": [
-                    (1, 2, 1),
-                    (1, 3, 3),
-                    (2, 3, 2),
-                    (2, 4, 4),
-                    (3, 4, "X"),  # 特殊边
-                    (4, 5, 2),
-                    (4, 6, 3),
-                    (5, 6, 1),
-                    (5, 7, 5),
-                    (6, 8, 4),
-                    (7, 8, 2),
-                ],
-                "special_edge": (3, 4),
-                "lower": 2,
-                "upper": 18,
-                "answer": 8,
-            },
-            4: {  # 较难：复杂图结构，多条可能路径
-                "n": 10,
-                "edges": [
-                    (1, 2, 2),
-                    (1, 3, 5),
-                    (2, 3, 3),
-                    (2, 4, 1),
-                    (3, 5, 2),
-                    (4, 5, 4),
-                    (5, 6, "X"),  # 特殊边
-                    (6, 7, 3),
-                    (6, 8, 2),
-                    (7, 8, 1),
-                    (7, 9, 4),
-                    (8, 9, 3),
-                    (8, 10, 5),
-                    (9, 10, 2),
-                ],
-                "special_edge": (5, 6),
-                "lower": 3,
-                "upper": 20,
-                "answer": 11,
-            },
-            5: {  # 难：大图，更多节点和边
-                "n": 12,
-                "edges": [
-                    (1, 2, 1),
-                    (1, 3, 4),
-                    (2, 3, 2),
-                    (2, 4, 3),
-                    (3, 4, 1),
-                    (3, 5, 5),
-                    (4, 6, 2),
-                    (5, 6, 3),
-                    (6, 7, "X"),  # 特殊边
-                    (7, 8, 2),
-                    (7, 9, 4),
-                    (8, 9, 1),
-                    (8, 10, 3),
-                    (9, 10, 2),
-                    (9, 11, 5),
-                    (10, 11, 3),
-                    (10, 12, 4),
-                    (11, 12, 1),
-                ],
-                "special_edge": (6, 7),
-                "lower": 5,
-                "upper": 20,
-                "answer": 13,
-            },
+        1: {
+            "sequence": [1, 2, 3, 2, 4, 5, 6, 5, 7, 8, 9, 10],
+            "rule_type": "α",
         },
-        "en": {
-            1: {
-                "n": 4,
-                "edges": [
-                    (1, 2, 3),
-                    (2, 3, "X"),
-                    (3, 4, 5),
-                ],
-                "special_edge": (2, 3),
-                "lower": 1,
-                "upper": 10,
-                "answer": 4,
-            },
-            2: {
-                "n": 6,
-                "edges": [
-                    (1, 2, 2),
-                    (1, 3, 4),
-                    (2, 3, 3),
-                    (3, 4, "X"),
-                    (4, 5, 2),
-                    (4, 6, 5),
-                    (5, 6, 1),
-                ],
-                "special_edge": (3, 4),
-                "lower": 1,
-                "upper": 15,
-                "answer": 6,
-            },
-            3: {
-                "n": 8,
-                "edges": [
-                    (1, 2, 1),
-                    (1, 3, 3),
-                    (2, 3, 2),
-                    (2, 4, 4),
-                    (3, 4, "X"),
-                    (4, 5, 2),
-                    (4, 6, 3),
-                    (5, 6, 1),
-                    (5, 7, 5),
-                    (6, 8, 4),
-                    (7, 8, 2),
-                ],
-                "special_edge": (3, 4),
-                "lower": 2,
-                "upper": 18,
-                "answer": 8,
-            },
-            4: {
-                "n": 10,
-                "edges": [
-                    (1, 2, 2),
-                    (1, 3, 5),
-                    (2, 3, 3),
-                    (2, 4, 1),
-                    (3, 5, 2),
-                    (4, 5, 4),
-                    (5, 6, "X"),
-                    (6, 7, 3),
-                    (6, 8, 2),
-                    (7, 8, 1),
-                    (7, 9, 4),
-                    (8, 9, 3),
-                    (8, 10, 5),
-                    (9, 10, 2),
-                ],
-                "special_edge": (5, 6),
-                "lower": 3,
-                "upper": 20,
-                "answer": 11,
-            },
-            5: {
-                "n": 12,
-                "edges": [
-                    (1, 2, 1),
-                    (1, 3, 4),
-                    (2, 3, 2),
-                    (2, 4, 3),
-                    (3, 4, 1),
-                    (3, 5, 5),
-                    (4, 6, 2),
-                    (5, 6, 3),
-                    (6, 7, "X"),
-                    (7, 8, 2),
-                    (7, 9, 4),
-                    (8, 9, 1),
-                    (8, 10, 3),
-                    (9, 10, 2),
-                    (9, 11, 5),
-                    (10, 11, 3),
-                    (10, 12, 4),
-                    (11, 12, 1),
-                ],
-                "special_edge": (6, 7),
-                "lower": 5,
-                "upper": 20,
-                "answer": 13,
-            },
+        2: {
+            "sequence": [2, 4, 6, 5, 7, 9, 8, 10, 3, 5, 7, 6],
+            "rule_type": "γ",
+        },
+        3: {
+            "sequence": [3, 6, 9, 8, 1, 4, 7, 6, 9, 8, 3, 5],
+            "rule_type": "δ",
+        },
+        4: {
+            "sequence": [5, 7, 4, 8, 3, 9, 2, 6, 1, 8, 4, 7],
+            "rule_type": "α",
+        },
+        5: {
+            "sequence": [4, 7, 1, 10, 3, 6, 2, 8, 5, 11, 9, 12],
+            "rule_type": "δ",
         },
     }
 
     def __init__(self, config):
+        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏状态，构建图结构和真实答案"""
-        lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        self.sequence = cfg["sequence"]
+        self.rule_type = cfg["rule_type"]
         
-        # 存储基本信息
-        self._game_info["n"] = cfg["n"]
-        self._game_info["m"] = len(cfg["edges"])
-        self.special_edge = cfg["special_edge"]
-        self.lower_bound = cfg["lower"]
-        self.upper_bound = cfg["upper"]
-        self.true_x = cfg["answer"]
+        self._game_info["n"] = len(self.sequence)
         
-        # 格式化特殊边显示
-        self._game_info["special_edge"] = f"{{{self.special_edge[0]},{self.special_edge[1]}}}"
-        self._game_info["lower"] = self.lower_bound
-        self._game_info["upper"] = self.upper_bound
-        
-        # 构建邻接表（不含X的图，用于同分量内最短路计算）
-        self.graph_without_x = {}  # vertex -> [(neighbor, weight)]
-        self.graph_with_x = {}  # 含X的完整图
-        
-        for i in range(1, cfg["n"] + 1):
-            self.graph_without_x[i] = []
-            self.graph_with_x[i] = []
-        
-        # 构建边信息字符串和图结构
-        edges_info_lines = []
-        for u, v, w in cfg["edges"]:
-            if w == "X":
-                # 特殊边暂不加入 graph_without_x
-                self.graph_with_x[u].append((v, self.true_x))
-                self.graph_with_x[v].append((u, self.true_x))
-                if lang == "zh":
-                    edges_info_lines.append(f"- 边 {{{u},{v}}}：权重 X（未知）")
-                else:
-                    edges_info_lines.append(f"- Edge {{{u},{v}}}: weight X (unknown)")
-            else:
-                self.graph_without_x[u].append((v, w))
-                self.graph_without_x[v].append((u, w))
-                self.graph_with_x[u].append((v, w))
-                self.graph_with_x[v].append((u, w))
-                if lang == "zh":
-                    edges_info_lines.append(f"- 边 {{{u},{v}}}：权重 {w}")
-                else:
-                    edges_info_lines.append(f"- Edge {{{u},{v}}}: weight {w}")
-        
-        self._game_info["edges_info"] = "\n".join(edges_info_lines)
-        
-        # 预计算分量划分（用于必经性判断）
-        self._compute_components()
+        self.satisfied_pairs = self._compute_satisfied_pairs()
 
-    def _compute_components(self):
-        """计算移除特殊边后的两个连通分量"""
-        visited = set()
-        self.component = {}  # vertex -> component_id (0 or 1)
+    def _compute_satisfied_pairs(self):
+        satisfied = set()
+        n = len(self.sequence)
         
-        # 从特殊边的一端开始BFS
-        def bfs(start, comp_id):
-            queue = [start]
-            visited.add(start)
-            self.component[start] = comp_id
+        for i in range(n - 1):
+            left_val = self.sequence[i]
+            right_val = self.sequence[i + 1]
+            left_idx = i + 1
             
-            while queue:
-                u = queue.pop(0)
-                for v, w in self.graph_without_x[u]:
-                    if v not in visited:
-                        visited.add(v)
-                        self.component[v] = comp_id
-                        queue.append(v)
+            if self.rule_type == "α":
+                if left_val < right_val:
+                    satisfied.add(left_idx)
+            elif self.rule_type == "γ":
+                if left_val % 2 == right_val % 2:
+                    satisfied.add(left_idx)
+            elif self.rule_type == "δ":
+                if left_val % 3 == right_val % 3:
+                    satisfied.add(left_idx)
         
-        # 从特殊边两端分别BFS
-        bfs(self.special_edge[0], 0)
-        bfs(self.special_edge[1], 1)
+        return satisfied
 
-    def _dijkstra(self, graph: Dict, start: int) -> Dict[int, int]:
-        """Dijkstra算法计算从start到所有点的最短距离"""
-        dist = {v: float('inf') for v in graph}
-        dist[start] = 0
-        pq = [(0, start)]
-        
-        while pq:
-            d, u = heapq.heappop(pq)
-            if d > dist[u]:
-                continue
-            for v, w in graph[u]:
-                if dist[u] + w < dist[v]:
-                    dist[v] = dist[u] + w
-                    heapq.heappush(pq, (dist[v], v))
-        
-        return dist
-
-    def _shortest_distance(self, u: int, v: int) -> int:
-        """计算真实X值下u到v的最短距离"""
-        if u == v:
-            return 0
-        dist = self._dijkstra(self.graph_with_x, u)
-        return dist[v]
-
-    def _is_necessary(self, u: int, v: int) -> bool:
-        """判断u到v的所有最短路是否必经特殊边"""
-        # 如果u和v在同一分量，检查不经过X的最短路是否等于经过X的最短路
-        if self.component[u] == self.component[v]:
-            dist_without_x = self._dijkstra(self.graph_without_x, u)[v]
-            dist_with_x = self._shortest_distance(u, v)
-            # 如果不经过X也能达到最短，则不必经
-            return dist_with_x < dist_without_x
-        else:
-            # 跨分量必然经过特殊边
-            return True
+    def _check_pair(self, idx):
+        return idx in self.satisfied_pairs
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案是否正确"""
+        if self.query_count < 2:
+            return False
+        
+        raw_ans = parsed_info["answer"]
+        
+        rule_match = re.search(r'rule\s*=\s*([αγδΑΓΔ])', raw_ans)
+        if not rule_match:
+            return False
+        
+        submitted_rule = rule_match.group(1).lower()
+        if submitted_rule != self.rule_type.lower():
+            return False
+        
+        satisfied_match = re.search(r'satisfied\s*=\s*([\d,\s]*)', raw_ans)
+        if not satisfied_match:
+            return False
+        
         try:
-            raw_ans = parsed_info["answer"].strip()
-            predicted_x = int(raw_ans)
-            return predicted_x == self.true_x
+            satisfied_str = satisfied_match.group(1).strip()
+            submitted_pairs = set()
+            if satisfied_str:
+                for x in satisfied_str.split(","):
+                    x = x.strip()
+                    if x:
+                        submitted_pairs.add(int(x))
         except:
             return False
+        
+        return submitted_pairs == self.satisfied_pairs
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑，计算正确的查询回复"""
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            first_shorter = "第一对更短"
-            second_shorter = "第二对更短"
-            both_equal = "两对相等"
-            error_format = "错误：格式无效或顶点编号超出范围。"
+            no_break_res = "无断点"
+            error_format = "错误：格式无效或索引超出范围。"
+            error_range = "错误：区间无效。"
         else:
             yes_res, no_res = "Yes", "No"
-            first_shorter = "First pair shorter"
-            second_shorter = "Second pair shorter"
-            both_equal = "Both equal"
-            error_format = "Error: Invalid format or vertex ID out of range."
-
-        # 处理最短路比较查询
-        if "query_compare" in parsed_info:
+            no_break_res = "No break"
+            error_format = "Error: Invalid format or index out of range."
+            error_range = "Error: Invalid range."
+        
+        if "query_pair" in parsed_info:
             try:
-                raw = parsed_info["query_compare"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 4:
+                idx = int(parsed_info["query_pair"].strip())
+                if idx < 1 or idx > 11:
                     return error_format
-                
-                i, j, p, q = map(int, parts)
-                
-                # 检查顶点编号有效性
-                if not all(1 <= v <= self._game_info["n"] for v in [i, j, p, q]):
-                    return error_format
-                
-                # 计算两对的最短距离
-                dist1 = self._shortest_distance(i, j)
-                dist2 = self._shortest_distance(p, q)
-                
-                if dist1 < dist2:
-                    return first_shorter
-                elif dist1 > dist2:
-                    return second_shorter
-                else:
-                    return both_equal
-                    
+                self.query_count += 1
+                return yes_res if self._check_pair(idx) else no_res
             except:
                 return error_format
-
-        # 处理必经性查询
-        elif "query_necessary" in parsed_info:
+        
+        elif "query_range" in parsed_info:
             try:
-                raw = parsed_info["query_necessary"].strip()
+                raw = parsed_info["query_range"]
                 parts = [x.strip() for x in raw.split(",")]
                 if len(parts) != 2:
+                    return error_range
+                a, b = int(parts[0]), int(parts[1])
+                if a < 1 or b > 12 or a >= b:
+                    return error_range
+                
+                count = 0
+                for i in range(a, b):
+                    if self._check_pair(i):
+                        count += 1
+                self.query_count += 1
+                return str(count)
+            except:
+                return error_range
+        
+        elif "query_break" in parsed_info:
+            try:
+                k = int(parsed_info["query_break"].strip())
+                if k < 1 or k > 11:
                     return error_format
                 
-                i, j = map(int, parts)
-                
-                # 检查顶点编号有效性
-                if not (1 <= i <= self._game_info["n"] and 1 <= j <= self._game_info["n"]):
-                    return error_format
-                
-                is_necessary = self._is_necessary(i, j)
-                return yes_res if is_necessary else no_res
-                
+                self.query_count += 1
+                for i in range(k, 12):
+                    if not self._check_pair(i):
+                        return str(i)
+                return no_break_res
             except:
                 return error_format
-
+        
         else:
             raise ValueError("No valid query tag found.")
 
-    def get_all_possible_queries(self) -> List[Dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，为完整 XML 格式
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
-        n = self._game_info["n"]
-        
-        # 1. 必经性查询 (Necessity Query)
-        # 遍历所有唯一的顶点对 (i, j)，约定 i < j
-        for i in range(1, n + 1):
-            for j in range(i + 1, n + 1):
-                content = f"{i},{j}"
-                # 构造模拟的 parsed_info，直接调用逻辑核心
-                parsed_info = {"query_necessary": content}
-                answer = self._cf_core_produce(parsed_info)
-                
-                results.append({
-                    "query": f"<query_necessary>{content}</query_necessary>",
-                    "answer": answer
-                })
-
-        # 2. 最短路比较查询 (Shortest Path Comparison Query)
-        # 遍历两对顶点 (i, j) 和 (p, q)。
-        # 为了避免数量爆炸，我们只生成 i < j 且 p < q 的组合。
-        # 同时，为了覆盖全面，对所有对的组合进行生成。
-        
-        pairs = []
-        for u in range(1, n + 1):
-            for v in range(u + 1, n + 1):
-                pairs.append((u, v))
-        
-        for p1 in pairs:
-            for p2 in pairs:
-                # p1 和 p2 分别为 (i, j) 和 (p, q)
-                content = f"{p1[0]},{p1[1]},{p2[0]},{p2[1]}"
-                parsed_info = {"query_compare": content}
-                answer = self._cf_core_produce(parsed_info)
-                
-                results.append({
-                    "query": f"<query_compare>{content}</query_compare>",
-                    "answer": answer
-                })
-                
-        return results
-
     def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个明显不同的错误答案"""
-        # 1. 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        # 2. 关键词替换
-        replacements = {
+        mapping = {
             "是": "否",
             "否": "是",
             "Yes": "No",
-            "No": "Yes",
-            "yes": "no",
-            "no": "yes"
+            "No": "Yes"
         }
+        if correct in mapping:
+            return mapping[correct]
         
-        if correct in replacements:
-            return replacements[correct]
+        if correct in ("无断点", "No break"):
+            return "6"
         
-        # 3. 都不匹配
+        if correct.isdigit():
+            val = int(correct)
+            wrong_val = val + 2 if val < 10 else val - 2
+            if wrong_val < 0:
+                wrong_val = val + 1
+            return str(wrong_val)
+        
         return correct + "_WRONG"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            no_break_res = "无断点"
+        else:
+            yes_res, no_res = "Yes", "No"
+            no_break_res = "No break"
+            
+        for k in range(1, 12):
+            query_content = f"<query_pair>{k}</query_pair>"
+            ans = yes_res if self._check_pair(k) else no_res
+            results.append({"query": query_content, "answer": ans})
+            
+        for a in range(1, 12):
+            for b in range(a + 1, 13):
+                query_content = f"<query_range>{a},{b}</query_range>"
+                count = 0
+                for i in range(a, b):
+                    if self._check_pair(i):
+                        count += 1
+                results.append({"query": query_content, "answer": str(count)})
+                
+        for k in range(1, 12):
+            query_content = f"<query_break>{k}</query_break>"
+            break_idx = no_break_res
+            for i in range(k, 12):
+                if not self._check_pair(i):
+                    break_idx = str(i)
+                    break
+            results.append({"query": query_content, "answer": break_idx})
+            
+        return results

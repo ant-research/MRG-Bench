@@ -1,960 +1,830 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   元素存在性：某个特定元素是否存在于集合中
-# ============================================================
-
 from .base import Game
 import re
+import random
 import itertools
 
-
-class BooleanFunctionInferenceGame(Game):
+class GraphMatchingGame(Game):
+    
+    reasoning_type = "归纳推理"
+    data_structure = "图"
 
     game_rule_zh = """\
-我们现在来玩一个"布尔函数推断"游戏，规则如下：
+我们来玩一个"图匹配推断"游戏，规则如下：
 
-游戏设定了一个全集 U，包含 16 个元素，每个元素由四个二值属性 x1, x2, x3, x4 组成（每个属性取值为 0 或 1）。例如元素 [0,1,0,1] 表示 x1=0, x2=1, x3=0, x4=1。
+游戏设定了一个未知的、固定的简单无向图 G，它有 10 个顶点，标记为 v1, v2, ..., v10。在整个游戏过程中，图 G 保持不变。
 
-存在一个固定但未知的布尔函数 g，它将 U 中的每个元素映射为 0 或 1。函数 g 定义了一个子集 S，包含所有使得 g(x)=1 的元素 x。
+你的目标是通过有限次数的查询，推断出这个图的最大匹配规模（即最大匹配包含的边数）。
 
-游戏开始时，我会给你一个目标元素 e*，它的四个属性值已明确给出：
-目标元素 e* = {target}
+你可以向我提出以下三类查询（每次仅限一个查询）：
 
-你的任务是通过查询来推断 g(e*) 的值（即目标元素是否属于集合 S）。
+1. **边存在性查询**：询问顶点 vi 和 vj 之间是否存在边。
+   - 回答："是"或"否"
 
-## 可用的查询类型
+2. **子集最大匹配规模查询**：给定一个顶点子集 S（2 到 6 个顶点），询问由 S 诱导的子图的最大匹配规模。
+   - 回答：一个整数 k（表示该子图的最大匹配规模）
+   - 注意：子集 S 的大小必须在 2 到 6 之间
 
-你可以反复向我提出以下两类查询（每次仅限一个查询）：
+3. **匹配校验查询**：给定一个顶点子集 S（不超过 6 个顶点）和一个匹配 M（M 是由 S 内顶点构成的若干条边，这些边两两不共享顶点），验证 M 是否为 S 诱导子图的有效匹配，以及是否为最大匹配。
+   - 回答：
+     - 若 M 不是有效匹配（如边不存在或边共享顶点）："有效=否"
+     - 若 M 是有效匹配："有效=是；是否最大=是/否"
+   - 注意：子集 S 的大小必须不超过 6
 
-1. **单点成员查询**：询问某个元素 x（x 不能是 e*）是否属于 S。我会回答"是"或"否"。
-2. **批量计数查询**：询问一个元素集合 Q（1到8个元素，不含 e*，元素不重复）中有多少个属于 S。我会回答一个非负整数。
+**约束**：
+- 不允许对超过 6 个顶点的子集发起子集最大匹配规模查询或匹配校验查询
+- 不允许直接对全部 10 个顶点发起子集最大匹配规模查询
+- 请尽可能少地使用查询次数
 
-## 约束条件
+当你收集足够信息后，请提交最终答案：给出全集（所有 10 个顶点）的最大匹配规模，并简要说明理由。
 
-- 任何查询都不得包含目标元素 e*
-- 在提交最终答案前，至少需进行 6 次有效查询
-- 你的查询记录中必须确证既存在属于 S 的样本，也存在不属于 S 的样本
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 查询格式（必须严格遵守）
+- 边存在性查询（例如查询 v1 和 v3 之间是否有边）：
+<query_edge>v1,v3</query_edge>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 子集最大匹配规模查询（例如查询子集 v1,v2,v3,v4 的最大匹配规模）：
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- 单点成员查询（例如询问元素 [0,1,0,1]）：
-<query_member>0,1,0,1</query_member>
+- 匹配校验查询（例如在子集 v1,v2,v3,v4 中校验匹配 (v1,v2),(v3,v4)）：
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- 批量计数查询（例如询问三个元素）：
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-注意：批量查询中多个元素用分号分隔，每个元素的四个属性用逗号分隔。
-
-## 提交最终答案
-
-当你收集足够信息后，请提交最终答案。格式如下：
-
-<answer>prediction=1, explanation=你对函数g的归纳性假设描述</answer>
-
-或
-
-<answer>prediction=0, explanation=你对函数g的归纳性假设描述</answer>
-
-其中 prediction 为 0 或 1，explanation 需简要说明你推断出的函数 g 的规律或特征。
+提交最终答案时，需说明推断出的全集最大匹配规模及理由，格式如下：
+<answer>size=5, reason=通过查询发现图包含多个不相交的边</answer>
 """
 
     game_rule_en = """\
-Let's play a "Boolean Function Inference" game. Here are the rules:
+Let's play a "Graph Matching Inference" game. Here are the rules:
 
-The game defines a universe U containing 16 elements, each consisting of four binary attributes x1, x2, x3, x4 (each taking value 0 or 1). For example, element [0,1,0,1] means x1=0, x2=1, x3=0, x4=1.
+The game has set up an unknown, fixed simple undirected graph G with 10 vertices, labeled v1, v2, ..., v10. Throughout the game, graph G remains unchanged.
 
-There exists a fixed but unknown boolean function g that maps each element in U to either 0 or 1. Function g defines a subset S containing all elements x where g(x)=1.
+Your goal is to infer the maximum matching size of this graph (i.e., the number of edges in a maximum matching) through a limited number of queries.
 
-At the start, I will give you a target element e* with its four attribute values explicitly provided:
-Target element e* = {target}
+You can ask me the following three types of queries (one query per turn):
 
-Your task is to infer the value of g(e*) (whether the target element belongs to set S) through queries.
+1. **Edge Existence Query**: Ask whether there is an edge between vertex vi and vj.
+   - Answer: "Yes" or "No"
 
-## Available Query Types
+2. **Subset Maximum Matching Size Query**: Given a vertex subset S (2 to 6 vertices), ask for the maximum matching size of the subgraph induced by S.
+   - Answer: An integer k (representing the maximum matching size of that subgraph)
+   - Note: The size of subset S must be between 2 and 6
 
-You can repeatedly ask me the following two types of queries (one query per turn):
+3. **Matching Verification Query**: Given a vertex subset S (at most 6 vertices) and a matching M (M consists of several edges formed by vertices in S, where these edges do not share vertices), verify whether M is a valid matching in the subgraph induced by S, and whether it is a maximum matching.
+   - Answer:
+     - If M is not a valid matching (e.g., edge does not exist or edges share vertices): "Valid=No"
+     - If M is a valid matching: "Valid=Yes; IsMaximum=Yes/No"
+   - Note: The size of subset S must not exceed 6
 
-1. **Single Member Query**: Ask whether an element x (x cannot be e*) belongs to S. I will answer "Yes" or "No".
-2. **Batch Count Query**: Ask how many elements in a set Q (1 to 8 elements, excluding e*, no duplicates) belong to S. I will answer a non-negative integer.
+**Constraints**:
+- Queries on subsets with more than 6 vertices are not allowed for subset maximum matching size queries or matching verification queries
+- Direct queries on all 10 vertices for subset maximum matching size are not allowed
+- Please use as few queries as possible
 
-## Constraints
+When you have gathered enough information, submit your final answer: provide the maximum matching size for the full set (all 10 vertices) and briefly explain your reasoning.
 
-- No query may include the target element e*
-- At least 6 valid queries must be made before submitting the final answer
-- Your query history must demonstrate evidence of both elements that belong to S and elements that do not
+Each query must contain only one tag. Use the following XML format:
 
-## Query Format (strictly required)
+- Edge Existence Query (e.g., query whether there is an edge between v1 and v3):
+<query_edge>v1,v3</query_edge>
 
-Each turn must contain only one query tag. Use the following XML format:
+- Subset Maximum Matching Size Query (e.g., query the maximum matching size of subset v1,v2,v3,v4):
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- Single Member Query (e.g., querying element [0,1,0,1]):
-<query_member>0,1,0,1</query_member>
+- Matching Verification Query (e.g., verify matching (v1,v2),(v3,v4) in subset v1,v2,v3,v4):
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- Batch Count Query (e.g., querying three elements):
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-Note: In batch queries, multiple elements are separated by semicolons, and the four attributes of each element are separated by commas.
-
-## Submit Final Answer
-
-When you have gathered sufficient information, submit your final answer in this format:
-
-<answer>prediction=1, explanation=your inductive hypothesis about function g</answer>
-
-or
-
-<answer>prediction=0, explanation=your inductive hypothesis about function g</answer>
-
-Where prediction is 0 or 1, and explanation should briefly describe the pattern or characteristics you inferred about function g.
+When submitting the final answer, specify the inferred maximum matching size for the full set and the reason, using this format:
+<answer>size=5, reason=Through queries found the graph contains multiple disjoint edges</answer>
 """
 
     contextualized_rule_zh_1 = """\
-我们现在来玩一个“交通拥堵干预推断”系统评估游戏，规则如下：
+欢迎来到交通枢纽规划系统。这里正在进行“枢纽通道最大并发量推断”任务。
 
-系统设定了一个路口状态全集 U，包含 16 种不同的交通情况，每种情况由四个二值属性 x1, x2, x3, x4 组成（每个属性取值为 0 或 1，分别代表：早晚高峰、主干道拥堵、恶劣天气、发生事故）。例如状态 [0,1,0,1] 表示非高峰期、主干道拥堵、天气良好且发生事故。
+系统设定了一个未知的、固定的区域交通网络图 G，它有 10 个交通枢纽，标记为 v1, v2, ..., v10。在整个规划过程中，网络结构保持不变。两个枢纽之间的连接代表可以直接建立一条专属双向直达通道。
 
-交通控制中心存在一个固定但未知的自动化调度规则 g，它将 U 中的每种状态映射为 0 或 1。规则 g 定义了一个必须开启“紧急疏导模式”的状态子集 S，包含所有使得 g(x)=1 的交通状态 x。
+你的目标是通过有限次数的查询，推断出这个网络中最多能同时建立多少条相互独立的专属通道（即最大匹配规模，要求每个枢纽最多参与一条专属通道）。
 
-评估开始时，我会给你一个当前目标路口的状态 e*，它的四个属性值已明确给出：
-目标路口状态 e* = {target}
+你可以向我提出以下三类查询（每次仅限一个查询）：
 
-你的任务是通过系统查询来推断 g(e*) 的值（即当前目标路口是否需要开启紧急疏导模式，属于集合 S）。
+1. **直达道路存在性查询**：询问枢纽 vi 和 vj 之间是否存在直达道路（边）。
+   - 回答："是"或"否"
 
-## 可用的查询类型
+2. **局部最大并发通道数查询**：给定一个枢纽子集 S（2 到 6 个枢纽），询问由 S 内部线路构成的子网中，最多能建立的独立专属通道数量（即子图的最大匹配规模）。
+   - 回答：一个整数 k（表示通道数）
+   - 注意：子集 S 的大小必须在 2 到 6 之间
 
-你可以反复向我提出以下两类系统查询（每次仅限一个查询）：
+3. **专属通道校验查询**：给定一个枢纽子集 S（不超过 6 个）和一个专属通道方案 M（M 是由 S 内枢纽构成的若干条独立通道，这些通道两两不共享枢纽），验证 M 是否为合法的专属通道，以及是否达到了局部最大通道数。
+   - 回答：
+     - 若 M 不是合法方案（如道路不存在或枢纽被重复使用）："有效=否"
+     - 若 M 是合法方案："有效=是；是否最大=是/否"
+   - 注意：子集 S 的大小必须不超过 6
 
-1. **单点状态查询**：询问某种特定交通状态 x（x 不能是 e*）是否会触发紧急疏导（即是否属于 S）。我会回答"是"或"否"。
-2. **批量状态计数查询**：询问一个状态集合 Q（1到8种状态，不含 e*，状态不重复）中有多少种情况会触发紧急疏导。我会回答一个非负整数。
+**约束**：
+- 不允许对超过 6 个枢纽的子集发起并发通道数查询或校验查询
+- 不允许直接对全部 10 个枢纽发起并发通道数查询
+- 请尽可能少地使用查询次数
 
-## 约束条件
+当你收集足够信息后，请提交最终答案：给出全网（所有 10 个枢纽）的最大并发专属通道数量，并简要说明理由。
 
-- 任何查询都不得包含目标状态 e*
-- 在提交最终评估报告前，至少需进行 6 次有效查询
-- 你的查询记录中必须确证既存在触发紧急疏导的样本，也存在不触发的样本
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 查询格式（必须严格遵守）
+- 直达道路存在性查询（例如查询 v1 和 v3 之间是否有直达道路）：
+<query_edge>v1,v3</query_edge>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 局部最大并发通道数查询（例如查询子集 v1,v2,v3,v4 的最大专属通道数）：
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- 单点状态查询（例如询问状态 [0,1,0,1]）：
-<query_member>0,1,0,1</query_member>
+- 专属通道校验查询（例如在子集 v1,v2,v3,v4 中校验通道 (v1,v2),(v3,v4)）：
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- 批量状态计数查询（例如询问三种状态）：
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-注意：批量查询中多个状态用分号分隔，每个状态的四个属性用逗号分隔。
-
-## 提交最终答案
-
-当你收集足够信息后，请提交最终评估决定。格式如下：
-
-<answer>prediction=1, explanation=你对调度规则g的归纳性假设描述</answer>
-
-或
-
-<answer>prediction=0, explanation=你对调度规则g的归纳性假设描述</answer>
-
-其中 prediction 为 0 或 1，explanation 需简要说明你推断出的触发紧急疏导的交通规则或特征。
+提交最终答案时，需说明推断出的全网最大专属通道数量及理由，格式如下：
+<answer>size=5, reason=通过查询发现网络包含多条相互独立的直达线路</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's play a "Traffic Congestion Intervention Inference" system evaluation game. Here are the rules:
+Welcome to the Transportation Hub Planning System. We are conducting the "Maximum Concurrent Hub Channel Inference" task.
 
-The system defines a complete set of intersection states U containing 16 elements, each consisting of four binary attributes x1, x2, x3, x4 (each taking value 0 or 1, representing: rush hour, main road congestion, severe weather, and traffic accident, respectively). For example, state [0,1,0,1] means non-rush hour, main road congestion, clear weather, and an accident occurred.
+The system has set up an unknown, fixed regional traffic network graph G with 10 transportation hubs, labeled v1, v2, ..., v10. Throughout the planning process, the network structure remains unchanged. A connection between two hubs represents the capability to establish a dedicated two-way direct channel.
 
-The traffic control center has a fixed but unknown automated scheduling rule g that maps each state in U to either 0 or 1. Rule g defines a subset S containing all states x that trigger the "Emergency Evacuation Mode" (i.e., where g(x)=1).
+Your goal is to infer the maximum number of mutually independent dedicated channels that can be established simultaneously across this network (i.e., the maximum matching size, where each hub can participate in at most one dedicated channel) through a limited number of queries.
 
-At the start, I will give you a target intersection state e* with its four attribute values explicitly provided:
-Target intersection state e* = {target}
+You can ask me the following three types of queries (one query per turn):
 
-Your task is to infer the value of g(e*) (whether the target state requires emergency evacuation and belongs to set S) through system queries.
+1. **Direct Route Existence Query**: Ask whether there is a direct route (edge) between hub vi and vj.
+   - Answer: "Yes" or "No"
 
-## Available Query Types
+2. **Local Maximum Concurrent Channels Query**: Given a hub subset S (2 to 6 hubs), ask for the maximum number of independent dedicated channels that can be established within the sub-network formed by S (i.e., the maximum matching size of the induced subgraph).
+   - Answer: An integer k (representing the maximum number of channels)
+   - Note: The size of subset S must be between 2 and 6
 
-You can repeatedly ask me the following two types of queries (one query per turn):
+3. **Dedicated Channel Verification Query**: Given a hub subset S (at most 6 hubs) and a dedicated channel scheme M (M consists of several independent channels formed by hubs in S, sharing no hubs), verify whether M is a valid scheme and whether it achieves the local maximum channel count.
+   - Answer:
+     - If M is invalid (e.g., route does not exist or hubs are reused): "Valid=No"
+     - If M is valid: "Valid=Yes; IsMaximum=Yes/No"
+   - Note: The size of subset S must not exceed 6
 
-1. **Single State Query**: Ask whether a specific traffic state x (x cannot be e*) triggers emergency evacuation (belongs to S). I will answer "Yes" or "No".
-2. **Batch State Count Query**: Ask how many states in a set Q (1 to 8 states, excluding e*, no duplicates) trigger emergency evacuation. I will answer a non-negative integer.
+**Constraints**:
+- Queries on subsets with more than 6 hubs are not allowed for maximum channels queries or verification queries.
+- Direct queries on all 10 hubs for maximum concurrent channels are not allowed.
+- Please use as few queries as possible.
 
-## Constraints
+When you have gathered enough information, submit your final answer: provide the maximum concurrent dedicated channels for the entire network (all 10 hubs) and briefly explain your reasoning.
 
-- No query may include the target state e*
-- At least 6 valid queries must be made before submitting the final evaluation report
-- Your query history must demonstrate evidence of both states that trigger the mode and states that do not
+Each query must contain only one tag. Use the following XML format:
 
-## Query Format (strictly required)
+- Direct Route Existence Query:
+<query_edge>v1,v3</query_edge>
 
-Each turn must contain only one query tag. Use the following XML format:
+- Local Maximum Concurrent Channels Query:
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- Single State Query (e.g., querying state [0,1,0,1]):
-<query_member>0,1,0,1</query_member>
+- Dedicated Channel Verification Query:
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- Batch State Count Query (e.g., querying three states):
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-Note: In batch queries, multiple states are separated by semicolons, and the four attributes of each state are separated by commas.
-
-## Submit Final Answer
-
-When you have gathered sufficient information, submit your final evaluation decision in this format:
-
-<answer>prediction=1, explanation=your inductive hypothesis about scheduling rule g</answer>
-
-or
-
-<answer>prediction=0, explanation=your inductive hypothesis about scheduling rule g</answer>
-
-Where prediction is 0 or 1, and explanation should briefly describe the pattern or characteristics you inferred about the emergency evacuation triggering rule.
+Submission format:
+<answer>size=5, reason=Through queries found the network contains multiple independent direct routes</answer>
 """
 
     contextualized_rule_zh_2 = """\
-我们现在来玩一个“临床诊断标准推断”游戏，规则如下：
+欢迎使用医疗科室协作分析系统。这里进行的是“一对一结对合作最大规模推断”。
 
-医学知识库设定了一个患者症状图谱全集 U，包含 16 种不同的症状体征组合，每种组合由四个二值属性 x1, x2, x3, x4 组成（每个属性取值为 0 或 1，分别代表：发烧、剧烈咳嗽、呼吸困难、异常乏力）。例如体征组合 [0,1,0,1] 表示无发烧、有剧烈咳嗽、无呼吸困难且异常乏力。
+系统设定了一家医院内未知的、固定的科室协作网络 G，它有 10 个科室，标记为 v1, v2, ..., v10。在整个分析过程中，该协作网络保持不变。
 
-医疗系统中存在一个固定但未知的临床诊断标准 g，它将 U 中的每种体征组合映射为 0 或 1。标准 g 定义了一个确诊特定罕见呼吸道综合征的患者子集 S，包含所有使得 g(x)=1 的体征组合 x。
+你的目标是通过有限次数的查询，推断出医院整体能够同时建立的最多“一对一结对合作”的数量（即协作网络的最大匹配规模，每个科室最多只能参与一对结对合作）。
 
-会诊开始时，我会给你一个目标患者的体征组合 e*，它的四个属性值已明确给出：
-目标患者体征组合 e* = {target}
+你可以向我提出以下三类查询（每次仅限一个查询）：
 
-你的任务是通过调阅历史病历来推断 g(e*) 的值（即该目标患者是否满足确诊标准，属于确诊集合 S）。
+1. **合作关系存在性查询**：询问科室 vi 和 vj 之间是否存在可共享专家的合作关系（边）。
+   - 回答："是"或"否"
 
-## 可用的查询类型
+2. **局部最大结对数量查询**：给定一个科室子集 S（2 到 6 个科室），询问由 S 内部合作关系诱导的子网络中，最多能建立几对“一对一结对合作”（即子图的最大匹配规模）。
+   - 回答：一个整数 k（表示最大结对数量）
+   - 注意：子集 S 的大小必须在 2 到 6 之间
 
-你可以反复向我提出以下两类病历查询（每次仅限一个查询）：
+3. **结对合作校验查询**：给定一个科室子集 S（不超过 6 个）和一个结对方案 M（M 是由 S 内科室构成的若干个合作对，每个科室不重复参与），验证 M 是否为该子集内合法的结对方案，以及是否达到最大结对数。
+   - 回答：
+     - 若 M 不是合法方案（如合作关系不存在或科室被重复分配）："有效=否"
+     - 若 M 是合法方案："有效=是；是否最大=是/否"
+   - 注意：子集 S 的大小必须不超过 6
 
-1. **单点病例查询**：询问某种特定的体征组合 x（x 不能是 e*）是否会被确诊（即是否属于 S）。我会回答"是"或"否"。
-2. **批量病例计数查询**：询问一个体征组合集合 Q（1到8种组合，不含 e*，组合不重复）中有多少种情况会被确诊。我会回答一个非负整数。
+**约束**：
+- 不允许对超过 6 个科室的子集发起结对数量查询或校验查询
+- 不允许直接对全部 10 个科室发起结对数量查询
+- 请尽可能少地使用查询次数
 
-## 约束条件
+当你收集足够信息后，请提交最终答案：给出全院（所有 10 个科室）的最大结对合作数量，并简要说明理由。
 
-- 任何查询都不得包含目标患者体征组合 e*
-- 在提交最终诊断结论前，至少需进行 6 次有效查询
-- 你的查询记录中必须确证既存在被确诊的体征组合，也存在未被确诊的体征组合
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 查询格式（必须严格遵守）
+- 合作关系存在性查询（例如查询 v1 和 v3 之间是否可合作）：
+<query_edge>v1,v3</query_edge>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 局部最大结对数量查询（例如查询子集 v1,v2,v3,v4 的最大结对数）：
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- 单点病例查询（例如询问体征组合 [0,1,0,1]）：
-<query_member>0,1,0,1</query_member>
+- 结对合作校验查询（例如在子集 v1,v2,v3,v4 中校验方案 (v1,v2),(v3,v4)）：
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- 批量病例计数查询（例如询问三种体征组合）：
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-注意：批量查询中多个体征组合用分号分隔，每个组合的四个属性用逗号分隔。
-
-## 提交最终答案
-
-当你收集足够信息后，请提交最终诊断结论。格式如下：
-
-<answer>prediction=1, explanation=你对临床诊断标准g的归纳性假设描述</answer>
-
-或
-
-<answer>prediction=0, explanation=你对临床诊断标准g的归纳性假设描述</answer>
-
-其中 prediction 为 0 或 1，explanation 需简要说明你推断出的该疾病的确诊规律或核心临床特征。
+提交最终答案时，需说明推断出的全院最大结对合作数量及理由，格式如下：
+<answer>size=5, reason=通过查询确认医院科室之间形成了5对相互独立的合作关系</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's play a "Clinical Diagnostic Criteria Inference" game. Here are the rules:
+Welcome to the Medical Department Collaboration Analysis System. We are conducting the "Maximum One-to-One Collaboration Inference" task.
 
-The medical knowledge base defines a complete universe of patient symptom profiles U containing 16 different combinations, each consisting of four binary attributes x1, x2, x3, x4 (each taking value 0 or 1, representing: fever, severe cough, shortness of breath, and abnormal fatigue, respectively). For example, profile [0,1,0,1] means no fever, severe cough present, no shortness of breath, and abnormal fatigue present.
+The system has configured an unknown, fixed department collaboration network G within a hospital, containing 10 departments labeled v1, v2, ..., v10. This network remains constant throughout the analysis.
 
-There exists a fixed but unknown clinical diagnostic criterion g in the medical system that maps each symptom profile in U to either 0 or 1. Criterion g defines a subset S of confirmed patients for a specific respiratory syndrome, containing all profiles x where g(x)=1.
+Your goal is to infer the maximum number of "one-to-one collaboration pairs" that the hospital can establish simultaneously (i.e., the maximum matching size of the collaboration network, where each department participates in at most one collaboration pair).
 
-At the start of the consultation, I will give you a target patient's symptom profile e* with its four attribute values explicitly provided:
-Target patient profile e* = {target}
+You can ask the following three types of queries (one query per turn):
 
-Your task is to infer the value of g(e*) (whether the target patient meets the diagnostic criteria and belongs to the confirmed set S) by reviewing historical medical records.
+1. **Collaboration Existence Query**: Ask whether a collaboration relationship sharing experts exists between department vi and vj.
+   - Answer: "Yes" or "No"
 
-## Available Query Types
+2. **Local Maximum Collaboration Pairs Query**: Given a department subset S (2 to 6 departments), ask for the maximum number of one-to-one collaboration pairs within the sub-network induced by S.
+   - Answer: An integer k (representing the maximum collaboration pairs)
+   - Note: The size of subset S must be between 2 and 6
 
-You can repeatedly ask me the following two types of medical record queries (one query per turn):
+3. **Collaboration Verification Query**: Given a department subset S (at most 6 departments) and a collaboration scheme M (M consists of multiple pairs from S with no department shared), verify if M is a valid collaboration scheme and if it reaches the maximum pair count for S.
+   - Answer:
+     - If M is invalid (e.g., collaboration does not exist or departments reused): "Valid=No"
+     - If M is valid: "Valid=Yes; IsMaximum=Yes/No"
+   - Note: The size of subset S must not exceed 6
 
-1. **Single Case Query**: Ask whether a specific symptom profile x (x cannot be e*) is diagnosed as positive (belongs to S). I will answer "Yes" or "No".
-2. **Batch Case Count Query**: Ask how many profiles in a set Q (1 to 8 profiles, excluding e*, no duplicates) are diagnosed as positive. I will answer a non-negative integer.
+**Constraints**:
+- Queries on subsets with more than 6 departments are not allowed for collaboration pairs queries or verification queries.
+- Direct queries on all 10 departments for maximum collaboration pairs are not allowed.
+- Please use as few queries as possible.
 
-## Constraints
+When sufficient information is gathered, submit your final answer: provide the maximum collaboration pairs for the entire hospital (10 departments) and briefly explain.
 
-- No query may include the target patient profile e*
-- At least 6 valid queries must be made before submitting the final diagnostic conclusion
-- Your query history must demonstrate evidence of both positive and negative diagnosed profiles
+Each query must contain only one tag. Use the following XML format:
 
-## Query Format (strictly required)
+- Collaboration Existence Query:
+<query_edge>v1,v3</query_edge>
 
-Each turn must contain only one query tag. Use the following XML format:
+- Local Maximum Collaboration Pairs Query:
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- Single Case Query (e.g., querying profile [0,1,0,1]):
-<query_member>0,1,0,1</query_member>
+- Collaboration Verification Query:
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- Batch Case Count Query (e.g., querying three profiles):
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-Note: In batch queries, multiple profiles are separated by semicolons, and the four attributes of each profile are separated by commas.
-
-## Submit Final Answer
-
-When you have gathered sufficient information, submit your final diagnostic conclusion in this format:
-
-<answer>prediction=1, explanation=your inductive hypothesis about the diagnostic criterion g</answer>
-
-or
-
-<answer>prediction=0, explanation=your inductive hypothesis about the diagnostic criterion g</answer>
-
-Where prediction is 0 or 1, and explanation should briefly describe the diagnostic pattern or core clinical characteristics you inferred.
+Submission format:
+<answer>size=5, reason=Found the hospital departments form 5 independent collaboration pairs</answer>
 """
 
     contextualized_rule_zh_3 = """\
-我们现在来玩一个“奖学金评定规则推断”游戏，规则如下：
+欢迎使用跨学科联合课题推演平台。这里正在进行“最大联合课题规模评估”。
 
-教务系统设定了一个学生表现画像全集 U，包含 16 种不同的表现组合，每种组合由四个二值属性 x1, x2, x3, x4 组成（每个属性取值为 0 或 1，分别代表：核心课程优秀、参与竞赛获奖、担任学生干部、志愿服务达标）。例如画像 [0,1,0,1] 表示核心课程未获优秀、有竞赛获奖、未担任干部且志愿服务达标。
+系统设定了一个未知的、固定的学科知识点关联图 G，它包含 10 个核心知识点，标记为 v1, v2, ..., v10。在整个评估过程中，关联网络保持不变。
 
-评优委员会存在一个固定但未公开的奖学金评定规则 g，它将 U 中的每种学生画像映射为 0 或 1。规则 g 定义了一个获得“卓越之星”奖学金的画像子集 S，包含所有使得 g(x)=1 的画像 x。
+你的目标是通过有限次数的查询，推断出这 10 个知识点最多能够同时组建多少个互不重叠的“双知识点联合课题”（即最大匹配规模，每个知识点最多只能参与一个联合课题）。
 
-评选开始时，我会给你一个目标候选学生的画像 e*，它的四个属性值已明确给出：
-目标学生画像 e* = {target}
+你可以向我提出以下三类查询（每次仅限一个查询）：
 
-你的任务是通过查询历史评审结果来推断 g(e*) 的值（即该目标学生是否符合“卓越之星”的评定标准，属于集合 S）。
+1. **直接关联存在性查询**：询问知识点 vi 和 vj 之间是否存在可以直接结合设计联合课题的关联（边）。
+   - 回答："是"或"否"
 
-## 可用的查询类型
+2. **局部最大课题数查询**：给定一个知识点子集 S（2 到 6 个知识点），询问由 S 内部的关联中，最多能设计出多少个互不重叠的联合课题（即子图的最大匹配规模）。
+   - 回答：一个整数 k（表示最大课题数量）
+   - 注意：子集 S 的大小必须在 2 到 6 之间
 
-你可以反复向我提出以下两类评审查询（每次仅限一个查询）：
+3. **课题组合校验查询**：给定一个知识点子集 S（不超过 6 个）和一个联合课题组合 M（M 是由 S 内知识点构成的若干课题对，课题之间不共享知识点），验证 M 是否为有效的联合课题方案，以及是否达到该子集的课题数上限。
+   - 回答：
+     - 若 M 不是有效方案（如知识点不关联或被重复使用）："有效=否"
+     - 若 M 是有效方案："有效=是；是否最大=是/否"
+   - 注意：子集 S 的大小必须不超过 6
 
-1. **单点画像查询**：询问某种特定的学生画像 x（x 不能是 e*）是否能获得奖学金（即是否属于 S）。我会回答"是"或"否"。
-2. **批量画像计数查询**：询问一个画像集合 Q（1到8种画像，不含 e*，画像不重复）中有多少种情况能获得奖学金。我会回答一个非负整数。
+**约束**：
+- 不允许对超过 6 个知识点的子集发起课题数查询或校验查询
+- 不允许直接对全部 10 个知识点发起课题数查询
+- 请尽可能少地使用查询次数
 
-## 约束条件
+当你收集足够信息后，请提交最终答案：给出全部（10 个知识点）能够组建的最大联合课题数量，并简要说明理由。
 
-- 任何查询都不得包含目标学生画像 e*
-- 在提交最终评定意见前，至少需进行 6 次有效查询
-- 你的查询记录中必须确证既存在获奖的画像样本，也存在未获奖的画像样本
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 查询格式（必须严格遵守）
+- 直接关联存在性查询（例如查询 v1 和 v3 是否可以结合）：
+<query_edge>v1,v3</query_edge>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 局部最大课题数查询（例如查询子集 v1,v2,v3,v4 的最大联合课题数）：
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- 单点画像查询（例如询问画像 [0,1,0,1]）：
-<query_member>0,1,0,1</query_member>
+- 课题组合校验查询（例如在子集 v1,v2,v3,v4 中校验课题组合 (v1,v2),(v3,v4)）：
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- 批量画像计数查询（例如询问三种画像）：
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-注意：批量查询中多个画像用分号分隔，每个画像的四个属性用逗号分隔。
-
-## 提交最终答案
-
-当你收集足够信息后，请提交最终评定意见。格式如下：
-
-<answer>prediction=1, explanation=你对奖学金评定规则g的归纳性假设描述</answer>
-
-或
-
-<answer>prediction=0, explanation=你对奖学金评定规则g的归纳性假设描述</answer>
-
-其中 prediction 为 0 或 1，explanation 需简要说明你推断出的奖学金发放规律或侧重考察的教育指标。
+提交最终答案时，需说明推断出的总体最大联合课题数量及理由，格式如下：
+<answer>size=5, reason=发现系统可划分为5组独立关联的知识点对</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Scholarship Evaluation Criteria Inference" game. Here are the rules:
+Welcome to the Interdisciplinary Joint Project Evaluation Platform. We are conducting the "Maximum Joint Projects Assessment".
 
-The academic system defines a complete universe of student performance profiles U containing 16 different combinations, each consisting of four binary attributes x1, x2, x3, x4 (each taking value 0 or 1, representing: core course excellence, competition award winner, student leader role, and volunteer service fulfilled, respectively). For example, profile [0,1,0,1] means no core course excellence, won a competition, no leadership role, and fulfilled volunteer service.
+The system features an unknown, fixed knowledge point association graph G, containing 10 core knowledge points labeled v1, v2, ..., v10. The association network remains unchanged during the assessment.
 
-The evaluation committee uses a fixed but unpublished scholarship awarding rule g that maps each student profile in U to either 0 or 1. Rule g defines a subset S of profiles that receive the "Star of Excellence" scholarship, containing all profiles x where g(x)=1.
+Your goal is to infer the maximum number of non-overlapping "dual-knowledge joint projects" that can be formed simultaneously among these 10 knowledge points (i.e., the maximum matching size, where each knowledge point participates in at most one joint project).
 
-At the start of the evaluation, I will give you a target candidate student's profile e* with its four attribute values explicitly provided:
-Target student profile e* = {target}
+You can ask the following three types of queries (one query per turn):
 
-Your task is to infer the value of g(e*) (whether the target student meets the scholarship criteria and belongs to set S) by querying historical review results.
+1. **Direct Association Existence Query**: Ask whether knowledge point vi and vj have a direct association to form a joint project.
+   - Answer: "Yes" or "No"
 
-## Available Query Types
+2. **Local Maximum Joint Projects Query**: Given a knowledge point subset S (2 to 6 knowledge points), ask for the maximum number of non-overlapping joint projects that can be designed within S.
+   - Answer: An integer k (representing the maximum number of projects)
+   - Note: The size of subset S must be between 2 and 6
 
-You can repeatedly ask me the following two types of review queries (one query per turn):
+3. **Project Combination Verification Query**: Given a subset S (at most 6 knowledge points) and a project combination M (non-overlapping project pairs in S), verify whether M is a valid project scheme and whether it achieves the maximum project count for that subset.
+   - Answer:
+     - If M is invalid (e.g., points not associated or reused): "Valid=No"
+     - If M is valid: "Valid=Yes; IsMaximum=Yes/No"
+   - Note: The size of subset S must not exceed 6
 
-1. **Single Profile Query**: Ask whether a specific student profile x (x cannot be e*) is awarded the scholarship (belongs to S). I will answer "Yes" or "No".
-2. **Batch Profile Count Query**: Ask how many profiles in a set Q (1 to 8 profiles, excluding e*, no duplicates) are awarded the scholarship. I will answer a non-negative integer.
+**Constraints**:
+- Queries on subsets with more than 6 knowledge points are not allowed for maximum projects queries or verification queries.
+- Direct queries on all 10 knowledge points for maximum joint projects are not allowed.
+- Please use as few queries as possible.
 
-## Constraints
+Submit your final answer once you have gathered enough information: provide the maximum number of joint projects for all 10 knowledge points and briefly explain your reasoning.
 
-- No query may include the target student profile e*
-- At least 6 valid queries must be made before submitting the final evaluation recommendation
-- Your query history must demonstrate evidence of both awarded profiles and unawarded profiles
+Each query must contain only one tag. Use the following XML format:
 
-## Query Format (strictly required)
+- Direct Association Existence Query:
+<query_edge>v1,v3</query_edge>
 
-Each turn must contain only one query tag. Use the following XML format:
+- Local Maximum Joint Projects Query:
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- Single Profile Query (e.g., querying profile [0,1,0,1]):
-<query_member>0,1,0,1</query_member>
+- Project Combination Verification Query:
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- Batch Profile Count Query (e.g., querying three profiles):
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-Note: In batch queries, multiple profiles are separated by semicolons, and the four attributes of each profile are separated by commas.
-
-## Submit Final Answer
-
-When you have gathered sufficient information, submit your final evaluation recommendation in this format:
-
-<answer>prediction=1, explanation=your inductive hypothesis about the scholarship evaluation rule g</answer>
-
-or
-
-<answer>prediction=0, explanation=your inductive hypothesis about the scholarship evaluation rule g</answer>
-
-Where prediction is 0 or 1, and explanation should briefly describe the awarding pattern or core educational metrics you inferred.
+Submission format:
+<answer>size=5, reason=Inferred that the system can be divided into 5 pairs of independent associated knowledge points</answer>
 """
 
     contextualized_rule_zh_4 = """\
-我们现在来玩一个“生产线缺陷根因推断”游戏，规则如下：
+欢迎使用智能车间产能优化系统。这里进行的是“双机协同单元最大化推断”。
 
-工厂质检系统设定了一个工艺参数配置全集 U，包含 16 种不同的配置组合，每种组合由四个二值属性 x1, x2, x3, x4 组成（每个属性取值为 0 或 1，分别代表：熔炉温度偏高、舱室压力异常、传输带降速、使用备用原料批次）。例如配置 [0,1,0,1] 表示温度正常、压力异常、带速正常且使用了备用原料。
+系统设定了一个未知的、固定的车间加工设备布局图 G，包含 10 台加工设备，标记为 v1, v2, ..., v10。在优化推断过程中，设备布局关系保持不变。若两台设备物理相邻且能进行物料直传，则可组建一个双机协同工作单元。
 
-生产线上存在一个固定但未知的物理缺陷触发机制 g，它将 U 中的每种参数配置映射为 0 或 1。机制 g 定义了一个导致产品被判定为“次品”的配置子集 S，包含所有使得 g(x)=1 的参数组合 x。
+你的目标是通过有限次数的查询，推断出整个车间最多能同时组建多少个相互独立的双机协同工作单元（即最大匹配规模，每台设备最多隶属于一个单元）。
 
-排查开始时，我会给你一个当前目标批次的工艺配置 e*，它的四个属性值已明确给出：
-目标工艺配置 e* = {target}
+你可以向我提出以下三类查询（每次仅限一个查询）：
 
-你的任务是通过质检测试记录来推断 g(e*) 的值（即该目标配置是否会生产出次品，属于缺陷集合 S）。
+1. **物料直传存在性查询**：询问设备 vi 和 vj 之间是否满足物料直传的条件（边）。
+   - 回答："是"或"否"
 
-## 可用的查询类型
+2. **局部最大协同单元数查询**：给定一个设备子集 S（2 到 6 台设备），询问在 S 内部最多能够组建多少个双机协同工作单元（即子图的最大匹配规模）。
+   - 回答：一个整数 k（表示最大工作单元数量）
+   - 注意：子集 S 的大小必须在 2 到 6 之间
 
-你可以反复向我提出以下两类质检查询（每次仅限一个查询）：
+3. **协同方案校验查询**：给定一个设备子集 S（不超过 6 台）和一个协同配置方案 M（M 是由 S 内设备组成的若干双机配对，设备互不重复），验证 M 是否为可行的配置方案，以及是否达到该局部的最优单元数。
+   - 回答：
+     - 若 M 不是可行方案（如无法直传或设备被复用）："有效=否"
+     - 若 M 是可行方案："有效=是；是否最大=是/否"
+   - 注意：子集 S 的大小必须不超过 6
 
-1. **单点配置查询**：询问某种特定的工艺配置 x（x 不能是 e*）是否会导致次品（即是否属于 S）。我会回答"是"或"否"。
-2. **批量配置计数查询**：询问一个配置集合 Q（1到8种配置，不含 e*，配置不重复）中有多少种情况会导致次品。我会回答一个非负整数。
+**约束**：
+- 不允许对超过 6 台设备的子集发起单元数查询或校验查询
+- 不允许直接对全部 10 台设备发起单元数查询
+- 请尽可能少地使用查询次数
 
-## 约束条件
+当你收集足够信息后，请提交最终答案：给出全车间（10 台设备）能够组建的最大双机协同单元总数，并简要说明理由。
 
-- 任何查询都不得包含目标工艺配置 e*
-- 在提交最终排查报告前，至少需进行 6 次有效查询
-- 你的查询记录中必须确证既存在导致次品的配置，也存在生产良品的配置
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 查询格式（必须严格遵守）
+- 物料直传存在性查询（例如查询 v1 和 v3 能否直传）：
+<query_edge>v1,v3</query_edge>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 局部最大协同单元数查询（例如查询子集 v1,v2,v3,v4 的最大协同单元数）：
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- 单点配置查询（例如询问配置 [0,1,0,1]）：
-<query_member>0,1,0,1</query_member>
+- 协同方案校验查询（例如在子集 v1,v2,v3,v4 中校验配置 (v1,v2),(v3,v4)）：
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- 批量配置计数查询（例如询问三种配置）：
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-注意：批量查询中多个配置用分号分隔，每个配置的四个属性用逗号分隔。
-
-## 提交最终答案
-
-当你收集足够信息后，请提交最终排查报告。格式如下：
-
-<answer>prediction=1, explanation=你对缺陷触发机制g的归纳性假设描述</answer>
-
-或
-
-<answer>prediction=0, explanation=你对缺陷触发机制g的归纳性假设描述</answer>
-
-其中 prediction 为 0 或 1，explanation 需简要说明你推断出的导致产品缺陷的核心工艺参数规律。
+提交最终答案时，需说明推断出的全车间最大双机协同单元总数及理由，格式如下：
+<answer>size=5, reason=经过验证发现设备间恰好可构成5对不互相干涉的工作单元</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Let's play a "Production Line Defect Root Cause Inference" game. Here are the rules:
+[Industry Scenario]
+Welcome to the Smart Workshop Capacity Optimization System. We are conducting the "Maximum Dual-Machine Synergy Units Inference".
 
-The factory quality control system defines a complete universe of process parameter configurations U containing 16 different combinations, each consisting of four binary attributes x1, x2, x3, x4 (each taking value 0 or 1, representing: elevated furnace temperature, abnormal chamber pressure, conveyor belt slowdown, and use of backup raw material batch, respectively). For example, configuration [0,1,0,1] means normal temperature, abnormal pressure, normal belt speed, and backup material used.
+The system involves an unknown, fixed workshop equipment layout graph G, containing 10 processing machines labeled v1, v2, ..., v10. The layout relationships remain constant. If two machines are physically adjacent and allow direct material transfer, they can form a dual-machine synergy unit.
 
-There exists a fixed but unknown physical defect triggering mechanism g on the production line that maps each parameter configuration in U to either 0 or 1. Mechanism g defines a subset S of configurations that result in the product being classified as "defective", containing all configurations x where g(x)=1.
+Your objective is to infer the maximum number of mutually independent dual-machine synergy units that can be established simultaneously across the workshop (i.e., maximum matching size, where each machine belongs to at most one unit).
 
-At the start of the troubleshooting, I will give you a target batch's process configuration e* with its four attribute values explicitly provided:
-Target process configuration e* = {target}
+You can ask the following three types of queries (one query per turn):
 
-Your task is to infer the value of g(e*) (whether the target configuration will produce a defective product and belongs to the defect set S) by querying QC test records.
+1. **Material Transfer Existence Query**: Ask whether direct material transfer is possible between machine vi and vj.
+   - Answer: "Yes" or "No"
 
-## Available Query Types
+2. **Local Maximum Synergy Units Query**: Given a machine subset S (2 to 6 machines), ask for the maximum number of dual-machine synergy units that can be formed within S.
+   - Answer: An integer k (representing maximum units)
+   - Note: The size of subset S must be between 2 and 6
 
-You can repeatedly ask me the following two types of QC queries (one query per turn):
+3. **Synergy Scheme Verification Query**: Given a machine subset S (at most 6 machines) and a synergy configuration M (machine pairs from S with no overlaps), verify if M is a feasible configuration and if it reaches the optimal unit count for S.
+   - Answer:
+     - If M is not feasible (e.g., cannot transfer or machine reused): "Valid=No"
+     - If M is feasible: "Valid=Yes; IsMaximum=Yes/No"
+   - Note: The size of subset S must not exceed 6
 
-1. **Single Configuration Query**: Ask whether a specific process configuration x (x cannot be e*) causes a defect (belongs to S). I will answer "Yes" or "No".
-2. **Batch Configuration Count Query**: Ask how many configurations in a set Q (1 to 8 configurations, excluding e*, no duplicates) cause defects. I will answer a non-negative integer.
+**Constraints**:
+- Queries on subsets with more than 6 machines are not allowed for synergy units queries or verification queries.
+- Direct queries on all 10 machines for maximum synergy units are not allowed.
+- Please use as few queries as possible.
 
-## Constraints
+Submit your final answer when ready: provide the maximum dual-machine synergy units for the entire workshop (10 machines) and a brief reasoning.
 
-- No query may include the target process configuration e*
-- At least 6 valid queries must be made before submitting the final troubleshooting report
-- Your query history must demonstrate evidence of both defective configurations and defect-free configurations
+Each query must contain only one tag. Use the following XML format:
 
-## Query Format (strictly required)
+- Material Transfer Existence Query:
+<query_edge>v1,v3</query_edge>
 
-Each turn must contain only one query tag. Use the following XML format:
+- Local Maximum Synergy Units Query:
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- Single Configuration Query (e.g., querying configuration [0,1,0,1]):
-<query_member>0,1,0,1</query_member>
+- Synergy Scheme Verification Query:
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- Batch Configuration Count Query (e.g., querying three configurations):
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-Note: In batch queries, multiple configurations are separated by semicolons, and the four attributes of each configuration are separated by commas.
-
-## Submit Final Answer
-
-When you have gathered sufficient information, submit your final troubleshooting report in this format:
-
-<answer>prediction=1, explanation=your inductive hypothesis about the defect triggering mechanism g</answer>
-
-or
-
-<answer>prediction=0, explanation=your inductive hypothesis about the defect triggering mechanism g</answer>
-
-Where prediction is 0 or 1, and explanation should briefly describe the core process parameter pattern you inferred that leads to product defects.
+Submission format:
+<answer>size=5, reason=Verified that the machines can perfectly form 5 non-interfering operational units</answer>
 """
 
     contextualized_rule_zh_5 = """\
-我们现在来玩一个“合规审查与违规裁定推断”游戏，规则如下：
+欢迎进入司法案件并案分析系统。这里进行的是“最大并案审理对推演”。
 
-监管法规库设定了一个企业商业行为特征全集 U，包含 16 种不同的行为画像，每种画像由四个二值属性 x1, x2, x3, x4 组成（每个属性取值为 0 或 1，分别代表：涉及跨境资金流动、缺乏独立审计、数据未匿名化处理、隐瞒实际控制人）。例如行为画像 [0,1,0,1] 表示无跨境资金、无独立审计、数据已匿名化且隐瞒了实际控制人。
+系统设定了一个未知的、固定的案件证据交叉网络 G，它有 10 起案件，标记为 v1, v2, ..., v10。在推演过程中，案件之间的证据联系保持不变。
 
-监管机构执行着一套固定但未完全公开的执法裁量标准 g，它将 U 中的每种行为画像映射为 0 或 1。标准 g 定义了一个被判定为“高风险违规”的行为子集 S，包含所有使得 g(x)=1 的行为画像 x。
+你的目标是通过有限次数的查询，推断出这 10 起案件最多能批准组建多少个“并案审理对”（即最大匹配规模，每对包含两起有证据交叉的案件，且每起案件最多只能参与一个并案审理对）。
 
-合规审查开始时，我会给你一个目标企业的当前行为画像 e*，它的四个属性值已明确给出：
-目标企业行为画像 e* = {target}
+你可以向我提出以下三类查询（每次仅限一个查询）：
 
-你的任务是通过检索过往处罚案例来推断 g(e*) 的值（即该目标企业的行为是否构成高风险违规，属于违规集合 S）。
+1. **证据交叉存在性查询**：询问案件 vi 和 vj 之间是否存在证据交叉从而可以并案处理（边）。
+   - 回答："是"或"否"
 
-## 可用的查询类型
+2. **局部最大并案对数查询**：给定一个案件子集 S（2 到 6 起案件），询问在 S 内部最多能组建多少个并案审理对（即诱导子图的最大匹配规模）。
+   - 回答：一个整数 k（表示最大并案审理对数量）
+   - 注意：子集 S 的大小必须在 2 到 6 之间
 
-你可以反复向我提出以下两类法务检索查询（每次仅限一个查询）：
+3. **并案方案校验查询**：给定一个案件子集 S（不超过 6 起案件）和一个并案提议 M（M 是由 S 内案件组建的若干对并案，各对不共享案件），验证 M 是否符合司法并案规定，以及是否达到该子集的最大并案数。
+   - 回答：
+     - 若 M 不符合规定（如无证据交叉或案件重复分配）："有效=否"
+     - 若 M 符合规定："有效=是；是否最大=是/否"
+   - 注意：子集 S 的大小必须不超过 6
 
-1. **单点案例查询**：询问某种特定的行为画像 x（x 不能是 e*）是否会被判定违规（即是否属于 S）。我会回答"是"或"否"。
-2. **批量案例计数查询**：询问一个行为画像集合 Q（1到8种画像，不含 e*，画像不重复）中有多少种情况会被判定违规。我会回答一个非负整数。
+**约束**：
+- 不允许对超过 6 起案件的子集发起并案数查询或校验查询
+- 不允许直接对全部 10 起案件发起并案数查询
+- 请尽可能少地使用查询次数
 
-## 约束条件
+当你收集足够信息后，请提交最终答案：给出全局（10 起案件）能够组建的最多并案审理对数量，并简要说明理由。
 
-- 任何查询都不得包含目标企业行为画像 e*
-- 在提交最终合规意见书前，至少需进行 6 次有效查询
-- 你的查询记录中必须确证既存在被罚的违规画像，也存在合规免罚的画像
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-## 查询格式（必须严格遵守）
+- 证据交叉存在性查询（例如查询 v1 和 v3 是否存在交叉）：
+<query_edge>v1,v3</query_edge>
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+- 局部最大并案对数查询（例如查询子集 v1,v2,v3,v4 的最大并案数）：
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- 单点案例查询（例如询问行为画像 [0,1,0,1]）：
-<query_member>0,1,0,1</query_member>
+- 并案方案校验查询（例如在子集 v1,v2,v3,v4 中校验并案 (v1,v2),(v3,v4)）：
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- 批量案例计数查询（例如询问三种行为画像）：
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-注意：批量查询中多个画像用分号分隔，每个画像的四个属性用逗号分隔。
-
-## 提交最终答案
-
-当你收集足够信息后，请提交最终合规意见书。格式如下：
-
-<answer>prediction=1, explanation=你对执法裁量标准g的归纳性假设描述</answer>
-
-或
-
-<answer>prediction=0, explanation=你对执法裁量标准g的归纳性假设描述</answer>
-
-其中 prediction 为 0 或 1，explanation 需简要说明你推断出的违规判定规律或核心法律特征。
+提交最终答案时，需说明推断出的最大并案审理对数量及理由，格式如下：
+<answer>size=5, reason=推断确认了整个案件网可以合法划分为5组互相独立的并案审理对</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Let's play a "Compliance Review and Violation Adjudication Inference" game. Here are the rules:
+[Law Scenario]
+Welcome to the Judicial Case Consolidation Analysis System. We are conducting the "Maximum Consolidated Case Pairs Deduction".
 
-The regulatory framework defines a complete universe of corporate business behavior profiles U containing 16 different combinations, each consisting of four binary attributes x1, x2, x3, x4 (each taking value 0 or 1, representing: involves cross-border capital flows, lacks independent auditing, data not anonymized, and conceals actual controllers, respectively). For example, profile [0,1,0,1] means no cross-border funds, no independent audit, data anonymized, and actual controllers concealed.
+The system comprises an unknown, fixed case evidence intersection network G with 10 cases labeled v1, v2, ..., v10. The evidentiary connections between cases remain constant throughout the deduction.
 
-The regulatory authority enforces a fixed but not fully public enforcement discretion standard g that maps each behavior profile in U to either 0 or 1. Standard g defines a subset S of behaviors deemed "High-Risk Violations", containing all profiles x where g(x)=1.
+Your goal is to deduce the maximum number of "consolidated case pairs" that can be approved simultaneously (i.e., maximum matching size, where each pair involves two cases with evidence intersection, and each case participates in at most one pair).
 
-At the start of the compliance review, I will give you a target company's current behavior profile e* with its four attribute values explicitly provided:
-Target corporate behavior profile e* = {target}
+You can ask the following three types of queries (one query per turn):
 
-Your task is to infer the value of g(e*) (whether the target company's behavior constitutes a high-risk violation and belongs to the violation set S) by retrieving past penalty cases.
+1. **Evidence Intersection Existence Query**: Ask whether there is an evidence intersection between case vi and vj allowing consolidation.
+   - Answer: "Yes" or "No"
 
-## Available Query Types
+2. **Local Maximum Consolidated Pairs Query**: Given a case subset S (2 to 6 cases), ask for the maximum number of consolidated case pairs that can be formed within S.
+   - Answer: An integer k (representing maximum pairs)
+   - Note: The size of subset S must be between 2 and 6
 
-You can repeatedly ask me the following two types of legal retrieval queries (one query per turn):
+3. **Consolidation Scheme Verification Query**: Given a case subset S (at most 6 cases) and a consolidation proposal M (pairs of cases from S with no overlap), verify whether M complies with judicial consolidation rules and reaches the maximum consolidated pair count for S.
+   - Answer:
+     - If M is non-compliant (e.g., no intersection or case reused): "Valid=No"
+     - If M is compliant: "Valid=Yes; IsMaximum=Yes/No"
+   - Note: The size of subset S must not exceed 6
 
-1. **Single Case Query**: Ask whether a specific behavior profile x (x cannot be e*) is judged as a violation (belongs to S). I will answer "Yes" or "No".
-2. **Batch Case Count Query**: Ask how many profiles in a set Q (1 to 8 profiles, excluding e*, no duplicates) are judged as violations. I will answer a non-negative integer.
+**Constraints**:
+- Queries on subsets with more than 6 cases are not allowed for consolidated pairs queries or verification queries.
+- Direct queries on all 10 cases for maximum consolidated pairs are not allowed.
+- Please use as few queries as possible.
 
-## Constraints
+When sufficient information is obtained, submit your final answer: provide the maximum consolidated case pairs for all 10 cases and briefly explain your reasoning.
 
-- No query may include the target behavior profile e*
-- At least 6 valid queries must be made before submitting the final compliance opinion
-- Your query history must demonstrate evidence of both penalized violation profiles and compliant profiles
+Each query must contain only one tag. Use the following XML format:
 
-## Query Format (strictly required)
+- Evidence Intersection Existence Query:
+<query_edge>v1,v3</query_edge>
 
-Each turn must contain only one query tag. Use the following XML format:
+- Local Maximum Consolidated Pairs Query:
+<query_maxmatch>v1,v2,v3,v4</query_maxmatch>
 
-- Single Case Query (e.g., querying profile [0,1,0,1]):
-<query_member>0,1,0,1</query_member>
+- Consolidation Scheme Verification Query:
+<query_verify>subset=v1,v2,v3,v4;matching=(v1,v2),(v3,v4)</query_verify>
 
-- Batch Case Count Query (e.g., querying three profiles):
-<query_count>0,0,0,0;1,1,1,1;0,1,0,1</query_count>
-
-Note: In batch queries, multiple profiles are separated by semicolons, and the four attributes of each profile are separated by commas.
-
-## Submit Final Answer
-
-When you have gathered sufficient information, submit your final compliance opinion in this format:
-
-<answer>prediction=1, explanation=your inductive hypothesis about the enforcement discretion standard g</answer>
-
-or
-
-<answer>prediction=0, explanation=your inductive hypothesis about the enforcement discretion standard g</answer>
-
-Where prediction is 0 or 1, and explanation should briefly describe the violation judgment pattern or core legal characteristics you inferred.
+Submission format:
+<answer>size=5, reason=Deduced that the network of cases can be legally divided into 5 independent consolidated pairs</answer>
 """
 
-    tags = ["answer", "query_member", "query_count"]
-
-    reasoning_type = "归纳推理"
-    data_structure = "集合"
-
-    # 难度配置说明：
-    # 1 (简单)       - g(x) = x1 (只看第一个属性)
-    # 2 (中等偏下)   - g(x) = x1 AND x2 (前两个属性的合取)
-    # 3 (中等偏上)   - g(x) = (x1+x2+x3+x4的和) >= 2 (至少两个1)
-    # 4 (较难)       - g(x) = (x1+x2+x3+x4的和)为奇数
-    # 5 (难)         - g(x) = (x1 XOR x2) AND (x3 OR x4)
+    tags = ["answer", "query_edge", "query_maxmatch", "query_verify"]
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "target": "[1,0,1,0]",
-                "target_vector": [1, 0, 1, 0],
-                "function_type": "first_attr",  # g(x) = x1
-                "true_value": 1,
-            },
-            2: {
-                "target": "[1,1,0,1]",
-                "target_vector": [1, 1, 0, 1],
-                "function_type": "and_first_two",  # g(x) = x1 AND x2
-                "true_value": 1,
-            },
-            3: {
-                "target": "[0,1,0,1]",
-                "target_vector": [0, 1, 0, 1],
-                "function_type": "at_least_two",  # g(x) = sum >= 2
-                "true_value": 1,
-            },
-            4: {
-                "target": "[1,0,0,1]",
-                "target_vector": [1, 0, 0, 1],
-                "function_type": "odd_sum",  # g(x) = sum is odd
-                "true_value": 0,
-            },
-            5: {
-                "target": "[1,1,1,0]",
-                "target_vector": [1, 1, 1, 0],
-                "function_type": "xor_and_or",  # g(x) = (x1 XOR x2) AND (x3 OR x4)
-                "true_value": 0,
-            },
+        1: {
+            "description": "5条独立边，完全匹配",
+            "edges": [(1,2), (3,4), (5,6), (7,8), (9,10)],
+            "max_matching": 5
         },
-        "en": {
-            1: {
-                "target": "[1,0,1,0]",
-                "target_vector": [1, 0, 1, 0],
-                "function_type": "first_attr",
-                "true_value": 1,
-            },
-            2: {
-                "target": "[1,1,0,1]",
-                "target_vector": [1, 1, 0, 1],
-                "function_type": "and_first_two",
-                "true_value": 1,
-            },
-            3: {
-                "target": "[0,1,0,1]",
-                "target_vector": [0, 1, 0, 1],
-                "function_type": "at_least_two",
-                "true_value": 1,
-            },
-            4: {
-                "target": "[1,0,0,1]",
-                "target_vector": [1, 0, 0, 1],
-                "function_type": "odd_sum",
-                "true_value": 0,
-            },
-            5: {
-                "target": "[1,1,1,0]",
-                "target_vector": [1, 1, 1, 0],
-                "function_type": "xor_and_or",
-                "true_value": 0,
-            },
+        2: {
+            "description": "路径图结构，最大匹配为3",
+            "edges": [(1,2), (2,3), (3,4), (5,6), (6,7)],
+            "max_matching": 3
+        },
+        3: {
+            "description": "包含三角形和孤立点的混合图",
+            "edges": [(1,2), (2,3), (3,1), (4,5), (5,6), (6,7), (7,4), (8,9)],
+            "max_matching": 4
+        },
+        4: {
+            "description": "复杂连接模式，最大匹配为3",
+            "edges": [(1,2), (1,3), (2,3), (3,4), (4,5), (5,6), (6,7), (7,5)],
+            "max_matching": 3
+        },
+        5: {
+            "description": "高度互连的复杂图，最大匹配为2",
+            "edges": [(1,2), (1,3), (1,4), (1,5), (2,3), (2,4), (2,5), (3,4), (3,5), (4,5)],
+            "max_matching": 2
         },
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 查询计数器
-        self.has_positive = False  # 是否有g(x)=1的证据
-        self.has_negative = False  # 是否有g(x)=0的证据
+        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["target"] = cfg["target"]
-        self.target_vector = cfg["target_vector"]
-        self.function_type = cfg["function_type"]
-        self.true_value = cfg["true_value"]
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        
+        self.edges = set()
+        for u, v in cfg["edges"]:
+            vertex_u = f"v{u}"
+            vertex_v = f"v{v}"
+            self.edges.add(frozenset([vertex_u, vertex_v]))
+        
+        self.correct_answer = cfg["max_matching"]
+        
+        self._game_info = {}
 
-    def _evaluate_function(self, vector):
-        """根据函数类型计算g(x)的值"""
-        x1, x2, x3, x4 = vector
+    def _has_edge(self, u, v):
+        return frozenset([u, v]) in self.edges
 
-        if self.function_type == "first_attr":
-            # g(x) = x1
-            return x1
+    def _validate_vertex(self, v):
+        valid_vertices = {f"v{i}" for i in range(1, 11)}
+        return v in valid_vertices
 
-        elif self.function_type == "and_first_two":
-            # g(x) = x1 AND x2
-            return 1 if (x1 == 1 and x2 == 1) else 0
+    def _compute_max_matching(self, vertices):
+        vertex_set = set(vertices)
+        subgraph_edges = []
+        for edge in self.edges:
+            if edge.issubset(vertex_set):
+                subgraph_edges.append(tuple(edge))
+        
+        if not subgraph_edges:
+            return 0
+        
+        max_size = [0]
+        
+        def backtrack(idx, matched_vertices, current_size):
+            max_size[0] = max(max_size[0], current_size)
+            if current_size + (len(subgraph_edges) - idx) <= max_size[0]:
+                return
+            for i in range(idx, len(subgraph_edges)):
+                u, v = subgraph_edges[i]
+                if u not in matched_vertices and v not in matched_vertices:
+                    matched_vertices.add(u)
+                    matched_vertices.add(v)
+                    backtrack(i + 1, matched_vertices, current_size + 1)
+                    matched_vertices.remove(u)
+                    matched_vertices.remove(v)
+        
+        backtrack(0, set(), 0)
+        return max_size[0]
 
-        elif self.function_type == "at_least_two":
-            # g(x) = (x1+x2+x3+x4) >= 2
-            return 1 if sum(vector) >= 2 else 0
-
-        elif self.function_type == "odd_sum":
-            # g(x) = (x1+x2+x3+x4) 为奇数
-            return 1 if sum(vector) % 2 == 1 else 0
-
-        elif self.function_type == "xor_and_or":
-            # g(x) = (x1 XOR x2) AND (x3 OR x4)
-            xor_part = 1 if x1 != x2 else 0
-            or_part = 1 if (x3 == 1 or x4 == 1) else 0
-            return 1 if (xor_part == 1 and or_part == 1) else 0
-
-        else:
-            raise ValueError(f"Unknown function type: {self.function_type}")
-
-    def _parse_vector(self, vec_str):
-        """解析逗号分隔的向量字符串为整数列表"""
-        try:
-            parts = [int(x.strip()) for x in vec_str.split(",")]
-            if len(parts) != 4:
-                raise ValueError
-            if not all(x in [0, 1] for x in parts):
-                raise ValueError
-            return parts
-        except:
-            raise ValueError("Invalid vector format")
+    def _is_valid_matching(self, vertices, matching_edges):
+        vertex_set = set(vertices)
+        used_vertices = set()
+        
+        for edge in matching_edges:
+            if len(edge) != 2:
+                return False, False
+            u, v = edge
+            if u not in vertex_set or v not in vertex_set:
+                return False, False
+            if not self._has_edge(u, v):
+                return False, False
+            if u in used_vertices or v in used_vertices:
+                return False, False
+            used_vertices.add(u)
+            used_vertices.add(v)
+        
+        max_size = self._compute_max_matching(vertices)
+        is_maximum = (len(matching_edges) == max_size)
+        
+        return True, is_maximum
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        # 检查是否满足最少查询次数和证据多样性（不满足则直接判错）
-        if self.query_count < 6:
-            return False
-        if not (self.has_positive and self.has_negative):
-            return False
-
-        # 解析答案
         raw_ans = parsed_info["answer"]
         
-        # 尝试提取 prediction 和 explanation
-        prediction_match = re.search(r'prediction\s*=\s*([01])', raw_ans, re.IGNORECASE)
-        explanation_match = re.search(r'explanation\s*=\s*(.+)', raw_ans, re.IGNORECASE)
-        
-        if not prediction_match:
-            return False
-        
-        prediction = int(prediction_match.group(1))
-        
-        # explanation 存在即可，不强制要求内容
-        if not explanation_match:
-            return False
-
-        # 判断预测值是否正确
-        return prediction == self.true_value
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        包括所有单点成员查询 (Type 1) 和部分示例性的批量计数查询 (Type 2)。
-        """
-        queries = []
-        
-        # 1. 确定全集 U (16个4维二值向量)
-        universe = []
-        for x1 in range(2):
-            for x2 in range(2):
-                for x3 in range(2):
-                    for x4 in range(2):
-                        universe.append([x1, x2, x3, x4])
-        
-        # 2. 确定可用元素集合 P = U - {target}
-        # 游戏规定查询不能包含目标元素
-        available_elements = [x for x in universe if x != self.target_vector]
-        
-        # 辅助函数：将向量转换为 "0,1,0,1" 格式
-        def vec_to_str(v):
-            return ",".join(str(x) for x in v)
-
-        # 确定当前语言下的回答词
-        if self.config.language == "zh":
-            yes_resp, no_resp = "是", "否"
-        else:
-            yes_resp, no_resp = "Yes", "No"
-
-        # ------------------------------------------------
-        # Type 1: 单点成员查询 (Single Member Query)
-        # ------------------------------------------------
-        for vec in available_elements:
-            # 构造查询字符串
-            vec_str = vec_to_str(vec)
+        try:
+            size_match = re.search(r'size\s*=\s*(\d+)', raw_ans, re.IGNORECASE)
+            if not size_match:
+                return False
             
-            # 复用内部逻辑计算 g(x)
-            res = self._evaluate_function(vec)
-            ans = yes_resp if res == 1 else no_resp
+            submitted_size = int(size_match.group(1))
+            return submitted_size == self.correct_answer
             
-            queries.append({
-                "query": f"<query_member>{vec_str}</query_member>",
-                "answer": ans
-            })
-
-        # ------------------------------------------------
-        # Type 2: 批量计数查询 (Batch Count Query)
-        # ------------------------------------------------
-        # 规则允许集合大小为 1 到 8。
-        # 理论上的子集总数巨大 (Sum(C(15, k) for k in 1..8) = 22818)。
-        # 为保持返回列表大小在合理范围内，此处仅枚举集合大小为 1 和 2 的情况。
-        # 这涵盖了基本的批量查询逻辑和格式验证。
-        
-        for r in range(1, 3):
-            for batch in itertools.combinations(available_elements, r):
-                # 构造查询字符串，元素间用分号分隔
-                batch_str = ";".join(vec_to_str(v) for v in batch)
-                
-                # 计算集合中有多少个元素属于 S (即 g(x)=1)
-                count = sum(self._evaluate_function(v) for v in batch)
-                
-                queries.append({
-                    "query": f"<query_count>{batch_str}</query_count>",
-                    "answer": str(count)
-                })
-                
-        return queries
+        except Exception:
+            return False
 
     def _cf_core_produce(self, parsed_info):
+        self.query_count += 1
+        
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_target = "错误：查询不能包含目标元素。"
-            error_format = "错误：格式无效。"
-            error_range = "错误：属性值必须为0或1。"
-            error_batch_size = "错误：批量查询元素数量必须在1到8之间。"
-            error_duplicate = "错误：批量查询中存在重复元素。"
+            valid_yes, valid_no = "有效=是", "有效=否"
+            max_yes, max_no = "是否最大=是", "是否最大=否"
+            error_format = "错误：格式无效"
+            error_range = "错误：子集大小超出允许范围（2到6个顶点）"
+            error_full_set = "错误：不允许对全部10个顶点查询最大匹配规模"
+            error_vertex = "错误：顶点标识不合法"
         else:
             yes_res, no_res = "Yes", "No"
-            error_target = "Error: Query cannot include the target element."
-            error_format = "Error: Invalid format."
-            error_range = "Error: Attribute values must be 0 or 1."
-            error_batch_size = "Error: Batch query must contain 1 to 8 elements."
-            error_duplicate = "Error: Duplicate elements in batch query."
+            valid_yes, valid_no = "Valid=Yes", "Valid=No"
+            max_yes, max_no = "IsMaximum=Yes", "IsMaximum=No"
+            error_format = "Error: Invalid format"
+            error_range = "Error: Subset size out of allowed range (2 to 6 vertices)"
+            error_full_set = "Error: Query on all 10 vertices for max matching size is not allowed"
+            error_vertex = "Error: Invalid vertex identifier"
 
-        # 单点成员查询
-        if "query_member" in parsed_info:
+        if "query_edge" in parsed_info:
             try:
-                vector = self._parse_vector(parsed_info["query_member"])
-                
-                # 检查是否是目标元素
-                if vector == self.target_vector:
-                    return error_target
-                
-                # 计算函数值
-                result = self._evaluate_function(vector)
-                self.query_count += 1
-                
-                # 更新证据多样性标记
-                if result == 1:
-                    self.has_positive = True
-                else:
-                    self.has_negative = True
-                
-                return yes_res if result == 1 else no_res
-                
-            except ValueError:
+                raw = parsed_info["query_edge"].strip()
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                u, v = parts
+                if not (self._validate_vertex(u) and self._validate_vertex(v)):
+                    return error_vertex
+                return yes_res if self._has_edge(u, v) else no_res
+            except Exception:
                 return error_format
 
-        # 批量计数查询
-        elif "query_count" in parsed_info:
+        elif "query_maxmatch" in parsed_info:
             try:
-                raw = parsed_info["query_count"].strip()
-                if not raw:
+                raw = parsed_info["query_maxmatch"].strip()
+                vertices = [x.strip() for x in raw.split(",")]
+                for v in vertices:
+                    if not self._validate_vertex(v):
+                        return error_vertex
+                if len(vertices) == 10:
+                    return error_full_set
+                if len(vertices) < 2 or len(vertices) > 6:
+                    return error_range
+                max_match = self._compute_max_matching(vertices)
+                return str(max_match)
+            except Exception:
+                return error_format
+
+        elif "query_verify" in parsed_info:
+            try:
+                raw = parsed_info["query_verify"].strip()
+                parts = raw.split(";")
+                if len(parts) != 2:
                     return error_format
                 
-                # 解析多个向量（用分号分隔）
-                vec_strs = raw.split(";")
-                if len(vec_strs) < 1 or len(vec_strs) > 8:
-                    return error_batch_size
+                subset_part = parts[0].strip()
+                matching_part = parts[1].strip()
                 
-                vectors = []
-                for vec_str in vec_strs:
-                    vector = self._parse_vector(vec_str.strip())
+                if not subset_part.startswith("subset="):
+                    return error_format
+                subset_str = subset_part[7:].strip()
+                vertices = [x.strip() for x in subset_str.split(",")]
+                
+                if len(vertices) < 2 or len(vertices) > 6:
+                    return error_range
+                
+                for v_name in vertices:
+                    if not self._validate_vertex(v_name):
+                        return error_vertex
+                
+                if not matching_part.startswith("matching="):
+                    return error_format
+                matching_str = matching_part[9:].strip()
+                
+                edge_pattern = r'\(([^,]+),([^)]+)\)'
+                edge_matches = re.findall(edge_pattern, matching_str)
+                matching_edges = []
+                for u, v in edge_matches:
+                    u = u.strip()
+                    v = v.strip()
+                    if not (self._validate_vertex(u) and self._validate_vertex(v)):
+                        return error_vertex
+                    matching_edges.append((u, v))
+                
+                is_valid, is_maximum = self._is_valid_matching(vertices, matching_edges)
+                
+                if not is_valid:
+                    return valid_no
+                else:
+                    max_str = max_yes if is_maximum else max_no
+                    return f"{valid_yes}; {max_str}"
                     
-                    # 检查是否是目标元素
-                    if vector == self.target_vector:
-                        return error_target
-                    
-                    vectors.append(vector)
-                
-                # 检查是否有重复元素
-                if len(vectors) != len(set(tuple(v) for v in vectors)):
-                    return error_duplicate
-                
-                # 计算属于S的元素数量
-                count = sum(self._evaluate_function(v) for v in vectors)
-                self.query_count += 1
-                
-                # 更新证据多样性标记
-                if count > 0:
-                    self.has_positive = True
-                if count < len(vectors):
-                    self.has_negative = True
-                
-                return str(count)
-                
-            except ValueError:
+            except Exception:
                 return error_format
 
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        # 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
+    def _cf_make_wrong(self, correct):
+        if correct in ("Yes", "No"):
+            return "No" if correct == "Yes" else "Yes"
+        if correct in ("是", "否"):
+            return "否" if correct == "是" else "是"
         
-        # 否则按规则替换关键词
-        mapping = {
-            "是": "否",
-            "否": "是",
-            "Yes": "No",
-            "No": "Yes",
-            # 兼容可能的非标题大小写（虽然代码中是 Title case）
-            "yes": "no",
-            "no": "yes"
-        }
+        if "Valid=No" in correct or "有效=否" in correct:
+            if self.config.language == "zh":
+                return "有效=是; 是否最大=是"
+            else:
+                return "Valid=Yes; IsMaximum=Yes"
+        if "Valid=Yes" in correct or "有效=是" in correct:
+            if self.config.language == "zh":
+                return "有效=否"
+            else:
+                return "Valid=No"
         
-        if correct in mapping:
-            return mapping[correct]
+        try:
+            val = int(correct)
+            wrong_val = val + 1 if val < 5 else val - 1
+            return str(wrong_val)
+        except ValueError:
+            pass
+        
+        return correct + " [modified]"
+
+    def step(self, response: str):
+        result = super().step(response)
+        return result
+    
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
             
-        # 若都不匹配
-        return correct + "_WRONG"
+        all_vertices = [f"v{i}" for i in range(1, 11)]
+        
+        for i in range(len(all_vertices)):
+            for j in range(i + 1, len(all_vertices)):
+                u, v = all_vertices[i], all_vertices[j]
+                
+                has_edge = self._has_edge(u, v)
+                ans = yes_res if has_edge else no_res
+                
+                queries.append({
+                    "query": f"<query_edge>{u},{v}</query_edge>",
+                    "answer": ans
+                })
+                
+        for k in range(2, 7):
+            for subset in itertools.combinations(all_vertices, k):
+                subset_str = ",".join(subset)
+                
+                max_match_size = self._compute_max_matching(subset)
+                ans = str(max_match_size)
+                
+                queries.append({
+                    "query": f"<query_maxmatch>{subset_str}</query_maxmatch>",
+                    "answer": ans
+                })
+                
+        return queries

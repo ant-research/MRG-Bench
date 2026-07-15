@@ -1,829 +1,689 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   条件计数：满足某给定条件的元素共有多少个
-# ============================================================
-
 from .base import Game
-import random
+import math
 
-
-class ExactlyOneAttributeGame(Game):
+class TreeAncestorGame(Game):
 
     reasoning_type = "演绎推理"
-    data_structure = "集合"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们来玩一个"属性推理"游戏，规则如下：
+我们来玩一个"树上祖先推理"游戏，规则如下：
 
-游戏设定了一个包含 {n} 个元素的集合。每个元素都可能具有三种属性中的任意组合：属性 A、属性 B、属性 C。每个元素可能具有这些属性中的零个、一个、两个或全部三个。这个属性分配在游戏中是固定的，不会改变。
+游戏设定了一棵有根树，共有 {n} 个节点，每个节点有唯一的编号。树的结构如下：
 
-你可以反复向我提出计数查询，每次查询指定一个或多个属性的组合，我会告诉你"同时具有所有这些属性"的元素数量。
+{tree_structure}
 
-允许的查询类型包括：
-- 查询单个属性：询问具有属性 A 的元素数量（记作 |A|）
-- 查询单个属性：询问具有属性 B 的元素数量（记作 |B|）
-- 查询单个属性：询问具有属性 C 的元素数量（记作 |C|）
-- 查询两个属性：询问同时具有属性 A 和 B 的元素数量（记作 |A∧B|）
-- 查询两个属性：询问同时具有属性 A 和 C 的元素数量（记作 |A∧C|）
-- 查询两个属性：询问同时具有属性 B 和 C 的元素数量（记作 |B∧C|）
-- 查询三个属性：询问同时具有属性 A、B 和 C 的元素数量（记作 |A∧B∧C|）
+在这棵树中，我已经秘密选择了一个目标节点 T。祖先关系定义为：任一节点被视为其自身的祖先；根节点是所有节点的祖先。
 
-注意：查询返回的是"至少具有所查询的全部属性"的元素数量，不限制元素是否还具有其他属性。
+你的目标是通过尽可能少的询问次数找到这个目标节点。你可以进行以下两类操作：
 
-你的目标是：推断出"恰好具有一种属性"的元素总数。也就是说，只具有 A、只具有 B 或只具有 C 中恰好一种的元素总数。
+1. 祖先查询：询问某个节点 X 是否为目标节点 T 的祖先（包含自身）。我会回答"是"或"否"。
+2. 提交答案：当你确定目标节点后，提交你的答案。
 
-请通过尽可能少的查询次数来推断出答案。
+注意：
+- 你必须进行至少 2 次祖先查询后才能提交答案。
+- 如果答案错误或格式不符，游戏失败。
+- 请尽可能少地使用查询次数。
 
-## 查询和提交答案的格式（必须严格遵守）
+祖先查询（例如询问节点 5）：
+<query_ancestor>5</query_ancestor>
 
-每次查询请使用以下 XML 格式（只能查询一次）：
-
-- 查询单个属性 A：
-<query>A</query>
-
-- 查询单个属性 B：
-<query>B</query>
-
-- 查询单个属性 C：
-<query>C</query>
-
-- 查询两个属性 A 和 B：
-<query>A,B</query>
-
-- 查询两个属性 A 和 C：
-<query>A,C</query>
-
-- 查询两个属性 B 和 C：
-<query>B,C</query>
-
-- 查询三个属性 A、B 和 C：
-<query>A,B,C</query>
-
-提交最终答案时，请给出"恰好具有一种属性"的元素总数（一个非负整数），格式如下：
-
-<answer>5</answer>
+提交最终答案（例如目标节点为 3）：
+<answer>3</answer>
 """
 
     game_rule_en = """\
-Let's play an "Attribute Reasoning" game. Here are the rules:
+Let's play a "Tree Ancestor Inference" game. Here are the rules:
 
-The game involves a set of {n} elements. Each element may have any combination of three attributes: attribute A, attribute B, and attribute C. Each element can have zero, one, two, or all three of these attributes. The attribute assignment is fixed throughout the game and will not change.
+The game is set on a rooted tree with {n} nodes, each having a unique ID. The tree structure is as follows:
 
-You can repeatedly ask me counting queries. Each query specifies one or more attributes, and I will tell you the count of elements that "have all the specified attributes simultaneously".
+{tree_structure}
 
-Allowed query types include:
-- Query single attribute: ask for the count of elements with attribute A (denoted as |A|)
-- Query single attribute: ask for the count of elements with attribute B (denoted as |B|)
-- Query single attribute: ask for the count of elements with attribute C (denoted as |C|)
-- Query two attributes: ask for the count of elements with both A and B (denoted as |A∧B|)
-- Query two attributes: ask for the count of elements with both A and C (denoted as |A∧C|)
-- Query two attributes: ask for the count of elements with both B and C (denoted as |B∧C|)
-- Query three attributes: ask for the count of elements with A, B, and C all together (denoted as |A∧B∧C|)
+In this tree, I have secretly selected a target node T. The ancestor relation is defined as: any node is considered an ancestor of itself; the root node is an ancestor of all nodes.
 
-Note: The query returns the count of elements that have "at least all the queried attributes", without restricting whether they have other attributes.
+Your goal is to find the target node using as few queries as possible. You can perform the following two types of operations:
 
-Your goal is: to infer the total number of elements that have "exactly one attribute". That is, the total count of elements that have exactly one of: only A, only B, or only C.
+1. Ancestor Query: Ask whether a node X is an ancestor of the target node T (including itself). I will answer "Yes" or "No".
+2. Submit Answer: When you have determined the target node, submit your answer.
 
-Please infer the answer using as few queries as possible.
+Note:
+- You must perform at least 2 ancestor queries before submitting an answer.
+- If the answer is incorrect or the format is invalid, the game fails.
+- Try to use as few queries as possible.
 
-## Query and Answer Format (must be strictly followed)
+Ancestor Query (e.g., asking about node 5):
+<query_ancestor>5</query_ancestor>
 
-Each query should use the following XML format (only one query per turn):
-
-- Query single attribute A:
-<query>A</query>
-
-- Query single attribute B:
-<query>B</query>
-
-- Query single attribute C:
-<query>C</query>
-
-- Query two attributes A and B:
-<query>A,B</query>
-
-- Query two attributes A and C:
-<query>A,C</query>
-
-- Query two attributes B and C:
-<query>B,C</query>
-
-- Query three attributes A, B, and C:
-<query>A,B,C</query>
-
-When submitting the final answer, provide the total number of elements with "exactly one attribute" (a non-negative integer), in this format:
-
-<answer>5</answer>
+Submit final answer (e.g., target node is 3):
+<answer>3</answer>
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-欢迎进入“智慧交通违规稽查”系统，规则如下：
+欢迎进入交通网层级溯源系统。我们构建了一个包含 {n} 个区域节点的交通管理路网，规则如下：
 
-系统内包含 {n} 辆登记在册的车辆。每辆车都可能存在以下三种违规情况中的任意组合：违章记录（属性 A）、逾期未年检（属性 B）、未交强险（属性 C）。每辆车可能没有任何违规，也可能存在一项、两项或全部三项违规。违规状态在稽查期间是固定的，不会改变。
+路网的层级结构如下：
 
-你可以反复向我提出计数查询，每次查询指定一种或多种违规情况的组合，我会告诉你“同时存在所有这些指定违规”的车辆数量。
+{tree_structure}
 
-允许的查询类型包括：
-- 查询单项违规：询问存在违章记录的车辆数量（记作 |A|）
-- 查询单项违规：询问存在逾期未年检的车辆数量（记作 |B|）
-- 查询单项违规：询问存在未交强险的车辆数量（记作 |C|）
-- 查询两项违规：询问同时存在违章记录和逾期未年检的车辆数量（记作 |A∧B|）
-- 查询两项违规：询问同时存在违章记录和未交强险的车辆数量（记作 |A∧C|）
-- 查询两项违规：询问同时存在逾期未年检和未交强险的车辆数量（记作 |B∧C|）
-- 查询三项违规：询问同时存在违章、未年检和未交强险的车辆数量（记作 |A∧B∧C|）
+在这片路网中，我已经秘密锁定了一个发生拥堵的"目标源头 T"。祖先关系在此定义为：任一区域节点被视为其自身的上级覆盖区域；总线/根节点是所有区域的上级。
 
-注意：查询返回的是“至少存在所查询的全部违规”的车辆数量，不限制车辆是否还存在其他违规。
+你的目标是通过尽可能少的询问次数找到这个拥堵源头节点。你可以进行以下两类操作：
 
-你的目标是：推断出“恰好存在一项违规情况”的车辆总数。也就是说，只存在违章、只存在未年检或只存在未交强险中恰好一种情况的车辆总数，以便进行针对性的轻微违法警告。
+1. 祖先查询：询问某个节点 X 是否为目标源头 T 的上级覆盖区域（包含自身）。我会回答"是"或"否"。
+2. 提交答案：当你确定目标源头节点后，提交你的答案。
 
-请通过尽可能少的查询次数来推断出答案。
+注意：
+- 你必须进行至少 2 次祖先查询后才能提交诊断结果。
+- 如果答案错误或格式不符，排查任务失败。
+- 请尽可能少地使用查询次数。
 
-## 查询和提交答案的格式（必须严格遵守）
+祖先查询（例如询问区域 5）：
+<query_ancestor>5</query_ancestor>
 
-每次查询请使用以下 XML 格式（只能查询一次），使用 A、B、C 代表对应违规项：
-
-- 查询单项违规 A (违章记录)：
-<query>A</query>
-
-- 查询单项违规 B (逾期未年检)：
-<query>B</query>
-
-- 查询单项违规 C (未交强险)：
-<query>C</query>
-
-- 查询两项违规 A 和 B：
-<query>A,B</query>
-
-- 查询两项违规 A 和 C：
-<query>A,C</query>
-
-- 查询两项违规 B 和 C：
-<query>B,C</query>
-
-- 查询三项违规 A、B 和 C：
-<query>A,B,C</query>
-
-提交最终答案时，请给出“恰好存在一项违规情况”的车辆总数（一个非负整数），格式如下：
-
-<answer>5</answer>
+提交最终答案（例如拥堵源头为 3）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Traffic Violation Audit" simulation system. Here are the rules:
+Welcome to the Traffic Network Hierarchical Tracing System. We have built a traffic management network with {n} zone nodes. The rules are as follows:
 
-The system involves a set of {n} registered vehicles. Each vehicle may have any combination of three violations: Traffic Violations (Attribute A), Overdue Inspection (Attribute B), and Unpaid Insurance (Attribute C). Each vehicle can have zero, one, two, or all three of these violations. The violation status is fixed throughout the audit and will not change.
+The hierarchical structure of the network is:
 
-You can repeatedly ask me counting queries. Each query specifies one or more violations, and I will tell you the count of vehicles that "have all the specified violations simultaneously".
+{tree_structure}
 
-Allowed query types include:
-- Query single violation: ask for the count of vehicles with Traffic Violations (denoted as |A|)
-- Query single violation: ask for the count of vehicles with Overdue Inspection (denoted as |B|)
-- Query single violation: ask for the count of vehicles with Unpaid Insurance (denoted as |C|)
-- Query two violations: ask for the count of vehicles with both A and B (denoted as |A∧B|)
-- Query two violations: ask for the count of vehicles with both A and C (denoted as |A∧C|)
-- Query two violations: ask for the count of vehicles with both B and C (denoted as |B∧C|)
-- Query three violations: ask for the count of vehicles with A, B, and C all together (denoted as |A∧B∧C|)
+In this network, I have secretly pinpointed a gridlock "target source T". The ancestor relation is defined here as: any zone node is considered its own covering area; the root node covers all zones.
 
-Note: The query returns the count of vehicles that have "at least all the queried violations", without restricting whether they have other violations.
+Your goal is to find this target source node using as few queries as possible. You can perform the following two types of operations:
 
-Your goal is: to infer the total number of vehicles that have "exactly one violation". That is, the total count of vehicles that have exactly one of: only A, only B, or only C. This helps us issue targeted warnings for minor infractions.
+1. Ancestor Query: Ask whether a node X is a covering ancestor area of the target source T (including itself). I will answer "Yes" or "No".
+2. Submit Answer: When you have determined the target source node, submit your answer.
 
-Please infer the answer using as few queries as possible.
+Note:
+- You must perform at least 2 ancestor queries before submitting an answer.
+- If the answer is incorrect or the format is invalid, the tracing task fails.
+- Try to use as few queries as possible.
 
-## Query and Answer Format (must be strictly followed)
+Ancestor Query (e.g., asking about zone 5):
+<query_ancestor>5</query_ancestor>
 
-Each query should use the following XML format (only one query per turn), using A, B, C for respective violations:
-
-- Query single violation A (Traffic Violations):
-<query>A</query>
-
-- Query single violation B (Overdue Inspection):
-<query>B</query>
-
-- Query single violation C (Unpaid Insurance):
-<query>C</query>
-
-- Query two violations A and B:
-<query>A,B</query>
-
-- Query two violations A and C:
-<query>A,C</query>
-
-- Query two violations B and C:
-<query>B,C</query>
-
-- Query three violations A, B, and C:
-<query>A,B,C</query>
-
-When submitting the final answer, provide the total number of vehicles with "exactly one violation" (a non-negative integer), in this format:
-
-<answer>5</answer>
+Submit final answer (e.g., target source is 3):
+<answer>3</answer>
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-欢迎进入“临床试验患者筛查”系统，规则如下：
+欢迎使用流行病学毒株溯源分析系统。系统加载了一棵包含 {n} 个毒株节点的病毒演化树，规则如下：
 
-系统提取了包含 {n} 名临床试验患者的集合。每名患者都可能具有以下三种并发症或风险的任意组合：高血压并发症（属性 A）、糖尿病并发症（属性 B）、心血管疾病风险（属性 C）。每名患者可能具有零个、一个、两个或全部三个健康风险因素。这些健康状态在筛查评估期间是固定的，不会改变。
+演化树的层级结构如下：
 
-你可以反复向我提出计数查询，每次查询指定一种或多种风险因素的组合，我会告诉你“同时存在所有这些指定风险”的患者数量。
+{tree_structure}
 
-允许的查询类型包括：
-- 查询单项风险：询问具有高血压并发症的患者数量（记作 |A|）
-- 查询单项风险：询问具有糖尿病并发症的患者数量（记作 |B|）
-- 查询单项风险：询问具有心血管疾病风险的患者数量（记作 |C|）
-- 查询两项风险：询问同时具有高血压并发症和糖尿病并发症的患者数量（记作 |A∧B|）
-- 查询两项风险：询问同时具有高血压并发症和心血管风险的患者数量（记作 |A∧C|）
-- 查询两项风险：询问同时具有糖尿病并发症和心血管风险的患者数量（记作 |B∧C|）
-- 查询三项风险：询问同时具有上述三种并发症及风险的患者数量（记作 |A∧B∧C|）
+在这棵树中，我已隔离了一个未知的"目标毒株 T"。演化祖先关系定义为：任一毒株节点被视为其自身的演化祖先；初代零号毒株（根节点）是所有毒株的祖先。
 
-注意：查询返回的是“至少存在所查询的全部风险”的患者数量，不限制患者是否还存在其他并发症或风险。
+你的目标是通过尽可能少的检测询问次数找到这个目标毒株。你可以进行以下两类操作：
 
-你的目标是：推断出“恰好仅有一种并发症/风险”的患者总数。用于开展单一病种的精准靶向治疗试验。
+1. 祖先查询：询问某个毒株节点 X 是否为目标毒株 T 的演化祖先（包含自身）。系统会返回"是"或"否"。
+2. 提交答案：当你确定目标毒株节点后，提交你的答案。
 
-请通过尽可能少的查询次数来推断出答案。
+注意：
+- 你必须进行至少 2 次演化祖先查询后才能提交诊断报告。
+- 如果答案错误或格式不符，溯源失败。
+- 请尽可能少地使用查询次数。
 
-## 查询和提交答案的格式（必须严格遵守）
+祖先查询（例如询问毒株 5）：
+<query_ancestor>5</query_ancestor>
 
-每次查询请使用以下 XML 格式（只能查询一次），使用 A、B、C 代表对应风险项：
-
-- 查询单项风险 A (高血压并发症)：
-<query>A</query>
-
-- 查询单项风险 B (糖尿病并发症)：
-<query>B</query>
-
-- 查询单项风险 C (心血管疾病风险)：
-<query>C</query>
-
-- 查询两项风险 A 和 B：
-<query>A,B</query>
-
-- 查询两项风险 A 和 C：
-<query>A,C</query>
-
-- 查询两项风险 B 和 C：
-<query>B,C</query>
-
-- 查询三项风险 A、B 和 C：
-<query>A,B,C</query>
-
-提交最终答案时，请给出“恰好仅有一种并发症/风险”的患者总数（一个非负整数），格式如下：
-
-<answer>5</answer>
+提交最终答案（例如目标毒株为 3）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Clinical Trial Patient Screening" system. Here are the rules:
+Welcome to the Epidemiological Strain Tracing System. The system has loaded a virus evolution tree containing {n} strain nodes. The rules are as follows:
 
-The system involves a set of {n} patients. Each patient may have any combination of three health conditions/risks: Hypertension Complications (Attribute A), Diabetes Complications (Attribute B), and Cardiovascular Risk (Attribute C). Each patient can have zero, one, two, or all three of these risk factors. These health states are fixed throughout the screening evaluation and will not change.
+The structure of the evolution tree is:
 
-You can repeatedly ask me counting queries. Each query specifies one or more risk factors, and I will tell you the count of patients that "have all the specified conditions simultaneously".
+{tree_structure}
 
-Allowed query types include:
-- Query single risk: ask for the count of patients with Hypertension Complications (denoted as |A|)
-- Query single risk: ask for the count of patients with Diabetes Complications (denoted as |B|)
-- Query single risk: ask for the count of patients with Cardiovascular Risk (denoted as |C|)
-- Query two risks: ask for the count of patients with both A and B (denoted as |A∧B|)
-- Query two risks: ask for the count of patients with both A and C (denoted as |A∧C|)
-- Query two risks: ask for the count of patients with both B and C (denoted as |B∧C|)
-- Query three risks: ask for the count of patients with A, B, and C all together (denoted as |A∧B∧C|)
+In this tree, I have isolated an unknown "target strain T". The evolutionary ancestor relation is defined as: any strain node is considered an evolutionary ancestor of itself; the patient-zero strain (root node) is the ancestor of all strains.
 
-Note: The query returns the count of patients that have "at least all the queried conditions", without restricting whether they have other risks.
+Your goal is to identify this target strain using as few test queries as possible. You can perform the following two types of operations:
 
-Your goal is: to infer the total number of patients who have "exactly one complication/risk". This metric is crucial for initiating precise targeted therapy trials for single-disease conditions.
+1. Ancestor Query: Ask whether a strain node X is an evolutionary ancestor of the target strain T (including itself). I will answer "Yes" or "No".
+2. Submit Answer: When you have determined the target strain node, submit your answer.
 
-Please infer the answer using as few queries as possible.
+Note:
+- You must perform at least 2 ancestor queries before submitting an answer.
+- If the answer is incorrect or the format is invalid, the tracing fails.
+- Try to use as few queries as possible.
 
-## Query and Answer Format (must be strictly followed)
+Ancestor Query (e.g., asking about strain 5):
+<query_ancestor>5</query_ancestor>
 
-Each query should use the following XML format (only one query per turn), using A, B, C for respective risks:
-
-- Query single risk A (Hypertension Complications):
-<query>A</query>
-
-- Query single risk B (Diabetes Complications):
-<query>B</query>
-
-- Query single risk C (Cardiovascular Risk):
-<query>C</query>
-
-- Query two risks A and B:
-<query>A,B</query>
-
-- Query two risks A and C:
-<query>A,C</query>
-
-- Query two risks B and C:
-<query>B,C</query>
-
-- Query three risks A, B, and C:
-<query>A,B,C</query>
-
-When submitting the final answer, provide the total number of patients with "exactly one complication/risk" (a non-negative integer), in this format:
-
-<answer>5</answer>
+Submit final answer (e.g., target strain is 3):
+<answer>3</answer>
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-欢迎进入“学生综合素质评价”系统，规则如下：
+欢迎进入自适应学习知识溯源模块。系统构建了一个包含 {n} 个知识点的学科层级树，规则如下：
 
-系统记录了包含 {n} 名参与评价的学生集合。每名学生都可能拥有以下三种特长或荣誉的任意组合：获得学术竞赛奖项（属性 A）、参与省级志愿服务（属性 B）、拥有艺术体育特长（属性 C）。每名学生可能拥有零个、一个、两个或全部三个荣誉。这些评价数据在当前统计周期内是固定的，不会改变。
+知识点的前置依赖结构如下：
 
-你可以反复向我提出计数查询，每次查询指定一种或多种荣誉的组合，我会告诉你“同时满足所有这些指定条件”的学生数量。
+{tree_structure}
 
-允许的查询类型包括：
-- 查询单项荣誉：询问获得学术竞赛奖项的学生数量（记作 |A|）
-- 查询单项荣誉：询问参与省级志愿服务的学生数量（记作 |B|）
-- 查询单项荣誉：询问拥有艺术体育特长的学生数量（记作 |C|）
-- 查询两项荣誉：询问同时获得学术竞赛奖项和参与省级志愿服务的学生数量（记作 |A∧B|）
-- 查询两项荣誉：询问同时获得学术竞赛奖项和拥有艺术体育特长的学生数量（记作 |A∧C|）
-- 查询两项荣誉：询问同时参与省级志愿服务和拥有艺术体育特长的学生数量（记作 |B∧C|）
-- 查询三项荣誉：询问同时满足上述三项特长及荣誉的学生数量（记作 |A∧B∧C|）
+在这个图谱中，我已为学生定位了一个需要强化的"目标知识点 T"。前置基础关系定义为：任一知识点被视为其自身的前置基础；学科根基节点是所有知识点的前置基础。
 
-注意：查询返回的是“至少拥有所查询的全部荣誉”的学生数量，不限制学生是否还拥有其他荣誉。
+你的目标是通过尽可能少的测试询问次数找到这个目标知识点。你可以进行以下两类操作：
 
-你的目标是：推断出“恰好满足一项特长/荣誉”的学生总数。这部分数据将用于发放“专项发展鼓励金”。
+1. 祖先查询：询问某个知识点 X 是否为目标知识点 T 的前置基础节点（包含自身）。系统会回答"是"或"否"。
+2. 提交答案：当你确定目标知识点后，提交你的诊断答案。
 
-请通过尽可能少的查询次数来推断出答案。
+注意：
+- 你必须进行至少 2 次前置基础查询后才能提交答案。
+- 如果答案错误或格式不符，诊断评估失败。
+- 请尽可能少地使用查询次数。
 
-## 查询和提交答案的格式（必须严格遵守）
+祖先查询（例如询问知识点 5）：
+<query_ancestor>5</query_ancestor>
 
-每次查询请使用以下 XML 格式（只能查询一次），使用 A、B、C 代表对应荣誉项：
-
-- 查询单项荣誉 A (学术竞赛奖项)：
-<query>A</query>
-
-- 查询单项荣誉 B (省级志愿服务)：
-<query>B</query>
-
-- 查询单项荣誉 C (艺术体育特长)：
-<query>C</query>
-
-- 查询两项荣誉 A 和 B：
-<query>A,B</query>
-
-- 查询两项荣誉 A 和 C：
-<query>A,C</query>
-
-- 查询两项荣誉 B 和 C：
-<query>B,C</query>
-
-- 查询三项荣誉 A、B 和 C：
-<query>A,B,C</query>
-
-提交最终答案时，请给出“恰好满足一项特长/荣誉”的学生总数（一个非负整数），格式如下：
-
-<answer>5</answer>
+提交最终答案（例如目标知识点为 3）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Student Comprehensive Quality Evaluation" system. Here are the rules:
+Welcome to the Adaptive Learning Knowledge Tracing Module. The system has constructed a subject hierarchy tree with {n} knowledge nodes. The rules are as follows:
 
-The system records a set of {n} students participating in the evaluation. Each student may possess any combination of three achievements/specialties: Academic Competition Awards (Attribute A), Provincial Volunteer Service (Attribute B), and Art/Sports Specialty (Attribute C). Each student can have zero, one, two, or all three of these achievements. The evaluation data is fixed during the current statistical period and will not change.
+The prerequisite dependency structure is:
 
-You can repeatedly ask me counting queries. Each query specifies one or more achievements, and I will tell you the count of students that "meet all the specified conditions simultaneously".
+{tree_structure}
 
-Allowed query types include:
-- Query single achievement: ask for the count of students with Academic Competition Awards (denoted as |A|)
-- Query single achievement: ask for the count of students with Provincial Volunteer Service (denoted as |B|)
-- Query single achievement: ask for the count of students with Art/Sports Specialty (denoted as |C|)
-- Query two achievements: ask for the count of students with both A and B (denoted as |A∧B|)
-- Query two achievements: ask for the count of students with both A and C (denoted as |A∧C|)
-- Query two achievements: ask for the count of students with both B and C (denoted as |B∧C|)
-- Query three achievements: ask for the count of students with A, B, and C all together (denoted as |A∧B∧C|)
+In this graph, I have pinpointed a "target concept T" that the student needs to reinforce. The prerequisite relation is defined as: any knowledge node is considered a prerequisite of itself; the foundational root node is the prerequisite for all nodes.
 
-Note: The query returns the count of students that have "at least all the queried achievements", without restricting whether they possess other honors.
+Your goal is to locate this target concept using as few diagnostic queries as possible. You can perform the following two types of operations:
 
-Your goal is: to infer the total number of students who possess "exactly one specialty/achievement". This demographic data will be used to issue the "Specialized Development Grant".
+1. Ancestor Query: Ask whether a knowledge node X is a prerequisite node for the target concept T (including itself). The system will answer "Yes" or "No".
+2. Submit Answer: When you have determined the target concept, submit your diagnostic answer.
 
-Please infer the answer using as few queries as possible.
+Note:
+- You must perform at least 2 prerequisite queries before submitting an answer.
+- If the answer is incorrect or the format is invalid, the diagnostic assessment fails.
+- Try to use as few queries as possible.
 
-## Query and Answer Format (must be strictly followed)
+Ancestor Query (e.g., asking about concept 5):
+<query_ancestor>5</query_ancestor>
 
-Each query should use the following XML format (only one query per turn), using A, B, C for respective achievements:
-
-- Query single achievement A (Academic Competition Awards):
-<query>A</query>
-
-- Query single achievement B (Provincial Volunteer Service):
-<query>B</query>
-
-- Query single achievement C (Art/Sports Specialty):
-<query>C</query>
-
-- Query two achievements A and B:
-<query>A,B</query>
-
-- Query two achievements A and C:
-<query>A,C</query>
-
-- Query two achievements B and C:
-<query>B,C</query>
-
-- Query three achievements A, B, and C:
-<query>A,B,C</query>
-
-When submitting the final answer, provide the total number of students with "exactly one specialty/achievement" (a non-negative integer), in this format:
-
-<answer>5</answer>
+Submit final answer (e.g., target concept is 3):
+<answer>3</answer>
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-欢迎进入“工业部件缺陷质检”系统，规则如下：
+欢迎启动工业装配线故障排查系统。设备由 {n} 个部件节点组成，呈树状装配结构，规则如下：
 
-系统抽样了一个包含 {n} 个下线工业部件的集合。每个部件都可能存在以下三种制造缺陷的任意组合：表面划痕缺陷（属性 A）、尺寸超差（属性 B）、材料硬度不达标（属性 C）。每个部件可能存在零个、一个、两个或全部三个缺陷。这些缺陷状态在抽检确认后是固定的，不会改变。
+设备的BOM（物料清单）装配层级如下：
 
-你可以反复向我提出计数查询，每次查询指定一种或多种缺陷的组合，我会告诉你“同时存在所有这些指定缺陷”的部件数量。
+{tree_structure}
 
-允许的查询类型包括：
-- 查询单项缺陷：询问存在表面划痕缺陷的部件数量（记作 |A|）
-- 查询单项缺陷：询问存在尺寸超差的部件数量（记作 |B|）
-- 查询单项缺陷：询问存在材料硬度不达标的部件数量（记作 |C|）
-- 查询两项缺陷：询问同时存在表面划痕和尺寸超差的部件数量（记作 |A∧B|）
-- 查询两项缺陷：询问同时存在表面划痕和材料硬度不达标的部件数量（记作 |A∧C|）
-- 查询两项缺陷：询问同时存在尺寸超差和材料硬度不达标的部件数量（记作 |B∧C|）
-- 查询三项缺陷：询问同时存在上述三种缺陷的部件数量（记作 |A∧B∧C|）
+系统检测到异常，我已锁定了一个"目标故障部件 T"。装配包含关系定义为：任一部件被视为其自身的上级总成；主干设备（根节点）是所有部件的上级总成。
 
-注意：查询返回的是“至少存在所查询的全部缺陷”的部件数量，不限制部件是否还存在其他缺陷。
+你的目标是通过尽可能少的探伤询问次数找到这个故障部件。你可以进行以下两类操作：
 
-你的目标是：推断出“恰好只有一种缺陷”的部件总数。这有助于评估有多少部件可以通过相对低成本的单一返工工序进行修复。
+1. 祖先查询：询问某个部件 X 是否为目标故障部件 T 的所在上级总成模块（包含自身）。诊断器会回答"是"或"否"。
+2. 提交答案：当你确定目标故障部件后，提交你的维修答案。
 
-请通过尽可能少的查询次数来推断出答案。
+注意：
+- 你必须进行至少 2 次总成查询后才能生成维修单。
+- 如果答案错误或格式不符，故障排查失败。
+- 请尽可能少地使用查询次数。
 
-## 查询和提交答案的格式（必须严格遵守）
+祖先查询（例如询问部件 5）：
+<query_ancestor>5</query_ancestor>
 
-每次查询请使用以下 XML 格式（只能查询一次），使用 A、B、C 代表对应缺陷项：
-
-- 查询单项缺陷 A (表面划痕缺陷)：
-<query>A</query>
-
-- 查询单项缺陷 B (尺寸超差)：
-<query>B</query>
-
-- 查询单项缺陷 C (材料硬度不达标)：
-<query>C</query>
-
-- 查询两项缺陷 A 和 B：
-<query>A,B</query>
-
-- 查询两项缺陷 A 和 C：
-<query>A,C</query>
-
-- 查询两项缺陷 B 和 C：
-<query>B,C</query>
-
-- 查询三项缺陷 A、B 和 C：
-<query>A,B,C</query>
-
-提交最终答案时，请给出“恰好只有一种缺陷”的部件总数（一个非负整数），格式如下：
-
-<answer>5</answer>
+提交最终答案（例如故障部件为 3）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Welcome to the "Industrial Part Defect Inspection" system. Here are the rules:
+[Manufacturing Scenario]
+Welcome to the Industrial Assembly Line Fault Troubleshooting System. The equipment consists of {n} component nodes arranged in a tree-like assembly structure. The rules are as follows:
 
-The system involves a sample set of {n} industrial parts. Each part may have any combination of three manufacturing defects: Surface Scratch Defect (Attribute A), Dimensional Deviation (Attribute B), and Substandard Material Hardness (Attribute C). Each part can have zero, one, two, or all three of these defects. These defect statuses are fixed once sampled and will not change.
+The BOM (Bill of Materials) assembly hierarchy of the equipment is:
 
-You can repeatedly ask me counting queries. Each query specifies one or more defects, and I will tell you the count of parts that "have all the specified defects simultaneously".
+{tree_structure}
 
-Allowed query types include:
-- Query single defect: ask for the count of parts with Surface Scratch Defect (denoted as |A|)
-- Query single defect: ask for the count of parts with Dimensional Deviation (denoted as |B|)
-- Query single defect: ask for the count of parts with Substandard Material Hardness (denoted as |C|)
-- Query two defects: ask for the count of parts with both A and B (denoted as |A∧B|)
-- Query two defects: ask for the count of parts with both A and C (denoted as |A∧C|)
-- Query two defects: ask for the count of parts with both B and C (denoted as |B∧C|)
-- Query three defects: ask for the count of parts with A, B, and C all together (denoted as |A∧B∧C|)
+The system has detected an anomaly, and I have isolated a "target faulty component T". The assembly inclusion relation is defined as: any component is considered its own parent assembly; the main equipment (root node) is the parent assembly for all components.
 
-Note: The query returns the count of parts that have "at least all the queried defects", without restricting whether they have other defects.
+Your goal is to find this faulty component using as few diagnostic queries as possible. You can perform the following two types of operations:
 
-Your goal is: to infer the total number of parts that have "exactly one defect". This helps evaluate how many parts can be salvaged through a relatively low-cost, single rework process.
+1. Ancestor Query: Ask whether a component X is a parent assembly module of the target faulty component T (including itself). The diagnostics will answer "Yes" or "No".
+2. Submit Answer: When you have identified the target faulty component, submit your maintenance answer.
 
-Please infer the answer using as few queries as possible.
+Note:
+- You must perform at least 2 assembly queries before submitting an answer.
+- If the answer is incorrect or the format is invalid, the troubleshooting fails.
+- Try to use as few queries as possible.
 
-## Query and Answer Format (must be strictly followed)
+Ancestor Query (e.g., asking about component 5):
+<query_ancestor>5</query_ancestor>
 
-Each query should use the following XML format (only one query per turn), using A, B, C for respective defects:
-
-- Query single defect A (Surface Scratch Defect):
-<query>A</query>
-
-- Query single defect B (Dimensional Deviation):
-<query>B</query>
-
-- Query single defect C (Substandard Material Hardness):
-<query>C</query>
-
-- Query two defects A and B:
-<query>A,B</query>
-
-- Query two defects A and C:
-<query>A,C</query>
-
-- Query two defects B and C:
-<query>B,C</query>
-
-- Query three defects A, B, and C:
-<query>A,B,C</query>
-
-When submitting the final answer, provide the total number of parts with "exactly one defect" (a non-negative integer), in this format:
-
-<answer>5</answer>
+Submit final answer (e.g., faulty component is 3):
+<answer>3</answer>
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-欢迎进入“企业合规审计”系统，规则如下：
+欢迎使用法律条文精准检索系统。我们整理了一部包含 {n} 个层级节点的法典目录树，规则如下：
 
-系统提取了包含 {n} 个企业合规审计案件的集合。每个案件都可能存在以下三种违规情况的任意组合：税务申报异常（属性 A）、劳动合同违规（属性 B）、环保资质缺失（属性 C）。每个案件可能存在零个、一个、两个或全部三个违规情况。这些案件的违规事实在归档后是固定的，不会改变。
+法典的编、章、节、条的层级结构如下：
 
-你可以反复向我提出计数查询，每次查询指定一种或多种违规情况的组合，我会告诉你“同时存在所有这些指定违规”的案件数量。
+{tree_structure}
 
-允许的查询类型包括：
-- 查询单项违规：询问存在税务申报异常的案件数量（记作 |A|）
-- 查询单项违规：询问存在劳动合同违规的案件数量（记作 |B|）
-- 查询单项违规：询问存在环保资质缺失的案件数量（记作 |C|）
-- 查询两项违规：询问同时存在税务申报异常和劳动合同违规的案件数量（记作 |A∧B|）
-- 查询两项违规：询问同时存在税务申报异常和环保资质缺失的案件数量（记作 |A∧C|）
-- 查询两项违规：询问同时存在劳动合同违规和环保资质缺失的案件数量（记作 |B∧C|）
-- 查询三项违规：询问同时存在上述三项违规情况的案件数量（记作 |A∧B∧C|）
+针对当前案件，我已秘密确定了一个最佳的"目标适用条款 T"。目录包含关系定义为：任一目录节点被视为其自身的上级；整部法典（根节点）是所有条款的上级。
 
-注意：查询返回的是“至少存在所查询的全部违规”的案件数量，不限制案件是否还涉及其他违规点。
+你的目标是通过尽可能少的检索询问次数找到这个目标适用条款。你可以进行以下两类操作：
 
-你的目标是：推断出“恰好仅存在一项违规情况”的案件总数。以便将这类案情相对单一的案卷分配给单法务领域的初级律师跟进处理。
+1. 祖先查询：询问某个目录节点 X 是否包含该目标适用条款 T（即 X 为 T 的上级层级或其自身）。系统会回答"是"或"否"。
+2. 提交答案：当你确定目标适用条款后，提交你的结论。
 
-请通过尽可能少的查询次数来推断出答案。
+注意：
+- 你必须进行至少 2 次层级查询后才能提交最终结论。
+- 如果答案错误或格式不符，案件检索失败。
+- 请尽可能少地使用查询次数。
 
-## 查询和提交答案的格式（必须严格遵守）
+祖先查询（例如询问目录 5）：
+<query_ancestor>5</query_ancestor>
 
-每次查询请使用以下 XML 格式（只能查询一次），使用 A、B、C 代表对应违规项：
-
-- 查询单项违规 A (税务申报异常)：
-<query>A</query>
-
-- 查询单项违规 B (劳动合同违规)：
-<query>B</query>
-
-- 查询单项违规 C (环保资质缺失)：
-<query>C</query>
-
-- 查询两项违规 A 和 B：
-<query>A,B</query>
-
-- 查询两项违规 A 和 C：
-<query>A,C</query>
-
-- 查询两项违规 B 和 C：
-<query>B,C</query>
-
-- 查询三项违规 A、B 和 C：
-<query>A,B,C</query>
-
-提交最终答案时，请给出“恰好仅存在一项违规情况”的案件总数（一个非负整数），格式如下：
-
-<answer>5</answer>
+提交最终答案（例如适用条款为 3）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the "Corporate Compliance Audit" system. Here are the rules:
+[Law Scenario]
+Welcome to the Legal Provision Precision Retrieval System. We have compiled a legal code directory tree containing {n} hierarchical nodes. The rules are as follows:
 
-The system involves a set of {n} enterprise audit cases. Each case may have any combination of three violations: Tax Declaration Anomalies (Attribute A), Labor Contract Violations (Attribute B), and Missing Environmental Qualifications (Attribute C). Each case can have zero, one, two, or all three of these violations. The violation facts are fixed once archived and will not change.
+The hierarchical structure of the legal code's books, parts, chapters, and articles is:
 
-You can repeatedly ask me counting queries. Each query specifies one or more violations, and I will tell you the count of cases that "have all the specified violations simultaneously".
+{tree_structure}
 
-Allowed query types include:
-- Query single violation: ask for the count of cases with Tax Declaration Anomalies (denoted as |A|)
-- Query single violation: ask for the count of cases with Labor Contract Violations (denoted as |B|)
-- Query single violation: ask for the count of cases with Missing Environmental Qualifications (denoted as |C|)
-- Query two violations: ask for the count of cases with both A and B (denoted as |A∧B|)
-- Query two violations: ask for the count of cases with both A and C (denoted as |A∧C|)
-- Query two violations: ask for the count of cases with both B and C (denoted as |B∧C|)
-- Query three violations: ask for the count of cases with A, B, and C all together (denoted as |A∧B∧C|)
+For the current case, I have secretly determined the most appropriate "target applicable provision T". The directory inclusion relation is defined as: any directory node is considered its own superior level; the entire code (root node) is the superior level for all provisions.
 
-Note: The query returns the count of cases that have "at least all the queried violations", without restricting whether they involve other legal issues.
+Your goal is to pinpoint this target applicable provision using as few retrieval queries as possible. You can perform the following two types of operations:
 
-Your goal is: to infer the total number of cases that have "exactly one violation". This allows us to assign these relatively straightforward, single-domain cases to junior lawyers for follow-up.
+1. Ancestor Query: Ask whether a directory node X includes the target applicable provision T (i.e., X is a superior level of T or T itself). The system will answer "Yes" or "No".
+2. Submit Answer: When you have pinpointed the target applicable provision, submit your conclusion.
 
-Please infer the answer using as few queries as possible.
+Note:
+- You must perform at least 2 hierarchical queries before submitting an answer.
+- If the answer is incorrect or the format is invalid, the case retrieval fails.
+- Try to use as few queries as possible.
 
-## Query and Answer Format (must be strictly followed)
+Ancestor Query (e.g., asking about directory 5):
+<query_ancestor>5</query_ancestor>
 
-Each query should use the following XML format (only one query per turn), using A, B, C for respective violations:
-
-- Query single violation A (Tax Declaration Anomalies):
-<query>A</query>
-
-- Query single violation B (Labor Contract Violations):
-<query>B</query>
-
-- Query single violation C (Missing Environmental Qualifications):
-<query>C</query>
-
-- Query two violations A and B:
-<query>A,B</query>
-
-- Query two violations A and C:
-<query>A,C</query>
-
-- Query two violations B and C:
-<query>B,C</query>
-
-- Query three violations A, B, and C:
-<query>A,B,C</query>
-
-When submitting the final answer, provide the total number of cases with "exactly one violation" (a non-negative integer), in this format:
-
-<answer>5</answer>
+Submit final answer (e.g., applicable provision is 3):
+<answer>3</answer>
 """
 
-    tags = ["answer", "query"]
-
-    # 难度说明：
-    # 1 (简单)       - N=10, 答案较小，分布简单
-    # 2 (中等偏下)   - N=15, 答案中等
-    # 3 (中等偏上)   - N=20, 分布较复杂
-    # 4 (较难)       - N=25, 分布复杂
-    # 5 (难)         - N=30, 分布最复杂
+    tags = ["answer", "query_ancestor"]
 
     DIFFICULTY_CONFIG = {
-        1: {
-            "n": 10,
-            # 元素属性：用二进制表示 (A, B, C)
-            # 000=无属性, 001=C, 010=B, 011=B∧C, 100=A, 101=A∧C, 110=A∧B, 111=A∧B∧C
-            "attributes": [
-                (1, 0, 0), (1, 0, 0),      # 2个只有A
-                (0, 1, 0), (0, 1, 0),      # 2个只有B
-                (0, 0, 1),                  # 1个只有C
-                (1, 1, 0),                  # 1个A∧B
-                (1, 0, 1),                  # 1个A∧C
-                (0, 1, 1),                  # 1个B∧C
-                (1, 1, 1),                  # 1个A∧B∧C
-                (0, 0, 0),                  # 1个无属性
-            ],
+        "zh": {
+            1: {
+                "n": 7,
+                "tree": {
+                    "1": [],
+                    "2": ["1"],
+                    "3": ["1"],
+                    "4": ["2"],
+                    "5": ["2"],
+                    "6": ["3"],
+                    "7": ["3"],
+                },
+                "target": "5",
+            },
+            2: {
+                "n": 15,
+                "tree": {
+                    "1": [],
+                    "2": ["1"], "3": ["1"],
+                    "4": ["2"], "5": ["2"], "6": ["3"], "7": ["3"],
+                    "8": ["4"], "9": ["4"], "10": ["5"], "11": ["5"],
+                    "12": ["6"], "13": ["6"], "14": ["7"], "15": ["7"],
+                },
+                "target": "11",
+            },
+            3: {
+                "n": 31,
+                "tree": {
+                    "1": [],
+                    "2": ["1"], "3": ["1"],
+                    "4": ["2"], "5": ["2"], "6": ["3"], "7": ["3"],
+                    "8": ["4"], "9": ["4"], "10": ["5"], "11": ["5"],
+                    "12": ["6"], "13": ["6"], "14": ["7"], "15": ["7"],
+                    "16": ["8"], "17": ["8"], "18": ["9"], "19": ["9"],
+                    "20": ["10"], "21": ["10"], "22": ["11"], "23": ["11"],
+                    "24": ["12"], "25": ["12"], "26": ["13"], "27": ["13"],
+                    "28": ["14"], "29": ["14"], "30": ["15"], "31": ["15"],
+                },
+                "target": "23",
+            },
+            4: {
+                "n": 50,
+                "tree": {
+                    "1": [],
+                    "2": ["1"], "3": ["1"], "4": ["1"],
+                    "5": ["2"], "6": ["2"], "7": ["3"],
+                    "8": ["4"], "9": ["4"], "10": ["4"], "11": ["5"],
+                    "12": ["5"], "13": ["6"], "14": ["7"], "15": ["7"],
+                    "16": ["8"], "17": ["9"], "18": ["9"], "19": ["10"],
+                    "20": ["11"], "21": ["11"], "22": ["12"], "23": ["13"],
+                    "24": ["13"], "25": ["14"], "26": ["15"], "27": ["15"],
+                    "28": ["16"], "29": ["17"], "30": ["18"], "31": ["18"],
+                    "32": ["19"], "33": ["19"], "34": ["20"], "35": ["21"],
+                    "36": ["22"], "37": ["23"], "38": ["24"], "39": ["25"],
+                    "40": ["26"], "41": ["27"], "42": ["28"], "43": ["29"],
+                    "44": ["30"], "45": ["31"], "46": ["32"], "47": ["33"],
+                    "48": ["34"], "49": ["35"], "50": ["36"],
+                },
+                "target": "47",
+            },
+            5: {
+                "n": 100,
+                "tree": {
+                    "1": [],
+                    "2": ["1"], "3": ["1"], "4": ["1"], "5": ["1"],
+                    "6": ["2"], "7": ["2"], "8": ["3"], "9": ["3"],
+                    "10": ["4"], "11": ["4"], "12": ["5"], "13": ["5"],
+                    "14": ["6"], "15": ["6"], "16": ["7"], "17": ["8"],
+                    "18": ["8"], "19": ["9"], "20": ["10"], "21": ["10"],
+                    "22": ["11"], "23": ["12"], "24": ["12"], "25": ["13"],
+                    "26": ["14"], "27": ["14"], "28": ["15"], "29": ["16"],
+                    "30": ["17"], "31": ["17"], "32": ["18"], "33": ["19"],
+                    "34": ["19"], "35": ["20"], "36": ["21"], "37": ["21"],
+                    "38": ["22"], "39": ["23"], "40": ["24"], "41": ["25"],
+                    "42": ["25"], "43": ["26"], "44": ["27"], "45": ["28"],
+                    "46": ["29"], "47": ["30"], "48": ["31"], "49": ["32"],
+                    "50": ["33"], "51": ["34"], "52": ["35"], "53": ["36"],
+                    "54": ["37"], "55": ["38"], "56": ["39"], "57": ["40"],
+                    "58": ["41"], "59": ["42"], "60": ["43"], "61": ["44"],
+                    "62": ["45"], "63": ["46"], "64": ["47"], "65": ["48"],
+                    "66": ["49"], "67": ["50"], "68": ["51"], "69": ["52"],
+                    "70": ["53"], "71": ["54"], "72": ["55"], "73": ["56"],
+                    "74": ["57"], "75": ["58"], "76": ["59"], "77": ["60"],
+                    "78": ["61"], "79": ["62"], "80": ["63"], "81": ["64"],
+                    "82": ["65"], "83": ["66"], "84": ["67"], "85": ["68"],
+                    "86": ["69"], "87": ["70"], "88": ["71"], "89": ["72"],
+                    "90": ["73"], "91": ["74"], "92": ["75"], "93": ["76"],
+                    "94": ["77"], "95": ["78"], "96": ["79"], "97": ["80"],
+                    "98": ["81"], "99": ["82"], "100": ["83"],
+                },
+                "target": "87",
+            },
         },
-        2: {
-            "n": 15,
-            "attributes": [
-                (1, 0, 0), (1, 0, 0), (1, 0, 0),  # 3个只有A
-                (0, 1, 0), (0, 1, 0),              # 2个只有B
-                (0, 0, 1), (0, 0, 1),              # 2个只有C
-                (1, 1, 0), (1, 1, 0),              # 2个A∧B
-                (1, 0, 1), (1, 0, 1),              # 2个A∧C
-                (0, 1, 1),                         # 1个B∧C
-                (1, 1, 1),                         # 1个A∧B∧C
-                (0, 0, 0), (0, 0, 0),              # 2个无属性
-            ],
-        },
-        3: {
-            "n": 20,
-            "attributes": [
-                (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0),  # 4个只有A
-                (0, 1, 0), (0, 1, 0), (0, 1, 0),             # 3个只有B
-                (0, 0, 1), (0, 0, 1),                        # 2个只有C
-                (1, 1, 0), (1, 1, 0), (1, 1, 0),             # 3个A∧B
-                (1, 0, 1), (1, 0, 1),                        # 2个A∧C
-                (0, 1, 1), (0, 1, 1),                        # 2个B∧C
-                (1, 1, 1), (1, 1, 1),                        # 2个A∧B∧C
-                (0, 0, 0), (0, 0, 0),                        # 2个无属性
-            ],
-        },
-        4: {
-            "n": 25,
-            "attributes": [
-                (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0),  # 5个只有A
-                (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),             # 4个只有B
-                (0, 0, 1), (0, 0, 1), (0, 0, 1),                        # 3个只有C
-                (1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 1, 0),             # 4个A∧B
-                (1, 0, 1), (1, 0, 1), (1, 0, 1),                        # 3个A∧C
-                (0, 1, 1), (0, 1, 1),                                   # 2个B∧C
-                (1, 1, 1), (1, 1, 1),                                   # 2个A∧B∧C
-                (0, 0, 0), (0, 0, 0),                                   # 2个无属性
-            ],
-        },
-        5: {
-            "n": 30,
-            "attributes": [
-                (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0),  # 6个只有A
-                (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),             # 5个只有B
-                (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1),                        # 4个只有C
-                (1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 1, 0),             # 5个A∧B
-                (1, 0, 1), (1, 0, 1), (1, 0, 1),                                   # 3个A∧C
-                (0, 1, 1), (0, 1, 1), (0, 1, 1),                                   # 3个B∧C
-                (1, 1, 1), (1, 1, 1), (1, 1, 1),                                   # 3个A∧B∧C
-                (0, 0, 0),                                                         # 1个无属性
-            ],
+        "en": {
+            1: {
+                "n": 7,
+                "tree": {
+                    "1": [],
+                    "2": ["1"],
+                    "3": ["1"],
+                    "4": ["2"],
+                    "5": ["2"],
+                    "6": ["3"],
+                    "7": ["3"],
+                },
+                "target": "5",
+            },
+            2: {
+                "n": 15,
+                "tree": {
+                    "1": [],
+                    "2": ["1"], "3": ["1"],
+                    "4": ["2"], "5": ["2"], "6": ["3"], "7": ["3"],
+                    "8": ["4"], "9": ["4"], "10": ["5"], "11": ["5"],
+                    "12": ["6"], "13": ["6"], "14": ["7"], "15": ["7"],
+                },
+                "target": "11",
+            },
+            3: {
+                "n": 31,
+                "tree": {
+                    "1": [],
+                    "2": ["1"], "3": ["1"],
+                    "4": ["2"], "5": ["2"], "6": ["3"], "7": ["3"],
+                    "8": ["4"], "9": ["4"], "10": ["5"], "11": ["5"],
+                    "12": ["6"], "13": ["6"], "14": ["7"], "15": ["7"],
+                    "16": ["8"], "17": ["8"], "18": ["9"], "19": ["9"],
+                    "20": ["10"], "21": ["10"], "22": ["11"], "23": ["11"],
+                    "24": ["12"], "25": ["12"], "26": ["13"], "27": ["13"],
+                    "28": ["14"], "29": ["14"], "30": ["15"], "31": ["15"],
+                },
+                "target": "23",
+            },
+            4: {
+                "n": 50,
+                "tree": {
+                    "1": [],
+                    "2": ["1"], "3": ["1"], "4": ["1"],
+                    "5": ["2"], "6": ["2"], "7": ["3"],
+                    "8": ["4"], "9": ["4"], "10": ["4"], "11": ["5"],
+                    "12": ["5"], "13": ["6"], "14": ["7"], "15": ["7"],
+                    "16": ["8"], "17": ["9"], "18": ["9"], "19": ["10"],
+                    "20": ["11"], "21": ["11"], "22": ["12"], "23": ["13"],
+                    "24": ["13"], "25": ["14"], "26": ["15"], "27": ["15"],
+                    "28": ["16"], "29": ["17"], "30": ["18"], "31": ["18"],
+                    "32": ["19"], "33": ["19"], "34": ["20"], "35": ["21"],
+                    "36": ["22"], "37": ["23"], "38": ["24"], "39": ["25"],
+                    "40": ["26"], "41": ["27"], "42": ["28"], "43": ["29"],
+                    "44": ["30"], "45": ["31"], "46": ["32"], "47": ["33"],
+                    "48": ["34"], "49": ["35"], "50": ["36"],
+                },
+                "target": "47",
+            },
+            5: {
+                "n": 100,
+                "tree": {
+                    "1": [],
+                    "2": ["1"], "3": ["1"], "4": ["1"], "5": ["1"],
+                    "6": ["2"], "7": ["2"], "8": ["3"], "9": ["3"],
+                    "10": ["4"], "11": ["4"], "12": ["5"], "13": ["5"],
+                    "14": ["6"], "15": ["6"], "16": ["7"], "17": ["8"],
+                    "18": ["8"], "19": ["9"], "20": ["10"], "21": ["10"],
+                    "22": ["11"], "23": ["12"], "24": ["12"], "25": ["13"],
+                    "26": ["14"], "27": ["14"], "28": ["15"], "29": ["16"],
+                    "30": ["17"], "31": ["17"], "32": ["18"], "33": ["19"],
+                    "34": ["19"], "35": ["20"], "36": ["21"], "37": ["21"],
+                    "38": ["22"], "39": ["23"], "40": ["24"], "41": ["25"],
+                    "42": ["25"], "43": ["26"], "44": ["27"], "45": ["28"],
+                    "46": ["29"], "47": ["30"], "48": ["31"], "49": ["32"],
+                    "50": ["33"], "51": ["34"], "52": ["35"], "53": ["36"],
+                    "54": ["37"], "55": ["38"], "56": ["39"], "57": ["40"],
+                    "58": ["41"], "59": ["42"], "60": ["43"], "61": ["44"],
+                    "62": ["45"], "63": ["46"], "64": ["47"], "65": ["48"],
+                    "66": ["49"], "67": ["50"], "68": ["51"], "69": ["52"],
+                    "70": ["53"], "71": ["54"], "72": ["55"], "73": ["56"],
+                    "74": ["57"], "75": ["58"], "76": ["59"], "77": ["60"],
+                    "78": ["61"], "79": ["62"], "80": ["63"], "81": ["64"],
+                    "82": ["65"], "83": ["66"], "84": ["67"], "85": ["68"],
+                    "86": ["69"], "87": ["70"], "88": ["71"], "89": ["72"],
+                    "90": ["73"], "91": ["74"], "92": ["75"], "93": ["76"],
+                    "94": ["77"], "95": ["78"], "96": ["79"], "97": ["80"],
+                    "98": ["81"], "99": ["82"], "100": ["83"],
+                },
+                "target": "87",
+            },
         },
     }
 
     def __init__(self, config):
+        self.query_count = 0
+        self.max_queries = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        diff = int(self.config.difficulty)
+        lang = self.config.language
+        diff = self.config.difficulty
 
-        if diff not in self.DIFFICULTY_CONFIG:
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[diff]
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
         
-        # 存储每个元素的属性 (A, B, C)，元组形式
-        self.attributes = cfg["attributes"]
+        self.tree = cfg["tree"]
+        self.target = cfg["target"]
         
-        # 计算正确答案：恰好有一个属性为真的元素数量
-        self.correct_answer = sum(
-            1 for (a, b, c) in self.attributes
-            if (a + b + c) == 1  # 恰好一个属性为真
-        )
+        self.max_queries = math.ceil(math.log2(cfg["n"])) + 2
+        
+        self._build_subtree_map()
+        
+        self._game_info["tree_structure"] = self._generate_tree_description()
 
-    def get_all_possible_queries(self) -> list[dict]:
-        # 定义所有合法的查询组合
-        # 单属性
-        queries = ["A", "B", "C"]
-        # 双属性
-        queries.extend(["A,B", "A,C", "B,C"])
-        # 三属性
-        queries.append("A,B,C")
+    def _build_subtree_map(self):
+        self.children = {node: [] for node in self.tree.keys()}
+        self.parent = {}
         
-        results = []
-        for q in queries:
-            # 构造 parsed_info
-            parsed_info = {"query": q}
-            # 复用核心计算逻辑计算正确答案
-            ans = self._cf_core_produce(parsed_info)
-            results.append({
-                "query": f"<query>{q}</query>",
-                "answer": ans
-            })
+        for node, parents in self.tree.items():
+            if parents:
+                parent = parents[0]
+                self.children[parent].append(node)
+                self.parent[node] = parent
         
-        return results
+        self.subtree = {}
+        
+        def dfs(node):
+            subtree_nodes = {node}
+            for child in self.children[node]:
+                subtree_nodes.update(dfs(child))
+            self.subtree[node] = subtree_nodes
+            return subtree_nodes
+        
+        root = None
+        for node in self.tree.keys():
+            if not self.tree[node]:
+                root = node
+                break
+        
+        if root:
+            dfs(root)
+
+    def _generate_tree_description(self):
+        lines = []
+        
+        if self.config.language == "zh":
+            for node, parents in sorted(self.tree.items(), key=lambda x: int(x[0])):
+                if not parents:
+                    lines.append(f"节点 {node}：根节点")
+                else:
+                    parent = parents[0]
+                    lines.append(f"节点 {node}：父节点为 {parent}")
+        else:
+            for node, parents in sorted(self.tree.items(), key=lambda x: int(x[0])):
+                if not parents:
+                    lines.append(f"Node {node}: root node")
+                else:
+                    parent = parents[0]
+                    lines.append(f"Node {node}: parent is {parent}")
+        
+        return "\n".join(lines)
+
+    def step(self, response: str):
+        try:
+            parsed_info = self.parse(response)
+            if "answer" in parsed_info:
+                if self.query_count < 2:
+                    if self.config.language == "zh":
+                        res = "错误：你必须进行至少 2 次祖先查询后才能提交答案。请继续查询。"
+                    else:
+                        res = "Error: You must perform at least 2 ancestor queries before submitting an answer. Please continue querying."
+                    self.state.add_message("user", res)
+                    return self.state
+                
+                is_success = self.evaluate(parsed_info)
+                if is_success:
+                    res = "答案正确" if self.config.language == "zh" else "Correct answer."
+                    self.state.set_state("success", "success")
+                    self.state.add_message("user", res)
+                else:
+                    res = "答案错误" if self.config.language == "zh" else "Incorrect answer."
+                    self.state.set_state("failed", "incorrect answer")
+                    self.state.add_message("user", res)
+            else:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+        except Exception as e:
+            self.state.set_state("failed", str(e))
+        
+        return self.state
 
     def evaluate(self, parsed_info):
-        # 解析答案：应该是一个非负整数
-        try:
-            answer = int(parsed_info["answer"].strip())
-            return answer == self.correct_answer
-        except:
-            return False
-
-    def _cf_make_wrong(self, correct):
-        """将正确的计数结果篡改为错误值"""
-        try:
-            correct_val = int(correct)
-            # 随机偏移 1~3，确保不为负且与正确值不同
-            offset = random.choice([-3, -2, -1, 1, 2, 3])
-            wrong_val = correct_val + offset
-            if wrong_val < 0:
-                wrong_val = correct_val + abs(offset)
-            return str(wrong_val)
-        except (ValueError, TypeError):
-            return correct + " [error]"
+        answer = parsed_info["answer"].strip()
+        
+        return answer == self.target
 
     def _cf_core_produce(self, parsed_info):
-        # 解析查询内容
-        if "query" not in parsed_info:
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_out_of_range = "错误：节点编号不存在。"
+            error_exceed_limit = f"错误：已超过最大查询次数限制（{self.max_queries}次）。请直接提交你的答案。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_out_of_range = "Error: Node ID does not exist."
+            error_exceed_limit = f"Error: Exceeded maximum query limit ({self.max_queries} queries). Please submit your answer directly."
+
+        if "query_ancestor" in parsed_info:
+            if self.query_count >= self.max_queries:
+                return error_exceed_limit
+            
+            query_node = parsed_info["query_ancestor"].strip()
+            
+            if query_node not in self.tree:
+                return error_out_of_range
+            
+            self.query_count += 1
+            
+            if self.target in self.subtree.get(query_node, set()):
+                return yes_res
+            else:
+                return no_res
+        else:
             raise ValueError("No valid query tag found.")
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+            
+        for node in self.tree.keys():
+            if self.target in self.subtree.get(node, set()):
+                ans = yes_res
+            else:
+                ans = no_res
+            
+            results.append({
+                "query": f"<query_ancestor>{node}</query_ancestor>",
+                "answer": ans
+            })
+            
+        return results
+
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        query_str = parsed_info["query"].strip().upper()
+        if self.config.language == "zh":
+            if correct == "是":
+                return "否"
+            if correct == "否":
+                return "是"
+        else:
+            lower_correct = correct.lower()
+            if lower_correct == "yes":
+                return "No" if correct[0].isupper() else "no"
+            if lower_correct == "no":
+                return "Yes" if correct[0].isupper() else "yes"
         
-        # 解析查询的属性列表
-        if not query_str:
-            return "Error: Empty query." if self.config.language == "en" else "错误：查询为空。"
-        
-        # 分割并标准化属性名
-        attrs = [x.strip() for x in query_str.split(",")]
-        
-        # 验证属性名有效性
-        valid_attrs = {"A", "B", "C"}
-        for attr in attrs:
-            if attr not in valid_attrs:
-                return "Error: Invalid attribute name." if self.config.language == "en" else "错误：无效的属性名。"
-        
-        # 去重并排序（保证一致性）
-        attrs = sorted(set(attrs))
-        
-        # 检查查询是否为允许的类型
-        if len(attrs) == 0 or len(attrs) > 3:
-            return "Error: Invalid query format." if self.config.language == "en" else "错误：无效的查询格式。"
-        
-        # 统计满足条件的元素数量
-        count = 0
-        for (a, b, c) in self.attributes:
-            attr_dict = {"A": a, "B": b, "C": c}
-            # 检查是否所有查询的属性都为真
-            if all(attr_dict[attr] == 1 for attr in attrs):
-                count += 1
-        
-        return str(count)
+        return f"{correct}_WRONG"

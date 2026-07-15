@@ -1,911 +1,483 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   全局可达：某节点是否能到达图中所有其他节点
-# ============================================================
-
-from .base import Game
 import re
 import random
+from .base import Game
 
+class BinarySequenceParityGame(Game):
 
-class GraphReachabilityGame(Game):
-
-    reasoning_type = "溯因推理"
-    data_structure = "图"
+    reasoning_type = "演绎推理"
+    data_structure = "序列"
+    tags = ["query_range", "query_param", "answer"]
 
     game_rule_zh = """\
-我们来玩一个"图可达性推理"游戏，规则如下：
+我们来玩一个"二进制序列奇偶查询"的推理游戏，规则如下：
 
-游戏设定了一个带颜色属性的定点有向图 G，节点集合 V 包含 {node_list}。
+游戏设定了一个长度为 N={n} 的有序二元序列 S，每个位置的元素只能是 0 或 1。序列的具体内容是保密的，但你的目标是推断出序列中第 k={k} 个位置的值。
 
-图中包含以下有向边：
-- 红色边：{red_edges}
-- 蓝色边：{blue_edges}
+你可以反复向我提出以下类型的问题：
 
-我已经秘密选择了一种"行走模式"，模式类型有五种（A、B、C、D、E），每种模式决定了哪些边可以通行以及通行方向：
-- 模式A：所有边（无论红色或蓝色）仅可按箭头方向通行。
-- 模式B：所有边（无论红色或蓝色）仅可逆箭头方向通行。
-- 模式C：红色边可双向通行；蓝色边仅按箭头方向通行。
-- 模式D：蓝色边可双向通行；红色边仅按箭头方向通行。
-- 模式E：所有边可双向通行。
+1. **区间奇偶查询**：询问连续区间 [l, r]（其中 1 小于等于 l 小于 r 小于等于 N）内所有元素的和是奇数还是偶数。我会回答"奇"或"偶"。注意：不允许查询单点区间（即 l 必须严格小于 r）。
 
-在给定的行走模式下，如果存在由可通行边组成的路径，则称从节点 X 可达节点 Y。
+2. **参数查询**：询问当前的 N 和 k 值。我会告诉你这两个参数。
 
-你的目标是推断出隐藏的行走模式，并找出"全域可达起点"，即能够到达所有其他节点的节点集合。
+如果你的区间查询不合法（越界或 l 大于等于 r），我会返回"非法"。
 
-你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
-
-1. 可达性查询：询问"从节点 X 是否可达节点 Y？"我会回答"是"或"否"。
-2. 单边通行测试：指定一条图上存在的有色有向边（颜色、起点、终点）以及测试方向（顺行或逆行），询问该单步是否允许。我会回答"可走"、"不可走"或"无此边"。
-
-当你收集足够信息后，请提交最终答案，包括行走模式和全域可达起点集合。若答案错误或格式不符，游戏失败。
-
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够信息后，请提交最终答案，说明第 k 个位置的值是 0 还是 1。若答案错误或格式不符，游戏失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 可达性查询（例如询问从 A 是否可达 C）：
-<query_reach>A,C</query_reach>
+- 区间奇偶查询（例如查询区间 [2, 5]）：
+<query_range>2,5</query_range>
 
-- 单边通行测试（例如测试红色边 A->B 的顺行）：
-<query_edge>red,A,B,forward</query_edge>
+- 参数查询：
+<query_param></query_param>
 
-- 单边通行测试（例如测试蓝色边 B->D 的逆行）：
-<query_edge>blue,B,D,backward</query_edge>
+提交最终答案时，必须说明第 k 个位置的值（0 或 1），格式如下：
 
-提交最终答案时，必须说明行走模式（A、B、C、D 或 E）并列出全域可达起点（用逗号隔开，顺序不限；若没有任何节点满足条件则填"无"；若所有节点都满足则填"所有节点"），格式如下：
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+或
+
+<answer>1</answer>
 """
 
     game_rule_en = """\
-Let's play a "Graph Reachability Inference" game. Here are the rules:
+Let's play a "Binary Sequence Parity Query" deduction game. Here are the rules:
 
-The game features a directed graph G with colored edges. The node set V contains {node_list}.
+The game has set up an ordered binary sequence S of length N={n}, where each position contains either 0 or 1. The specific content of the sequence is secret, but your goal is to infer the value at position k={k} in the sequence.
 
-The graph has the following directed edges:
-- Red edges: {red_edges}
-- Blue edges: {blue_edges}
+You can repeatedly ask me the following types of questions:
 
-I have secretly selected a "walking mode" from five types (A, B, C, D, E). Each mode determines which edges are passable and in which direction:
-- Mode A: All edges (both red and blue) can only be traversed in the arrow direction.
-- Mode B: All edges (both red and blue) can only be traversed against the arrow direction.
-- Mode C: Red edges are bidirectional; blue edges can only be traversed in the arrow direction.
-- Mode D: Blue edges are bidirectional; red edges can only be traversed in the arrow direction.
-- Mode E: All edges are bidirectional.
+1. **Range Parity Query**: Ask whether the sum of all elements in a contiguous interval [l, r] (where 1 less than or equal to l less than r less than or equal to N) is odd or even. I will answer "Odd" or "Even". Note: Single-point intervals are not allowed (l must be strictly less than r).
 
-Under a given walking mode, node X can reach node Y if there exists a path consisting of passable edges.
+2. **Parameter Query**: Ask for the current values of N and k. I will tell you these two parameters.
 
-Your goal is to infer the hidden walking mode and identify the "universal source" nodes, which are nodes that can reach all other nodes.
+If your range query is invalid (out of bounds or l greater than or equal to r), I will return "Invalid".
 
-You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
-
-1. Reachability Query: Ask "Can node X reach node Y?" I will answer "Yes" or "No".
-2. Single Edge Test: Specify a colored directed edge (color, start, end) and a test direction (forward or backward), asking if that single step is allowed. I will answer "Allowed", "Not allowed", or "No such edge".
-
-When you have enough information, submit your final answer including the walking mode and the universal source set. If the answer is wrong or the format is invalid, the game fails.
-
-## Query and Answer Format (strictly required)
+When you have gathered enough information, submit your final answer stating whether the value at position k is 0 or 1. If the answer is wrong or the format is invalid, the game fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Reachability Query (e.g., asking if A can reach C):
-<query_reach>A,C</query_reach>
+- Range Parity Query (e.g., querying interval [2, 5]):
+<query_range>2,5</query_range>
 
-- Single Edge Test (e.g., testing red edge A->B in forward direction):
-<query_edge>red,A,B,forward</query_edge>
+- Parameter Query:
+<query_param></query_param>
 
-- Single Edge Test (e.g., testing blue edge B->D in backward direction):
-<query_edge>blue,B,D,backward</query_edge>
+When submitting the final answer, specify the value at position k (0 or 1), using this format:
 
-When submitting the final answer, specify the walking mode (A, B, C, D, or E) and list the universal source nodes (comma-separated, order does not matter; use "none" if no node qualifies; use "all" if all nodes qualify), using this format:
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+or
+
+<answer>1</answer>
 """
 
     contextualized_rule_zh_1 = """\
-这是一个【交通网络规划】模拟分析场景。
-我们来评估一个带颜色标识的有向交通路网 G，节点集合 V 代表城市，包含 {node_list}。
+智能交通控制中心正在排查主干道信号灯系统的隐蔽故障。
 
-路网中包含以下有向路线：
-- 红色干线：{red_edges}
-- 蓝色支线：{blue_edges}
+系统记录了一条包含 N={n} 个连续路口信号机的工作状态序列 S。每个路口的状态仅为 0（正常）或 1（故障）。为避免引发全线交通瘫痪，具体状态已被系统底层锁定保护。你的任务是通过逻辑排查，推断出关键的第 k={k} 号路口当前的状态。
 
-当前路网正在执行一种未知的"交通管制模式"，模式类型有五种（A、B、C、D、E），每种模式决定了哪些路线可以通行以及通行方向：
-- 模式A：所有路线（无论红蓝）仅可按设定箭头方向顺行。
-- 模式B：所有路线（无论红蓝）仅可逆设定箭头方向逆行。
-- 模式C：红色干线可双向通行；蓝色支线仅按箭头方向顺行。
-- 模式D：蓝色支线可双向通行；红色干线仅按箭头方向顺行。
-- 模式E：所有路线全面解除管制，可双向通行。
+你可以反复调用诊断控制台提出以下类型的查询请求：
 
-在给定的管制模式下，如果存在由可通行路线组成的路径，则称从城市 X 可达城市 Y。
+1. **路段奇偶测试**：查询连续路口区间 [l, r]（其中 1 小于等于 l 小于 r 小于等于 N）内，处于"故障"状态的信号机总数的奇偶性。控制台会返回"奇"或"偶"。注意：由于硬件限制，不允许对单一路口进行测试（即 l 必须严格小于 r）。
 
-你的目标是推断出隐藏的交通管制模式，并找出"全域辐射枢纽"，即能够到达所有其他城市的节点集合。
+2. **参数核实**：查询当前监控路口总数 N 和目标排查路口 k。控制台会反馈这两个参数。
 
-你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
+如果你的区间参数不合法（越界或 l 大于等于 r），控制台会拦截并返回"非法"。
 
-1. 路径可达性查询：询问"从城市 X 是否可达城市 Y？"我会回答"是"或"否"。
-2. 单线通行测试：指定一条路网上存在的有色有向路线（颜色、起点、终点）以及测试方向（顺行或逆行），询问该路段当前是否允许通行。我会回答"可走"、"不可走"或"无此边"。
-
-当你收集足够信息后，请提交最终答案，包括管制模式和全域辐射枢纽集合。若答案错误或格式不符，排查失败。
-
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够信息后，请提交最终排查结果，说明第 k 个路口的状态是 0 还是 1。若答案错误或格式不符，排查任务失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 路径可达性查询（例如询问从 A 是否可达 C）：
-<query_reach>A,C</query_reach>
+- 路段奇偶测试（例如查询区间 [2, 5]）：
+<query_range>2,5</query_range>
 
-- 单线通行测试（例如测试红色干线 A->B 的顺行）：
-<query_edge>red,A,B,forward</query_edge>
+- 参数核实：
+<query_param></query_param>
 
-- 单线通行测试（例如测试蓝色支线 B->D 的逆行）：
-<query_edge>blue,B,D,backward</query_edge>
+提交最终结果时，必须说明第 k 个路口的状态（0 或 1），格式如下：
 
-提交最终答案时，必须说明交通管制模式（A、B、C、D 或 E）并列出全域辐射枢纽（用逗号隔开，顺序不限；若没有任何节点满足条件则填"无"；若所有节点都满足则填"所有节点"），格式如下：
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+或
+
+<answer>1</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Welcome to the "Traffic Network Planning" simulation.
-We are evaluating a directed traffic network G with colored routes. The node set V represents cities and contains {node_list}.
+[Traffic Scenario]
+The Intelligent Traffic Control Center is troubleshooting hidden faults in the main arterial traffic light system.
 
-The network has the following directed routes:
-- Red arterial routes: {red_edges}
-- Blue branch routes: {blue_edges}
+The system has logged an operating status sequence S for a corridor of N={n} consecutive intersections. The status of each intersection is strictly either 0 (Normal) or 1 (Faulty). To prevent system-wide gridlock, the specific statuses are locked by the core security protocol. Your objective is to deduce the exact status of the critical intersection at position k={k}.
 
-The network is currently operating under a secret "traffic control mode" chosen from five types (A, B, C, D, E). Each mode determines which routes are passable and in which direction:
-- Mode A: All routes (both red and blue) can only be traversed in the arrow direction.
-- Mode B: All routes (both red and blue) can only be traversed against the arrow direction.
-- Mode C: Red routes are bidirectional; blue routes can only be traversed in the arrow direction.
-- Mode D: Blue routes are bidirectional; red routes can only be traversed in the arrow direction.
-- Mode E: All routes are bidirectional.
+You can repeatedly use the diagnostic console to make the following types of queries:
 
-Under a given control mode, city X can reach city Y if there exists a path consisting of passable routes.
+1. **Corridor Parity Test**: Query whether the total number of faulty signals in a contiguous corridor interval [l, r] (where 1 less than or equal to l less than r less than or equal to N) is odd or even. The console will return "Odd" or "Even". Note: Due to hardware constraints, single-point intersection testing is not allowed (l must be strictly less than r).
 
-Your goal is to infer the hidden traffic control mode and identify the "universal source hubs", which are cities that can reach all other cities.
+2. **Parameter Verification**: Request the current total number of monitored intersections N and the target intersection k. The console will provide these two parameters.
 
-You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
+If your interval parameters are invalid (out of bounds or l greater than or equal to r), the console will intercept the request and return "Invalid".
 
-1. Reachability Query: Ask "Can city X reach city Y?" I will answer "Yes" or "No".
-2. Single Route Test: Specify a colored directed route (color, start, end) and a test direction (forward or backward), asking if that single segment is allowed. I will answer "Allowed", "Not allowed", or "No such edge".
-
-When you have enough information, submit your final answer including the control mode and the universal source hub set. If the answer is wrong or the format is invalid, the simulation fails.
-
-## Query and Answer Format (strictly required)
+When you have gathered sufficient diagnostic data, submit your final report stating whether the status at intersection k is 0 or 1. If the diagnosis is incorrect or improperly formatted, the troubleshooting operation fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Reachability Query (e.g., asking if A can reach C):
-<query_reach>A,C</query_reach>
+- Corridor Parity Test (e.g., querying interval [2, 5]):
+<query_range>2,5</query_range>
 
-- Single Route Test (e.g., testing red route A->B in forward direction):
-<query_edge>red,A,B,forward</query_edge>
+- Parameter Verification:
+<query_param></query_param>
 
-- Single Route Test (e.g., testing blue route B->D in backward direction):
-<query_edge>blue,B,D,backward</query_edge>
+When submitting the final report, specify the status at intersection k (0 or 1), using this format:
 
-When submitting the final answer, specify the control mode (A, B, C, D, or E) and list the universal source hubs (comma-separated, order does not matter; use "none" if no node qualifies; use "all" if all nodes qualify), using this format:
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+or
+
+<answer>1</answer>
 """
 
     contextualized_rule_zh_2 = """\
-这是一个【医疗院感防控】通道规划场景。
-我们来评估一个带颜色标识的医院有向通道图 G，节点集合 V 代表医院科室/病区，包含 {node_list}。
+在精准医疗实验室中，你正在对一份罕见的病原体基因序列进行靶向筛查。
 
-图中包含以下有向转移通道：
-- 红色污染通道（重症/感染）：{red_edges}
-- 蓝色清洁通道（物资/医护）：{blue_edges}
+测序仪读取了一条包含 N={n} 个关键基因位点的序列 S。每个位点的状态仅为 0（野生型/正常）或 1（突变型）。由于全基因组直接解码成本极高，具体突变分布处于未解析状态。你的任务是推断出关键靶点——第 k={k} 个基因位点是否存在突变。
 
-医院当前正执行一种未知的"院感管控模式"，模式类型有五种（A、B、C、D、E），每种模式决定了哪些通道可以通行以及通行方向：
-- 模式A：所有通道（无论红蓝）仅可按箭头方向顺向转运。
-- 模式B：所有通道（无论红蓝）仅可逆箭头方向逆向溯源。
-- 模式C：红色污染通道可双向通行；蓝色清洁通道仅按箭头方向顺向转运。
-- 模式D：蓝色清洁通道可双向通行；红色污染通道仅按箭头方向顺向转运。
-- 模式E：所有通道解除封控，可双向通行。
+你可以反复利用生化试剂盒向系统提出以下类型的查询：
 
-在给定的管控模式下，如果存在由可通行通道组成的路径，则称从科室 X 可安全到达科室 Y。
+1. **片段突变奇偶检测**：检测连续基因片段区间 [l, r]（其中 1 小于等于 l 小于 r 小于等于 N）内，发生"突变"的位点总数的奇偶性。生化系统会反馈"奇"或"偶"。注意：试剂盒灵敏度限制，不允许对单一位点进行检测（即 l 必须严格小于 r）。
 
-你的目标是推断出隐藏的院感管控模式，并找出"全域调度中心"，即能够向所有其他科室输送资源/人员的节点集合。
+2. **靶点参数查询**：核对当前分析的序列总长度 N 和目标靶点位点 k。系统会返回这两个参数。
 
-你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
+如果你的检测区间不合法（越界或 l 大于等于 r），系统会提示试剂盒错误并返回"非法"。
 
-1. 可达性查询：询问"从科室 X 是否可达科室 Y？"我会回答"是"或"否"。
-2. 单步通道测试：指定一条图上存在的有色有向通道（颜色、起点、终点）以及测试方向（顺行或逆行），询问该单步转运是否允许。我会回答"可走"、"不可走"或"无此边"。
-
-当你收集足够信息后，请提交最终答案，包括管控模式和全域调度中心集合。若答案错误或格式不符，演练失败。
-
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够的突变分布特征后，请提交最终筛查结论，说明第 k 个基因位点的状态是 0 还是 1。若答案错误或格式不符，筛查失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 可达性查询（例如询问从 A 是否可达 C）：
-<query_reach>A,C</query_reach>
+- 片段突变奇偶检测（例如检测区间 [2, 5]）：
+<query_range>2,5</query_range>
 
-- 单步通道测试（例如测试红色通道 A->B 的顺行）：
-<query_edge>red,A,B,forward</query_edge>
+- 靶点参数查询：
+<query_param></query_param>
 
-- 单步通道测试（例如测试蓝色通道 B->D 的逆行）：
-<query_edge>blue,B,D,backward</query_edge>
+提交最终结论时，必须说明第 k 个位点的状态（0 或 1），格式如下：
 
-提交最终答案时，必须说明管控模式（A、B、C、D 或 E）并列出全域调度中心（用逗号隔开，顺序不限；若没有任何节点满足条件则填"无"；若所有节点都满足则填"所有节点"），格式如下：
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+或
+
+<answer>1</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Hospital Infection Control" routing simulation.
-We are assessing a directed hospital corridor graph G with colored routes. The node set V represents departments/wards and contains {node_list}.
+In the precision medicine laboratory, you are conducting a targeted screening on a rare pathogen's genetic sequence.
 
-The graph has the following directed transfer corridors:
-- Red contaminated corridors (critical/infection): {red_edges}
-- Blue clean corridors (supplies/staff): {blue_edges}
+The sequencer has read a sequence S comprising N={n} critical genetic loci. The state of each locus is strictly either 0 (Wild-type/Normal) or 1 (Mutated). Because direct full-genome decoding is prohibitively expensive, the exact mutation distribution remains unresolved. Your task is to deduce whether the crucial target—the k={k}-th genetic locus—has mutated.
 
-The hospital is currently operating under a secret "infection control mode" chosen from five types (A, B, C, D, E). Each mode determines which corridors are passable and in which direction:
-- Mode A: All corridors (both red and blue) can only be traversed in the arrow direction.
-- Mode B: All corridors (both red and blue) can only be traversed against the arrow direction.
-- Mode C: Red corridors are bidirectional; blue corridors can only be traversed in the arrow direction.
-- Mode D: Blue corridors are bidirectional; red corridors can only be traversed in the arrow direction.
-- Mode E: All corridors are bidirectional.
+You can repeatedly use biochemical assay kits to submit the following types of queries to the system:
 
-Under a given control mode, department X can reach department Y if there exists a path consisting of passable corridors.
+1. **Segment Mutation Parity Assay**: Test the parity of the total number of mutated loci within a continuous genetic segment [l, r] (where 1 less than or equal to l less than r less than or equal to N). The biochemical system will return "Odd" or "Even". Note: Due to the sensitivity limits of the assay kits, single-locus testing is not permitted (l must be strictly less than r).
 
-Your goal is to infer the hidden infection control mode and identify the "universal dispatch centers", which are departments that can deliver resources/personnel to all other departments.
+2. **Target Parameter Inquiry**: Verify the current sequence length N and the target locus k. The system will provide these two parameters.
 
-You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
+If your assay interval is invalid (out of bounds or l greater than or equal to r), the system will indicate a kit error and return "Invalid".
 
-1. Reachability Query: Ask "Can department X reach department Y?" I will answer "Yes" or "No".
-2. Single Corridor Test: Specify a colored directed corridor (color, start, end) and a test direction (forward or backward), asking if that single transfer step is allowed. I will answer "Allowed", "Not allowed", or "No such edge".
-
-When you have enough information, submit your final answer including the control mode and the universal dispatch center set. If the answer is wrong or the format is invalid, the simulation fails.
-
-## Query and Answer Format (strictly required)
+When you have gathered enough mutation distribution characteristics, submit your final screening conclusion stating whether the state of the k-th locus is 0 or 1. If the answer is incorrect or improperly formatted, the screening fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Reachability Query (e.g., asking if A can reach C):
-<query_reach>A,C</query_reach>
+- Segment Mutation Parity Assay (e.g., testing interval [2, 5]):
+<query_range>2,5</query_range>
 
-- Single Corridor Test (e.g., testing red corridor A->B in forward direction):
-<query_edge>red,A,B,forward</query_edge>
+- Target Parameter Inquiry:
+<query_param></query_param>
 
-- Single Corridor Test (e.g., testing blue corridor B->D in backward direction):
-<query_edge>blue,B,D,backward</query_edge>
+When submitting the final conclusion, specify the state of the k-th locus (0 or 1), using this format:
 
-When submitting the final answer, specify the control mode (A, B, C, D, or E) and list the universal dispatch centers (comma-separated, order does not matter; use "none" if no node qualifies; use "all" if all nodes qualify), using this format:
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+or
+
+<answer>1</answer>
 """
 
     contextualized_rule_zh_3 = """\
-这是一个【教育课程先修关系】规划场景。
-我们来分析一个带颜色属性的课程体系图 G，节点集合 V 代表核心知识模块，包含 {node_list}。
+在线教育平台的智能阅卷系统正在执行大规模的防作弊异常筛查。
 
-体系中包含以下有向依赖关系：
-- 红色强依赖（主修先决）：{red_edges}
-- 蓝色弱依赖（辅修拓展）：{blue_edges}
+系统提取了一份包含 N={n} 道客观题的答题判定序列 S。每道题的作答状态仅被标记为 0（正常作答）或 1（疑似异常/机刷）。为保护后台判定算法，具体的异常题目明细已被系统隐藏。你需要通过系统提供的审计接口，推断出第 k={k} 题的作答状态。
 
-教务系统当前设定了一种未知的"选课追踪模式"，模式类型有五种（A、B、C、D、E），每种模式决定了知识点之间允许的推导和溯源方向：
-- 模式A：所有依赖（无论强弱）仅可按箭头方向进行先修到后修的顺推。
-- 模式B：所有依赖（无论强弱）仅可逆箭头方向进行后修到先修的溯源。
-- 模式C：红色强依赖可双向推导；蓝色弱依赖仅按箭头方向顺推。
-- 模式D：蓝色弱依赖可双向推导；红色强依赖仅按箭头方向顺推。
-- 模式E：所有依赖关系可进行双向推导与溯源。
+你可以反复调用接口进行以下类型的查询：
 
-在给定的选课追踪模式下，如果存在由合法推导路径组成的知识链，则称从模块 X 可推导至模块 Y。
+1. **题组异常奇偶校验**：请求校验连续题号区间 [l, r]（其中 1 小于等于 l 小于 r 小于等于 N）内，标记为"疑似异常"的总题数的奇偶性。接口会返回"奇"或"偶"。注意：为了防止恶意试探，不允许对单道题进行独立校验（即 l 必须严格小于 r）。
 
-你的目标是推断出隐藏的选课追踪模式，并找出"全域基石模块"，即能够推导至所有其他模块的起点节点集合。
+2. **卷面参数查询**：获取当前试卷的题目总数 N 和重点审计的题号 k。接口会返回这两个参数。
 
-你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
+如果你的校验区间不合法（越界或 l 大于等于 r），接口会拒绝请求并返回"非法"。
 
-1. 推导可达性查询：询问"从模块 X 是否可推导至模块 Y？"我会回答"是"或"否"。
-2. 单步依赖测试：指定图上存在的一条有色有向依赖（颜色、起点、终点）以及测试方向（顺推或逆溯），询问该单步是否允许。我会回答"可走"、"不可走"或"无此边"。
-
-当你收集足够信息后，请提交最终答案，包括选课追踪模式和全域基石模块集合。若答案错误或格式不符，排查失败。
-
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够的作答特征后，请提交最终审计结果，说明第 k 题的状态是 0 还是 1。若答案错误或格式不符，则筛查失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 推导可达性查询（例如询问从 A 是否可推导至 C）：
-<query_reach>A,C</query_reach>
+- 题组异常奇偶校验（例如校验题号 [2, 5]）：
+<query_range>2,5</query_range>
 
-- 单步依赖测试（例如测试红色强依赖 A->B 的顺推）：
-<query_edge>red,A,B,forward</query_edge>
+- 卷面参数查询：
+<query_param></query_param>
 
-- 单步依赖测试（例如测试蓝色弱依赖 B->D 的逆溯）：
-<query_edge>blue,B,D,backward</query_edge>
+提交最终结果时，必须说明第 k 题的状态（0 或 1），格式如下：
 
-提交最终答案时，必须说明选课追踪模式（A、B、C、D 或 E）并列出全域基石模块（用逗号隔开，顺序不限；若没有任何节点满足条件则填"无"；若所有节点都满足则填"所有节点"），格式如下：
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+或
+
+<answer>1</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Curriculum Prerequisite Planning" analysis.
-We are analyzing a curriculum dependency graph G with colored attributes. The node set V represents core knowledge modules and contains {node_list}.
+The smart grading system of an online education platform is conducting a large-scale anti-cheating anomaly screening.
 
-The graph has the following directed dependencies:
-- Red strong dependencies (major prerequisites): {red_edges}
-- Blue weak dependencies (minor extensions): {blue_edges}
+The system has extracted an answer judgment sequence S containing N={n} objective questions. The answering state of each question is merely flagged as 0 (Normal) or 1 (Suspected Anomaly/Bot-generated). To protect the backend judgment algorithm, the specific details of the anomalous questions have been hidden. You need to infer the answering state of question k={k} using the audit interface provided by the system.
 
-The academic system is currently under a secret "course tracking mode" chosen from five types (A, B, C, D, E). Each mode determines the allowed directions for deriving and tracing knowledge:
-- Mode A: All dependencies (both red and blue) can only be tracked forward from prerequisite to subsequent course.
-- Mode B: All dependencies (both red and blue) can only be traced backward from subsequent course to prerequisite.
-- Mode C: Red strong dependencies are bidirectional; blue weak dependencies are strictly forward.
-- Mode D: Blue weak dependencies are bidirectional; red strong dependencies are strictly forward.
-- Mode E: All dependencies are bidirectional.
+You can repeatedly call the interface to make the following types of queries:
 
-Under a given tracking mode, module X can derive module Y if there exists a valid chain of allowable dependencies.
+1. **Question Group Anomaly Parity Check**: Request the parity of the total number of questions flagged as "Suspected Anomaly" within a continuous question number interval [l, r] (where 1 less than or equal to l less than r less than or equal to N). The interface will return "Odd" or "Even". Note: To prevent malicious probing, independent checking of a single question is not allowed (l must be strictly less than r).
 
-Your goal is to infer the hidden course tracking mode and identify the "universal foundational modules", which are modules that can derive all other modules.
+2. **Paper Parameter Query**: Obtain the total number of questions N in the current paper and the target audit question number k. The interface will return these two parameters.
 
-You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
+If your check interval is invalid (out of bounds or l greater than or equal to r), the interface will reject the request and return "Invalid".
 
-1. Derivation Reachability Query: Ask "Can module X derive module Y?" I will answer "Yes" or "No".
-2. Single Dependency Test: Specify a colored directed dependency (color, start, end) and a test direction (forward or backward), asking if that single derivation step is allowed. I will answer "Allowed", "Not allowed", or "No such edge".
-
-When you have enough information, submit your final answer including the tracking mode and the universal foundational module set. If the answer is wrong or the format is invalid, the analysis fails.
-
-## Query and Answer Format (strictly required)
+When you have gathered enough answering characteristics, please submit the final audit result, stating whether the state of question k is 0 or 1. If the answer is incorrect or the format does not match, the screening fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Derivation Reachability Query (e.g., asking if A can derive C):
-<query_reach>A,C</query_reach>
+- Question Group Anomaly Parity Check (e.g., checking questions [2, 5]):
+<query_range>2,5</query_range>
 
-- Single Dependency Test (e.g., testing red dependency A->B in forward direction):
-<query_edge>red,A,B,forward</query_edge>
+- Paper Parameter Query:
+<query_param></query_param>
 
-- Single Dependency Test (e.g., testing blue dependency B->D in backward direction):
-<query_edge>blue,B,D,backward</query_edge>
+When submitting the final result, you must state the state of question k (0 or 1), formatted as follows:
 
-When submitting the final answer, specify the tracking mode (A, B, C, D, or E) and list the universal foundational modules (comma-separated, order does not matter; use "none" if no node qualifies; use "all" if all nodes qualify), using this format:
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+or
+
+<answer>1</answer>
 """
 
     contextualized_rule_zh_4 = """\
-这是一个【工业流水线调度】诊断场景。
-我们来诊断一个带颜色标识的工厂物料流转有向图 G，节点集合 V 代表生产车间/工位，包含 {node_list}。
+智能制造工厂的品控系统正在排查流水线上的隐蔽质量缺陷。
 
-图中包含以下有向传送带：
-- 红色主传送带（重型部件）：{red_edges}
-- 蓝色辅传送带（轻型配件）：{blue_edges}
+系统记录了一条包含 N={n} 个连续产品的质检状态序列 S。每个产品的状态仅为 0（合格）或 1（缺陷）。为防止产线停线带来的巨大损失，具体的缺陷分布明细已被底层工控系统封存。你的任务是通过逻辑排查，推断出关键的第 k={k} 号产品当前的状态。
 
-工厂当前正在执行一种未知的"流转控制模式"，模式类型有五种（A、B、C、D、E），每种模式决定了哪些传送带可以运转以及流转方向：
-- 模式A：所有传送带（无论红蓝）仅可按设定箭头方向正转流转。
-- 模式B：所有传送带（无论红蓝）仅可逆设定箭头方向反转回流。
-- 模式C：红色主传送带可双向流转；蓝色辅传送带仅按箭头方向正转流转。
-- 模式D：蓝色辅传送带可双向流转；红色主传送带仅按箭头方向正转流转。
-- 模式E：所有传送带均可进行双向流转调度。
+你可以反复调用品控控制台提出以下类型的查询请求：
 
-在给定的控制模式下，如果存在由正在运转的传送带组成的流转路径，则称物料可从工位 X 传送到工位 Y。
+1. **批次缺陷奇偶测试**：查询连续产品区间 [l, r]（其中 1 小于等于 l 小于 r 小于等于 N）内，处于"缺陷"状态的产品总数的奇偶性。控制台会返回"奇"或"偶"。注意：由于传感器批处理限制，不允许对单一产品进行测试（即 l 必须严格小于 r）。
 
-你的目标是推断出隐藏的流转控制模式，并找出"全域供料枢纽"，即能够向所有其他工位输送物料的起点节点集合。
+2. **产线参数核实**：查询当前监控的产品总数 N 和目标排查产品 k。控制台会反馈这两个参数。
 
-你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
+如果你的区间参数不合法（越界或 l 大于等于 r），控制台会拦截并返回"非法"。
 
-1. 流转可达性查询：询问"从工位 X 是否可传送到工位 Y？"我会回答"是"或"否"。
-2. 单步传送测试：指定图上存在的一条有色有向传送带（颜色、起点、终点）以及测试方向（正转或反转），询问该单步流转是否允许。我会回答"可走"、"不可走"或"无此边"。
-
-当你收集足够信息后，请提交最终答案，包括流转控制模式和全域供料枢纽集合。若答案错误或格式不符，诊断失败。
-
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够信息后，请提交最终排查结果，说明第 k 个产品的状态是 0 还是 1。若答案错误或格式不符，排查任务失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 流转可达性查询（例如询问从 A 是否可传送到 C）：
-<query_reach>A,C</query_reach>
+- 批次缺陷奇偶测试（例如查询区间 [2, 5]）：
+<query_range>2,5</query_range>
 
-- 单步传送测试（例如测试红色传送带 A->B 的正转）：
-<query_edge>red,A,B,forward</query_edge>
+- 产线参数核实：
+<query_param></query_param>
 
-- 单步传送测试（例如测试蓝色传送带 B->D 的反转）：
-<query_edge>blue,B,D,backward</query_edge>
+提交最终结果时，必须说明第 k 个产品的状态（0 或 1），格式如下：
 
-提交最终答案时，必须说明流转控制模式（A、B、C、D 或 E）并列出全域供料枢纽（用逗号隔开，顺序不限；若没有任何节点满足条件则填"无"；若所有节点都满足则填"所有节点"），格式如下：
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+或
+
+<answer>1</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Welcome to the "Industrial Assembly Line Dispatch" diagnostics.
-We are diagnosing a factory material flow directed graph G with colored conveyors. The node set V represents production workshops/stations and contains {node_list}.
+The quality control system of a smart manufacturing plant is troubleshooting hidden quality defects on the assembly line.
 
-The graph has the following directed conveyors:
-- Red main conveyors (heavy parts): {red_edges}
-- Blue auxiliary conveyors (light parts): {blue_edges}
+The system has logged a quality inspection status sequence S for a batch of N={n} consecutive products. The status of each product is strictly either 0 (Qualified) or 1 (Defective). To prevent massive losses from halting the production line, the specific defect distribution details have been sealed by the low-level industrial control system. Your objective is to deduce the exact status of the critical product at position k={k}.
 
-The factory is currently operating under a secret "flow control mode" chosen from five types (A, B, C, D, E). Each mode determines which conveyors are operational and in which direction:
-- Mode A: All conveyors (both red and blue) can only run forward in the arrow direction.
-- Mode B: All conveyors (both red and blue) can only run backward against the arrow direction.
-- Mode C: Red main conveyors are bidirectional; blue auxiliary conveyors are strictly forward.
-- Mode D: Blue auxiliary conveyors are bidirectional; red main conveyors are strictly forward.
-- Mode E: All conveyors are bidirectional.
+You can repeatedly use the quality control console to make the following types of queries:
 
-Under a given control mode, station X can transfer materials to station Y if there exists a valid path of operational conveyors.
+1. **Batch Defect Parity Test**: Query whether the total number of defective products in a contiguous batch interval [l, r] (where 1 less than or equal to l less than r less than or equal to N) is odd or even. The console will return "Odd" or "Even". Note: Due to sensor batch-processing constraints, single-product testing is not allowed (l must be strictly less than r).
 
-Your goal is to infer the hidden flow control mode and identify the "universal supply hubs", which are stations that can supply materials to all other stations.
+2. **Line Parameter Verification**: Request the current total number of monitored products N and the target product k. The console will provide these two parameters.
 
-You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
+If your interval parameters are invalid (out of bounds or l greater than or equal to r), the console will intercept the request and return "Invalid".
 
-1. Flow Reachability Query: Ask "Can materials transfer from station X to station Y?" I will answer "Yes" or "No".
-2. Single Conveyor Test: Specify a colored directed conveyor (color, start, end) and a test direction (forward or backward), asking if that single transfer step is allowed. I will answer "Allowed", "Not allowed", or "No such edge".
-
-When you have enough information, submit your final answer including the flow control mode and the universal supply hub set. If the answer is wrong or the format is invalid, the diagnostics fail.
-
-## Query and Answer Format (strictly required)
+When you have gathered sufficient diagnostic data, submit your final report stating whether the status of the k-th product is 0 or 1. If the diagnosis is incorrect or improperly formatted, the troubleshooting task fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Flow Reachability Query (e.g., asking if A can transfer to C):
-<query_reach>A,C</query_reach>
+- Batch Defect Parity Test (e.g., querying interval [2, 5]):
+<query_range>2,5</query_range>
 
-- Single Conveyor Test (e.g., testing red conveyor A->B in forward direction):
-<query_edge>red,A,B,forward</query_edge>
+- Line Parameter Verification:
+<query_param></query_param>
 
-- Single Conveyor Test (e.g., testing blue conveyor B->D in backward direction):
-<query_edge>blue,B,D,backward</query_edge>
+When submitting the final report, specify the status of the k-th product (0 or 1), using this format:
 
-When submitting the final answer, specify the flow control mode (A, B, C, D, or E) and list the universal supply hubs (comma-separated, order does not matter; use "none" if no node qualifies; use "all" if all nodes qualify), using this format:
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+or
+
+<answer>1</answer>
 """
 
     contextualized_rule_zh_5 = """\
-这是一个【司法程序流转】合规审查场景。
-我们来审查一个带颜色标识的法律程序有向图 G，节点集合 V 代表案件审理阶段/法院，包含 {node_list}。
+金融犯罪调查局的审计系统正在排查连串交易记录中的隐蔽违规操作。
 
-图中包含以下有向程序流转路径：
-- 红色刑事程序（强制上诉/移送）：{red_edges}
-- 蓝色民事程序（复议/庭外调解）：{blue_edges}
+系统提取了一条包含 N={n} 笔连续交易的审计状态序列 S。每笔交易的状态仅为 0（合规）或 1（违规）。由于涉及核心商业机密，具体的违规明细已被司法系统加密锁定。你的任务是通过逻辑排查，推断出关键的第 k={k} 笔交易的合规状态。
 
-司法系统当前正在试行一种未知的"案件流转模式"，模式类型有五种（A、B、C、D、E），每种模式决定了哪些程序阶段可以推进以及推进方向：
-- 模式A：所有程序（无论红蓝）仅可按设定箭头方向顺次推进。
-- 模式B：所有程序（无论红蓝）仅可逆设定箭头方向进行发回重审/撤销。
-- 模式C：红色刑事程序可双向流转（推进与发回重审）；蓝色民事程序仅按箭头方向顺次推进。
-- 模式D：蓝色民事程序可双向流转；红色刑事程序仅按箭头方向顺次推进。
-- 模式E：所有程序均允许双向推进与重审。
+你可以反复调用审计接口提出以下类型的查询请求：
 
-在给定的案件流转模式下，如果存在由合法程序路径组成的案件链条，则称案件可从阶段 X 推进到阶段 Y。
+1. **账目异常奇偶审计**：查询连续交易区间 [l, r]（其中 1 小于等于 l 小于 r 小于等于 N）内，处于"违规"状态的交易总数的奇偶性。接口会返回"奇"或"偶"。注意：为了符合法定抽样程序限制，不允许对单一交易进行审计（即 l 必须严格小于 r）。
 
-你的目标是推断出隐藏的案件流转模式，并找出"全域立案起点"，即能够依法推进至所有其他阶段的初始阶段节点集合。
+2. **案件参数查询**：查询当前监控的交易总数 N 和目标排查交易 k。接口会反馈这两个参数。
 
-你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实设定如实回答：
+如果你的区间参数不合法（越界或 l 大于等于 r），接口会拦截并返回"非法"。
 
-1. 程序可达性查询：询问"从阶段 X 是否可推进至阶段 Y？"我会回答"是"或"否"。
-2. 单步程序测试：指定图上存在的一条有色有向程序流转（颜色、起点、终点）以及测试方向（顺推或发回重审/逆向），询问该单步流转是否合规。我会回答"可走"、"不可走"或"无此边"。
-
-当你收集足够信息后，请提交最终答案，包括案件流转模式和全域立案起点集合。若答案错误或格式不符，审查失败。
-
-## 询问与提交答案的格式（必须严格遵守）
+当你收集到足够信息后，请提交最终排查结果，说明第 k 笔交易的状态是 0 还是 1。若答案错误或格式不符，排查任务失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 程序可达性查询（例如询问从 A 是否可推进至 C）：
-<query_reach>A,C</query_reach>
+- 账目异常奇偶审计（例如查询区间 [2, 5]）：
+<query_range>2,5</query_range>
 
-- 单步程序测试（例如测试红色程序 A->B 的顺推）：
-<query_edge>red,A,B,forward</query_edge>
+- 案件参数查询：
+<query_param></query_param>
 
-- 单步程序测试（例如测试蓝色程序 B->D 的逆向/发回重审）：
-<query_edge>blue,B,D,backward</query_edge>
+提交最终结果时，必须说明第 k 笔交易的状态（0 或 1），格式如下：
 
-提交最终答案时，必须说明案件流转模式（A、B、C、D 或 E）并列出全域立案起点（用逗号隔开，顺序不限；若没有任何阶段满足条件则填"无"；若所有节点都满足则填"所有节点"），格式如下：
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+或
+
+<answer>1</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Judicial Procedure Flow" compliance review.
-We are reviewing a directed legal procedure graph G with colored attributes. The node set V represents case trial stages/courts and contains {node_list}.
+The audit system of the Financial Crimes Investigation Bureau is troubleshooting hidden regulatory violations in a series of transaction records.
 
-The graph has the following directed procedure flows:
-- Red criminal procedures (mandatory appeals/transfers): {red_edges}
-- Blue civil procedures (reviews/out-of-court mediations): {blue_edges}
+The system has extracted an audit status sequence S for N={n} consecutive transactions. The status of each transaction is strictly either 0 (Compliant) or 1 (Violative). Due to core commercial confidentiality, the specific violation details have been encrypted and locked by the judicial system. Your objective is to deduce the exact compliance status of the critical transaction at position k={k}.
 
-The judicial system is currently piloting a secret "case flow mode" chosen from five types (A, B, C, D, E). Each mode determines which procedure stages can advance and in which direction:
-- Mode A: All procedures (both red and blue) can only advance sequentially in the arrow direction.
-- Mode B: All procedures (both red and blue) can only move backward against the arrow direction (remands/revocations).
-- Mode C: Red criminal procedures are bidirectional (advance and remand); blue civil procedures are strictly sequential.
-- Mode D: Blue civil procedures are bidirectional; red criminal procedures are strictly sequential.
-- Mode E: All procedures allow bidirectional advancement and remand.
+You can repeatedly use the audit interface to make the following types of queries:
 
-Under a given case flow mode, a case can advance from stage X to stage Y if there exists a valid chain of allowable procedures.
+1. **Account Anomaly Parity Audit**: Query whether the total number of violative transactions in a contiguous transaction interval [l, r] (where 1 less than or equal to l less than r less than or equal to N) is odd or even. The interface will return "Odd" or "Even". Note: To comply with statutory sampling procedure limits, single-transaction auditing is not allowed (l must be strictly less than r).
 
-Your goal is to infer the hidden case flow mode and identify the "universal filing initiators", which are stages that can legally advance to all other stages.
+2. **Case Parameter Inquiry**: Request the current total number of monitored transactions N and the target transaction k. The interface will provide these two parameters.
 
-You can repeatedly ask me two types of questions (one per turn), and I will answer truthfully:
+If your interval parameters are invalid (out of bounds or l greater than or equal to r), the interface will intercept the request and return "Invalid".
 
-1. Procedure Reachability Query: Ask "Can a case advance from stage X to stage Y?" I will answer "Yes" or "No".
-2. Single Procedure Test: Specify a colored directed procedure flow (color, start, end) and a test direction (forward or backward/remand), asking if that single step is compliant. I will answer "Allowed", "Not allowed", or "No such edge".
-
-When you have enough information, submit your final answer including the case flow mode and the universal filing initiator set. If the answer is wrong or the format is invalid, the review fails.
-
-## Query and Answer Format (strictly required)
+When you have gathered sufficient diagnostic data, submit your final report stating whether the status of the k-th transaction is 0 or 1. If the diagnosis is incorrect or improperly formatted, the troubleshooting task fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Procedure Reachability Query (e.g., asking if A can advance to C):
-<query_reach>A,C</query_reach>
+- Account Anomaly Parity Audit (e.g., querying interval [2, 5]):
+<query_range>2,5</query_range>
 
-- Single Procedure Test (e.g., testing red procedure A->B in forward direction):
-<query_edge>red,A,B,forward</query_edge>
+- Case Parameter Inquiry:
+<query_param></query_param>
 
-- Single Procedure Test (e.g., testing blue procedure B->D in backward/remand direction):
-<query_edge>blue,B,D,backward</query_edge>
+When submitting the final report, specify the status of the k-th transaction (0 or 1), using this format:
 
-When submitting the final answer, specify the case flow mode (A, B, C, D, or E) and list the universal filing initiators (comma-separated, order does not matter; use "none" if no node qualifies; use "all" if all nodes qualify), using this format:
+<answer>0</answer>
 
-<answer>mode=E, universal_source=A,B</answer>
+or
+
+<answer>1</answer>
 """
 
-    tags = ["answer", "query_reach", "query_edge"]
-
-    # 难度配置：
-    # 1 (简单)       - 模式E (全双向)，全域可达起点为所有节点
-    # 2 (中等偏下)   - 模式A (全顺向)，全域可达起点为A
-    # 3 (中等偏上)   - 模式C (红双向、蓝顺向)，全域可达起点需要分析
-    # 4 (较难)       - 模式D (蓝双向、红顺向)，全域可达起点需要分析
-    # 5 (难)         - 模式B (全逆向)，全域可达起点为E
-
-    DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {"mode": "E", "universal_source": "所有节点"},
-            2: {"mode": "A", "universal_source": "A"},
-            3: {"mode": "C", "universal_source": "所有节点"},
-            4: {"mode": "D", "universal_source": "A"},
-            5: {"mode": "B", "universal_source": "C,D,E"},
-        },
-        "en": {
-            1: {"mode": "E", "universal_source": "all"},
-            2: {"mode": "A", "universal_source": "A"},
-            3: {"mode": "C", "universal_source": "all"},
-            4: {"mode": "D", "universal_source": "A"},
-            5: {"mode": "B", "universal_source": "C,D,E"},
-        },
-    }
-
-    def __init__(self, config):
-        super().__init__(config)
-
     def _initialize_game(self):
-        # 基础图结构（拓扑固定）
-        base_nodes = ["A", "B", "C", "D", "E"]
-        
-        # 使用确定性随机源（基于难度+语言），使同一配置下结果可复现
-        rng = random.Random(hash((self.config.difficulty, self.config.language, 42)))
-        shuffled = base_nodes[:]
-        rng.shuffle(shuffled)
-        
-        # 建立映射
-        mapping = {base_nodes[i]: shuffled[i] for i in range(len(base_nodes))}
-        
-        self.nodes = shuffled
-        self.red_edges = [(mapping["A"], mapping["B"]), (mapping["B"], mapping["C"]),
-                          (mapping["C"], mapping["D"]), (mapping["D"], mapping["E"])]
-        self.blue_edges = [(mapping["B"], mapping["D"]), (mapping["E"], mapping["C"])]
-        
-        lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保转换为整数
-        
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
-            raise KeyError(f"Unsupported difficulty: {diff}")
-        
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self.mode = cfg["mode"]
-        
-        # 将预设答案中的节点名也做映射
-        raw_us = cfg["universal_source"]
-        if raw_us in ("all", "none", "所有节点", "无"):
-            self.expected_universal_source = raw_us
+        seed = getattr(self.config, 'seed', None)
+        if seed is None:
+            seed = hash(('BinarySequenceParityGame', getattr(self.config, 'difficulty', 1))) % (2**31)
+        rng = random.Random(seed)
+        difficulty = int(getattr(self.config, 'difficulty', 1))
+        if difficulty == 1:
+            self.n = rng.randint(6, 10)
+        elif difficulty == 2:
+            self.n = rng.randint(8, 12)
         else:
-            mapped_nodes = [mapping[n.strip()] for n in raw_us.split(",")]
-            self.expected_universal_source = ",".join(sorted(mapped_nodes))
-        
-        # 格式化游戏规则中的变量
-        self._game_info["node_list"] = ", ".join(self.nodes)
-        self._game_info["red_edges"] = ", ".join([f"{u}->{v}" for u, v in self.red_edges])
-        self._game_info["blue_edges"] = ", ".join([f"{u}->{v}" for u, v in self.blue_edges])
-        
-        # 根据模式构建可通行边集合
-        self._build_passable_edges()
-
-    def _build_passable_edges(self):
-        """根据当前模式构建可通行的边集合"""
-        self.passable_edges = set()
-
-        if self.mode == "A":
-            # 所有边仅顺向
-            for u, v in self.red_edges + self.blue_edges:
-                self.passable_edges.add((u, v))
-        elif self.mode == "B":
-            # 所有边仅逆向
-            for u, v in self.red_edges + self.blue_edges:
-                self.passable_edges.add((v, u))
-        elif self.mode == "C":
-            # 红边双向，蓝边顺向
-            for u, v in self.red_edges:
-                self.passable_edges.add((u, v))
-                self.passable_edges.add((v, u))
-            for u, v in self.blue_edges:
-                self.passable_edges.add((u, v))
-        elif self.mode == "D":
-            # 蓝边双向，红边顺向
-            for u, v in self.red_edges:
-                self.passable_edges.add((u, v))
-            for u, v in self.blue_edges:
-                self.passable_edges.add((u, v))
-                self.passable_edges.add((v, u))
-        elif self.mode == "E":
-            # 所有边双向
-            for u, v in self.red_edges + self.blue_edges:
-                self.passable_edges.add((u, v))
-                self.passable_edges.add((v, u))
-
-    def _can_reach(self, start, end):
-        """使用BFS判断从start是否可达end"""
-        if start == end:
-            return True
-        
-        visited = {start}
-        queue = [start]
-        
-        while queue:
-            current = queue.pop(0)
-            for u, v in self.passable_edges:
-                if u == current and v not in visited:
-                    if v == end:
-                        return True
-                    visited.add(v)
-                    queue.append(v)
-        
-        return False
-
-    def _is_edge_passable(self, color, start, end, direction):
-        """检查指定的边在指定方向上是否可通行"""
-        # 首先检查边是否存在
-        if color == "red" or color == "红色":
-            edge_exists = (start, end) in self.red_edges
-        elif color == "blue" or color == "蓝色":
-            edge_exists = (start, end) in self.blue_edges
-        else:
-            return None  # 颜色无效
-        
-        if not edge_exists:
-            return None  # 无此边
-        
-        # 根据方向检查
-        if direction == "forward" or direction == "顺行" or direction == "顺推" or direction == "正转" or direction == "顺次推进":
-            return (start, end) in self.passable_edges
-        elif direction == "backward" or direction == "逆行" or direction == "逆溯" or direction == "反转" or direction == "发回重审" or direction == "逆向":
-            return (end, start) in self.passable_edges
-        else:
-            return None  # 方向无效
+            self.n = rng.randint(10, 15)
+        self.k = rng.randint(2, self.n - 1)
+        self.sequence = [rng.choice([0, 1]) for _ in range(self.n)]
+        self._game_info = {"n": self.n, "k": self.k}
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"]
-        
-        # 使用更健壮的解析方式：先按 "mode=" 和 "universal_source=" 提取
-        # 格式: mode=X, universal_source=Y  (Y 中可能含逗号)
-        mode_match = re.search(r'mode\s*=\s*([A-E])', raw_ans)
-        us_match = re.search(r'universal_source\s*=\s*(.+)', raw_ans)
-        
-        if not mode_match or not us_match:
+        if "answer" not in parsed_info:
             return False
-        
-        ans_mode = mode_match.group(1).strip()
-        ans_us = us_match.group(1).strip().rstrip('.,;!?')
-        
-        # 检查模式是否正确
-        if ans_mode != self.mode:
+        try:
+            ans = int(parsed_info["answer"].strip())
+            return ans == self.sequence[self.k - 1]
+        except Exception:
             return False
-        
-        # 检查全域可达起点
-        if self.config.language == "zh":
-            if self.expected_universal_source == "所有节点":
-                expected_normalized = "所有节点"
-            elif self.expected_universal_source == "无":
-                expected_normalized = "无"
-            else:
-                expected_normalized = set(x.strip() for x in self.expected_universal_source.split(",") if x.strip())
-            
-            if ans_us == "所有节点":
-                model_normalized = "所有节点"
-            elif ans_us == "无":
-                model_normalized = "无"
-            else:
-                model_normalized = set(x.strip() for x in ans_us.split(",") if x.strip())
-        else:
-            if self.expected_universal_source == "all":
-                expected_normalized = "all"
-            elif self.expected_universal_source == "none":
-                expected_normalized = "none"
-            else:
-                expected_normalized = set(x.strip() for x in self.expected_universal_source.split(",") if x.strip())
-            
-            if ans_us.lower() == "all":
-                model_normalized = "all"
-            elif ans_us.lower() == "none":
-                model_normalized = "none"
-            else:
-                model_normalized = set(x.strip() for x in ans_us.split(",") if x.strip())
-        
-        return model_normalized == expected_normalized
 
     def _cf_core_produce(self, parsed_info):
-        """原始的生成响应逻辑"""
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            allowed_res, not_allowed_res, no_edge_res = "可走", "不可走", "无此边"
-        else:
-            yes_res, no_res = "Yes", "No"
-            allowed_res, not_allowed_res, no_edge_res = "Allowed", "Not allowed", "No such edge"
-
-        # 优先级：query_reach > query_edge
-        if "query_reach" in parsed_info:
+        if "query_param" in parsed_info:
+            if self.config.language == "zh":
+                return f"N={self.n}, k={self.k}"
+            else:
+                return f"N={self.n}, k={self.k}"
+                
+        if "query_range" in parsed_info:
             try:
-                raw = parsed_info["query_reach"]
-                parts = [x.strip() for x in raw.split(",")]
+                parts = parsed_info["query_range"].split(',')
                 if len(parts) != 2:
-                    raise ValueError
-                start, end = parts
-                if start not in self.nodes or end not in self.nodes:
-                    raise ValueError
-                
-                can_reach = self._can_reach(start, end)
-                return yes_res if can_reach else no_res
-            except:
-                return "错误：格式无效或节点错误。" if self.config.language == "zh" else "Error: Invalid format or node."
+                    return "非法" if self.config.language == "zh" else "Invalid"
+                l = int(parts[0].strip())
+                r = int(parts[1].strip())
+                if 1 <= l < r <= self.n:
+                    total = sum(self.sequence[l-1 : r])
+                    is_odd = (total % 2 != 0)
+                    if self.config.language == "zh":
+                        return "奇" if is_odd else "偶"
+                    else:
+                        return "Odd" if is_odd else "Even"
+                else:
+                    return "非法" if self.config.language == "zh" else "Invalid"
+            except Exception:
+                return "非法" if self.config.language == "zh" else "Invalid"
+        
+        return "非法" if self.config.language == "zh" else "Invalid"
 
-        elif "query_edge" in parsed_info:
-            try:
-                raw = parsed_info["query_edge"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 4:
-                    raise ValueError
-                color, start, end, direction = parts
-                
-                if start not in self.nodes or end not in self.nodes:
-                    raise ValueError
-                
-                result = self._is_edge_passable(color, start, end, direction)
-                if result is None:
-                    return no_edge_res
-                return allowed_res if result else not_allowed_res
-            except:
-                return "错误：格式无效或参数错误。" if self.config.language == "zh" else "Error: Invalid format or parameters."
-
-        else:
-            raise ValueError("No valid query tag found.")
+    def get_all_possible_queries(self):
+        results = []
+        param_query = "<query_param></query_param>"
+        param_parsed = {"query_param": ""}
+        param_answer = self._cf_core_produce(param_parsed)
+        results.append({"query": param_query, "answer": param_answer})
+        for l in range(1, self.n):
+            for r in range(l + 1, self.n + 1):
+                range_query = f"<query_range>{l},{r}</query_range>"
+                range_parsed = {"query_range": f"{l},{r}"}
+                range_answer = self._cf_core_produce(range_parsed)
+                results.append({"query": range_query, "answer": range_answer})
+        return results
 
     def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        # 中文是非翻转
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-        
-        # 中文可走/不可走翻转
-        if correct == "可走":
-            return "不可走"
-        if correct == "不可走":
-            return "可走"
-        
-        # 英文 Yes/No 翻转
-        lower_correct = correct.lower()
-        if lower_correct == "yes":
-            return "No"
-        if lower_correct == "no":
-            return "Yes"
-        
-        # 英文 Allowed/Not allowed 翻转
-        if lower_correct == "allowed":
-            return "Not allowed"
-        if lower_correct == "not allowed":
-            return "Allowed"
-        
-        # 中文/英文 "无此边" / "No such edge" 的情况
-        if correct == "无此边":
-            return "可走"
-        if lower_correct == "no such edge":
-            return "Allowed"
-        
-        # 纯数字
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        # 其他情况追加 _WRONG
-        return f"{correct}_WRONG"
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串 (这里返回完整的XML格式，以符合用户输入的形态)
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
-        
-        # 根据语言设置回答文本
-        if self.config.language == "zh":
-            ans_yes = "是"
-            ans_no = "否"
-            ans_allowed = "可走"
-            ans_not_allowed = "不可走"
-        else:
-            ans_yes = "Yes"
-            ans_no = "No"
-            ans_allowed = "Allowed"
-            ans_not_allowed = "Not allowed"
-
-        # 1. 可达性查询 (Reachability Queries)
-        # 枚举所有节点对 (start, end)
-        for start in self.nodes:
-            for end in self.nodes:
-                if start == end:
-                    continue  # 跳过自环查询，答案恒为 Yes，无信息量
-                # 复用内部逻辑 _can_reach
-                is_reachable = self._can_reach(start, end)
-                ans = ans_yes if is_reachable else ans_no
-                
-                # 构建查询字符串 (XML格式，这是对外的标准查询形式)
-                query_str = f"<query_reach>{start},{end}</query_reach>"
-                
-                results.append({
-                    "query": query_str,
-                    "answer": ans
-                })
-
-        # 2. 单边通行测试 (Single Edge Test)
-        # XML参数建议始终使用英文代码(red, blue, forward, backward)，即使在中文模式下，
-        # 以匹配 game_rule_zh 和 game_rule_en 中的示例格式。
-        input_dirs = ["forward", "backward"]
-        
-        # 遍历所有存在的红色边
-        for u, v in self.red_edges:
-            for d in input_dirs:
-                # 复用内部逻辑 _is_edge_passable(color, start, end, direction)
-                is_passable = self._is_edge_passable("red", u, v, d)
-                
-                # 仅对存在的边生成查询
-                if is_passable is not None:
-                    ans = ans_allowed if is_passable else ans_not_allowed
-                    query_str = f"<query_edge>red,{u},{v},{d}</query_edge>"
-                    results.append({
-                        "query": query_str,
-                        "answer": ans
-                    })
-
-        # 遍历所有存在的蓝色边
-        for u, v in self.blue_edges:
-            for d in input_dirs:
-                is_passable = self._is_edge_passable("blue", u, v, d)
-                
-                if is_passable is not None:
-                    ans = ans_allowed if is_passable else ans_not_allowed
-                    query_str = f"<query_edge>blue,{u},{v},{d}</query_edge>"
-                    results.append({
-                        "query": query_str,
-                        "answer": ans
-                    })
-
-        return results
+        if correct == "奇": return "偶"
+        if correct == "偶": return "奇"
+        if correct == "Odd": return "Even"
+        if correct == "Even": return "Odd"
+        if correct.startswith("N="):
+            wrong_k = self.k + 1 if self.k < self.n else self.k - 1
+            if self.config.language == "zh":
+                return f"N={self.n}, k={wrong_k}"
+            else:
+                return f"N={self.n}, k={wrong_k}"
+        if correct == "非法" or correct == "Invalid":
+            if self.config.language == "zh":
+                return "偶"
+            else:
+                return "Even"
+        return correct

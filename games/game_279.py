@@ -1,934 +1,659 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   节点深度：某给定节点位于树的第几层
-# ============================================================
-
 from .base import Game
 import re
+import itertools
 
-
-class TreeMappingInferenceGame(Game):
+class PredicateDeductionGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"树映射推理"游戏，规则如下：
+我们来玩一个"谓词推理"游戏，规则如下：
 
-游戏设定了一棵有根树，最大深度为3（根深度为0），共19个节点。节点标识及父子关系如下：
-- 深度0：r
-- 深度1：r 的子节点为 a1, a2, a3
-- 深度2：
-  - a1 的子节点：b11, b12
-  - a2 的子节点：b21
-  - a3 的子节点：b31, b32, b33
-- 深度3（叶）：
-  - b11 的子节点：c111, c112
-  - b12 的子节点：c121
-  - b21 的子节点：c211, c212
-  - b31 的子节点：c311
-  - b32 的子节点：c321, c322
-  - b33 的子节点：c331
+游戏设定了16个元素，每个元素由4个二元属性（A、B、C、D）标注。对于每个属性，已预先公开指定哪一侧为"1"（另一侧为"0"）：
+{attributes_desc}
 
-存在一个特殊的目标节点T（你需要推断出它）。
+这16个元素恰好覆盖4个属性的全部16种取值组合（0000到1111），每种组合各对应一个元素。
 
-游戏已秘密选择了一个二值映射方案 g(d)，作用于节点深度 d，四种候选方案如下（确切采用其一）：
-- 方案A（奇偶）：g(d) = d 对 2 取模的结果
-- 方案B（中层）：g(d) = 1 当且仅当 d 属于集合 1或2，否则为 0
-- 方案C（下层）：g(d) = 1 当且仅当 d 属于集合 2或3，否则为 0
-- 方案D（全零）：g(d) = 0 对所有 d
+我已秘密选定了一个判定规则P，它是以下六个候选之一：
+- α：当且仅当 A=1 时，P为真。
+- β：当且仅当 A与B取值不同时，P为真。
+- γ：当且仅当（A=1且B=1）或（C=1且D=1）时，P为真。
+- δ：当且仅当 A+B+C+D 为奇数时，P为真。
+- ε：当且仅当 A+B+C+D 恰好等于2时，P为真。
+- ζ：当且仅当 A=C 时，P为真。
 
-你的目标是：
-1. 确定真实采用的映射方案（A/B/C/D）
-2. 确定目标节点 T 的深度（0/1/2/3）
+你的目标是通过查询推断出：
+1. 隐藏的判定规则是哪一个（α、β、γ、δ、ε或ζ）；
+2. 在子集 [A=1 且 C=1] 中满足P的元素个数。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据真实设定如实回答：
+你可以提出以下两类查询：
 
-1. 采样输出：询问某个节点在映射方案下的输出值。回答"输出=0"或"输出=1"，等于 g(该节点的深度)。
-2. 查询子节点：询问某个节点的所有子节点列表。回答"子节点=[...]"。注意：若查询对象为目标节点T，会返回"拒绝：目标结构不可查"。
-3. 是否叶子：询问某个节点是否为叶子节点。回答"是"或"否"（允许对T进行此查询）。
-4. 是否同层：询问两个节点是否在相同深度。回答"是"或"否"。注意：若任一参数为目标节点T，会返回"拒绝：目标不得参与此比较"。
+1. 计数查询：给出0至4个筛选条件（形式为"属性=0"或"属性=1"的合取），我会返回该子集中满足P的元素数量。例如"A=1,B=0"表示筛选出A=1且B=0的元素；空条件表示全部16个元素。
 
-当你收集足够信息后，请提交最终答案。答案需包含：
-1. 采用的映射方案（A/B/C/D）
-2. 至少两次针对非目标节点的采样记录（节点与对应输出），并基于各深度输出特征排除其余方案的逻辑推理
-3. 目标节点T的深度（0/1/2/3），并基于已确定方案与对T的允许查询进行论证
+2. 比较查询：给出两组筛选条件，我会比较两个子集中满足P的元素数量，返回"A多于B"、"A少于B"或"A等于B"。
 
-若答案错误、格式不符或推理依据不足，游戏失败。
+请尽可能少地使用查询次数。当你准备好后，提交最终答案。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个查询或答案标签。使用以下XML格式：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 计数查询（例如查询A=1且B=0的子集）：
+<query_count>A=1,B=0</query_count>
 
-- 采样输出（例如查询节点 r）：
-<query_sample>r</query_sample>
+- 计数查询（查询全集）：
+<query_count></query_count>
 
-- 查询子节点（例如查询节点 a1）：
-<query_children>a1</query_children>
+- 比较查询（例如比较"A=1"与"B=1"两个子集）：
+<query_compare>A=1|B=1</query_compare>
 
-- 是否叶子（例如查询节点 c111）：
-<query_leaf>c111</query_leaf>
+提交最终答案时，必须同时给出判定规则的名称和目标计数，格式如下：
 
-- 是否同层（例如比较节点 a1 和 a2）：
-<query_same_depth>a1,a2</query_same_depth>
-
-提交最终答案时，必须说明映射方案、采样证据、目标节点T的深度及推理过程，格式如下：
-
-<answer>
-方案=A
-证据1=节点:r,输出:0
-证据2=节点:a1,输出:1
-排除逻辑=深度0输出0排除了无效方案，深度1输出1结合深度特征可确定方案A
-目标深度=3
-目标推理=通过采样T得到输出1，结合方案A中深度3对应输出1，且T为叶子节点，确定T深度为3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     game_rule_en = """\
-Let's play a "Tree Mapping Inference" game. Here are the rules:
+Let's play a "Predicate Deduction" game. Here are the rules:
 
-The game features a rooted tree with a maximum depth of 3 (root has depth 0) and 19 nodes total. Node identifiers and parent-child relationships are as follows:
-- Depth 0: r
-- Depth 1: r has children a1, a2, a3
-- Depth 2:
-  - a1 has children: b11, b12
-  - a2 has child: b21
-  - a3 has children: b31, b32, b33
-- Depth 3 (leaves):
-  - b11 has children: c111, c112
-  - b12 has child: c121
-  - b21 has children: c211, c212
-  - b31 has child: c311
-  - b32 has children: c321, c322
-  - b33 has child: c331
+The game has 16 elements, each labeled with 4 binary attributes (A, B, C, D). For each attribute, which side is "1" (and which is "0") has been publicly specified in advance:
+{attributes_desc}
 
-There exists a special target node T (which you need to infer).
+These 16 elements exactly cover all 16 value combinations of the 4 attributes (from 0000 to 1111), with each combination corresponding to exactly one element.
 
-The game has secretly selected a binary mapping scheme g(d) that acts on node depth d. There are four candidate schemes (exactly one is used):
-- Scheme A (Parity): g(d) = d modulo 2
-- Scheme B (Middle): g(d) = 1 if and only if d is in the set 1 or 2, otherwise 0
-- Scheme C (Lower): g(d) = 1 if and only if d is in the set 2 or 3, otherwise 0
-- Scheme D (All Zero): g(d) = 0 for all d
+I have secretly selected a judgment rule P, which is one of the following six candidates:
+- α: P is true if and only if A=1.
+- β: P is true if and only if A and B have different values.
+- γ: P is true if and only if (A=1 and B=1) or (C=1 and D=1).
+- δ: P is true if and only if A+B+C+D is odd.
+- ε: P is true if and only if A+B+C+D equals exactly 2.
+- ζ: P is true if and only if A=C.
 
-Your goals are:
-1. Determine the actual mapping scheme used (A/B/C/D)
-2. Determine the depth of target node T (0/1/2/3)
+Your goal is to infer through queries:
+1. Which judgment rule is hidden (α, β, γ, δ, ε, or ζ);
+2. The number of elements satisfying P in the subset [A=1 and C=1].
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the actual setup:
+You can make two types of queries:
 
-1. Sample Output: Ask for the output value of a node under the mapping scheme. Answer "Output=0" or "Output=1", equal to g(depth of that node).
-2. Query Children: Ask for the list of all child nodes of a node. Answer "Children=[...]". Note: If the query target is T, returns "Rejected: Target structure not queryable".
-3. Is Leaf: Ask if a node is a leaf node. Answer "Yes" or "No" (this query is allowed for T).
-4. Same Depth: Ask if two nodes are at the same depth. Answer "Yes" or "No". Note: If either parameter is target node T, returns "Rejected: Target cannot participate in this comparison".
+1. Count Query: Provide 0 to 4 filter conditions (in the form of "attribute=0" or "attribute=1" conjunctions), and I will return the number of elements in that subset satisfying P. For example, "A=1,B=0" filters elements with A=1 and B=0; empty condition means all 16 elements.
 
-When you have collected enough information, submit your final answer. The answer must include:
-1. The mapping scheme used (A/B/C/D)
-2. At least two sampling records for non-target nodes (node and corresponding output), with logical reasoning to exclude other schemes based on depth-output characteristics
-3. The depth of target node T (0/1/2/3), with justification based on the determined scheme and allowed queries for T
+2. Compare Query: Provide two sets of filter conditions, and I will compare the number of elements satisfying P in the two subsets, returning "A more than B", "A less than B", or "A equals B".
 
-If the answer is incorrect, format is invalid, or reasoning is insufficient, the game fails.
+Please use as few queries as possible. When ready, submit your final answer.
 
-## Query and Answer Format (must strictly follow)
+Each time only one query or answer tag is allowed. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Count Query (e.g., query subset with A=1 and B=0):
+<query_count>A=1,B=0</query_count>
 
-- Sample Output (e.g., querying node r):
-<query_sample>r</query_sample>
+- Count Query (query full set):
+<query_count></query_count>
 
-- Query Children (e.g., querying node a1):
-<query_children>a1</query_children>
+- Compare Query (e.g., compare subset "A=1" with "B=1"):
+<query_compare>A=1|B=1</query_compare>
 
-- Is Leaf (e.g., querying node c111):
-<query_leaf>c111</query_leaf>
+When submitting final answer, you must provide both the predicate name and target count in this format:
 
-- Same Depth (e.g., comparing nodes a1 and a2):
-<query_same_depth>a1,a2</query_same_depth>
-
-When submitting the final answer, you must specify the mapping scheme, sampling evidence, target node T's depth, and reasoning process, using this format:
-
-<answer>
-Scheme=A
-Evidence1=Node:r,Output:0
-Evidence2=Node:a1,Output:1
-Exclusion_Logic=Depth 0 output 0 excludes invalid schemes, depth 1 output 1 combined with depth characteristics confirms Scheme A
-Target_Depth=3
-Target_Reasoning=Sampling T yields output 1, combined with Scheme A where depth 3 corresponds to output 1, and T is a leaf node, confirming T depth is 3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎进入“智能交通路网排查系统”。这是一场基于路网拓扑的溯因推理排查游戏，规则如下：
+欢迎使用“智能交通异常车辆排查系统”。请阅读以下排查规则：
 
-系统设定了一棵区域路网层级树，最大深度为3（根枢纽深度为0），共19个路网节点。节点标识及层级（父子）关系如下：
-- 深度0（核心枢纽）：r
-- 深度1（主干道）：r 的下级节点为 a1, a2, a3
-- 深度2（次干道）：
-  - a1 的下级节点：b11, b12
-  - a2 的下级节点：b21
-  - a3 的下级节点：b31, b32, b33
-- 深度3（支路/叶子节点）：
-  - b11 的下级节点：c111, c112
-  - b12 的下级节点：c121
-  - b21 的下级节点：c211, c212
-  - b31 的下级节点：c311
-  - b32 的下级节点：c321, c322
-  - b33 的下级节点：c331
+系统当前锁定了16辆目标车辆，每辆车通过4个二元传感器特征（A、B、C、D）进行标注。对于每个特征，系统已预先定义了“1”和“0”所代表的状态：
+{attributes_desc}
 
-存在一个发生未知拥堵的特殊目标节点 T（你需要推断出它的深度层级）。
+这16辆车恰好覆盖了4个特征的全部16种状态组合（从0000到1111），每种组合各对应一辆车。
 
-交管局已秘密实施了一套针对路段深度 d 的二值限行方案 g(d)，四种预案如下（确切采用其一）：
-- 方案A（奇偶限行）：g(d) = d 对 2 取模的结果
-- 方案B（中层限行）：g(d) = 1 当且仅当 d 属于集合 1或2，否则为 0
-- 方案C（基层限行）：g(d) = 1 当且仅当 d 属于集合 2或3，否则为 0
-- 方案D（全网放行）：g(d) = 0 对所有 d
+系统内部预设了一个隐藏的“高风险车辆”判定规则 P，它是以下六个候选模型之一：
+- α：当且仅当 A=1 时，判定为高风险（P为真）。
+- β：当且仅当 A与B的状态不同时，判定为高风险（P为真）。
+- γ：当且仅当（A=1且B=1）或（C=1且D=1）时，判定为高风险（P为真）。
+- δ：当且仅当 A+B+C+D 的总和为奇数时，判定为高风险（P为真）。
+- ε：当且仅当 A+B+C+D 恰好等于2时，判定为高风险（P为真）。
+- ζ：当且仅当 A=C 时，判定为高风险（P为真）。
 
-你的目标是：
-1. 确定真实采用的限行方案（A/B/C/D）
-2. 确定拥堵目标节点 T 的深度（0/1/2/3）
+你的排查目标是通过系统查询推断出：
+1. 隐藏的判定规则模型是哪一个（α、β、γ、δ、ε或ζ）；
+2. 在满足条件 [特征A=1 且 特征C=1] 的车辆子集中，被判定为高风险（满足P）的车辆总数。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据系统真实设定如实回答：
+你可以向系统提交以下两类查询：
 
-1. 采样输出：询问某个节点在当前方案下的输出值（即限行状态）。回答"输出=0"（未限行）或"输出=1"（限行），等于 g(该节点的深度)。
-2. 查询子节点：询问某个节点的所有下级子节点列表。回答"子节点=[...]"。注意：若查询对象为目标节点T，会返回"拒绝：目标结构不可查"。
-3. 是否叶子：询问某个节点是否为最底层的支路（叶子节点）。回答"是"或"否"（允许对T进行此查询）。
-4. 是否同层：询问两个节点是否在相同深度层级。回答"是"或"否"。注意：若任一参数为目标节点T，会返回"拒绝：目标不得参与此比较"。
+1. 计数查询：给出0至4个特征筛选条件（形式为"A=0"或"A=1"的合取），系统将返回该子集中被判定为高风险的车辆数量。例如"A=1,B=0"表示筛选出A=1且B=0的车辆；空条件表示查询全部16辆车。
 
-当你收集足够信息后，请提交最终排查报告。答案需包含：
-1. 采用的方案（A/B/C/D）
-2. 至少两次针对非目标节点的采样记录（节点与对应输出），并基于各深度输出特征排除其余方案的逻辑推理
-3. 目标节点 T 的深度（0/1/2/3），并基于已确定方案与对T的允许查询进行论证
+2. 比较查询：给出两组筛选条件，系统将比较两个子集中高风险车辆的数量，返回"A多于B"、"A少于B"或"A等于B"。
 
-若答案错误、格式不符或推理依据不足，排查失败。
+请尽可能少地调用查询接口。当你完成推断后，提交最终的排查结果。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个查询或答案标签。使用以下XML格式：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 计数查询（例如查询A=1且B=0的子集）：
+<query_count>A=1,B=0</query_count>
 
-- 采样输出（例如查询节点 r）：
-<query_sample>r</query_sample>
+- 计数查询（查询全集）：
+<query_count></query_count>
 
-- 查询子节点（例如查询节点 a1）：
-<query_children>a1</query_children>
+- 比较查询（例如比较"A=1"与"B=1"两个子集）：
+<query_compare>A=1|B=1</query_compare>
 
-- 是否叶子（例如查询节点 c111）：
-<query_leaf>c111</query_leaf>
+提交最终排查结果时，必须同时给出判定规则模型的名称和目标数量，格式如下：
 
-- 是否同层（例如比较节点 a1 和 a2）：
-<query_same_depth>a1,a2</query_same_depth>
-
-提交最终答案时，必须说明映射方案、采样证据、目标节点T的深度及推理过程，格式如下：
-
-<answer>
-方案=A
-证据1=节点:r,输出:0
-证据2=节点:a1,输出:1
-排除逻辑=深度0输出0排除了无效方案，深度1输出1结合深度特征可确定方案A
-目标深度=3
-目标推理=通过采样T得到输出1，结合方案A中深度3对应输出1，且T为叶子节点，确定T深度为3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Intelligent Traffic Network Inspection System". Let's play a topological mapping inference game. Here are the rules:
+Welcome to the "Intelligent Traffic Abnormal Vehicle Detection System". Here are the operational rules:
 
-The system features a regional road network modeled as a rooted tree with a maximum depth of 3 (root hub has depth 0) and 19 nodes total. Node identifiers and hierarchical (parent-child) relationships are as follows:
-- Depth 0 (Core Hub): r
-- Depth 1 (Arterial Roads): r has children a1, a2, a3
-- Depth 2 (Collector Roads):
-  - a1 has children: b11, b12
-  - a2 has child: b21
-  - a3 has children: b31, b32, b33
-- Depth 3 (Local Roads/Leaves):
-  - b11 has children: c111, c112
-  - b12 has child: c121
-  - b21 has children: c211, c212
-  - b31 has child: c311
-  - b32 has children: c321, c322
-  - b33 has child: c331
+The system has locked onto 16 target vehicles, each labeled with 4 binary sensor features (A, B, C, D). For each feature, which state is "1" (and which is "0") has been predefined:
+{attributes_desc}
 
-There exists a special congested target node T (whose depth you need to infer).
+These 16 vehicles exactly cover all 16 state combinations of the 4 features (from 0000 to 1111), with each combination corresponding to exactly one vehicle.
 
-The traffic authority has secretly implemented a binary traffic control scheme g(d) based on the road depth d. There are four candidate schemes (exactly one is used):
-- Scheme A (Parity Restriction): g(d) = d modulo 2
-- Scheme B (Mid-Level Restriction): g(d) = 1 if and only if d is in the set 1 or 2, otherwise 0
-- Scheme C (Local Restriction): g(d) = 1 if and only if d is in the set 2 or 3, otherwise 0
-- Scheme D (No Restriction): g(d) = 0 for all d
+The system has a hidden "high-risk vehicle" judgment rule P, which is one of the following six candidate models:
+- α: P is true (high-risk) if and only if A=1.
+- β: P is true if and only if A and B have different states.
+- γ: P is true if and only if (A=1 and B=1) or (C=1 and D=1).
+- δ: P is true if and only if A+B+C+D is odd.
+- ε: P is true if and only if A+B+C+D equals exactly 2.
+- ζ: P is true if and only if A=C.
 
-Your goals are:
-1. Determine the actual control scheme used (A/B/C/D)
-2. Determine the depth of target node T (0/1/2/3)
+Your detection goal is to infer through system queries:
+1. Which judgment rule model is hidden (α, β, γ, δ, ε, or ζ);
+2. The number of vehicles identified as high-risk (satisfying P) in the subset [feature A=1 and feature C=1].
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the system setup:
+You can make two types of queries to the system:
 
-1. Sample Output: Ask for the restriction output value of a node. Answer "Output=0" or "Output=1", equal to g(depth of that node).
-2. Query Children: Ask for the list of all subordinate child nodes. Answer "Children=[...]". Note: If the query target is T, returns "Rejected: Target structure not queryable".
-3. Is Leaf: Ask if a node is a terminal local road (leaf node). Answer "Yes" or "No" (this query is allowed for T).
-4. Same Depth: Ask if two nodes are at the same depth. Answer "Yes" or "No". Note: If either parameter is target node T, returns "Rejected: Target cannot participate in this comparison".
+1. Count Query: Provide 0 to 4 feature filter conditions (in the form of "A=0" or "A=1" conjunctions), and the system will return the number of high-risk vehicles in that subset. For example, "A=1,B=0" filters vehicles with A=1 and B=0; an empty condition means querying all 16 vehicles.
 
-When you have collected enough information, submit your final report. The answer must include:
-1. The scheme used (A/B/C/D)
-2. At least two sampling records for non-target nodes (node and corresponding output), with logical reasoning to exclude other schemes based on depth-output characteristics
-3. The depth of target node T (0/1/2/3), with justification based on the determined scheme and allowed queries for T
+2. Compare Query: Provide two sets of filter conditions, and the system will compare the number of high-risk vehicles in the two subsets, returning "A more than B", "A less than B", or "A equals B".
 
-If the answer is incorrect, format is invalid, or reasoning is insufficient, the inspection fails.
+Please use as few queries as possible. When your inference is complete, submit your final result.
 
-## Query and Answer Format (must strictly follow)
+Each time only one query or answer tag is allowed. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Count Query (e.g., query subset with A=1 and B=0):
+<query_count>A=1,B=0</query_count>
 
-- Sample Output (e.g., querying node r):
-<query_sample>r</query_sample>
+- Count Query (query all vehicles):
+<query_count></query_count>
 
-- Query Children (e.g., querying node a1):
-<query_children>a1</query_children>
+- Compare Query (e.g., compare subset "A=1" with "B=1"):
+<query_compare>A=1|B=1</query_compare>
 
-- Is Leaf (e.g., querying node c111):
-<query_leaf>c111</query_leaf>
+When submitting the final detection result, you must provide both the predicate model name and the target count in this format:
 
-- Same Depth (e.g., comparing nodes a1 and a2):
-<query_same_depth>a1,a2</query_same_depth>
-
-When submitting the final answer, you must specify the scheme, sampling evidence, target node T's depth, and reasoning process, using this format:
-
-<answer>
-Scheme=A
-Evidence1=Node:r,Output:0
-Evidence2=Node:a1,Output:1
-Exclusion_Logic=Depth 0 output 0 excludes invalid schemes, depth 1 output 1 combined with depth characteristics confirms Scheme A
-Target_Depth=3
-Target_Reasoning=Sampling T yields output 1, combined with Scheme A where depth 3 corresponds to output 1, and T is a leaf node, confirming T depth is 3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“病原体溯源与基因表达检测系统”。这是一场基于分类进化树的溯因推理排查游戏，规则如下：
+欢迎进入“临床疑难病例分析系统”。请仔细阅读以下分析规范：
 
-系统设定了一棵病原体分类演化树，最大演化深度为3（根系病原体深度为0），共19个分类节点。节点标识及进化（父子）关系如下：
-- 深度0（根系病原体）：r
-- 深度1（亚型分支）：r 的下级节点为 a1, a2, a3
-- 深度2（变异株系）：
-  - a1 的下级节点：b11, b12
-  - a2 的下级节点：b21
-  - a3 的下级节点：b31, b32, b33
-- 深度3（终端序列/叶子节点）：
-  - b11 的下级节点：c111, c112
-  - b12 的下级节点：c121
-  - b21 的下级节点：c211, c212
-  - b31 的下级节点：c311
-  - b32 的下级节点：c321, c322
-  - b33 的下级节点：c331
+系统调取了16份罕见病例样本，每份样本都记录了4个二元临床指征（A、B、C、D）。对于每个指征，已预先界定其阳性“1”与阴性“0”的具体含义：
+{attributes_desc}
 
-存在一个发生未知突变的特殊目标节点 T（你需要推断出它的深度层级）。
+这16份样本严密覆盖了4个临床指征的全部16种表现组合（0000至1111），每种指征组合仅对应一份病例。
 
-疾控中心已秘密确认了一套针对演化深度 d 的二值基因标记表达方案 g(d)，四种预案如下（确切采用其一）：
-- 方案A（奇偶表达）：g(d) = d 对 2 取模的结果
-- 方案B（中层表达）：g(d) = 1 当且仅当 d 属于集合 1或2，否则为 0
-- 方案C（终端表达）：g(d) = 1 当且仅当 d 属于集合 2或3，否则为 0
-- 方案D（全阴性）：g(d) = 0 对所有 d
+系统中隐匿了一项针对特定综合征的“确诊标准 P”，它必定是以下六个候选假说之一：
+- α：当且仅当指征 A=1 时，确诊成立（P为真）。
+- β：当且仅当指征 A与B 的表现相反时，确诊成立（P为真）。
+- γ：当且仅当（A=1且B=1）或（C=1且D=1）时，确诊成立（P为真）。
+- δ：当且仅当 A+B+C+D 的总阳性数为奇数时，确诊成立（P为真）。
+- ε：当且仅当 A+B+C+D 恰好有2个呈现阳性时，确诊成立（P为真）。
+- ζ：当且仅当指征 A与C 的表现相同时，确诊成立（P为真）。
 
-你的目标是：
-1. 确定真实采用的表达方案（A/B/C/D）
-2. 确定突变目标节点 T 的深度（0/1/2/3）
+你的医学推断任务是通过查询得出：
+1. 查明系统采用的确诊标准是哪一个（α、β、γ、δ、ε或ζ）；
+2. 计算在满足条件 [指征A=1 且 指征C=1] 的病例集中，最终确诊（满足P）的病例总数。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据系统真实设定如实回答：
+你可以使用两种类型的临床数据查询：
 
-1. 采样输出：询问某个节点在当前方案下的输出值（基因表达状态）。回答"输出=0"（阴性）或"输出=1"（阳性），等于 g(该节点的深度)。
-2. 查询子节点：询问某个节点的所有演化下级节点列表。回答"子节点=[...]"。注意：若查询对象为目标节点T，会返回"拒绝：目标结构不可查"。
-3. 是否叶子：询问某个节点是否为最底层的终端序列（叶子节点）。回答"是"或"否"（允许对T进行此查询）。
-4. 是否同层：询问两个节点是否在相同演化深度。回答"是"或"否"。注意：若任一参数为目标节点T，会返回"拒绝：目标不得参与此比较"。
+1. 计数查询：给出0至4个指征筛选条件（形式为"A=0"或"A=1"的合取），系统将返回该子集中确诊病例的数量。例如"A=1,B=0"表示筛选出指征A阳性且B阴性的病例；空条件表示查询全部16份病例。
 
-当你收集足够信息后，请提交最终排查报告。答案需包含：
-1. 采用的方案（A/B/C/D）
-2. 至少两次针对非目标节点的采样记录（节点与对应输出），并基于各深度输出特征排除其余方案的逻辑推理
-3. 目标节点 T 的深度（0/1/2/3），并基于已确定方案与对T的允许查询进行论证
+2. 比较查询：给出两组筛选条件，系统将比较两个子集的确诊数量，返回"A多于B"、"A少于B"或"A等于B"。
 
-若答案错误、格式不符或推理依据不足，排查失败。
+请尽可能少地进行查询。就绪后，提交你的诊断推论。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个查询或答案标签。使用以下XML格式：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 计数查询（例如查询A=1且B=0的子集）：
+<query_count>A=1,B=0</query_count>
 
-- 采样输出（例如查询节点 r）：
-<query_sample>r</query_sample>
+- 计数查询（查询全部样本）：
+<query_count></query_count>
 
-- 查询子节点（例如查询节点 a1）：
-<query_children>a1</query_children>
+- 比较查询（例如比较"A=1"与"B=1"两个子集）：
+<query_compare>A=1|B=1</query_compare>
 
-- 是否叶子（例如查询节点 c111）：
-<query_leaf>c111</query_leaf>
+提交最终推断时，必须同时给出确诊标准的名称和目标病例数，格式如下：
 
-- 是否同层（例如比较节点 a1 和 a2）：
-<query_same_depth>a1,a2</query_same_depth>
-
-提交最终答案时，必须说明映射方案、采样证据、目标节点T的深度及推理过程，格式如下：
-
-<answer>
-方案=A
-证据1=节点:r,输出:0
-证据2=节点:a1,输出:1
-排除逻辑=深度0输出0排除了无效方案，深度1输出1结合深度特征可确定方案A
-目标深度=3
-目标推理=通过采样T得到输出1，结合方案A中深度3对应输出1，且T为叶子节点，确定T深度为3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Pathogen Traceability and Gene Expression Detection System". Let's play a taxonomic mapping inference game. Here are the rules:
+Welcome to the "Clinical Rare Disease Analysis System". Please read the following analysis specifications carefully:
 
-The system features a pathogen taxonomy tree with a maximum depth of 3 (root pathogen has depth 0) and 19 nodes total. Node identifiers and evolutionary (parent-child) relationships are as follows:
-- Depth 0 (Root Pathogen): r
-- Depth 1 (Sub-type Branch): r has children a1, a2, a3
-- Depth 2 (Variant Strain):
-  - a1 has children: b11, b12
-  - a2 has child: b21
-  - a3 has children: b31, b32, b33
-- Depth 3 (Terminal Sequence/Leaves):
-  - b11 has children: c111, c112
-  - b12 has child: c121
-  - b21 has children: c211, c212
-  - b31 has child: c311
-  - b32 has children: c321, c322
-  - b33 has child: c331
+The system has retrieved 16 rare case samples, each recorded with 4 binary clinical indicators (A, B, C, D). For each indicator, the specific meaning of positive "1" and negative "0" has been predefined:
+{attributes_desc}
 
-There exists a special mutated target node T (whose depth you need to infer).
+These 16 samples rigorously cover all 16 manifestation combinations of the 4 clinical indicators (from 0000 to 1111), with each combination corresponding to exactly one case.
 
-The CDC has secretly confirmed a binary gene marker expression scheme g(d) based on the evolutionary depth d. There are four candidate schemes (exactly one is used):
-- Scheme A (Parity Expression): g(d) = d modulo 2
-- Scheme B (Mid-Level Expression): g(d) = 1 if and only if d is in the set 1 or 2, otherwise 0
-- Scheme C (Terminal Expression): g(d) = 1 if and only if d is in the set 2 or 3, otherwise 0
-- Scheme D (All Negative): g(d) = 0 for all d
+A "diagnostic criterion P" for a specific syndrome is hidden in the system, which must be one of the following six candidate hypotheses:
+- α: The diagnosis is confirmed (P is true) if and only if indicator A=1.
+- β: The diagnosis is confirmed (P is true) if and only if indicators A and B show opposite manifestations.
+- γ: The diagnosis is confirmed (P is true) if and only if (A=1 and B=1) or (C=1 and D=1).
+- δ: The diagnosis is confirmed (P is true) if and only if the total number of positive indicators among A+B+C+D is odd.
+- ε: The diagnosis is confirmed (P is true) if and only if exactly 2 indicators among A+B+C+D are positive.
+- ζ: The diagnosis is confirmed (P is true) if and only if indicators A and C show the same manifestation.
 
-Your goals are:
-1. Determine the actual expression scheme used (A/B/C/D)
-2. Determine the depth of target node T (0/1/2/3)
+Your medical inference tasks are to deduce through queries:
+1. Determine which diagnostic criterion the system uses (α, β, γ, δ, ε, or ζ);
+2. Calculate the total number of confirmed cases (satisfying P) in the subset of cases meeting [indicator A=1 and indicator C=1].
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the system setup:
+You can use two types of clinical data queries:
 
-1. Sample Output: Ask for the expression output value of a node. Answer "Output=0" (Negative) or "Output=1" (Positive), equal to g(depth of that node).
-2. Query Children: Ask for the list of all evolutionary child nodes. Answer "Children=[...]". Note: If the query target is T, returns "Rejected: Target structure not queryable".
-3. Is Leaf: Ask if a node is a terminal sequence (leaf node). Answer "Yes" or "No" (this query is allowed for T).
-4. Same Depth: Ask if two nodes are at the same evolutionary depth. Answer "Yes" or "No". Note: If either parameter is target node T, returns "Rejected: Target cannot participate in this comparison".
+1. Count Query: Provide 0 to 4 indicator filter conditions (in the form of "A=0" or "A=1" conjunctions), and the system will return the number of confirmed cases in that subset. For example, "A=1,B=0" filters cases with A=1 and B=0; an empty condition means querying all 16 cases.
 
-When you have collected enough information, submit your final report. The answer must include:
-1. The scheme used (A/B/C/D)
-2. At least two sampling records for non-target nodes (node and corresponding output), with logical reasoning to exclude other schemes based on depth-output characteristics
-3. The depth of target node T (0/1/2/3), with justification based on the determined scheme and allowed queries for T
+2. Compare Query: Provide two sets of filter conditions, and the system will compare the number of confirmed cases in the two subsets, returning "A more than B", "A less than B", or "A equals B".
 
-If the answer is incorrect, format is invalid, or reasoning is insufficient, the inspection fails.
+Please use as few queries as possible. Submit your final diagnosis conclusion when ready.
 
-## Query and Answer Format (must strictly follow)
+Each time only one query or answer tag is allowed. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Count Query (e.g., query subset with A=1 and B=0):
+<query_count>A=1,B=0</query_count>
 
-- Sample Output (e.g., querying node r):
-<query_sample>r</query_sample>
+- Count Query (query all cases):
+<query_count></query_count>
 
-- Query Children (e.g., querying node a1):
-<query_children>a1</query_children>
+- Compare Query (e.g., compare subset "A=1" with "B=1"):
+<query_compare>A=1|B=1</query_compare>
 
-- Is Leaf (e.g., querying node c111):
-<query_leaf>c111</query_leaf>
+When submitting the final conclusion, you must provide both the diagnostic criterion name and the target count in this format:
 
-- Same Depth (e.g., comparing nodes a1 and a2):
-<query_same_depth>a1,a2</query_same_depth>
-
-When submitting the final answer, you must specify the scheme, sampling evidence, target node T's depth, and reasoning process, using this format:
-
-<answer>
-Scheme=A
-Evidence1=Node:r,Output:0
-Evidence2=Node:a1,Output:1
-Exclusion_Logic=Depth 0 output 0 excludes invalid schemes, depth 1 output 1 combined with depth characteristics confirms Scheme A
-Target_Depth=3
-Target_Reasoning=Sampling T yields output 1, combined with Scheme A where depth 3 corresponds to output 1, and T is a leaf node, confirming T depth is 3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用“知识图谱与课程考核分析系统”。这是一场基于知识点依赖树的溯因推理排查游戏，规则如下：
+欢迎登录“智能教学与学生能力评估系统”。请阅读以下测评规则：
 
-系统设定了一棵学科知识图谱树，最大深度为3（核心学科深度为0），共19个图谱节点。节点标识及依赖（父子）关系如下：
-- 深度0（核心学科）：r
-- 深度1（主干模块）：r 的下级节点为 a1, a2, a3
-- 深度2（单元节点）：
-  - a1 的下级节点：b11, b12
-  - a2 的下级节点：b21
-  - a3 的下级节点：b31, b32, b33
-- 深度3（具体考点/叶子节点）：
-  - b11 的下级节点：c111, c112
-  - b12 的下级节点：c121
-  - b21 的下级节点：c211, c212
-  - b31 的下级节点：c311
-  - b32 的下级节点：c321, c322
-  - b33 的下级节点：c331
+系统中归档了16份学生能力评估档案，每份档案涵盖4项二元能力指标（A、B、C、D）。针对每项指标，系统明确界定了“1”（具备）与“0”（欠缺）的具体内涵：
+{attributes_desc}
 
-存在一个导致学生认知障碍的特殊缺失节点 T（你需要推断出它的深度层级）。
+这16份档案正好涵盖了4项能力指标的全部16种组合状态（从0000到1111），每种状态仅对应一名学生。
 
-教研组已秘密部署了一套针对知识深度 d 的二值考核覆盖方案 g(d)，四种预案如下（确切采用其一）：
-- 方案A（奇偶考核）：g(d) = d 对 2 取模的结果
-- 方案B（中层考核）：g(d) = 1 当且仅当 d 属于集合 1或2，否则为 0
-- 方案C（细节考核）：g(d) = 1 当且仅当 d 属于集合 2或3，否则为 0
-- 方案D（无新增考核）：g(d) = 0 对所有 d
+系统底层搭载了一个选拔“创新推荐人才”的隐藏评价模型 P，为以下六种候选模型之一：
+- α：当且仅当指标 A=1 时，获得推荐资格（P为真）。
+- β：当且仅当指标 A与B 状态不一致时，获得推荐资格（P为真）。
+- γ：当且仅当（A=1且B=1）或（C=1且D=1）时，获得推荐资格（P为真）。
+- δ：当且仅当 A+B+C+D 具备的指标总数为奇数时，获得推荐资格（P为真）。
+- ε：当且仅当 A+B+C+D 恰好具备2项指标时，获得推荐资格（P为真）。
+- ζ：当且仅当指标 A=C 状态一致时，获得推荐资格（P为真）。
 
-你的目标是：
-1. 确定真实采用的考核方案（A/B/C/D）
-2. 确定缺失目标节点 T 的深度（0/1/2/3）
+你的评估推导任务是通过接口调用得出：
+1. 查明隐蔽的评价模型是哪一个（α、β、γ、δ、ε或ζ）；
+2. 计算在满足条件 [指标A=1 且 指标C=1] 的学生群体中，最终获得推荐（满足P）的学生人数。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据系统真实设定如实回答：
+你可以提交以下两类测评查询：
 
-1. 采样输出：询问某个节点在当前方案下的输出值（即考核状态）。回答"输出=0"（未考核）或"输出=1"（已考核），等于 g(该节点的深度)。
-2. 查询子节点：询问某个节点的所有依赖下级节点列表。回答"子节点=[...]"。注意：若查询对象为目标节点T，会返回"拒绝：目标结构不可查"。
-3. 是否叶子：询问某个节点是否为最底层的具体考点（叶子节点）。回答"是"或"否"（允许对T进行此查询）。
-4. 是否同层：询问两个节点是否在相同知识层级深度。回答"是"或"否"。注意：若任一参数为目标节点T，会返回"拒绝：目标不得参与此比较"。
+1. 计数查询：给出0至4个指标筛选条件（例如"A=1,B=0"），系统将返回该子集中获得推荐的学生人数；空条件表示查询全部16名学生。
 
-当你收集足够信息后，请提交最终排查报告。答案需包含：
-1. 采用的方案（A/B/C/D）
-2. 至少两次针对非目标节点的采样记录（节点与对应输出），并基于各深度输出特征排除其余方案的逻辑推理
-3. 目标节点 T 的深度（0/1/2/3），并基于已确定方案与对T的允许查询进行论证
+2. 比较查询：给出两组筛选条件，系统将对比两个子集中获得推荐的人数，返回"A多于B"、"A少于B"或"A等于B"。
 
-若答案错误、格式不符或推理依据不足，排查失败。
+请用尽可能少的测评请求。完成推断后，提交最终评估结果。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个查询或答案标签。使用以下XML格式：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 计数查询（例如查询A=1且B=0的子集）：
+<query_count>A=1,B=0</query_count>
 
-- 采样输出（例如查询节点 r）：
-<query_sample>r</query_sample>
+- 计数查询（查询全部学生）：
+<query_count></query_count>
 
-- 查询子节点（例如查询节点 a1）：
-<query_children>a1</query_children>
+- 比较查询（例如比较"A=1"与"B=1"两个子集）：
+<query_compare>A=1|B=1</query_compare>
 
-- 是否叶子（例如查询节点 c111）：
-<query_leaf>c111</query_leaf>
+提交最终评估结果时，必须同时给出评价模型名称和目标人数，格式如下：
 
-- 是否同层（例如比较节点 a1 和 a2）：
-<query_same_depth>a1,a2</query_same_depth>
-
-提交最终答案时，必须说明映射方案、采样证据、目标节点T的深度及推理过程，格式如下：
-
-<answer>
-方案=A
-证据1=节点:r,输出:0
-证据2=节点:a1,输出:1
-排除逻辑=深度0输出0排除了无效方案，深度1输出1结合深度特征可确定方案A
-目标深度=3
-目标推理=通过采样T得到输出1，结合方案A中深度3对应输出1，且T为叶子节点，确定T深度为3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Knowledge Graph and Curriculum Assessment Analysis System". Let's play a concept dependency mapping inference game. Here are the rules:
+Welcome to the "Intelligent Teaching and Student Assessment System". Please review the following evaluation rules:
 
-The system features a subject knowledge graph tree with a maximum depth of 3 (core subject has depth 0) and 19 nodes total. Node identifiers and dependency (parent-child) relationships are as follows:
-- Depth 0 (Core Subject): r
-- Depth 1 (Main Module): r has children a1, a2, a3
-- Depth 2 (Unit Node):
-  - a1 has children: b11, b12
-  - a2 has child: b21
-  - a3 has children: b31, b32, b33
-- Depth 3 (Specific Topic/Leaves):
-  - b11 has children: c111, c112
-  - b12 has child: c121
-  - b21 has children: c211, c212
-  - b31 has child: c311
-  - b32 has children: c321, c322
-  - b33 has child: c331
+The system has archived 16 student ability assessment profiles, each covering 4 binary ability metrics (A, B, C, D). For each metric, the system has clearly defined the meaning of "1" (competent) and "0" (lacking):
+{attributes_desc}
 
-There exists a special missing target node T causing cognitive barriers (whose depth you need to infer).
+These 16 profiles perfectly encompass all 16 state combinations of the 4 ability metrics (from 0000 to 1111), with each state corresponding to exactly one student.
 
-The teaching research group has secretly deployed a binary assessment coverage scheme g(d) based on the knowledge depth d. There are four candidate schemes (exactly one is used):
-- Scheme A (Parity Assessment): g(d) = d modulo 2
-- Scheme B (Mid-Level Assessment): g(d) = 1 if and only if d is in the set 1 or 2, otherwise 0
-- Scheme C (Detailed Assessment): g(d) = 1 if and only if d is in the set 2 or 3, otherwise 0
-- Scheme D (No Assessment): g(d) = 0 for all d
+An underlying evaluation model P for "Innovative Talent Recommendation" is hidden in the system, which is one of the following six candidate models:
+- α: The recommendation qualification is granted (P is true) if and only if metric A=1.
+- β: The recommendation qualification is granted if and only if the states of metrics A and B are inconsistent.
+- γ: The recommendation qualification is granted if and only if (A=1 and B=1) or (C=1 and D=1).
+- δ: The recommendation qualification is granted if and only if the total number of competent metrics among A+B+C+D is odd.
+- ε: The recommendation qualification is granted if and only if exactly 2 metrics among A+B+C+D are competent.
+- ζ: The recommendation qualification is granted if and only if the states of metrics A and C are identical.
 
-Your goals are:
-1. Determine the actual assessment scheme used (A/B/C/D)
-2. Determine the depth of target node T (0/1/2/3)
+Your evaluation tasks are to deduce through queries:
+1. Deduce the hidden evaluation model being applied (α, β, γ, δ, ε, or ζ);
+2. Calculate the number of students who receive the recommendation (satisfying P) in the subset meeting [metric A=1 and metric C=1].
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the system setup:
+You can submit the following two types of evaluation queries:
 
-1. Sample Output: Ask for the assessment output value of a node. Answer "Output=0" (Not assessed) or "Output=1" (Assessed), equal to g(depth of that node).
-2. Query Children: Ask for the list of all subordinate knowledge nodes. Answer "Children=[...]". Note: If the query target is T, returns "Rejected: Target structure not queryable".
-3. Is Leaf: Ask if a node is a terminal specific topic (leaf node). Answer "Yes" or "No" (this query is allowed for T).
-4. Same Depth: Ask if two nodes are at the same knowledge depth. Answer "Yes" or "No". Note: If either parameter is target node T, returns "Rejected: Target cannot participate in this comparison".
+1. Count Query: Provide 0 to 4 metric filter conditions (e.g., "A=1,B=0"), and the system will return the number of recommended students in that subset. An empty condition queries all 16 students.
 
-When you have collected enough information, submit your final report. The answer must include:
-1. The scheme used (A/B/C/D)
-2. At least two sampling records for non-target nodes (node and corresponding output), with logical reasoning to exclude other schemes based on depth-output characteristics
-3. The depth of target node T (0/1/2/3), with justification based on the determined scheme and allowed queries for T
+2. Compare Query: Provide two sets of filter conditions, and the system will compare the number of recommended students in the two subsets, returning "A more than B", "A less than B", or "A equals B".
 
-If the answer is incorrect, format is invalid, or reasoning is insufficient, the inspection fails.
+Please use as few evaluation requests as possible. Submit your final assessment when ready.
 
-## Query and Answer Format (must strictly follow)
+Each time only one query or answer tag is allowed. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Count Query (e.g., query subset with A=1 and B=0):
+<query_count>A=1,B=0</query_count>
 
-- Sample Output (e.g., querying node r):
-<query_sample>r</query_sample>
+- Count Query (query all students):
+<query_count></query_count>
 
-- Query Children (e.g., querying node a1):
-<query_children>a1</query_children>
+- Compare Query (e.g., compare subset "A=1" with "B=1"):
+<query_compare>A=1|B=1</query_compare>
 
-- Is Leaf (e.g., querying node c111):
-<query_leaf>c111</query_leaf>
+When submitting the final result, you must provide both the evaluation model name and the target count in this format:
 
-- Same Depth (e.g., comparing nodes a1 and a2):
-<query_same_depth>a1,a2</query_same_depth>
-
-When submitting the final answer, you must specify the scheme, sampling evidence, target node T's depth, and reasoning process, using this format:
-
-<answer>
-Scheme=A
-Evidence1=Node:r,Output:0
-Evidence2=Node:a1,Output:1
-Exclusion_Logic=Depth 0 output 0 excludes invalid schemes, depth 1 output 1 combined with depth characteristics confirms Scheme A
-Target_Depth=3
-Target_Reasoning=Sampling T yields output 1, combined with Scheme A where depth 3 corresponds to output 1, and T is a leaf node, confirming T depth is 3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎进入“工业BOM追溯与质检排查系统”。这是一场基于装配拓扑的溯因推理排查游戏，规则如下：
+欢迎接入“工业流水线智能质检系统”。请遵循以下品控排查规程：
 
-系统设定了一棵产品BOM（物料清单）装配树，最大深度为3（最终产品深度为0），共19个装配节点。节点标识及包含（父子）关系如下：
-- 深度0（最终产品）：r
-- 深度1（核心组件）：r 的下级节点为 a1, a2, a3
-- 深度2（子模块）：
-  - a1 的下级节点：b11, b12
-  - a2 的下级节点：b21
-  - a3 的下级节点：b31, b32, b33
-- 深度3（基础零件/叶子节点）：
-  - b11 的下级节点：c111, c112
-  - b12 的下级节点：c121
-  - b21 的下级节点：c211, c212
-  - b31 的下级节点：c311
-  - b32 的下级节点：c321, c322
-  - b33 的下级节点：c331
+系统已截取16个批次的产品检测样本，每个样本涉及4道工序的关键参数状态（A、B、C、D）。各工序参数已被严格定义了特定状态“1”与常规状态“0”的具体表象：
+{attributes_desc}
 
-存在一个具有隐患的特殊缺陷目标节点 T（你需要推断出它在BOM树中的深度层级）。
+这16个批次完整包含了4项参数状态的所有16种组合（从0000到1111），每种组合对应唯一批次。
 
-质检部已秘密实施了一套针对装配深度 d 的二值质检方案 g(d)，四种预案如下（确切采用其一）：
-- 方案A（奇偶质检）：g(d) = d 对 2 取模的结果
-- 方案B（中层质检）：g(d) = 1 当且仅当 d 属于集合 1或2，否则为 0
-- 方案C（底层质检）：g(d) = 1 当且仅当 d 属于集合 2或3，否则为 0
-- 方案D（免检放行）：g(d) = 0 对所有 d
+系统现存一个判定产品为“残次/不达标”的潜在缺陷归因模型 P，它隶属于下列六种候选模型之一：
+- α：当且仅当参数 A=1 时，判定为残次（P为真）。
+- β：当且仅当参数 A与B 的状态相悖时，判定为残次（P为真）。
+- γ：当且仅当（A=1且B=1）或（C=1且D=1）时，判定为残次（P为真）。
+- δ：当且仅当 A+B+C+D 呈现特定状态的总数为奇数时，判定为残次（P为真）。
+- ε：当且仅当 A+B+C+D 恰好有2个参数呈现特定状态时，判定为残次（P为真）。
+- ζ：当且仅当参数 A与C 状态相同时，判定为残次（P为真）。
 
-你的目标是：
-1. 确定真实采用的质检方案（A/B/C/D）
-2. 确定缺陷目标节点 T 的深度（0/1/2/3）
+你的排查任务是通过系统接口推导出：
+1. 当前生效的缺陷归因模型是哪一个（α、β、γ、δ、ε或ζ）；
+2. 计算在满足条件 [参数A=1 且 参数C=1] 的批次集中，被判定为残次（满足P）的样本数量。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据系统真实设定如实回答：
+你可以执行两类质检查询：
 
-1. 采样输出：询问某个节点在当前方案下的输出值（即质检状态）。回答"输出=0"（免检）或"输出=1"（必检），等于 g(该节点的深度)。
-2. 查询子节点：询问某个节点的所有下级组成节点列表。回答"子节点=[...]"。注意：若查询对象为目标节点T，会返回"拒绝：目标结构不可查"。
-3. 是否叶子：询问某个节点是否为最底层的基础零件（叶子节点）。回答"是"或"否"（允许对T进行此查询）。
-4. 是否同层：询问两个节点是否在相同BOM层级。回答"是"或"否"。注意：若任一参数为目标节点T，会返回"拒绝：目标不得参与此比较"。
+1. 计数查询：给出0至4个参数筛选条件（例如"A=1,B=0"），系统将返回该参数子集中判定为残次的批次数量；空条件表示查询全部16个批次。
 
-当你收集足够信息后，请提交最终排查报告。答案需包含：
-1. 采用的方案（A/B/C/D）
-2. 至少两次针对非目标节点的采样记录（节点与对应输出），并基于各深度输出特征排除其余方案的逻辑推理
-3. 目标节点 T 的深度（0/1/2/3），并基于已确定方案与对T的允许查询进行论证
+2. 比较查询：提供两组筛选条件，系统将比较两个子集中残次批次的数量，返回"A多于B"、"A少于B"或"A等于B"。
 
-若答案错误、格式不符或推理依据不足，排查失败。
+请优化并最小化你的查询调用。核查完毕后，提交最终质检报告。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个查询或答案标签。使用以下XML格式：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 计数查询（例如查询A=1且B=0的子集）：
+<query_count>A=1,B=0</query_count>
 
-- 采样输出（例如查询节点 r）：
-<query_sample>r</query_sample>
+- 计数查询（查询所有批次）：
+<query_count></query_count>
 
-- 查询子节点（例如查询节点 a1）：
-<query_children>a1</query_children>
+- 比较查询（例如比较"A=1"与"B=1"两个子集）：
+<query_compare>A=1|B=1</query_compare>
 
-- 是否叶子（例如查询节点 c111）：
-<query_leaf>c111</query_leaf>
+提交最终质检报告时，必须同时给出缺陷归因模型名称和目标批次数量，格式如下：
 
-- 是否同层（例如比较节点 a1 和 a2）：
-<query_same_depth>a1,a2</query_same_depth>
-
-提交最终答案时，必须说明映射方案、采样证据、目标节点T的深度及推理过程，格式如下：
-
-<answer>
-方案=A
-证据1=节点:r,输出:0
-证据2=节点:a1,输出:1
-排除逻辑=深度0输出0排除了无效方案，深度1输出1结合深度特征可确定方案A
-目标深度=3
-目标推理=通过采样T得到输出1，结合方案A中深度3对应输出1，且T为叶子节点，确定T深度为3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Industrial BOM Traceability and Quality Inspection System". Let's play an assembly mapping inference game. Here are the rules:
+[Industrial Scenario]
+Welcome to the "Industrial Assembly Line Intelligent Quality Inspection System". Please follow these quality control procedures:
 
-The system features a product Bill of Materials (BOM) modeled as a rooted tree with a maximum depth of 3 (final product has depth 0) and 19 nodes total. Node identifiers and inclusion (parent-child) relationships are as follows:
-- Depth 0 (Final Product): r
-- Depth 1 (Core Assembly): r has children a1, a2, a3
-- Depth 2 (Sub-module):
-  - a1 has children: b11, b12
-  - a2 has child: b21
-  - a3 has children: b31, b32, b33
-- Depth 3 (Base Component/Leaves):
-  - b11 has children: c111, c112
-  - b12 has child: c121
-  - b21 has children: c211, c212
-  - b31 has child: c311
-  - b32 has children: c321, c322
-  - b33 has child: c331
+The system has intercepted 16 batches of product inspection samples, each involving the parameter states of 4 key processes (A, B, C, D). The specific appearances of specific state "1" and regular state "0" for each process parameter have been strictly defined:
+{attributes_desc}
 
-There exists a special defective target node T (whose depth you need to infer).
+These 16 batches completely contain all 16 combinations of the 4 parameter states (from 0000 to 1111), with each combination corresponding to a unique batch.
 
-The Quality Control Department has secretly implemented a binary inspection protocol g(d) based on the assembly depth d. There are four candidate protocols (exactly one is used):
-- Scheme A (Parity Inspection): g(d) = d modulo 2
-- Scheme B (Mid-Level Inspection): g(d) = 1 if and only if d is in the set 1 or 2, otherwise 0
-- Scheme C (Lower-Level Inspection): g(d) = 1 if and only if d is in the set 2 or 3, otherwise 0
-- Scheme D (No Inspection): g(d) = 0 for all d
+There exists a potential defect attribution model P that determines a product as "defective/substandard", which belongs to one of the following six candidates:
+- α: The product is deemed defective (P is true) if and only if parameter A=1.
+- β: The product is deemed defective if and only if the states of parameters A and B are contrary.
+- γ: The product is deemed defective if and only if (A=1 and B=1) or (C=1 and D=1).
+- δ: The product is deemed defective if and only if the total number of specific parameter states among A+B+C+D is odd.
+- ε: The product is deemed defective if and only if exactly 2 parameters among A+B+C+D exhibit the specific state.
+- ζ: The product is deemed defective if and only if parameters A and C have identical states.
 
-Your goals are:
-1. Determine the actual inspection protocol used (A/B/C/D)
-2. Determine the depth of target node T (0/1/2/3)
+Your inspection tasks are to deduce through system interfaces:
+1. Identify the defect attribution model in effect (α, β, γ, δ, ε, or ζ);
+2. Calculate the number of defective samples (satisfying P) in the subset of batches meeting [parameter A=1 and parameter C=1].
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the system setup:
+You can execute two types of quality inspection queries:
 
-1. Sample Output: Ask for the inspection output value of a node. Answer "Output=0" (Skipped) or "Output=1" (Inspected), equal to g(depth of that node).
-2. Query Children: Ask for the list of all sub-component nodes. Answer "Children=[...]". Note: If the query target is T, returns "Rejected: Target structure not queryable".
-3. Is Leaf: Ask if a node is a terminal base component (leaf node). Answer "Yes" or "No" (this query is allowed for T).
-4. Same Depth: Ask if two nodes are at the same BOM depth. Answer "Yes" or "No". Note: If either parameter is target node T, returns "Rejected: Target cannot participate in this comparison".
+1. Count Query: Provide 0 to 4 parameter filter conditions (e.g., "A=1,B=0"), and the system returns the number of defective batches in that subset. An empty condition queries all 16 batches.
 
-When you have collected enough information, submit your final report. The answer must include:
-1. The scheme used (A/B/C/D)
-2. At least two sampling records for non-target nodes (node and corresponding output), with logical reasoning to exclude other schemes based on depth-output characteristics
-3. The depth of target node T (0/1/2/3), with justification based on the determined scheme and allowed queries for T
+2. Compare Query: Provide two sets of filter conditions to compare the number of defective batches, returning "A more than B", "A less than B", or "A equals B".
 
-If the answer is incorrect, format is invalid, or reasoning is insufficient, the inspection fails.
+Please optimize and minimize your query calls. Submit the final quality report when verification is complete.
 
-## Query and Answer Format (must strictly follow)
+Each time only one query or answer tag is allowed. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Count Query (e.g., query subset with A=1 and B=0):
+<query_count>A=1,B=0</query_count>
 
-- Sample Output (e.g., querying node r):
-<query_sample>r</query_sample>
+- Count Query (query all batches):
+<query_count></query_count>
 
-- Query Children (e.g., querying node a1):
-<query_children>a1</query_children>
+- Compare Query (e.g., compare subset "A=1" with "B=1"):
+<query_compare>A=1|B=1</query_compare>
 
-- Is Leaf (e.g., querying node c111):
-<query_leaf>c111</query_leaf>
+When submitting the final quality report, you must provide both the defect attribution model name and the target count in this format:
 
-- Same Depth (e.g., comparing nodes a1 and a2):
-<query_same_depth>a1,a2</query_same_depth>
-
-When submitting the final answer, you must specify the scheme, sampling evidence, target node T's depth, and reasoning process, using this format:
-
-<answer>
-Scheme=A
-Evidence1=Node:r,Output:0
-Evidence2=Node:a1,Output:1
-Exclusion_Logic=Depth 0 output 0 excludes invalid schemes, depth 1 output 1 combined with depth characteristics confirms Scheme A
-Target_Depth=3
-Target_Reasoning=Sampling T yields output 1, combined with Scheme A where depth 3 corresponds to output 1, and T is a leaf node, confirming T depth is 3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎进入“法律条文层级与适用性审查系统”。这是一场基于条文层级结构的溯因推理排查游戏，规则如下：
+欢迎访问“司法案例辅助量刑与分析平台”。请阅读案件审查规则：
 
-系统设定了一部法律的条文层级树，最大深度为3（基本法/宪法为0），共19个架构节点。节点标识及从属（父子）关系如下：
-- 深度0（基本法）：r
-- 深度1（编/章）：r 的下级节点为 a1, a2, a3
-- 深度2（节）：
-  - a1 的下级节点：b11, b12
-  - a2 的下级节点：b21
-  - a3 的下级节点：b31, b32, b33
-- 深度3（条/款/叶子节点）：
-  - b11 的下级节点：c111, c112
-  - b12 的下级节点：c121
-  - b21 的下级节点：c211, c212
-  - b31 的下级节点：c311
-  - b32 的下级节点：c321, c322
-  - b33 的下级节点：c331
+平台已调阅16宗同类案件的卷宗，每宗案件提取了4个二元核心案情要素（A、B、C、D）。对于每个要素，法理上已预先界定了认定存在“1”或不存在“0”的具体情形：
+{attributes_desc}
 
-存在一个存在司法争议的特殊目标条文节点 T（你需要推断出它在法律框架中的深度层级）。
+这16宗卷宗穷尽了4个案情要素的16种全部组合（0000至1111），每种要素组合对应一宗案件。
 
-立法委员会已秘密设定了一套针对条文深度 d 的二值修正案适用规则 g(d)，四种预案如下（确切采用其一）：
-- 方案A（奇偶适用）：g(d) = d 对 2 取模的结果
-- 方案B（中层适用）：g(d) = 1 当且仅当 d 属于集合 1或2，否则为 0
-- 方案C（基层适用）：g(d) = 1 当且仅当 d 属于集合 2或3，否则为 0
-- 方案D（不适用）：g(d) = 0 对所有 d
+平台依据一个隐藏的法定适用原则 P 来判定是否对案件“从重处罚”，该原则是以下六项候选之一：
+- α：当且仅当要素 A=1 时，适用从重处罚（P为真）。
+- β：当且仅当要素 A与B 认定结果相反时，适用从重处罚（P为真）。
+- γ：当且仅当（A=1且B=1）或（C=1且D=1）时，适用从重处罚（P为真）。
+- δ：当且仅当 A+B+C+D 呈现的要素总数为奇数时，适用从重处罚（P为真）。
+- ε：当且仅当 A+B+C+D 恰好存在2个要素时，适用从重处罚（P为真）。
+- ζ：当且仅当要素 A与C 认定结果相同时，适用从重处罚（P为真）。
 
-你的目标是：
-1. 确定真实采用的修正案适用规则（A/B/C/D）
-2. 确定争议目标条文 T 的深度（0/1/2/3）
+你的法理推断目标是通过平台接口得出：
+1. 推断出当前适用的法定适用原则是哪一个（α、β、γ、δ、ε或ζ）；
+2. 计算在满足条件 [要素A=1 且 要素C=1] 的案件群体中，最终被适用从重处罚（满足P）的案件总数。
 
-你可以反复向我提出以下四类查询（每次仅限一个查询），我会根据系统真实设定如实回答：
+你可以发起两类司法查询：
 
-1. 采样输出：询问某个节点在当前规则下的适用状态。回答"输出=0"（不适用）或"输出=1"（适用），等于 g(该节点的深度)。
-2. 查询子节点：询问某个节点的所有下属条文节点列表。回答"子节点=[...]"。注意：若查询对象为目标节点T，会返回"拒绝：目标结构不可查"。
-3. 是否叶子：询问某个节点是否为最底层的具体条款（叶子节点）。回答"是"或"否"（允许对T进行此查询）。
-4. 是否同层：询问两个法律节点是否在相同条文层级。回答"是"或"否"。注意：若任一参数为目标节点T，会返回"拒绝：目标不得参与此比较"。
+1. 计数查询：给出0至4个要素筛选条件（例如"A=1,B=0"），平台将返回该类案件中适用从重处罚的案件数；空条件表示查询全部16宗案件。
 
-当你收集足够信息后，请提交最终排查报告。答案需包含：
-1. 采用的方案（A/B/C/D）
-2. 至少两次针对非目标节点的采样记录（节点与对应输出），并基于各深度输出特征排除其余方案的逻辑推理
-3. 目标节点 T 的深度（0/1/2/3），并基于已确定方案与对T的允许查询进行论证
+2. 比较查询：提供两组筛选条件以比较不同子集下适用从重处罚的案件数，返回"A多于B"、"A少于B"或"A等于B"。
 
-若答案错误、格式不符或推理依据不足，排查失败。
+请节约司法算力并减少查询次数。推理完成后，提交最终法理判断。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个查询或答案标签。使用以下XML格式：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
+- 计数查询（例如查询A=1且B=0的子集）：
+<query_count>A=1,B=0</query_count>
 
-- 采样输出（例如查询节点 r）：
-<query_sample>r</query_sample>
+- 计数查询（查询全部案件）：
+<query_count></query_count>
 
-- 查询子节点（例如查询节点 a1）：
-<query_children>a1</query_children>
+- 比较查询（例如比较"A=1"与"B=1"两个子集）：
+<query_compare>A=1|B=1</query_compare>
 
-- 是否叶子（例如查询节点 c111）：
-<query_leaf>c111</query_leaf>
+提交最终法理判断时，必须同时给出法定适用原则的名称和目标案件数，格式如下：
 
-- 是否同层（例如比较节点 a1 和 a2）：
-<query_same_depth>a1,a2</query_same_depth>
-
-提交最终答案时，必须说明映射方案、采样证据、目标节点T的深度及推理过程，格式如下：
-
-<answer>
-方案=A
-证据1=节点:r,输出:0
-证据2=节点:a1,输出:1
-排除逻辑=深度0输出0排除了无效方案，深度1输出1结合深度特征可确定方案A
-目标深度=3
-目标推理=通过采样T得到输出1，结合方案A中深度3对应输出1，且T为叶子节点，确定T深度为3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the "Legal Provision Hierarchy and Applicability Review System". Let's play a legal framework mapping inference game. Here are the rules:
+[Legal Scenario]
+Welcome to the "Judicial Case Auxiliary Sentencing and Analysis Platform". Please read the case review rules:
 
-The system features a legal code hierarchy modeled as a rooted tree with a maximum depth of 3 (basic law has depth 0) and 19 nodes total. Node identifiers and subordinate (parent-child) relationships are as follows:
-- Depth 0 (Basic Law/Constitution): r
-- Depth 1 (Chapter): r has children a1, a2, a3
-- Depth 2 (Section):
-  - a1 has children: b11, b12
-  - a2 has child: b21
-  - a3 has children: b31, b32, b33
-- Depth 3 (Article/Clause/Leaves):
-  - b11 has children: c111, c112
-  - b12 has child: c121
-  - b21 has children: c211, c212
-  - b31 has child: c311
-  - b32 has children: c321, c322
-  - b33 has child: c331
+The platform has reviewed the files of 16 similar cases, each extracting 4 binary core case elements (A, B, C, D). For each element, the specific circumstances defining its presence "1" or absence "0" have been pre-established in jurisprudence:
+{attributes_desc}
 
-There exists a special disputed target node T (whose depth you need to infer).
+These 16 case files exhaust all 16 combinations of the 4 case elements (from 0000 to 1111), with each combination corresponding to a single case.
 
-The Legislative Committee has secretly established a binary amendment applicability rule g(d) based on the provision depth d. There are four candidate rules (exactly one is used):
-- Scheme A (Parity Applicability): g(d) = d modulo 2
-- Scheme B (Mid-Tier Applicability): g(d) = 1 if and only if d is in the set 1 or 2, otherwise 0
-- Scheme C (Specific-Tier Applicability): g(d) = 1 if and only if d is in the set 2 or 3, otherwise 0
-- Scheme D (Not Applicable): g(d) = 0 for all d
+The platform relies on a hidden statutory application principle P to determine whether a "heavier punishment" applies to the case. This principle is one of the following six candidates:
+- α: A heavier punishment applies (P is true) if and only if element A=1.
+- β: A heavier punishment applies if and only if the determination results of elements A and B are opposite.
+- γ: A heavier punishment applies if and only if (A=1 and B=1) or (C=1 and D=1).
+- δ: A heavier punishment applies if and only if the total number of present elements among A+B+C+D is odd.
+- ε: A heavier punishment applies if and only if exactly 2 elements among A+B+C+D are present.
+- ζ: A heavier punishment applies if and only if elements A and C have the same determination result.
 
-Your goals are:
-1. Determine the actual applicability rule used (A/B/C/D)
-2. Determine the depth of target node T (0/1/2/3)
+Your jurisprudential inference goals are to deduce through platform interfaces:
+1. Deduce the applicable statutory principle (α, β, γ, δ, ε, or ζ);
+2. Calculate the number of cases subjected to a heavier punishment (satisfying P) in the subset of cases meeting [element A=1 and element C=1].
 
-You can repeatedly ask me four types of queries (one per turn), and I will answer truthfully based on the system setup:
+You can initiate two types of judicial queries:
 
-1. Sample Output: Ask for the applicability output value of a node. Answer "Output=0" (Not applicable) or "Output=1" (Applicable), equal to g(depth of that node).
-2. Query Children: Ask for the list of all subordinate provision nodes. Answer "Children=[...]". Note: If the query target is T, returns "Rejected: Target structure not queryable".
-3. Is Leaf: Ask if a node is a terminal clause (leaf node). Answer "Yes" or "No" (this query is allowed for T).
-4. Same Depth: Ask if two provision nodes are at the same legislative depth. Answer "Yes" or "No". Note: If either parameter is target node T, returns "Rejected: Target cannot participate in this comparison".
+1. Count Query: Provide 0 to 4 element filter conditions (e.g., "A=1,B=0"), and the platform returns the number of cases with heavier punishment in that subset. An empty condition queries all 16 cases.
 
-When you have collected enough information, submit your final report. The answer must include:
-1. The scheme used (A/B/C/D)
-2. At least two sampling records for non-target nodes (node and corresponding output), with logical reasoning to exclude other schemes based on depth-output characteristics
-3. The depth of target node T (0/1/2/3), with justification based on the determined scheme and allowed queries for T
+2. Compare Query: Provide two sets of filter conditions to compare the number of cases with heavier punishment, returning "A more than B", "A less than B", or "A equals B".
 
-If the answer is incorrect, format is invalid, or reasoning is insufficient, the review fails.
+Please save judicial computing resources by minimizing queries. Once inferred, submit the final jurisprudential judgment.
 
-## Query and Answer Format (must strictly follow)
+Each time only one query or answer tag is allowed. Use the following XML format:
 
-Each query must contain only one tag. Use the following XML format:
+- Count Query (e.g., query subset with A=1 and B=0):
+<query_count>A=1,B=0</query_count>
 
-- Sample Output (e.g., querying node r):
-<query_sample>r</query_sample>
+- Count Query (query all cases):
+<query_count></query_count>
 
-- Query Children (e.g., querying node a1):
-<query_children>a1</query_children>
+- Compare Query (e.g., compare subset "A=1" with "B=1"):
+<query_compare>A=1|B=1</query_compare>
 
-- Is Leaf (e.g., querying node c111):
-<query_leaf>c111</query_leaf>
+When submitting the final judgment, you must provide both the statutory principle name and the target case count in this format:
 
-- Same Depth (e.g., comparing nodes a1 and a2):
-<query_same_depth>a1,a2</query_same_depth>
-
-When submitting the final answer, you must specify the scheme, sampling evidence, target node T's depth, and reasoning process, using this format:
-
-<answer>
-Scheme=A
-Evidence1=Node:r,Output:0
-Evidence2=Node:a1,Output:1
-Exclusion_Logic=Depth 0 output 0 excludes invalid schemes, depth 1 output 1 combined with depth characteristics confirms Scheme A
-Target_Depth=3
-Target_Reasoning=Sampling T yields output 1, combined with Scheme A where depth 3 corresponds to output 1, and T is a leaf node, confirming T depth is 3
-</answer>
+<answer>predicate=α, count=3</answer>
 """
 
-    tags = ["answer", "query_sample", "query_children", "query_leaf", "query_same_depth"]
+    tags = ["answer", "query_count", "query_compare"]
     
     reasoning_type = "溯因推理"
-    data_structure = "树"
+    data_structure = "集合"
+
+    PREDICATES = {
+        "α": lambda a, b, c, d: a == 1,
+        "β": lambda a, b, c, d: a != b,
+        "γ": lambda a, b, c, d: (a == 1 and b == 1) or (c == 1 and d == 1),
+        "δ": lambda a, b, c, d: (a + b + c + d) % 2 == 1,
+        "ε": lambda a, b, c, d: (a + b + c + d) == 2,
+        "ζ": lambda a, b, c, d: a == c,
+    }
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {"scheme": "D", "target": "c111"},
-            2: {"scheme": "B", "target": "c211"},
-            3: {"scheme": "A", "target": "c322"},
-            4: {"scheme": "C", "target": "c321"},
-            5: {"scheme": "A", "target": "c331"},
+            1: {
+                "predicate": "α",
+                "attributes": {
+                    "A": "圆形=1, 方形=0",
+                    "B": "红色=1, 蓝色=0",
+                    "C": "大=1, 小=0",
+                    "D": "实心=1, 空心=0"
+                }
+            },
+            2: {
+                "predicate": "ζ",
+                "attributes": {
+                    "A": "有边框=1, 无边框=0",
+                    "B": "粗线=1, 细线=0",
+                    "C": "有纹理=1, 无纹理=0",
+                    "D": "暗色=1, 亮色=0"
+                }
+            },
+            3: {
+                "predicate": "β",
+                "attributes": {
+                    "A": "左侧=1, 右侧=0",
+                    "B": "上方=1, 下方=0",
+                    "C": "内部=1, 外部=0",
+                    "D": "前景=1, 背景=0"
+                }
+            },
+            4: {
+                "predicate": "ε",
+                "attributes": {
+                    "A": "尖角=1, 圆角=0",
+                    "B": "多层=1, 单层=0",
+                    "C": "透明=1, 不透明=0",
+                    "D": "对称=1, 不对称=0"
+                }
+            },
+            5: {
+                "predicate": "γ",
+                "attributes": {
+                    "A": "旋转=1, 静止=0",
+                    "B": "闪烁=1, 恒定=0",
+                    "C": "波浪=1, 平直=0",
+                    "D": "渐变=1, 纯色=0"
+                }
+            }
         },
         "en": {
-            1: {"scheme": "D", "target": "c111"},
-            2: {"scheme": "B", "target": "c211"},
-            3: {"scheme": "A", "target": "c322"},
-            4: {"scheme": "C", "target": "c321"},
-            5: {"scheme": "A", "target": "c331"},
-        },
+            1: {
+                "predicate": "α",
+                "attributes": {
+                    "A": "Circle=1, Square=0",
+                    "B": "Red=1, Blue=0",
+                    "C": "Large=1, Small=0",
+                    "D": "Filled=1, Hollow=0"
+                }
+            },
+            2: {
+                "predicate": "ζ",
+                "attributes": {
+                    "A": "Bordered=1, Unbordered=0",
+                    "B": "Thick=1, Thin=0",
+                    "C": "Textured=1, Smooth=0",
+                    "D": "Dark=1, Bright=0"
+                }
+            },
+            3: {
+                "predicate": "β",
+                "attributes": {
+                    "A": "Left=1, Right=0",
+                    "B": "Top=1, Bottom=0",
+                    "C": "Inner=1, Outer=0",
+                    "D": "Foreground=1, Background=0"
+                }
+            },
+            4: {
+                "predicate": "ε",
+                "attributes": {
+                    "A": "Sharp=1, Rounded=0",
+                    "B": "Layered=1, Flat=0",
+                    "C": "Transparent=1, Opaque=0",
+                    "D": "Symmetric=1, Asymmetric=0"
+                }
+            },
+            5: {
+                "predicate": "γ",
+                "attributes": {
+                    "A": "Rotating=1, Static=0",
+                    "B": "Blinking=1, Steady=0",
+                    "C": "Wavy=1, Straight=0",
+                    "D": "Gradient=1, Solid=0"
+                }
+            }
+        }
     }
 
     def __init__(self, config):
-        self.tree_structure = {
-            "r": {"depth": 0, "children": ["a1", "a2", "a3"]},
-            "a1": {"depth": 1, "children": ["b11", "b12"]},
-            "a2": {"depth": 1, "children": ["b21"]},
-            "a3": {"depth": 1, "children": ["b31", "b32", "b33"]},
-            "b11": {"depth": 2, "children": ["c111", "c112"]},
-            "b12": {"depth": 2, "children": ["c121"]},
-            "b21": {"depth": 2, "children": ["c211", "c212"]},
-            "b31": {"depth": 2, "children": ["c311"]},
-            "b32": {"depth": 2, "children": ["c321", "c322"]},
-            "b33": {"depth": 2, "children": ["c331"]},
-            "c111": {"depth": 3, "children": []},
-            "c112": {"depth": 3, "children": []},
-            "c121": {"depth": 3, "children": []},
-            "c211": {"depth": 3, "children": []},
-            "c212": {"depth": 3, "children": []},
-            "c311": {"depth": 3, "children": []},
-            "c321": {"depth": 3, "children": []},
-            "c322": {"depth": 3, "children": []},
-            "c331": {"depth": 3, "children": []},
-        }
         super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -936,253 +661,230 @@ Target_Reasoning=Sampling T yields output 1, combined with Scheme A where depth 
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self.scheme = cfg["scheme"]
-        self.target_node = cfg["target"]
+        
+        self.predicate_name = cfg["predicate"]
+        self.predicate_func = self.PREDICATES[self.predicate_name]
+        
+        attrs = cfg["attributes"]
+        if lang == "zh":
+            attrs_desc = "\n".join([f"- 属性{k}：{v}" for k, v in attrs.items()])
+        else:
+            attrs_desc = "\n".join([f"- Attribute {k}: {v}" for k, v in attrs.items()])
+        
+        self._game_info["attributes_desc"] = attrs_desc
+        
+        self.elements = []
+        for i in range(16):
+            a = (i >> 3) & 1
+            b = (i >> 2) & 1
+            c = (i >> 1) & 1
+            d = i & 1
+            satisfies_p = self.predicate_func(a, b, c, d)
+            self.elements.append({
+                "A": a, "B": b, "C": c, "D": d,
+                "satisfies_p": satisfies_p
+            })
+        
+        self.target_count = sum(
+            1 for elem in self.elements
+            if elem["A"] == 1 and elem["C"] == 1 and elem["satisfies_p"]
+        )
+        
+        self.query_count = 0
+        self.max_queries = 7
 
-        # 定义映射方案函数
-        self.scheme_functions = {
-            "A": lambda d: d % 2,           # 奇偶
-            "B": lambda d: 1 if d in [1, 2] else 0,  # 中层
-            "C": lambda d: 1 if d in [2, 3] else 0,  # 下层
-            "D": lambda d: 0,               # 全零
-        }
-
-        self._game_info = {}
-
-    def _get_node_output(self, node):
-        """获取节点的映射输出值"""
-        if node not in self.tree_structure:
-            return None
-        depth = self.tree_structure[node]["depth"]
-        return self.scheme_functions[self.scheme](depth)
-
-    def _is_leaf(self, node):
-        """判断节点是否为叶子"""
-        if node not in self.tree_structure:
-            return None
-        return len(self.tree_structure[node]["children"]) == 0
+    def _parse_filter(self, filter_str):
+        filter_str = filter_str.strip()
+        if not filter_str:
+            return self.elements
+        
+        conditions = {}
+        for cond in filter_str.split(","):
+            cond = cond.strip()
+            if "=" not in cond:
+                continue
+            attr, val = cond.split("=", 1)
+            attr = attr.strip().upper()
+            val = val.strip()
+            if attr not in ["A", "B", "C", "D"]:
+                continue
+            try:
+                conditions[attr] = int(val)
+            except:
+                continue
+        
+        result = []
+        for elem in self.elements:
+            match = True
+            for attr, val in conditions.items():
+                if elem[attr] != val:
+                    match = False
+                    break
+            if match:
+                result.append(elem)
+        
+        return result
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
         raw_ans = parsed_info["answer"]
         
-        # 解析答案（支持中英文）
+        kv_pairs = [x.strip() for x in raw_ans.split(",")]
         ans_dict = {}
+        for kv in kv_pairs:
+            if "=" not in kv:
+                continue
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip()] = v.strip()
         
-        # 匹配中文格式
-        patterns_zh = {
-            "scheme": r"方案\s*=\s*([A-D])",
-            "evidence1": r"证据1\s*=\s*节点\s*:\s*(\w+)\s*,\s*输出\s*:\s*([01])",
-            "evidence2": r"证据2\s*=\s*节点\s*:\s*(\w+)\s*,\s*输出\s*:\s*([01])",
-            "target_depth": r"目标深度\s*=\s*([0-3])",
-        }
-        
-        # 匹配英文格式
-        patterns_en = {
-            "scheme": r"Scheme\s*=\s*([A-D])",
-            "evidence1": r"Evidence1\s*=\s*Node\s*:\s*(\w+)\s*,\s*Output\s*:\s*([01])",
-            "evidence2": r"Evidence2\s*=\s*Node\s*:\s*(\w+)\s*,\s*Output\s*:\s*([01])",
-            "target_depth": r"Target_Depth\s*=\s*([0-3])",
-        }
-        
-        # 尝试中文格式
-        for key, pattern in patterns_zh.items():
-            match = re.search(pattern, raw_ans, re.IGNORECASE)
-            if match:
-                ans_dict[key] = match.groups()
-        
-        # 如果中文格式不完整，尝试英文格式
-        if len(ans_dict) < 4:
-            ans_dict = {}
-            for key, pattern in patterns_en.items():
-                match = re.search(pattern, raw_ans, re.IGNORECASE)
-                if match:
-                    ans_dict[key] = match.groups()
-        
-        # 检查必要字段
-        if len(ans_dict) < 4:
+        if "predicate" not in ans_dict or "count" not in ans_dict:
             return False
         
-        # 1. 检查方案是否正确
-        if ans_dict["scheme"][0] != self.scheme:
+        if ans_dict["predicate"] != self.predicate_name:
             return False
         
-        # 2. 检查证据有效性（至少两个非目标节点的采样）
-        evidence_nodes = []
-        for ev_key in ["evidence1", "evidence2"]:
-            if ev_key in ans_dict:
-                node, output = ans_dict[ev_key][0], ans_dict[ev_key][1]
-                # 检查节点是否为目标节点
-                if node == self.target_node:
-                    return False
-                # 检查节点是否存在
-                if node not in self.tree_structure:
-                    return False
-                # 检查输出是否正确
-                expected_output = str(self._get_node_output(node))
-                if output != expected_output:
-                    return False
-                evidence_nodes.append(node)
-        
-        # 确保至少有两个不同的非目标节点证据
-        if len(set(evidence_nodes)) < 2:
+        try:
+            model_count = int(ans_dict["count"])
+        except:
             return False
         
-        # 3. 检查目标深度是否正确
-        target_depth = int(ans_dict["target_depth"][0])
-        expected_depth = self.tree_structure[self.target_node]["depth"]
-        if target_depth != expected_depth:
-            return False
-        
-        return True
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        nodes = list(self.tree_structure.keys())
-        
-        # 1. Sample Output
-        for node in nodes:
-            query_tag = "query_sample"
-            query_content = node
-            xml_query = f"<{query_tag}>{query_content}</{query_tag}>"
-            parsed_info = {query_tag: query_content}
-            answer = self._cf_core_produce(parsed_info)
-            queries.append({"query": xml_query, "answer": answer})
-
-        # 2. Query Children
-        for node in nodes:
-            query_tag = "query_children"
-            query_content = node
-            xml_query = f"<{query_tag}>{query_content}</{query_tag}>"
-            parsed_info = {query_tag: query_content}
-            answer = self._cf_core_produce(parsed_info)
-            queries.append({"query": xml_query, "answer": answer})
-
-        # 3. Is Leaf
-        for node in nodes:
-            query_tag = "query_leaf"
-            query_content = node
-            xml_query = f"<{query_tag}>{query_content}</{query_tag}>"
-            parsed_info = {query_tag: query_content}
-            answer = self._cf_core_produce(parsed_info)
-            queries.append({"query": xml_query, "answer": answer})
-
-        # 4. Same Depth
-        for i, n1 in enumerate(nodes):
-            for j, n2 in enumerate(nodes):
-                if i >= j:
-                    continue  # 去重：只保留 i < j 的组合，去掉自身对比
-                if n1 == self.target_node or n2 == self.target_node:
-                    continue  # 包含 target 的查询只会返回拒绝消息，无信息量
-                query_tag = "query_same_depth"
-                query_content = f"{n1},{n2}"
-                xml_query = f"<{query_tag}>{query_content}</{query_tag}>"
-                parsed_info = {query_tag: query_content}
-                answer = self._cf_core_produce(parsed_info)
-                queries.append({"query": xml_query, "answer": answer})
-        
-        return queries
+        return model_count == self.target_count
 
     def _cf_core_produce(self, parsed_info):
-        """原始的游戏响应生成逻辑"""
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            reject_structure = "拒绝：目标结构不可查"
-            reject_compare = "拒绝：目标不得参与此比较"
-            error_node = "错误：节点不存在"
-        else:
-            yes_res, no_res = "Yes", "No"
-            reject_structure = "Rejected: Target structure not queryable"
-            reject_compare = "Rejected: Target cannot participate in this comparison"
-            error_node = "Error: Node does not exist"
-
-        if "query_sample" in parsed_info:
-            node = parsed_info["query_sample"].strip()
-            if node not in self.tree_structure:
-                return error_node
-            output = self._get_node_output(node)
-            return f"输出={output}" if self.config.language == "zh" else f"Output={output}"
-
-        elif "query_children" in parsed_info:
-            node = parsed_info["query_children"].strip()
-            if node not in self.tree_structure:
-                return error_node
-            if node == self.target_node:
-                return reject_structure
-            children = self.tree_structure[node]["children"]
-            children_str = ",".join(children) if children else ""
-            return f"子节点=[{children_str}]" if self.config.language == "zh" else f"Children=[{children_str}]"
-
-        elif "query_leaf" in parsed_info:
-            node = parsed_info["query_leaf"].strip()
-            if node not in self.tree_structure:
-                return error_node
-            is_leaf = self._is_leaf(node)
-            return yes_res if is_leaf else no_res
-
-        elif "query_same_depth" in parsed_info:
-            try:
-                raw = parsed_info["query_same_depth"]
-                node1, node2 = [x.strip() for x in raw.split(",")]
-                
-                if node1 not in self.tree_structure or node2 not in self.tree_structure:
-                    return error_node
-                
-                if node1 == self.target_node or node2 == self.target_node:
-                    return reject_compare
-                
-                depth1 = self.tree_structure[node1]["depth"]
-                depth2 = self.tree_structure[node2]["depth"]
-                return yes_res if depth1 == depth2 else no_res
-            except Exception:
-                return error_node
-
-        else:
-            raise ValueError("No valid query tag found.")
-
-    def _cf_make_wrong(self, correct):
-        """生成一个与正确答案不同的错误答案"""
-        # 处理采样输出格式: "Output=0"/"Output=1" 或 "输出=0"/"输出=1"
-        sample_match = re.search(r'[=]\s*([01])\s*$', correct)
-        if sample_match:
-            val = sample_match.group(1)
-            wrong_val = "1" if val == "0" else "0"
-            return correct[:sample_match.start(1)] + wrong_val + correct[sample_match.end(1):]
-
-        # 处理纯数字
-        if correct.strip().isdigit():
-            return str(int(correct.strip()) + 1)
-
-        # 处理是/否类型
-        if self.config.language == "zh":
-            if correct.strip() == "是":
-                return "否"
-            elif correct.strip() == "否":
-                return "是"
-        else:
-            stripped = correct.strip()
-            if stripped == "Yes":
-                return "No"
-            elif stripped == "No":
-                return "Yes"
-            elif stripped == "yes":
-                return "no"
-            elif stripped == "no":
-                return "yes"
-
-        # 处理子节点列表: 添加一个虚假节点
-        children_match = re.search(r'(Children=\[|子节点=\[)(.*?)(\])', correct)
-        if children_match:
-            prefix = children_match.group(1)
-            content = children_match.group(2)
-            suffix = children_match.group(3)
-            if content.strip():
-                return prefix + content + ",fake_node" + suffix
+        self.query_count += 1
+        if self.query_count > self.max_queries:
+            if self.config.language == "zh":
+                return f"查询次数已达上限（最多{self.max_queries}次）。请直接提交你的最终答案。"
             else:
-                return prefix + "fake_node" + suffix
+                return f"Query limit reached (maximum {self.max_queries} queries). Please submit your final answer now."
+        
+        if "query_count" in parsed_info:
+            filter_str = parsed_info["query_count"]
+            filtered_elements = self._parse_filter(filter_str)
+            count = sum(1 for elem in filtered_elements if elem["satisfies_p"])
+            return str(count)
+        
+        elif "query_compare" in parsed_info:
+            try:
+                raw = parsed_info["query_compare"]
+                parts = raw.split("|")
+                if len(parts) != 2:
+                    if self.config.language == "zh":
+                        raise ValueError("比较查询格式错误，需要用'|'分隔两组条件")
+                    else:
+                        raise ValueError("Invalid compare query format, use '|' to separate two filter sets")
+                
+                filter_a, filter_b = parts[0].strip(), parts[1].strip()
+                
+                elements_a = self._parse_filter(filter_a)
+                elements_b = self._parse_filter(filter_b)
+                
+                count_a = sum(1 for elem in elements_a if elem["satisfies_p"])
+                count_b = sum(1 for elem in elements_b if elem["satisfies_p"])
+                
+                if self.config.language == "zh":
+                    if count_a > count_b:
+                        return "A多于B"
+                    elif count_a < count_b:
+                        return "A少于B"
+                    else:
+                        return "A等于B"
+                else:
+                    if count_a > count_b:
+                        return "A more than B"
+                    elif count_a < count_b:
+                        return "A less than B"
+                    else:
+                        return "A equals B"
+            except ValueError:
+                raise
+            except:
+                if self.config.language == "zh":
+                    raise ValueError("比较查询格式错误")
+                else:
+                    raise ValueError("Invalid compare query format")
+        
+        else:
+            if self.config.language == "zh":
+                raise ValueError("未找到有效的查询标签")
+            else:
+                raise ValueError("No valid query tag found")
 
-        # 处理拒绝消息等其他情况
-        return correct + "_WRONG"
+    def _cf_make_wrong(self, correct: str) -> str:
+        try:
+            val = int(correct)
+            wrong_val = val + 1 if val == 0 else val - 1
+            return str(wrong_val)
+        except ValueError:
+            pass
+        
+        compare_flip = {
+            "A more than B": "A less than B",
+            "A less than B": "A more than B",
+            "A equals B": "A more than B",
+            "A多于B": "A少于B",
+            "A少于B": "A多于B",
+            "A等于B": "A多于B",
+        }
+        if correct in compare_flip:
+            return compare_flip[correct]
+        
+        return correct + " [error]"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        attrs = ["A", "B", "C", "D"]
+        
+        all_filters = [""]
+        for r in range(1, 5):
+            for comb in itertools.combinations(attrs, r):
+                for values in itertools.product([0, 1], repeat=r):
+                    parts = [f"{attr}={values[i]}" for i, attr in enumerate(comb)]
+                    filter_str = ",".join(parts)
+                    all_filters.append(filter_str)
+        
+        filter_counts = {}
+        for f in all_filters:
+            elements = self._parse_filter(f)
+            count = sum(1 for elem in elements if elem["satisfies_p"])
+            filter_counts[f] = count
+            
+            q_str = f"<query_count>{f}</query_count>"
+            queries.append({
+                "query": q_str,
+                "answer": str(count)
+            })
+        
+        simple_filters = [""]
+        for attr in attrs:
+            for val in [0, 1]:
+                simple_filters.append(f"{attr}={val}")
+        
+        for f1 in simple_filters:
+            c1 = filter_counts[f1]
+            for f2 in simple_filters:
+                if f1 == f2:
+                    continue
+                c2 = filter_counts[f2]
+                
+                if self.config.language == "zh":
+                    if c1 > c2:
+                        ans = "A多于B"
+                    elif c1 < c2:
+                        ans = "A少于B"
+                    else:
+                        ans = "A等于B"
+                else:
+                    if c1 > c2:
+                        ans = "A more than B"
+                    elif c1 < c2:
+                        ans = "A less than B"
+                    else:
+                        ans = "A equals B"
+                
+                q_str = f"<query_compare>{f1}|{f2}</query_compare>"
+                queries.append({
+                    "query": q_str,
+                    "answer": ans
+                })
+        
+        return queries

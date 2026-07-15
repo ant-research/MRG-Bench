@@ -1,427 +1,441 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（通过精确查询确定集合成员）：通过对子集的交集大小查询来推断隐藏集合的内容。
-# 数据结构: 集合：存在一个N元素的集合及其子集。
-# 知识点:   子集计数：给定子集与隐藏子集的交集大小。
-# ============================================================
-
 from .base import Game
 import random
-import itertools
 
-
-class SubsetCountingGame(Game):
+class RangeMaxQueryGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"子集计数推理"游戏，规则如下：
+我们来玩一个"区间最大值推理"游戏，规则如下：
 
-游戏设定了一个标号集合 L，包含编号 1 到 {n}，以及一个特定的目标元素 T（编号为 {target}）。我已秘密选择了一个目标子集 A，A 是 L 中除 T 之外的某些元素组成的集合（A 可能为空）。
+游戏设定了一个长度为 {n} 的整数序列 H[1..{n}]，序列中所有元素两两不相等。序列的具体数值已被隐藏，但你知道序列长度为 {n}。
 
-你的目标是精确识别出集合 A 中包含哪些元素。你可以反复向我提出子集计数查询：选择 L 中除 T 之外的任意若干元素组成一个子集 S，询问"S 中有多少个元素属于 A"，我会如实告诉你一个非负整数 k，表示 S 与 A 的交集大小。
+你的目标是：找出序列中全局最大值的位置 k（位置编号从 1 到 {n}）。全局最大值的位置是唯一的。
 
-当你收集到足够信息后，请提交你推断出的集合 A。若答案完全正确则游戏成功，否则游戏失败。请尽可能用较少的查询次数完成推理。
+你可以通过以下两种查询方式来收集信息（查询次数不限，但应尽可能少）：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. 区间最大值查询（MAX 查询）：
+   - 询问区间 [L, R] 内的最大值是多少。
+   - L 和 R 必须满足：1 小于等于 L 小于等于 R 小于等于 {n}。
+   - 我会返回该区间内的最大值。
 
-每次查询时，请使用以下 XML 格式提交一个子集 S（用逗号分隔的编号列表，编号不能包含目标元素 T）：
+2. 区间比较查询（CMP 查询）：
+   - 询问两个不相交区间 [L1, R1] 和 [L2, R2] 的最大值哪个更大。
+   - 要求：1 小于等于 L1 小于等于 R1 小于 L2 小于等于 R2 小于等于 {n}（左区间必须完全在右区间左侧且不相交）。
+   - 我会返回 LEFT（左区间最大值更大）或 RIGHT（右区间最大值更大）。
 
-<query_subset>1,3,5</query_subset>
+如果查询格式错误或越界，我会返回 INVALID。
 
-如果你想查询单个元素是否属于 A，也可以只提交一个编号：
+当你确定了全局最大值的位置后，请提交你的最终答案。
 
-<query_subset>7</query_subset>
+每次只能进行一个查询或提交一个答案。请使用以下 XML 格式：
 
-提交最终答案时，请列出你认为属于 A 的所有元素编号（用逗号隔开，顺序不限）。如果你认为 A 为空集，请提交空内容：
+- 区间最大值查询（例如查询区间 [2, 5]）：
+<query_max>2,5</query_max>
 
-<answer>2,4,6</answer>
+- 区间比较查询（例如比较区间 [1, 3] 和 [5, 7]）：
+<query_cmp>1,3,5,7</query_cmp>
 
-或（如果 A 为空）：
-
-<answer></answer>
+- 提交最终答案（例如认为位置 3 是全局最大值位置）：
+<answer>3</answer>
 """
 
     game_rule_en = """\
-Let's play a "Subset Counting Inference" game. Here are the rules:
+Let's play a "Range Max Query" deduction game. Here are the rules:
 
-The game defines a labeled set L containing numbers from 1 to {n}, and a specific target element T (numbered {target}). I have secretly selected a target subset A, which consists of some elements from L excluding T (A may be empty).
+There is a hidden integer sequence H[1..{n}] of length {n}, where all elements are distinct. The specific values are hidden, but you know the sequence length is {n}.
 
-Your goal is to precisely identify which elements are in set A. You can repeatedly ask me subset counting queries: choose any subset S from L (excluding T), and ask "how many elements in S belong to A". I will truthfully tell you a non-negative integer k, representing the size of the intersection between S and A.
+Your goal is: Find the position k (indexed from 1 to {n}) of the global maximum value in the sequence. The position of the global maximum is unique.
 
-When you have gathered enough information, submit your inferred set A. The game succeeds if and only if your answer is completely correct; otherwise it fails. Please try to complete the inference with as few queries as possible.
+You can collect information through the following two types of queries (unlimited queries, but try to use as few as possible):
 
-## Query and Answer Format (must be strictly followed)
+1. Range Maximum Query (MAX query):
+   - Ask for the maximum value in the range [L, R].
+   - L and R must satisfy: 1 less than or equal to L less than or equal to R less than or equal to {n}.
+   - I will return the maximum value in that range.
 
-For each query, use the following XML format to submit a subset S (a comma-separated list of numbers, excluding the target element T):
+2. Range Comparison Query (CMP query):
+   - Ask which of two non-overlapping ranges [L1, R1] and [L2, R2] has a larger maximum value.
+   - Requirements: 1 less than or equal to L1 less than or equal to R1 less than L2 less than or equal to R2 less than or equal to {n} (left range must be completely to the left of and disjoint from right range).
+   - I will return LEFT (left range has larger maximum) or RIGHT (right range has larger maximum).
 
-<query_subset>1,3,5</query_subset>
+If the query format is invalid or out of bounds, I will return INVALID.
 
-If you want to query whether a single element belongs to A, you can submit just one number:
+When you have determined the position of the global maximum, please submit your final answer.
 
-<query_subset>7</query_subset>
+Each turn can only contain one query or one answer. Use the following XML format:
 
-When submitting your final answer, list all element numbers you believe belong to A (comma-separated, order does not matter). If you believe A is empty, submit empty content:
+- Range Maximum Query (e.g., query range [2, 5]):
+<query_max>2,5</query_max>
 
-<answer>2,4,6</answer>
+- Range Comparison Query (e.g., compare ranges [1, 3] and [5, 7]):
+<query_cmp>1,3,5,7</query_cmp>
 
-Or (if A is empty):
-
-<answer></answer>
+- Submit final answer (e.g., position 3 is the global maximum position):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_1 = """\
-[交通监控故障排查]
-我们现在来玩一个"监控网络故障推理"系统，规则如下：
+智慧交通路网指挥中心启动。系统已接入高速公路上 {n} 个连续的交通流量监测点（编号 1 到 {n}），各监测点的实时拥堵指数两两不同。为了及时疏导交通，你需要找出全局拥堵指数最高的核心拥堵点位置 k。
 
-我们的城市路网部署了一套监控摄像头系统 L，摄像头编号从 1 到 {n}，其中包含一个已确认正常的枢纽主摄像头 T（编号为 {target}）。近期网络中出现了一些信号丢失的情况，我已秘密记录了当前发生故障的摄像头集合 A，A 是系统 L 中除 T 之外的某些摄像头组成的集合（A 可能为空，即全部正常）。
+你可以通过以下两种查询方式来收集路况信息（查询次数不限，但应尽可能高效）：
 
-你的目标是精确识别出集合 A 中包含哪些发生故障的摄像头。你可以反复向我提出区域探查查询：选择 L 中除 T 之外的任意若干摄像头组成一个探查组 S，询问"探查组 S 中有多少个摄像头处于故障状态"，我会如实告诉你一个非负整数 k，表示 S 中发生故障的摄像头数量（即 S 与 A 的交集大小）。
+1. 路段峰值查询（MAX 查询）：
+   - 询问监测点区间 [L, R] 内的最高拥堵指数。
+   - L 和 R 必须满足：1 小于等于 L 小于等于 R 小于等于 {n}。
+   - 系统会返回该路段内的最高指数。
 
-当你收集到足够信息后，请提交你推断出的故障摄像头集合 A。若答案完全正确则排查成功，否则任务失败。请尽可能用较少的查询次数完成排查。
+2. 路段峰值比较（CMP 查询）：
+   - 询问两个不相交路段 [L1, R1] 和 [L2, R2] 哪个路段的最高拥堵指数更大。
+   - 要求：1 小于等于 L1 小于等于 R1 小于 L2 小于等于 R2 小于等于 {n}（左路段必须完全在右路段左侧且不相交）。
+   - 系统会返回 LEFT（左路段峰值更高）或 RIGHT（右路段峰值更高）。
 
-## 询问与提交答案的格式（必须严格遵守）
+如果查询格式错误或越界，系统会返回 INVALID。
 
-每次查询时，请使用以下 XML 格式提交一个探查组 S（用逗号分隔的编号列表，编号不能包含枢纽摄像头 T）：
+当你确定了核心拥堵点的确切位置后，请提交最终答案。
 
-<query_subset>1,3,5</query_subset>
+每次只能进行一个查询或提交一个答案。请使用以下 XML 格式：
 
-如果你想单独查询某个监控是否故障，也可以只提交一个编号：
+- 路段峰值查询（例如查询区间 [2, 5]）：
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- 路段峰值比较（例如比较区间 [1, 3] 和 [5, 7]）：
+<query_cmp>1,3,5,7</query_cmp>
 
-提交最终答案时，请列出你认为处于故障状态的所有摄像头编号（用逗号隔开，顺序不限）。如果你认为 A 为空集（全部正常），请提交空内容：
-
-<answer>2,4,6</answer>
-
-或（如果 A 为空）：
-
-<answer></answer>
+- 提交最终答案（例如认为位置 3 是核心拥堵点）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Let's operate the "Surveillance Network Fault Inference" system. Here are the rules:
+[Transportation Scenario]
+Smart Traffic Network Command Center activated. The system is connected to {n} consecutive traffic flow monitoring points (numbered 1 to {n}) on a highway. The real-time congestion indices of these points are all distinct. To efficiently manage traffic, you need to find the exact position k of the core congestion point with the highest global congestion index.
 
-Our city road network has deployed a surveillance camera system L, with cameras numbered from 1 to {n}. This includes a verified normal hub camera T (numbered {target}). Recently, there have been some signal losses. I have secretly recorded the current set of faulty cameras A, which consists of some cameras from L excluding T (A may be empty, meaning all are normal).
+You can collect traffic information through the following two types of queries (unlimited queries, but try to use as few as possible):
 
-Your goal is to precisely identify which faulty cameras are in set A. You can repeatedly ask me regional probe queries: choose any subset of cameras S from L (excluding T), and ask "how many cameras in probe group S are in a faulty state". I will truthfully tell you a non-negative integer k, representing the number of faulty cameras in S (the size of the intersection between S and A).
+1. Range Peak Query (MAX query):
+   - Ask for the highest congestion index in the monitoring point range [L, R].
+   - L and R must satisfy: 1 less than or equal to L less than or equal to R less than or equal to {n}.
+   - The system will return the highest index in that range.
 
-When you have gathered enough information, submit your inferred faulty camera set A. The task succeeds if and only if your answer is completely correct; otherwise it fails. Please try to complete the troubleshooting with as few queries as possible.
+2. Range Peak Comparison (CMP query):
+   - Ask which of two non-overlapping ranges [L1, R1] and [L2, R2] has a larger peak congestion index.
+   - Requirements: 1 less than or equal to L1 less than or equal to R1 less than L2 less than or equal to R2 less than or equal to {n} (left range must be completely to the left of and disjoint from right range).
+   - The system will return LEFT (left range has a larger peak) or RIGHT (right range has a larger peak).
 
-## Query and Answer Format (must be strictly followed)
+If the query format is invalid or out of bounds, the system will return INVALID.
 
-For each query, use the following XML format to submit a probe group S (a comma-separated list of numbers, excluding the hub camera T):
+When you have determined the exact position of the core congestion point, please submit your final answer.
 
-<query_subset>1,3,5</query_subset>
+Each turn can only contain one query or one answer. Use the following XML format:
 
-If you want to query whether a single camera is faulty, you can submit just one number:
+- Range Peak Query (e.g., query range [2, 5]):
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- Range Peak Comparison (e.g., compare ranges [1, 3] and [5, 7]):
+<query_cmp>1,3,5,7</query_cmp>
 
-When submitting your final answer, list all camera numbers you believe are faulty (comma-separated, order does not matter). If you believe A is empty (all normal), submit empty content:
-
-<answer>2,4,6</answer>
-
-Or (if A is empty):
-
-<answer></answer>
+- Submit final answer (e.g., position 3 is the core congestion point):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_2 = """\
-[医疗病原体筛查]
-我们现在来操作一套"致病靶点联合检测"系统，规则如下：
+神经内科脑电波分析系统就绪。患者的连续脑电波记录被划分为 {n} 个时间片段（编号 1 到 {n}），每个片段记录到的最高电位均不相同。你的任务是定位出全局最高异常电位出现的确切时间片段位置 k。
 
-我们的数据库中标记了一组可能导致未知综合征的病原体 L，编号从 1 到 {n}，其中包含一种明确作为健康对照的良性变异 T（编号为 {target}）。我已秘密锁定了一组导致某患者发病的致病靶点集合 A，A 是 L 中除 T 之外的某些病原体组成的集合（A 可能为空，即患者无上述感染）。
+你可以通过以下两种查询方式来收集脑电信息（查询次数不限，但应尽可能少）：
 
-你的目标是精确识别出集合 A 中包含哪些病原体。你可以反复向我提出联合检测查询：选择 L 中除 T 之外的任意若干病原体组成一个检测面板 S，询问"面板 S 中有多少个靶点在患者体内呈现阳性"，我会如实告诉你一个非负整数 k，表示 S 中阳性靶点的数量（即 S 与 A 的交集大小）。
+1. 窗口峰值查询（MAX 查询）：
+   - 询问时间片段区间 [L, R] 内的最大电位。
+   - L 和 R 必须满足：1 小于等于 L 小于等于 R 小于等于 {n}。
+   - 系统会返回该区间内的最大电位。
 
-当你收集到足够信息后，请提交你推断出的致病靶点集合 A。若答案完全正确则确诊成功，否则诊断失败。请尽可能用较少的检测次数完成确诊。
+2. 窗口峰值比较（CMP 查询）：
+   - 询问两个不相交时间窗口 [L1, R1] 和 [L2, R2] 哪个窗口的最大电位更高。
+   - 要求：1 小于等于 L1 小于等于 R1 小于 L2 小于等于 R2 小于等于 {n}（左窗口必须完全在右窗口左侧且不相交）。
+   - 系统会返回 LEFT（左窗口峰值更高）或 RIGHT（右窗口峰值更高）。
 
-## 询问与提交答案的格式（必须严格遵守）
+如果查询格式错误或越界，系统会返回 INVALID。
 
-每次查询时，请使用以下 XML 格式提交一个检测面板 S（用逗号分隔的编号列表，编号不能包含对照变异 T）：
+当你确定了最高异常电位的时间片段位置后，请提交最终诊断答案。
 
-<query_subset>1,3,5</query_subset>
+每次只能进行一个查询或提交一个诊断答案。请使用以下 XML 格式：
 
-如果你想单独查询某一种病原体是否为阳性，也可以只提交一个编号：
+- 窗口峰值查询（例如查询区间 [2, 5]）：
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- 窗口峰值比较（例如比较区间 [1, 3] 和 [5, 7]）：
+<query_cmp>1,3,5,7</query_cmp>
 
-提交最终答案时，请列出你认为属于致病靶点的所有病原体编号（用逗号隔开，顺序不限）。如果你认为 A 为空集（无感染），请提交空内容：
-
-<answer>2,4,6</answer>
-
-或（如果 A 为空）：
-
-<answer></answer>
+- 提交最终答案（例如认为时间片段 3 出现全局最高异常电位）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Let's operate a "Pathogenic Target Joint Detection" system. Here are the rules:
+[Healthcare Scenario]
+Neurology EEG analysis system ready. The patient's continuous EEG recording is divided into {n} time segments (numbered 1 to {n}), and the maximum electrical potential recorded in each segment is distinct. Your task is to locate the exact time segment position k where the global maximum abnormal potential occurs.
 
-Our database flags a set of pathogens L suspected of causing an unknown syndrome, numbered from 1 to {n}, which includes a known benign variant T acting as a healthy control (numbered {target}). I have secretly locked onto a set of pathogenic targets A causing illness in a patient. A consists of some pathogens from L excluding T (A may be empty, meaning no such infection).
+You can collect EEG information through the following two types of queries (unlimited queries, but try to use as few as possible):
 
-Your goal is to precisely identify which pathogens are in set A. You can repeatedly ask me joint detection queries: choose any subset of pathogens S from L (excluding T) to form a testing panel, and ask "how many targets in panel S test positive in the patient". I will truthfully tell you a non-negative integer k, representing the number of positive targets in S (the size of the intersection between S and A).
+1. Window Peak Query (MAX query):
+   - Ask for the maximum potential in the time segment range [L, R].
+   - L and R must satisfy: 1 less than or equal to L less than or equal to R less than or equal to {n}.
+   - The system will return the maximum potential in that range.
 
-When you have gathered enough information, submit your inferred pathogenic target set A. The diagnosis succeeds if and only if your answer is completely correct; otherwise it fails. Please try to complete the diagnosis with as few queries as possible.
+2. Window Peak Comparison (CMP query):
+   - Ask which of two non-overlapping time windows [L1, R1] and [L2, R2] has a higher maximum potential.
+   - Requirements: 1 less than or equal to L1 less than or equal to R1 less than L2 less than or equal to R2 less than or equal to {n} (left window must be completely to the left of and disjoint from right window).
+   - The system will return LEFT (left window has a higher peak) or RIGHT (right window has a higher peak).
 
-## Query and Answer Format (must be strictly followed)
+If the query format is invalid or out of bounds, the system will return INVALID.
 
-For each query, use the following XML format to submit a testing panel S (a comma-separated list of numbers, excluding the control variant T):
+When you have located the time segment position of the maximum abnormal potential, please submit your final diagnostic answer.
 
-<query_subset>1,3,5</query_subset>
+Each turn can only contain one query or one answer. Use the following XML format:
 
-If you want to query whether a single pathogen is positive, you can submit just one number:
+- Window Peak Query (e.g., query range [2, 5]):
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- Window Peak Comparison (e.g., compare ranges [1, 3] and [5, 7]):
+<query_cmp>1,3,5,7</query_cmp>
 
-When submitting your final answer, list all pathogen numbers you believe are pathogenic targets (comma-separated, order does not matter). If you believe A is empty (no infection), submit empty content:
-
-<answer>2,4,6</answer>
-
-Or (if A is empty):
-
-<answer></answer>
+- Submit final answer (e.g., segment 3 is the location of the highest potential):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_3 = """\
-[教育学情分析]
-我们现在来操作"学生知识点薄弱项分析"系统，规则如下：
+区域教育质量评估系统已启动。学区内有 {n} 所连续编号的试点学校（编号 1 到 {n}），每所学校的综合教学评估分数互不相等。你的目标是：找出整个学区中综合评估分数最高的示范学校编号 k。
 
-我们的课程体系中有一批知识点标签 L，编号从 1 到 {n}，其中包含一个所有学生都已掌握的通识标签 T（编号为 {target}）。我已秘密评估了某位学生，并找出了他的薄弱知识点集合 A，A 是 L 中除 T 之外的某些知识点组成的集合（A 可能为空，即该生无薄弱项）。
+你可以通过以下两种调研方式来收集数据（查询次数不限，但应尽可能少）：
 
-你的目标是精确识别出集合 A 中包含哪些薄弱知识点。你可以反复向我提出试卷测评查询：选择 L 中除 T 之外的任意若干知识点组合成一套测试卷 S，询问"测试卷 S 中有多少个知识点属于该生的薄弱项"，我会如实告诉你一个非负整数 k，表示 S 中薄弱知识点的数量（即 S 与 A 的交集大小）。
+1. 学区区间峰值查询（MAX 查询）：
+   - 询问学校区间 [L, R] 内的最高评估分。
+   - L 和 R 必须满足：1 小于等于 L 小于等于 R 小于等于 {n}。
+   - 系统会返回该区间内的最高分。
 
-当你收集到足够信息后，请提交你推断出的薄弱知识点集合 A。若答案完全正确则学情分析成功，否则分析失败。请尽可能用较少的测评次数完成推断。
+2. 学区区间比较（CMP 查询）：
+   - 询问两组不相交学校区间 [L1, R1] 和 [L2, R2] 中，哪组的最高评估分更大。
+   - 要求：1 小于等于 L1 小于等于 R1 小于 L2 小于等于 R2 小于等于 {n}（左侧学校组必须完全在右侧学校组编号之前且不相交）。
+   - 系统会返回 LEFT（左区间最高分更大）或 RIGHT（右区间最高分更大）。
 
-## 询问与提交答案的格式（必须严格遵守）
+如果查询格式错误或越界，系统会返回 INVALID。
 
-每次查询时，请使用以下 XML 格式提交一套测试卷 S（用逗号分隔的知识点编号列表，编号不能包含通识标签 T）：
+当你确定了得分最高的示范学校编号后，请提交你的最终答案。
 
-<query_subset>1,3,5</query_subset>
+每次只能进行一个查询或提交一个答案。请使用以下 XML 格式：
 
-如果你想单独测试某一个知识点是否薄弱，也可以只提交一个编号：
+- 学区区间峰值查询（例如查询学校区间 [2, 5]）：
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- 学区区间比较（例如比较学校区间 [1, 3] 和 [5, 7]）：
+<query_cmp>1,3,5,7</query_cmp>
 
-提交最终答案时，请列出你认为属于薄弱项的所有知识点编号（用逗号隔开，顺序不限）。如果你认为 A 为空集（全部掌握），请提交空内容：
-
-<answer>2,4,6</answer>
-
-或（如果 A 为空）：
-
-<answer></answer>
+- 提交最终答案（例如认为学校 3 是得分最高的示范校）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's operate the "Student Weak Knowledge Point Analysis" system. Here are the rules:
+Regional education quality assessment system activated. There are {n} consecutively numbered pilot schools (numbered 1 to {n}) in the district, and the comprehensive teaching evaluation score of each school is distinct. Your goal is: Find the position k of the model school with the highest comprehensive evaluation score in the entire district.
 
-Our curriculum has a batch of knowledge point tags L, numbered from 1 to {n}. This includes a general knowledge tag T (numbered {target}) that all students have mastered. I have secretly evaluated a student and identified their set of weak knowledge points A, which consists of some tags from L excluding T (A may be empty, meaning no weak points).
+You can collect assessment data through the following two types of queries (unlimited queries, but try to use as few as possible):
 
-Your goal is to precisely identify which weak knowledge points are in set A. You can repeatedly ask me assessment queries: choose any subset of knowledge points S from L (excluding T) to form a test paper, and ask "how many knowledge points in test paper S are weak points for this student". I will truthfully tell you a non-negative integer k, representing the number of weak points in S (the size of the intersection between S and A).
+1. District Range Peak Query (MAX query):
+   - Ask for the highest evaluation score within the school range [L, R].
+   - L and R must satisfy: 1 less than or equal to L less than or equal to R less than or equal to {n}.
+   - The system will return the highest score in that range.
 
-When you have gathered enough information, submit your inferred set of weak knowledge points A. The analysis succeeds if and only if your answer is completely correct; otherwise it fails. Please try to complete the inference with as few test queries as possible.
+2. District Range Comparison (CMP query):
+   - Ask which of two non-overlapping school ranges [L1, R1] and [L2, R2] has a larger maximum score.
+   - Requirements: 1 less than or equal to L1 less than or equal to R1 less than L2 less than or equal to R2 less than or equal to {n} (left range must be completely before and disjoint from right range).
+   - The system will return LEFT (left range has a larger maximum) or RIGHT (right range has a larger maximum).
 
-## Query and Answer Format (must be strictly followed)
+If the query format is invalid or out of bounds, the system will return INVALID.
 
-For each query, use the following XML format to submit a test paper S (a comma-separated list of numbers, excluding the general tag T):
+When you have determined the school number with the highest score, please submit your final answer.
 
-<query_subset>1,3,5</query_subset>
+Each turn can only contain one query or one answer. Use the following XML format:
 
-If you want to test whether a single knowledge point is weak, you can submit just one number:
+- District Range Peak Query (e.g., query range [2, 5]):
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- District Range Comparison (e.g., compare ranges [1, 3] and [5, 7]):
+<query_cmp>1,3,5,7</query_cmp>
 
-When submitting your final answer, list all knowledge point numbers you believe are weak points (comma-separated, order does not matter). If you believe A is empty (all mastered), submit empty content:
-
-<answer>2,4,6</answer>
-
-Or (if A is empty):
-
-<answer></answer>
+- Submit final answer (e.g., school 3 is the top model school):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_4 = """\
-[工业流水线无损探伤]
-我们现在来执行一项"流水线零部件偏差检测"任务，规则如下：
+自动化流水线故障排查系统启动。当前生产线上有 {n} 个连续的质检工位（编号 1 到 {n}），各个工位统计出的零件缺陷率数值两两不同。你的任务是：精准定位出缺陷率最高的故障源头工位位置 k。
 
-一条核心流水线上安装了一组关键零部件 L，编号从 1 到 {n}，其中包含一个已通过校准的主控台节点 T（编号为 {target}）。近期流水线良率下降，我已秘密确定了产生微小偏差的零部件集合 A，A 是 L 中除 T 之外的某些零部件组成的集合（A 可能为空，即全部合格）。
+你可以通过以下两种检测指令收集工位数据（查询次数不限，但应尽可能高效）：
 
-你的目标是精确识别出集合 A 中包含哪些存在偏差的零部件。你可以反复向我提出探伤扫描查询：选择 L 中除 T 之外的任意若干零部件组成一个扫描组 S，询问"扫描组 S 中有多少个零部件存在偏差"，我会如实告诉你一个非负整数 k，表示 S 中不合格零部件的数量（即 S 与 A 的交集大小）。
+1. 工序区间峰值查询（MAX 查询）：
+   - 询问工位区间 [L, R] 内的最高缺陷率数值。
+   - L 和 R 必须满足：1 小于等于 L 小于等于 R 小于等于 {n}。
+   - 系统会返回该区间内的最大值。
 
-当你收集到足够信息后，请提交你推断出的偏差零部件集合 A。若答案完全正确则检修成功，否则任务失败。请尽可能用较少的扫描次数完成检测。
+2. 工序区间比较（CMP 查询）：
+   - 询问两段不相交工位区间 [L1, R1] 和 [L2, R2] 哪个区间的最高缺陷率更大。
+   - 要求：1 小于等于 L1 小于等于 R1 小于 L2 小于等于 R2 小于等于 {n}（左侧区间必须完全在右侧区间前段且不相交）。
+   - 系统会返回 LEFT（左区间峰值更大）或 RIGHT（右区间峰值更大）。
 
-## 询问与提交答案的格式（必须严格遵守）
+如果查询格式错误或越界，系统会返回 INVALID。
 
-每次查询时，请使用以下 XML 格式提交一个扫描组 S（用逗号分隔的零部件编号列表，编号不能包含主控台节点 T）：
+当你确定了缺陷率最高的故障工位后，请提交最终排查结果。
 
-<query_subset>1,3,5</query_subset>
+每次只能进行一个查询或提交一个答案。请使用以下 XML 格式：
 
-如果你想单独扫描某一个零部件，也可以只提交一个编号：
+- 工序区间峰值查询（例如查询区间 [2, 5]）：
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- 工序区间比较（例如比较区间 [1, 3] 和 [5, 7]）：
+<query_cmp>1,3,5,7</query_cmp>
 
-提交最终答案时，请列出你认为存在偏差的所有零部件编号（用逗号隔开，顺序不限）。如果你认为 A 为空集（全部合格），请提交空内容：
-
-<answer>2,4,6</answer>
-
-或（如果 A 为空）：
-
-<answer></answer>
+- 提交最终答案（例如认为工位 3 是故障源头）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Let's perform an "Assembly Line Component Deviation Detection" task. Here are the rules:
+[Manufacturing Scenario]
+Automated assembly line troubleshooting system initiated. There are {n} consecutive quality inspection stations (numbered 1 to {n}) on the current production line, and the defect rate values detected at each station are all distinct. Your task is: Pinpoint the exact station position k with the highest defect rate as the source of the fault.
 
-A core assembly line is equipped with a set of key components L, numbered from 1 to {n}. This includes a calibrated main console node T (numbered {target}). Recently, the yield rate has dropped, and I have secretly identified a set of components A that have developed minor deviations. A consists of some components from L excluding T (A may be empty, meaning all are qualified).
+You can collect station data through the following two types of queries (unlimited queries, but try to use as few as possible):
 
-Your goal is to precisely identify which defective components are in set A. You can repeatedly ask me non-destructive scanning queries: choose any subset of components S from L (excluding T) to form a scanning group, and ask "how many components in scanning group S have deviations". I will truthfully tell you a non-negative integer k, representing the number of unqualified components in S (the size of the intersection between S and A).
+1. Process Range Peak Query (MAX query):
+   - Ask for the highest defect rate value in the station range [L, R].
+   - L and R must satisfy: 1 less than or equal to L less than or equal to R less than or equal to {n}.
+   - The system will return the maximum value in that range.
 
-When you have gathered enough information, submit your inferred set of deviated components A. The maintenance succeeds if and only if your answer is completely correct; otherwise it fails. Please try to complete the detection with as few scanning queries as possible.
+2. Process Range Comparison (CMP query):
+   - Ask which of two non-overlapping station ranges [L1, R1] and [L2, R2] has a larger peak defect rate.
+   - Requirements: 1 less than or equal to L1 less than or equal to R1 less than L2 less than or equal to R2 less than or equal to {n} (left range must be completely prior to and disjoint from right range).
+   - The system will return LEFT (left range has a larger peak) or RIGHT (right range has a larger peak).
 
-## Query and Answer Format (must be strictly followed)
+If the query format is invalid or out of bounds, the system will return INVALID.
 
-For each query, use the following XML format to submit a scanning group S (a comma-separated list of numbers, excluding the console node T):
+When you have determined the faulty station with the highest defect rate, please submit your final troubleshooting result.
 
-<query_subset>1,3,5</query_subset>
+Each turn can only contain one query or one answer. Use the following XML format:
 
-If you want to scan a single component, you can submit just one number:
+- Process Range Peak Query (e.g., query range [2, 5]):
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- Process Range Comparison (e.g., compare ranges [1, 3] and [5, 7]):
+<query_cmp>1,3,5,7</query_cmp>
 
-When submitting your final answer, list all component numbers you believe have deviations (comma-separated, order does not matter). If you believe A is empty (all qualified), submit empty content:
-
-<answer>2,4,6</answer>
-
-Or (if A is empty):
-
-<answer></answer>
+- Submit final answer (e.g., station 3 is the source of the fault):
+<answer>3</answer>
 """
 
     contextualized_rule_zh_5 = """\
-[法律证据篡改查证]
-我们现在来协助进行"复杂案件证据链验真"工作，规则如下：
+经济犯罪案件审计系统就绪。在调查某企业的财务造假案中，我们锁定了 {n} 个连续月份的财务流水记录（月份编号 1 到 {n}），且每个月的最大单笔异常转移金额均不相同。你的目标是：找出全局异常转移金额最高的核心案发月份编号 k。
 
-案卷中封存了一系列相关的证据线索 L，编号从 1 到 {n}，其中包含一份已公开定性的不可篡改核心物证 T（编号为 {target}）。根据线人情报，我已掌握了被犯罪嫌疑人秘密篡改或销毁的线索集合 A，A 是 L 中除 T 之外的某些线索组成的集合（A 可能为空，即全部证据真实）。
+你可以通过以下两种审计手段来调取卷宗（查询次数不限，但应尽可能隐蔽）：
 
-你的目标是精确识别出集合 A 中包含哪些被篡改的证据线索。你可以反复向我提出司法比对查询：选择 L 中除 T 之外的任意若干线索组成一个送检批次 S，询问"送检批次 S 中有多少个线索是遭受篡改的"，我会如实告诉你一个非负整数 k，表示 S 中被篡改的线索数量（即 S 与 A 的交集大小）。
+1. 审计区间峰值查询（MAX 查询）：
+   - 询问月份区间 [L, R] 内的最高单笔异常金额。
+   - L 和 R 必须满足：1 小于等于 L 小于等于 R 小于等于 {n}。
+   - 系统会返回该区间内的最高金额。
 
-当你收集到足够信息后，请提交你推断出的被篡改线索集合 A。若答案完全正确则查证成功，否则调查失败。请尽可能用较少的比对次数完成查证。
+2. 审计区间比较（CMP 查询）：
+   - 比较两段不相交月份区间 [L1, R1] 和 [L2, R2]，询问哪段区间内存在更高的单笔异常金额。
+   - 要求：1 小于等于 L1 小于等于 R1 小于 L2 小于等于 R2 小于等于 {n}（较早月份区间必须完全在较晚月份区间之前且不相交）。
+   - 系统会返回 LEFT（左侧较早区间金额更高）或 RIGHT（右侧较晚区间金额更高）。
 
-## 询问与提交答案的格式（必须严格遵守）
+如果查询格式错误或越界，系统会返回 INVALID。
 
-每次查询时，请使用以下 XML 格式提交一个送检批次 S（用逗号分隔的证据编号列表，编号不能包含核心物证 T）：
+当你锁定核心案发月份后，请提交你的最终指控答案。
 
-<query_subset>1,3,5</query_subset>
+每次只能进行一个查询或提交一个答案。请使用以下 XML 格式：
 
-如果你想单独查验某一条线索，也可以只提交一个编号：
+- 审计区间峰值查询（例如查询月份区间 [2, 5]）：
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- 审计区间比较（例如比较月份区间 [1, 3] 和 [5, 7]）：
+<query_cmp>1,3,5,7</query_cmp>
 
-提交最终答案时，请列出你认为被篡改的所有证据线索编号（用逗号隔开，顺序不限）。如果你认为 A 为空集（全部真实），请提交空内容：
-
-<answer>2,4,6</answer>
-
-或（如果 A 为空）：
-
-<answer></answer>
+- 提交最终答案（例如认为第 3 个月是核心案发月份）：
+<answer>3</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's assist in the "Complex Case Evidence Chain Authentication" work. Here are the rules:
+Economic crime audit system ready. During the investigation of a corporate financial fraud case, we have secured {n} consecutive months of financial transaction records (numbered 1 to {n}), and the maximum single abnormal transfer amount in each month is distinct. Your goal is: Find the specific month position k with the global highest abnormal transfer amount.
 
-The case file seals a series of related evidence clues L, numbered from 1 to {n}. This includes an unalterable core physical evidence T (numbered {target}) that has been publicly characterized. Based on informant intelligence, I have grasped the set of clues A that were secretly tampered with or destroyed by the suspect. A consists of some clues from L excluding T (A may be empty, meaning all evidence is authentic).
+You can retrieve files through the following two auditing methods (unlimited queries, but try to remain as discreet as possible):
 
-Your goal is to precisely identify which tampered evidence clues are in set A. You can repeatedly ask me forensic comparison queries: choose any subset of clues S from L (excluding T) to form an inspection batch, and ask "how many clues in inspection batch S have been tampered with". I will truthfully tell you a non-negative integer k, representing the number of tampered clues in S (the size of the intersection between S and A).
+1. Audit Range Peak Query (MAX query):
+   - Ask for the highest single abnormal transfer amount within the month range [L, R].
+   - L and R must satisfy: 1 less than or equal to L less than or equal to R less than or equal to {n}.
+   - The system will return the highest amount in that range.
 
-When you have gathered enough information, submit your inferred set of tampered clues A. The verification succeeds if and only if your answer is completely correct; otherwise it fails. Please try to complete the authentication with as few comparison queries as possible.
+2. Audit Range Comparison (CMP query):
+   - Compare two non-overlapping month ranges [L1, R1] and [L2, R2] to ask which range contains a higher single abnormal amount.
+   - Requirements: 1 less than or equal to L1 less than or equal to R1 less than L2 less than or equal to R2 less than or equal to {n} (earlier month range must be completely before and disjoint from later month range).
+   - The system will return LEFT (left/earlier range has a higher amount) or RIGHT (right/later range has a higher amount).
 
-## Query and Answer Format (must be strictly followed)
+If the query format is invalid or out of bounds, the system will return INVALID.
 
-For each query, use the following XML format to submit an inspection batch S (a comma-separated list of numbers, excluding the core evidence T):
+When you have locked onto the core incident month, please submit your final accusatory answer.
 
-<query_subset>1,3,5</query_subset>
+Each turn can only contain one query or one answer. Use the following XML format:
 
-If you want to verify a single clue, you can submit just one number:
+- Audit Range Peak Query (e.g., query range [2, 5]):
+<query_max>2,5</query_max>
 
-<query_subset>7</query_subset>
+- Audit Range Comparison (e.g., compare ranges [1, 3] and [5, 7]):
+<query_cmp>1,3,5,7</query_cmp>
 
-When submitting your final answer, list all clue numbers you believe have been tampered with (comma-separated, order does not matter). If you believe A is empty (all authentic), submit empty content:
-
-<answer>2,4,6</answer>
-
-Or (if A is empty):
-
-<answer></answer>
+- Submit final answer (e.g., month 3 is the core incident month):
+<answer>3</answer>
 """
 
-    tags = ["answer", "query_subset"]
-    reasoning_type = "演绎推理"
-    data_structure = "集合"
-
-    # 难度配置说明：
-    # 1 (简单)       - N=5, T=1, |A|=1, A 中只有 1 个元素
-    # 2 (中等偏下)   - N=8, T=4, |A|=2, A 中有 2 个元素
-    # 3 (中等偏上)   - N=10, T=5, |A|=3, A 中有 3 个元素
-    # 4 (较难)       - N=12, T=6, |A|=4, A 中有 4 个元素
-    # 5 (难)         - N=15, T=8, |A|=0, A 为空集（需要验证所有元素都不在 A 中）
+    tags = ["answer", "query_max", "query_cmp"]
+    
+    reasoning_type = "演绎推理（明确的规则系统）"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
                 "n": 5,
-                "target": 1,
-                "answer_set": "3",  # A = {3}
+                "sequence": [10, 25, 15, 8, 12],
             },
             2: {
                 "n": 8,
-                "target": 4,
-                "answer_set": "2,7",  # A = {2, 7}
+                "sequence": [34, 67, 23, 89, 45, 12, 56, 78],
             },
             3: {
-                "n": 10,
-                "target": 5,
-                "answer_set": "1,6,9",  # A = {1, 6, 9}
+                "n": 12,
+                "sequence": [45, 67, 89, 34, 23, 91, 56, 78, 12, 43, 88, 76],
             },
             4: {
-                "n": 12,
-                "target": 6,
-                "answer_set": "2,5,8,11",  # A = {2, 5, 8, 11}
+                "n": 16,
+                "sequence": [45, 67, 23, 89, 34, 91, 56, 78, 93, 43, 88, 76, 54, 32, 65, 87],
             },
             5: {
-                "n": 15,
-                "target": 8,
-                "answer_set": "",  # A = {} (空集)
+                "n": 20,
+                "sequence": [45, 67, 23, 89, 34, 91, 56, 78, 93, 43, 88, 76, 54, 98, 32, 65, 87, 71, 49, 82],
             },
         },
         "en": {
             1: {
                 "n": 5,
-                "target": 1,
-                "answer_set": "3",
+                "sequence": [10, 25, 15, 8, 12],
             },
             2: {
                 "n": 8,
-                "target": 4,
-                "answer_set": "2,7",
+                "sequence": [34, 67, 23, 89, 45, 12, 56, 78],
             },
             3: {
-                "n": 10,
-                "target": 5,
-                "answer_set": "1,6,9",
+                "n": 12,
+                "sequence": [45, 67, 89, 34, 23, 91, 56, 78, 12, 43, 88, 76],
             },
             4: {
-                "n": 12,
-                "target": 6,
-                "answer_set": "2,5,8,11",
+                "n": 16,
+                "sequence": [45, 67, 23, 89, 34, 91, 56, 78, 93, 43, 88, 76, 54, 32, 65, 87],
             },
             5: {
-                "n": 15,
-                "target": 8,
-                "answer_set": "",
+                "n": 20,
+                "sequence": [45, 67, 23, 89, 34, 91, 56, 78, 93, 43, 88, 76, 54, 98, 32, 65, 87, 71, 49, 82],
             },
         },
     }
@@ -430,9 +444,8 @@ Or (if A is empty):
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据难度和语言配置，设定集合大小、目标元素和答案集合"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保转为整数
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -441,142 +454,122 @@ Or (if A is empty):
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
-        self._game_info["target"] = cfg["target"]
         
-        self.target_element = str(cfg["target"])
-        self.full_set = set(str(i) for i in range(1, cfg["n"] + 1))
+        self.sequence = cfg["sequence"]
+        self.n = cfg["n"]
         
-        # 直接使用预定义的答案集合，保证可复现性
-        answer_str = cfg["answer_set"].strip()
-        if answer_str:
-            self.answer_set = set(x.strip() for x in answer_str.split(",") if x.strip())
-        else:
-            self.answer_set = set()
-        
-        if self.target_element in self.answer_set:
-            raise ValueError("Answer set should not contain target element")
-        if not self.answer_set.issubset(self.full_set):
-            raise ValueError("Answer set contains invalid elements")
+        max_val = max(self.sequence)
+        self.max_position = self.sequence.index(max_val) + 1
 
     def evaluate(self, parsed_info):
-        """
-        评估最终答案是否正确
-        解析格式: <answer>1,2,3</answer> 或 <answer></answer>（空集）
-        """
-        raw_ans = parsed_info["answer"].strip()
-        
-        # 解析模型提交的集合
-        if raw_ans:
-            try:
-                model_answer = set(x.strip() for x in raw_ans.split(",") if x.strip())
-            except:
+        try:
+            answer = parsed_info["answer"].strip()
+            predicted_pos = int(answer)
+            
+            if predicted_pos < 1 or predicted_pos > self.n:
                 return False
-        else:
-            model_answer = set()  # 空集
-        
-        # 检查模型答案是否包含目标元素（不允许）
-        if self.target_element in model_answer:
+            
+            return predicted_pos == self.max_position
+        except:
             return False
-        
-        # 检查模型答案是否包含超出范围的元素
-        if not model_answer.issubset(self.full_set):
-            return False
-        
-        # 精确匹配
-        return model_answer == self.answer_set
 
     def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑处理方法"""
-        if "query_subset" not in parsed_info:
+        if "query_max" in parsed_info:
+            return self._handle_max_query(parsed_info["query_max"])
+        elif "query_cmp" in parsed_info:
+            return self._handle_cmp_query(parsed_info["query_cmp"])
+        else:
             raise ValueError("No valid query tag found.")
-        
-        raw_query = parsed_info["query_subset"].strip()
-        
-        # 解析查询子集 S
-        if not raw_query:
-            # 空查询，返回 0
-            return "0"
-        
-        try:
-            query_set = set(x.strip() for x in raw_query.split(",") if x.strip())
-        except:
-            if self.config.language == "zh":
-                raise ValueError("错误：查询格式无效。")
-            else:
-                raise ValueError("Error: Invalid query format.")
-        
-        # 检查查询集合是否包含目标元素
-        if self.target_element in query_set:
-            if self.config.language == "zh":
-                raise ValueError(f"错误：查询集合不能包含目标元素 {self.target_element}。")
-            else:
-                raise ValueError(f"Error: Query set cannot contain target element {self.target_element}.")
-        
-        # 检查查询集合是否包含超出范围的元素
-        if not query_set.issubset(self.full_set):
-            if self.config.language == "zh":
-                raise ValueError("错误：查询集合包含无效的编号。")
-            else:
-                raise ValueError("Error: Query set contains invalid numbers.")
-        
-        # 计算交集大小 |S ∩ A|
-        intersection_size = len(query_set.intersection(self.answer_set))
-        
-        return str(intersection_size)
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个在合法范围内但不同的错误答案"""
-        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
-            val = int(correct)
-            max_possible = len(self.full_set) - 1  # 排除 target 后的最大交集
-            # 生成一个不同的值，优先 +1，若超出范围则 -1
-            if val + 1 <= max_possible:
-                return str(val + 1)
-            elif val - 1 >= 0:
-                return str(val - 1)
-            else:
-                # 极端情况：max_possible == 0 且 val == 0，不应发生
-                return str(val + 1)
-        
-        # 关键词替换（区分语言）
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            elif "否" in correct:
-                return correct.replace("否", "是")
-        elif self.config.language == "en":
-            # 简单的大小写敏感替换
-            if "Yes" in correct:
-                return correct.replace("Yes", "No")
-            elif "No" in correct:
-                return correct.replace("No", "Yes")
-            elif "yes" in correct:
-                return correct.replace("yes", "no")
-            elif "no" in correct:
-                return correct.replace("no", "yes")
-        
-        # 若都不匹配，追加 _WRONG
+    def _cf_make_wrong(self, correct):
+        import re
+
+        m = re.search(r'=\s*(\d+)', correct)
+        if m:
+            val = int(m.group(1))
+            wrong_val = val + 1
+            return correct[:m.start(1)] + str(wrong_val) + correct[m.end(1):]
+
+        m = re.search(r'最大值为\s*(\d+)', correct)
+        if m:
+            val = int(m.group(1))
+            wrong_val = val + 1
+            return correct[:m.start(1)] + str(wrong_val) + correct[m.end(1):]
+
+        if "LEFT" in correct:
+            return correct.replace("LEFT", "RIGHT")
+        if "RIGHT" in correct:
+            return correct.replace("RIGHT", "LEFT")
+
         return correct + "_WRONG"
 
-    def get_all_possible_queries(self):
-        """
-        返回所有单元素查询，这是最高效的查询策略。
-        每个单元素查询可以精确判断该元素是否属于 A。
-        对于冗余性评估，这组查询既完整又简洁。
-        """
-        queries = []
-        
-        valid_nums = sorted([int(x) for x in self.full_set if x != self.target_element])
-        
-        for num in valid_nums:
-            num_str = str(num)
-            subset_set = {num_str}
-            intersection_size = len(subset_set.intersection(self.answer_set))
+    def _handle_max_query(self, query_str):
+        try:
+            parts = [x.strip() for x in query_str.split(",")]
+            if len(parts) != 2:
+                return "INVALID"
             
-            queries.append({
-                "query": f"<query_subset>{num_str}</query_subset>",
-                "answer": str(intersection_size)
-            })
-        
-        return queries
+            L, R = int(parts[0]), int(parts[1])
+            
+            if L < 1 or R > self.n or L > R:
+                return "INVALID"
+            
+            max_val = max(self.sequence[L-1:R])
+            
+            if self.config.language == "zh":
+                return f"区间 [{L}, {R}] 的最大值为 {max_val}"
+            else:
+                return f"MAX [{L}, {R}] = {max_val}"
+                
+        except:
+            return "INVALID"
 
+    def _handle_cmp_query(self, query_str):
+        try:
+            parts = [x.strip() for x in query_str.split(",")]
+            if len(parts) != 4:
+                return "INVALID"
+            
+            L1, R1, L2, R2 = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+            
+            if L1 < 1 or R2 > self.n or L1 > R1 or L2 > R2 or R1 >= L2:
+                return "INVALID"
+            
+            max_left = max(self.sequence[L1-1:R1])
+            max_right = max(self.sequence[L2-1:R2])
+            
+            if max_left > max_right:
+                result = "LEFT"
+            else:
+                result = "RIGHT"
+            
+            if self.config.language == "zh":
+                return f"区间 [{L1}, {R1}] 与 [{L2}, {R2}] 比较结果: {result}"
+            else:
+                return f"CMP [{L1}, {R1}] vs [{L2}, {R2}]: {result}"
+                
+        except:
+            return "INVALID"
+
+    def get_all_possible_queries(self) -> list:
+        queries = []
+
+        for L in range(1, self.n + 1):
+            for R in range(L, self.n + 1):
+                answer = self._handle_max_query(f"{L},{R}")
+                queries.append({
+                    "query":  f"<query_max>{L},{R}</query_max>",
+                    "answer": answer,
+                })
+
+        for L1 in range(1, self.n):
+            for R1 in range(L1, self.n):
+                for L2 in range(R1 + 1, self.n + 1):
+                    for R2 in range(L2, self.n + 1):
+                        answer = self._handle_cmp_query(f"{L1},{R1},{L2},{R2}")
+                        queries.append({
+                            "query":  f"<query_cmp>{L1},{R1},{L2},{R2}</query_cmp>",
+                            "answer": answer,
+                        })
+
+        return queries

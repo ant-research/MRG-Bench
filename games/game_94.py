@@ -1,522 +1,565 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   连通分量数：图中共有多少个连通分量
-# ============================================================
-
 from .base import Game
 import random
 
-
-class GAME94(Game):
-
-    reasoning_type = "演绎推理"
-    data_structure = "图"
-
-    game_rule_zh = """\
-我们来玩一个"图连通分量推断"游戏，规则如下：
-
-游戏设定了一个未知的、固定的简单无向图 G，图中有 {n} 个节点，编号为 {node_list}。图中没有自环、没有重边。
-
-你的目标是通过查询推断出该图的连通分量数 K。
-
-你可以反复向我提出以下三类问题（每次仅限一个问题），我会根据真实图结构如实回答：
-
-1. 边存在性查询：询问节点 u 和 v 之间是否有直接的边。回答"是"或"否"。
-2. 连通性查询：询问节点 u 和 v 是否属于同一连通分量（即是否可达）。回答"是"或"否"。
-3. 邻居枚举查询：询问节点 u 的所有相邻节点。回答一个节点列表（逗号分隔）；若该节点度为 0，则返回空。注意：此类查询在整个游戏中最多使用 3 次。
-
-整个游戏中，你的查询总次数不能超过 40 次。在进行至少 5 次有效查询后，你可以提交最终答案。若答案错误或格式不符，游戏失败。
-
-## 询问与提交答案的格式（必须严格遵守）
-
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 边存在性查询（例如询问 v1 和 v2 之间是否有边）：
-<query_edge>v1,v2</query_edge>
-
-- 连通性查询（例如询问 v1 和 v3 是否连通）：
-<query_connected>v1,v3</query_connected>
-
-- 邻居枚举查询（例如询问 v2 的所有邻居）：
-<query_neighbors>v2</query_neighbors>
-
-提交最终答案时，必须说明连通分量数 K，格式如下：
-
-<answer>K</answer>
-
-其中 K 是一个正整数。
-"""
-
-    game_rule_en = """\
-Let's play a "Graph Component Inference" game. Here are the rules:
-
-There is an unknown, fixed simple undirected graph G with {n} nodes, labeled as {node_list}. The graph has no self-loops and no multiple edges.
-
-Your goal is to infer the number of connected components K in the graph through queries.
-
-You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the true graph structure:
-
-1. Edge Existence Query: Ask if there is a direct edge between nodes u and v. Answer "Yes" or "No".
-2. Connectivity Query: Ask if nodes u and v belong to the same connected component (i.e., reachable). Answer "Yes" or "No".
-3. Neighbor Enumeration Query: Ask for all neighbors of node u. Answer a list of nodes (comma-separated); if the node has degree 0, return empty. Note: This type of query can be used at most 3 times in the entire game.
-
-The total number of queries in the entire game cannot exceed 40. After at least 5 valid queries, you can submit your final answer. If the answer is wrong or the format is invalid, the game fails.
-
-## Query and Answer Format (strictly required)
-
-Each query must contain only one tag. Use the following XML format:
-
-- Edge Existence Query (e.g., asking if there is an edge between v1 and v2):
-<query_edge>v1,v2</query_edge>
-
-- Connectivity Query (e.g., asking if v1 and v3 are connected):
-<query_connected>v1,v3</query_connected>
-
-- Neighbor Enumeration Query (e.g., asking for all neighbors of v2):
-<query_neighbors>v2</query_neighbors>
-
-When submitting the final answer, specify the number of connected components K using this format:
-
-<answer>K</answer>
-
-where K is a positive integer.
-"""
+class DiameterTreeTrafficGame(Game):
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     contextualized_rule_zh_1 = """\
-欢迎使用交通路网排查系统。近期受极端天气影响，部分地区的公路受损，形成了若干孤立的交通网络。
+我们在进行一项“交通主干线勘测”任务。系统映射了一个城市的无回路公路网（可视为一棵无向树），节点代表路口或站点，编号从 1 到 N，相邻节点间的距离定义为一个路段。路网中隐藏着两个高度保密的物流枢纽 A 和 B。你的目标是通过有限次的探测，找出该城市公路网中最长的主干线端点（即距离最远的两个节点）及其路段总数（直径长度）。
 
-系统记录了一个区域内的 {n} 个交通枢纽，编号为 {node_list}。枢纽之间可能存在双向直达公路（无重叠公路，无自环）。
+你可以使用以下几种指令：
 
-你的目标是通过查询排查出当前共有多少个独立的交通路网（即连通分量数 K）。
+1. **路网规模查询**：查询路网中的节点总数 N。不限次数。
 
-你可以反复向我提出以下三类查询（每次仅限一个问题），我会根据实际路网情况如实回答：
+2. **枢纽偏离度查询 (ECQ)**：输入一个参考节点 u，系统会对比并返回隐藏枢纽 A、B 中距离 u 更远的那个枢纽 e（距离相等则返回编号较小的枢纽），以及对应的路段数 d(u,e)。
+   - 最多可进行 12 次此类查询
+   - 提交最终答案前，必须至少完成 5 次 ECQ
 
-1. 直达公路查询：询问枢纽 u 和 v 之间是否有直接的公路连接。回答"是"或"否"。
-2. 路网连通查询：询问枢纽 u 和 v 是否可以通过公路网相互通行（属于同一路网）。回答"是"或"否"。
-3. 邻近枢纽查询：询问枢纽 u 的所有直达相邻枢纽。回答一个枢纽列表（逗号分隔）；若该枢纽完全孤立，则返回空。注意：受限于系统资源，此类查询在整个排查中最多使用 3 次。
+3. **节点距离查询 (DQ)**：查询任意两个路口 x 和 y 之间的最短路段数。最多可进行 2 次。
 
-整个排查中，你的查询总次数不能超过 40 次。在进行至少 5 次有效查询后，你可以提交最终答案。若答案错误或格式不符，排查任务失败。
+4. **主干线判定 (DCQ)**：判定路口 p 和 q 的距离是否等于全网最长主干线的长度（即路网直径）。系统回答"是"或"否"。不限次数。
 
-## 询问与提交答案的格式（必须严格遵守）
+5. **路线调取 (PRQ)**：仅在某次 DCQ 返回"是"之后才可使用一次。输入已确认的主干线端点 p,q，系统会返回从 p 到 q 的完整路径节点序列及路段数。最多可进行 1 次。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 直达公路查询（例如询问 v1 和 v2 之间是否有直达公路）：
-<query_edge>v1,v2</query_edge>
+- 路网规模查询：
+<query_n></query_n>
 
-- 路网连通查询（例如询问 v1 和 v3 是否可通过路网相互通行）：
-<query_connected>v1,v3</query_connected>
+- 枢纽偏离度查询（例如查询节点 5）：
+<query_ecq>5</query_ecq>
 
-- 邻近枢纽查询（例如询问 v2 的所有直达枢纽）：
-<query_neighbors>v2</query_neighbors>
+- 节点距离查询（例如查询节点 3 和 7 之间的距离）：
+<query_dq>3,7</query_dq>
 
-提交最终答案时，必须说明独立的交通路网数量 K，格式如下：
+- 主干线判定（例如判定节点 2 和 8 是否为主干线端点）：
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- 路线调取（例如获取节点 2 到 8 的路径）：
+<query_prq>2,8</query_prq>
 
-其中 K 是一个正整数。
+提交最终答案时，必须包含端点和最大路段数（直径）。如果使用了 PRQ，还需包含路径序列。格式如下：
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+或（未使用 PRQ 时）：
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the Traffic Network Inspection System. Due to recent extreme weather, some regional roads have been damaged, resulting in several isolated traffic networks.
+We are conducting a "Traffic Arterial Survey" task. The system has mapped a city's loop-free road network (an undirected tree), where nodes represent intersections or stations numbered from 1 to N, and the distance between adjacent nodes is defined as a road segment. Two highly classified logistics hubs, A and B, are hidden within the network. Your goal is to identify the endpoints of the longest arterial route (i.e., the tree's diameter endpoints) and its total segment count (diameter length) through a limited number of probes.
 
-The system has recorded {n} traffic hubs in the region, labeled as {node_list}. There may be direct two-way roads between hubs (no multiple roads, no self-loops).
+You can use the following query types:
 
-Your goal is to deduce the total number of independent traffic networks (i.e., the number of connected components K) through queries.
+1. **Network Scale Query**: Ask for the total number of nodes N in the network. Unlimited uses.
 
-You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the actual network structure:
+2. **Hub Deviation Query (ECQ)**: Given a reference node u, the system returns which of the hidden hubs A, B is farther from u (if equal distance, return the one with the smaller ID), along with the corresponding segment count d(u,e).
+   - Maximum 12 such queries allowed
+   - At least 5 ECQ queries must be completed before submitting the final answer
 
-1. Direct Road Query: Ask if there is a direct road between hubs u and v. Answer "Yes" or "No".
-2. Network Connectivity Query: Ask if hubs u and v are reachable from each other through the road network (i.e., belong to the same network). Answer "Yes" or "No".
-3. Adjacent Hubs Query: Ask for all hubs directly connected to hub u. Answer a list of hubs (comma-separated); if the hub is completely isolated, return empty. Note: Due to system limits, this query can be used at most 3 times in the entire inspection.
+3. **Node Distance Query (DQ)**: Ask for the shortest segment count between any two intersections x and y. Maximum 2 uses.
 
-The total number of queries in the entire inspection cannot exceed 40. After at least 5 valid queries, you can submit your final answer. If the answer is wrong or the format is invalid, the inspection fails.
+4. **Arterial Check Query (DCQ)**: Ask whether the distance between intersections p and q equals the network's longest arterial route (the diameter length). The system answers "Yes" or "No". Unlimited uses.
 
-## Query and Answer Format (strictly required)
+5. **Route Retrieval Query (PRQ)**: Can only be used once after a DCQ returns "Yes". Input the confirmed arterial endpoints p,q, and the system returns the complete path node sequence from p to q and the segment count. Maximum 1 use.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Direct Road Query (e.g., asking if there is a direct road between v1 and v2):
-<query_edge>v1,v2</query_edge>
+- Network Scale Query:
+<query_n></query_n>
 
-- Network Connectivity Query (e.g., asking if v1 and v3 are connected via the network):
-<query_connected>v1,v3</query_connected>
+- Hub Deviation Query (e.g., query node 5):
+<query_ecq>5</query_ecq>
 
-- Adjacent Hubs Query (e.g., asking for all directly connected hubs of v2):
-<query_neighbors>v2</query_neighbors>
+- Node Distance Query (e.g., query distance between nodes 3 and 7):
+<query_dq>3,7</query_dq>
 
-When submitting the final answer, specify the number of independent traffic networks K using this format:
+- Arterial Check Query (e.g., check if nodes 2 and 8 are arterial endpoints):
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- Route Retrieval Query (e.g., get path from node 2 to 8):
+<query_prq>2,8</query_prq>
 
-where K is a positive integer.
+When submitting the final answer, you must include endpoints and the maximum segment count (diameter). If PRQ was used, also include the path sequence. Format:
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+Or (when PRQ was not used):
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用流行病学流调追踪系统。在本次疫情排查中，我们需要查明所有独立的感染链条。
+在此“神经网络传导分析”任务中，你需要分析一个特定的神经元树突网络（无向拓扑树），突触节点编号为 1 到 N，节点间距离为信号传导的级数。在该网络中，存在两个尚未准确定位的隐匿性异常病灶节点 A 和 B。你的目标是通过有限的生物电位探测，找出该网络中最长的传导链路两端（即网络直径端点）及链路长度，以评估病理性放电的最大波及范围。
 
-系统锁定了 {n} 名潜在接触者，编号为 {node_list}。两人之间可能存在直接的无防护接触史（双向接触，无自身接触）。
+你可以使用以下几种指令：
 
-你的目标是通过调取流调数据，推断出当前共有多少个独立的感染集群（即连通分量数 K）。
+1. **网络规模查询**：获取网络中突触节点总数 N。不限次数。
 
-你可以反复向我提出以下三类查询（每次仅限一个问题），我会根据真实流调数据如实回答：
+2. **病灶偏向性查询 (ECQ)**：刺激节点 u，系统会评估并返回隐匿病灶 A、B 中信号传导距离更远的那个病灶节点 e（距离相等则返回编号较小者），以及距离级数 d(u,e)。
+   - 最多可进行 12 次此类查询
+   - 提交最终答案前，必须至少完成 5 次 ECQ
 
-1. 直接接触查询：询问人员 u 和 v 之间是否存在直接接触史。回答"是"或"否"。
-2. 传播链连通查询：询问人员 u 和 v 是否存在潜在的交叉感染风险（属于同一感染传播链）。回答"是"或"否"。
-3. 密接者枚举查询：询问人员 u 的所有直接接触者。回答一个人员列表（逗号分隔）；若该人员无接触史，则返回空。注意：为保护隐私，此类查询在整个流调中最多使用 3 次。
+3. **传导级数查询 (DQ)**：测定任意节点 x 和 y 之间的传导级数。最多可进行 2 次。
 
-整个流调中，你的查询总次数不能超过 40 次。在进行至少 5 次有效查询后，你可以提交最终答案。若答案错误或格式不符，流调任务失败。
+4. **极值链路判定 (DCQ)**：判定节点 p 和 q 之间的传导级数是否等于整个网络的最大传导链路长度（即网络直径）。系统回答"是"或"否"。不限次数。
 
-## 询问与提交答案的格式（必须严格遵守）
+5. **完整链路追踪 (PRQ)**：仅在某次 DCQ 返回"是"之后才可使用一次。输入已确认的极值链路端点 p,q，系统会返回信号传导的完整突触节点序列及总级数。最多可进行 1 次。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 直接接触查询（例如询问 v1 和 v2 是否有直接接触）：
-<query_edge>v1,v2</query_edge>
+- 网络规模查询：
+<query_n></query_n>
 
-- 传播链连通查询（例如询问 v1 和 v3 是否属于同一感染链）：
-<query_connected>v1,v3</query_connected>
+- 病灶偏向性查询（例如刺激节点 5）：
+<query_ecq>5</query_ecq>
 
-- 密接者枚举查询（例如询问 v2 的所有直接接触者）：
-<query_neighbors>v2</query_neighbors>
+- 传导级数查询（例如测定节点 3 和 7 之间的级数）：
+<query_dq>3,7</query_dq>
 
-提交最终答案时，必须说明独立的感染集群数量 K，格式如下：
+- 极值链路判定（例如判定节点 2 和 8 是否为极值链路端点）：
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- 完整链路追踪（例如追踪节点 2 到 8 的链路）：
+<query_prq>2,8</query_prq>
 
-其中 K 是一个正整数。
+提交最终答案时，必须包含端点和最大链路长度（直径）。如果使用了 PRQ，还需包含路径序列。格式如下：
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+或（未使用 PRQ 时）：
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the Epidemiological Tracing System. In this outbreak investigation, we need to identify all independent transmission chains.
+In this "Neural Network Conduction Analysis" task, you need to analyze a specific neuron dendrite network (an undirected topological tree), with synaptic nodes numbered from 1 to N. The distance between nodes is the number of signal conduction stages. Two hidden, unlocated pathological lesion nodes, A and B, exist in the network. Your objective is to find the two endpoints of the longest conduction pathway (network diameter endpoints) and its length through limited bioelectric probing, in order to assess the maximum spread of pathological discharge.
 
-The system has identified {n} potential contacts, labeled as {node_list}. There may be a history of direct unprotected contact between any two individuals (two-way contact, no self-contact).
+You can use the following query commands:
 
-Your goal is to infer the total number of independent infection clusters (i.e., the number of connected components K) by querying the tracing data.
+1. **Network Scale Query**: Get the total number of synaptic nodes N in the network. Unlimited uses.
 
-You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the actual tracing data:
+2. **Lesion Bias Query (ECQ)**: Stimulate a reference node u; the system assesses and returns the hidden lesion A or B that is farther in conduction distance (if equal, return the smaller ID), and the stage count d(u,e).
+   - Maximum 12 such queries allowed
+   - At least 5 ECQ queries must be completed before submitting the final answer
 
-1. Direct Contact Query: Ask if there is a direct contact history between individuals u and v. Answer "Yes" or "No".
-2. Transmission Chain Connectivity Query: Ask if individuals u and v share a potential cross-infection risk (i.e., belong to the same transmission chain). Answer "Yes" or "No".
-3. Close Contacts Enumeration Query: Ask for all direct contacts of individual u. Answer a list of individuals (comma-separated); if the person has no contacts, return empty. Note: For privacy protection, this query can be used at most 3 times during the investigation.
+3. **Conduction Stage Query (DQ)**: Measure the number of conduction stages between any two nodes x and y. Maximum 2 uses.
 
-The total number of queries in the entire investigation cannot exceed 40. After at least 5 valid queries, you can submit your final answer. If the answer is wrong or the format is invalid, the investigation fails.
+4. **Extreme Pathway Check (DCQ)**: Check whether the stages between nodes p and q equal the maximum conduction length of the entire network (the diameter length). The system answers "Yes" or "No". Unlimited uses.
 
-## Query and Answer Format (strictly required)
+5. **Complete Pathway Trace (PRQ)**: Can only be used once after a DCQ returns "Yes". Input the confirmed extreme pathway endpoints p,q, and the system returns the complete synaptic node sequence and stage count. Maximum 1 use.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Direct Contact Query (e.g., asking if there is a direct contact between v1 and v2):
-<query_edge>v1,v2</query_edge>
+- Network Scale Query:
+<query_n></query_n>
 
-- Transmission Chain Connectivity Query (e.g., asking if v1 and v3 are in the same infection chain):
-<query_connected>v1,v3</query_connected>
+- Lesion Bias Query (e.g., stimulate node 5):
+<query_ecq>5</query_ecq>
 
-- Close Contacts Enumeration Query (e.g., asking for all direct contacts of v2):
-<query_neighbors>v2</query_neighbors>
+- Conduction Stage Query (e.g., measure stages between nodes 3 and 7):
+<query_dq>3,7</query_dq>
 
-When submitting the final answer, specify the number of independent infection clusters K using this format:
+- Extreme Pathway Check (e.g., check if nodes 2 and 8 are extreme endpoints):
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- Complete Pathway Trace (e.g., trace pathway from node 2 to 8):
+<query_prq>2,8</query_prq>
 
-where K is a positive integer.
+When submitting the final answer, you must include endpoints and the maximum stage count (diameter). If PRQ was used, also include the path sequence. Format:
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+Or (when PRQ was not used):
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎进入智能教学知识图谱系统。为了定制个性化学习路线，我们需要摸清各学科的知识体系划分。
+欢迎使用“学科知识图谱跨度评估”系统。该学科的知识点依赖关系构成了一棵无向树，知识模块编号从 1 到 N，相邻模块间的连线表示直接的前置关联。体系中存在两个隐藏的、作为基石的核心考核点 A 和 B。你的教学规划目标是通过最少的检索，找出学科体系中认知跨度最大的两个知识模块（即树直径的两个端点）及其跨度值（直径长度）。
 
-课程库中包含 {n} 个核心知识点，编号为 {node_list}。知识点之间可能存在双向关联（无多重关联，无自我关联）。
+你可以使用以下几种指令：
 
-你的目标是通过系统查询，推断出这些知识点共划分成了多少个独立的知识模块（即连通分量数 K）。
+1. **模块总数查询**：查询体系内的知识模块总数 N。不限次数。
 
-你可以反复向我提出以下三类查询（每次仅限一个问题），我会根据真实知识图谱结构如实回答：
+2. **考核点跨度对比 (ECQ)**：给定模块 u，系统将在核心考核点 A、B 中，返回距离 u 关联跨度更大的那个考核点 e（若跨度相同则返回编号较小者），以及对应的跨度 d(u,e)。
+   - 最多可进行 12 次此类查询
+   - 提交最终答案前，必须至少完成 5 次 ECQ
 
-1. 知识点关联查询：询问知识点 u 和 v 之间是否有直接的关联关系。回答"是"或"否"。
-2. 模块连通查询：询问知识点 u 和 v 是否可以通过关联路径互相推演（即属于同一知识模块）。回答"是"或"否"。
-3. 关联枚举查询：询问知识点 u 的所有直接关联知识点。回答一个知识点列表（逗号分隔）；若该知识点相对孤立，则返回空。注意：为避免过度依赖提示，此类查询在整个评估中最多使用 3 次。
+3. **关联跨度查询 (DQ)**：检索任意模块 x 和 y 之间的关联跨度。最多可进行 2 次。
 
-整个评估中，你的查询总次数不能超过 40 次。在进行至少 5 次有效查询后，你可以提交最终答案。若答案错误或格式不符，图谱构建失败。
+4. **最大跨度判定 (DCQ)**：判定模块 p 和 q 之间的跨度是否为全体系的最大认知跨度（即树直径）。系统回答"是"或"否"。不限次数。
 
-## 询问与提交答案的格式（必须严格遵守）
+5. **学习路径生成 (PRQ)**：仅在某次 DCQ 返回"是"之后才可使用一次。输入已确认的最大跨度模块 p,q，系统会生成它们之间的完整过渡模块序列及跨度值。最多可进行 1 次。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 知识点关联查询（例如询问 v1 和 v2 之间是否有直接关联）：
-<query_edge>v1,v2</query_edge>
+- 模块总数查询：
+<query_n></query_n>
 
-- 模块连通查询（例如询问 v1 和 v3 是否属于同一知识模块）：
-<query_connected>v1,v3</query_connected>
+- 考核点跨度对比（例如查询模块 5）：
+<query_ecq>5</query_ecq>
 
-- 关联枚举查询（例如询问 v2 的所有直接关联知识点）：
-<query_neighbors>v2</query_neighbors>
+- 关联跨度查询（例如检索模块 3 和 7 之间的跨度）：
+<query_dq>3,7</query_dq>
 
-提交最终答案时，必须说明独立的知识模块数量 K，格式如下：
+- 最大跨度判定（例如判定模块 2 和 8 是否为最大跨度端点）：
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- 学习路径生成（例如生成模块 2 到 8 的路径）：
+<query_prq>2,8</query_prq>
 
-其中 K 是一个正整数。
+提交最终答案时，必须包含端点和最大跨度值（直径）。如果使用了 PRQ，还需包含模块序列。格式如下：
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+或（未使用 PRQ 时）：
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Intelligent Teaching Knowledge Graph System. To customize personalized learning paths, we need to clarify the division of academic knowledge systems.
+Welcome to the "Knowledge Graph Span Assessment" system. The knowledge dependencies form an undirected tree with knowledge modules numbered from 1 to N. The links represent direct prerequisite associations. Two core, hidden cornerstone assessment points, A and B, exist in the system. Your instructional design goal is to find the two knowledge modules with the maximum cognitive span (the tree diameter endpoints) and their span value (diameter length) via minimal retrievals.
 
-The course library contains {n} core knowledge points, labeled as {node_list}. There may be two-way associations between these points (no multiple associations, no self-associations).
+You can use the following retrieval commands:
 
-Your goal is to infer how many independent knowledge modules these points are divided into (i.e., the number of connected components K) through system queries.
+1. **Module Count Query**: Query the total number of knowledge modules N in the system. Unlimited uses.
 
-You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the actual knowledge graph:
+2. **Assessment Span Comparison (ECQ)**: Given a module u, the system returns the core point A or B with the greater association span from u (if equal, return the smaller ID), and the span d(u,e).
+   - Maximum 12 such queries allowed
+   - At least 5 ECQ queries must be completed before submitting the final answer
 
-1. Knowledge Point Association Query: Ask if there is a direct association between knowledge points u and v. Answer "Yes" or "No".
-2. Module Connectivity Query: Ask if knowledge points u and v can be deduced from each other through an association path (i.e., belong to the same knowledge module). Answer "Yes" or "No".
-3. Association Enumeration Query: Ask for all directly associated points of knowledge point u. Answer a list of points (comma-separated); if the point is isolated, return empty. Note: To prevent over-reliance on hints, this query can be used at most 3 times during the assessment.
+3. **Association Span Query (DQ)**: Retrieve the shortest association span between any two modules x and y. Maximum 2 uses.
 
-The total number of queries in the entire assessment cannot exceed 40. After at least 5 valid queries, you can submit your final answer. If the answer is wrong or the format is invalid, the graph construction fails.
+4. **Maximum Span Check (DCQ)**: Verify whether the span between modules p and q equals the system's maximum cognitive span (the diameter length). The system answers "Yes" or "No". Unlimited uses.
 
-## Query and Answer Format (strictly required)
+5. **Learning Path Generation (PRQ)**: Can only be used once after a DCQ returns "Yes". Input the confirmed maximum span modules p,q, and the system generates the transitional module sequence and span value. Maximum 1 use.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Knowledge Point Association Query (e.g., asking if there is a direct association between v1 and v2):
-<query_edge>v1,v2</query_edge>
+- Module Count Query:
+<query_n></query_n>
 
-- Module Connectivity Query (e.g., asking if v1 and v3 belong to the same knowledge module):
-<query_connected>v1,v3</query_connected>
+- Assessment Span Comparison (e.g., query module 5):
+<query_ecq>5</query_ecq>
 
-- Association Enumeration Query (e.g., asking for all directly associated points of v2):
-<query_neighbors>v2</query_neighbors>
+- Association Span Query (e.g., retrieve span between modules 3 and 7):
+<query_dq>3,7</query_dq>
 
-When submitting the final answer, specify the number of independent knowledge modules K using this format:
+- Maximum Span Check (e.g., verify if modules 2 and 8 are maximum span endpoints):
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- Learning Path Generation (e.g., generate path from module 2 to 8):
+<query_prq>2,8</query_prq>
 
-where K is a positive integer.
+When submitting the final answer, you must include endpoints and the maximum span value (diameter). If PRQ was used, also include the path sequence. Format:
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+Or (when PRQ was not used):
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎登录智能工厂生产调度系统。工厂内有多条自动化产线，目前正在进行物料流转架构重组。
+正在初始化“工业管网极限压损检测”程序。该化工厂的管道系统是一棵无闭环的拓扑树，检测阀门编号从 1 到 N，阀门间的管段数即为距离。管网内部有两个隐藏的高压泵源 A 和 B。工程师的目标是通过有限的传感器调用，找出整个管网中流体输送距离最长的两端（即管网直径端点）及其管段总数（直径长度），以便对最大可能压力损耗进行安全评估。
 
-厂区内分布着 {n} 个生产车间，编号为 {node_list}。车间之间可能铺设了双向物料传送带（无重复传送带，无车间内自循环）。
+你可以使用以下几种指令：
 
-你的目标是通过设备排查，确定目前厂区内共有多少个独立的物料流转子系统（即连通分量数 K）。
+1. **节点盘点查询**：获取管网系统内的检测阀门总数 N。不限次数。
 
-你可以反复向我提出以下三类查询（每次仅限一个问题），我会根据车间物理连接情况如实回答：
+2. **泵源远端定位 (ECQ)**：给定检测阀 u，系统在隐藏泵源 A、B 中，返回管段距离更远的那个泵源 e（距离相等则返回编号较小者），以及压损管段数 d(u,e)。
+   - 最多可进行 12 次此类查询
+   - 提交最终答案前，必须至少完成 5 次 ECQ
 
-1. 传送带直连查询：询问车间 u 和 v 之间是否铺设了直接的物料传送带。回答"是"或"否"。
-2. 物料流转查询：询问车间 u 和 v 的物料是否可以通过传送带网络互相流转（即属于同一子系统）。回答"是"或"否"。
-3. 邻接车间查询：询问车间 u 通过传送带直连的所有相邻车间。回答一个车间列表（逗号分隔）；若该车间无外部传送带，则返回空。注意：为防系统过载，此类查询在整个排查中最多使用 3 次。
+3. **管段距离测量 (DQ)**：测量任意阀门 x 和 y 之间的最短管段数。最多可进行 2 次。
 
-整个排查中，你的查询总次数不能超过 40 次。在进行至少 5 次有效查询后，你可以提交最终答案。若答案错误或格式不符，调度评估失败。
+4. **极限管径验证 (DCQ)**：验证阀门 p 和 q 之间的距离是否等于管网最长输送距离（即管网直径）。系统回答"是"或"否"。不限次数。
 
-## 询问与提交答案的格式（必须严格遵守）
+5. **管道拓扑解析 (PRQ)**：仅在某次 DCQ 返回"是"之后才可使用一次。输入已确认的极限端点 p,q，系统会提取它们之间的完整阀门序列与总距离。最多可进行 1 次。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 传送带直连查询（例如询问 v1 和 v2 是否有直连传送带）：
-<query_edge>v1,v2</query_edge>
+- 节点盘点查询：
+<query_n></query_n>
 
-- 物料流转查询（例如询问 v1 和 v3 是否在同一物料流转网络中）：
-<query_connected>v1,v3</query_connected>
+- 泵源远端定位（例如定位参考阀门 5）：
+<query_ecq>5</query_ecq>
 
-- 邻接车间查询（例如询问 v2 的所有直连车间）：
-<query_neighbors>v2</query_neighbors>
+- 管段距离测量（例如测量阀门 3 和 7 之间的管段数）：
+<query_dq>3,7</query_dq>
 
-提交最终答案时，必须说明独立的物料流转子系统数量 K，格式如下：
+- 极限管径验证（例如验证阀门 2 和 8 是否为极限输送端点）：
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- 管道拓扑解析（例如解析阀门 2 到 8 的拓扑）：
+<query_prq>2,8</query_prq>
 
-其中 K 是一个正整数。
+提交最终答案时，必须包含端点和管段总数（直径）。如果使用了 PRQ，还需包含阀门序列。格式如下：
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+或（未使用 PRQ 时）：
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Industry Scenario]
-Welcome to the Smart Factory Production Scheduling System. The factory has multiple automated production lines and is currently restructuring its material flow architecture.
+[Manufacturing Scenario]
+Initializing the "Industrial Pipe Network Pressure Loss Detection" program. The plant's piping is a loop-free topological tree with detection valves numbered from 1 to N. The distance is defined as the pipe segment count. Two critical high-pressure pump sources, A and B, are hidden in the network. Your engineering objective is to find the longest fluid transport ends (the diameter endpoints) and total segment count (diameter length) through limited sensor calls to evaluate the maximum potential pressure loss.
 
-There are {n} production workshops distributed across the plant, labeled as {node_list}. Two-way material conveyor belts may be installed between workshops (no redundant belts, no self-loops).
+You can use the following sensor protocols:
 
-Your goal is to determine the total number of independent material flow subsystems (i.e., the number of connected components K) through equipment inspection.
+1. **Node Inventory Query**: Get the total number of valves N in the network. Unlimited uses.
 
-You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on the physical workshop connections:
+2. **Pump Remote Location (ECQ)**: Given a reference valve u, the system returns the hidden pump A or B that is farther in segment distance (if equal, return the smaller ID), and the segment drop d(u,e).
+   - Maximum 12 such queries allowed
+   - At least 5 ECQ queries must be completed before submitting the final answer
 
-1. Direct Conveyor Query: Ask if there is a direct material conveyor belt between workshops u and v. Answer "Yes" or "No".
-2. Material Flow Connectivity Query: Ask if materials between workshops u and v can flow through the conveyor network (i.e., belong to the same subsystem). Answer "Yes" or "No".
-3. Adjacent Workshops Query: Ask for all workshops directly connected to workshop u via conveyor belts. Answer a list of workshops (comma-separated); if the workshop has no external belts, return empty. Note: To prevent system overload, this query can be used at most 3 times during the inspection.
+3. **Segment Measurement Query (DQ)**: Measure the shortest segment count between any two valves x and y. Maximum 2 uses.
 
-The total number of queries in the entire inspection cannot exceed 40. After at least 5 valid queries, you can submit your final answer. If the answer is wrong or the format is invalid, the scheduling assessment fails.
+4. **Limit Diameter Verification (DCQ)**: Verify whether the distance between valves p and q equals the maximum transport distance of the network (the diameter length). The system answers "Yes" or "No". Unlimited uses.
 
-## Query and Answer Format (strictly required)
+5. **Topology Parsing (PRQ)**: Can only be used once after a DCQ returns "Yes". Input the confirmed limit endpoints p,q, and the system extracts the full valve sequence and total distance. Maximum 1 use.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Direct Conveyor Query (e.g., asking if there is a direct conveyor between v1 and v2):
-<query_edge>v1,v2</query_edge>
+- Node Inventory Query:
+<query_n></query_n>
 
-- Material Flow Connectivity Query (e.g., asking if v1 and v3 are in the same material flow network):
-<query_connected>v1,v3</query_connected>
+- Pump Remote Location (e.g., locate relative to valve 5):
+<query_ecq>5</query_ecq>
 
-- Adjacent Workshops Query (e.g., asking for all directly connected workshops of v2):
-<query_neighbors>v2</query_neighbors>
+- Segment Measurement Query (e.g., measure segment count between valves 3 and 7):
+<query_dq>3,7</query_dq>
 
-When submitting the final answer, specify the number of independent material flow subsystems K using this format:
+- Limit Diameter Verification (e.g., verify if valves 2 and 8 are limit transport ends):
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- Topology Parsing (e.g., parse topology from valve 2 to 8):
+<query_prq>2,8</query_prq>
 
-where K is a positive integer.
+When submitting the final answer, you must include endpoints and the maximum segment count (diameter). If PRQ was used, also include the path sequence. Format:
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+Or (when PRQ was not used):
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用经侦资金穿透分析系统。在本次大型金融洗钱案件侦办中，我们需要摸清错综复杂的资金网络。
+你正在执行“商业洗钱网络穿透调查”。目标企业的关联交易网络呈现复杂的无向树状实体结构，各公司/法人节点编号从 1 到 N，节点间距离代表资金流转的层级。调查发现存在两家深度隐藏的幕后空壳公司 A 和 B。为了界定该案件的最高追溯定罪范围，你需要找出整个洗钱网络中最长的资金流转链路的起点和终点（即树的直径端点）及其流转层级数（直径长度）。
 
-案卷中锁定了 {n} 个涉案实体（个人或空壳公司），编号为 {node_list}。实体之间可能存在直接的非法资金往来（无重叠记录，无自我转账）。
+你可以使用以下几种手段：
 
-你的目标是通过调取交易记录，推断出这批涉案实体背后共有多少个独立的洗钱网络（即连通分量数 K）。
+1. **实体规模问询**：查询涉案法人节点总数 N。不限次数。
 
-你可以反复向我提出以下三类查询（每次仅限一个问题），我会根据银行流水证据如实回答：
+2. **幕后距离探查 (ECQ)**：锁定基准节点 u，系统将在隐藏空壳公司 A、B 中，反馈资金流转层级更深的那家 e（层级一致取编号小者），以及流转层级数 d(u,e)。
+   - 最多可进行 12 次此类查询
+   - 提交最终答案前，必须至少完成 5 次 ECQ
 
-1. 直接交易查询：询问实体 u 和 v 之间是否有直接的资金往来记录。回答"是"或"否"。
-2. 资金归集查询：询问实体 u 和 v 的资金是否在同一个资金池内流转（属于同一洗钱网络）。回答"是"或"否"。
-3. 交易对手枚举查询：询问实体 u 的所有直接资金往来对象。回答一个实体列表（逗号分隔）；若该账户无交易记录，则返回空。注意：受限于协查权限，此类查询在整个案件侦办中最多使用 3 次。
+3. **流转层级核对 (DQ)**：核对任意节点 x 和 y 之间的最短资金流转层级数。最多可进行 2 次。
 
-整个案件侦办中，你的查询总次数不能超过 40 次。在进行至少 5 次有效查询后，你可以提交最终答案。若答案错误或格式不符，案件侦办方向判定失败。
+4. **极端链路裁定 (DCQ)**：裁定节点 p 和 q 之间的层级数是否构成整个网络中的最长资金流转链路（即网络直径）。系统回答"是"或"否"。不限次数。
 
-## 询问与提交答案的格式（必须严格遵守）
+5. **资金流水穿透 (PRQ)**：仅在某次 DCQ 返回"是"之后才可使用一次。输入已确认的极端链路端点 p,q，系统将出具完整的资金流转涉案节点序列及层级长度。最多可进行 1 次。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 直接交易查询（例如询问 v1 和 v2 之间是否有直接交易）：
-<query_edge>v1,v2</query_edge>
+- 实体规模问询：
+<query_n></query_n>
 
-- 资金归集查询（例如询问 v1 和 v3 是否属于同一洗钱网络）：
-<query_connected>v1,v3</query_connected>
+- 幕后距离探查（例如基准节点 5）：
+<query_ecq>5</query_ecq>
 
-- 交易对手枚举查询（例如询问 v2 的所有直接往来实体）：
-<query_neighbors>v2</query_neighbors>
+- 流转层级核对（例如核对节点 3 和 7 的层级）：
+<query_dq>3,7</query_dq>
 
-提交最终答案时，必须说明独立的洗钱网络数量 K，格式如下：
+- 极端链路裁定（例如裁定节点 2 和 8 是否为最长链路端点）：
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- 资金流水穿透（例如穿透节点 2 到 8 的流水）：
+<query_prq>2,8</query_prq>
 
-其中 K 是一个正整数。
+提交最终答案时，必须包含端点和最大流转层级数（直径）。如果使用了 PRQ，还需包含节点序列。格式如下：
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+或（未使用 PRQ 时）：
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the Economic Crime Financial Penetration Analysis System. In this major money laundering case, we need to uncover the intricate financial networks.
+You are executing a "Commercial Money Laundering Network Penetration". The target enterprise's transaction network is a complex undirected tree of legal entities, numbered from 1 to N. Distance represents the capital flow tiers. Two deeply hidden shell companies, A and B, have been identified as key behind the scenes. To define the maximum retroactive prosecution scope, you must locate the longest capital flow chain's endpoints (the diameter endpoints) and its tier count (diameter length) via limited investigative means.
 
-The case files have locked onto {n} involved entities (individuals or shell companies), labeled as {node_list}. There may be direct illegal financial transactions between entities (no redundant records, no self-transfers).
+You can use the following investigative tools:
 
-Your goal is to deduce the total number of independent money laundering networks (i.e., the number of connected components K) behind these entities by querying transaction records.
+1. **Entity Scale Inquiry**: Query the total number of involved entities N. Unlimited uses.
 
-You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully based on bank statement evidence:
+2. **Behind-the-Scenes Probe (ECQ)**: For a base node u, the system returns the hidden shell company A or B with deeper flow tiers (if tied, return the smaller ID), and the tier count d(u,e).
+   - Maximum 12 such queries allowed
+   - At least 5 ECQ queries must be completed before submitting the final answer
 
-1. Direct Transaction Query: Ask if there is a direct financial transaction record between entities u and v. Answer "Yes" or "No".
-2. Fund Pooling Connectivity Query: Ask if the funds of entities u and v flow within the same capital pool (i.e., belong to the same laundering network). Answer "Yes" or "No".
-3. Counterparty Enumeration Query: Ask for all direct transaction counterparties of entity u. Answer a list of entities (comma-separated); if the account has no records, return empty. Note: Due to investigation authority limits, this query can be used at most 3 times in the entire case handling.
+3. **Flow Tier Verification (DQ)**: Verify the shortest capital flow tiers between any two entities x and y. Maximum 2 uses.
 
-The total number of queries in the entire case handling cannot exceed 40. After at least 5 valid queries, you can submit your final answer. If the answer is wrong or the format is invalid, the case investigation direction fails.
+4. **Extreme Chain Ruling (DCQ)**: Rule whether the tiers between entities p and q constitute the longest capital flow chain (the diameter length). The system answers "Yes" or "No". Unlimited uses.
 
-## Query and Answer Format (strictly required)
+5. **Capital Flow Penetration (PRQ)**: Can only be used once after a DCQ ruling is "Yes". Input the confirmed extreme chain endpoints p,q, and the system reveals the full entity sequence and tier length. Maximum 1 use.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Direct Transaction Query (e.g., asking if there is a direct transaction between v1 and v2):
-<query_edge>v1,v2</query_edge>
+- Entity Scale Inquiry:
+<query_n></query_n>
 
-- Fund Pooling Connectivity Query (e.g., asking if v1 and v3 belong to the same money laundering network):
-<query_connected>v1,v3</query_connected>
+- Behind-the-Scenes Probe (e.g., probe base node 5):
+<query_ecq>5</query_ecq>
 
-- Counterparty Enumeration Query (e.g., asking for all direct counterparties of v2):
-<query_neighbors>v2</query_neighbors>
+- Flow Tier Verification (e.g., verify tiers between entities 3 and 7):
+<query_dq>3,7</query_dq>
 
-When submitting the final answer, specify the number of independent money laundering networks K using this format:
+- Extreme Chain Ruling (e.g., rule if entities 2 and 8 are extreme chain endpoints):
+<query_dcq>2,8</query_dcq>
 
-<answer>K</answer>
+- Capital Flow Penetration (e.g., penetrate flow from entity 2 to 8):
+<query_prq>2,8</query_prq>
 
-where K is a positive integer.
+When submitting the final answer, you must include endpoints and the maximum tier count (diameter). If PRQ was used, also include the path sequence. Format:
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+Or (when PRQ was not used):
+
+<answer>endpoints=2,8, diameter=5</answer>
 """
 
-    tags = ["answer", "query_edge", "query_connected", "query_neighbors"]
+    game_rule_zh = """\
+我们来玩一个"树直径推理"游戏，规则如下：
 
-    # 难度说明：
-    # 1 (简单)        - N=4, 稀疏图，明显分离的连通分量
-    # 2 (中等偏下)    - N=6, 中等稀疏，部分孤立点
-    # 3 (中等偏上)    - N=8, 中等密度，需要综合查询策略
-    # 4 (较难)        - N=10, 较高密度，连通结构较复杂
-    # 5 (难)          - N=12, 高密度，多个相似大小的连通分量
+游戏设定了一棵未知的无向树，节点编号为 1 到 N，节点间的距离定义为最短路径上的边数。树中存在两个固定但隐藏的特殊节点 A 和 B。你的目标是通过有限次数的询问，推断出这棵树的直径端点（即距离最远的两个节点）及其直径长度。
+
+你可以使用以下几种询问方式：
+
+1. **节点总数查询**：询问树的节点总数 N。不限次数。
+
+2. **端点比较查询 (ECQ)**：给定一个节点 u，系统会在隐藏的两个特殊节点 A、B 中，返回与 u 距离更远的那个节点 e（如果距离相等则返回编号较小的节点），以及对应的距离值 d(u,e)。
+   - 最多可进行 12 次此类查询
+   - 提交最终答案前，必须至少完成 5 次 ECQ
+
+3. **距离查询 (DQ)**：询问任意两个节点 x 和 y 之间的距离。最多可进行 2 次。
+
+4. **直径判定查询 (DCQ)**：询问两个节点 p 和 q 之间的距离是否等于树的直径长度（即树中任意两点间的最大距离）。系统回答"是"或"否"。不限次数。
+
+5. **路径揭示查询 (PRQ)**：仅在某次 DCQ 返回"是"之后才可使用一次。输入已确认为直径端点的节点对 p,q，系统会返回从 p 到 q 的完整路径节点序列及路径长度。最多可进行 1 次。
+
+每次询问只能包含一个标签。请使用以下 XML 格式：
+
+- 节点总数查询：
+<query_n></query_n>
+
+- 端点比较查询（例如查询节点 5）：
+<query_ecq>5</query_ecq>
+
+- 距离查询（例如查询节点 3 和 7 之间的距离）：
+<query_dq>3,7</query_dq>
+
+- 直径判定查询（例如判定节点 2 和 8 是否为直径端点）：
+<query_dcq>2,8</query_dcq>
+
+- 路径揭示查询（例如获取节点 2 到 8 的路径）：
+<query_prq>2,8</query_prq>
+
+提交最终答案时，必须包含直径端点和直径长度。如果使用了 PRQ，还需包含路径序列。格式如下：
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+或（未使用 PRQ 时）：
+
+<answer>endpoints=2,8, diameter=5</answer>
+"""
+
+    game_rule_en = """\
+Let's play a "Tree Diameter Deduction" game with the following rules:
+
+The game involves an unknown undirected tree with nodes numbered from 1 to N. The distance between nodes is defined as the number of edges in the shortest path. There are two fixed but hidden special nodes A and B in the tree. Your goal is to deduce the diameter endpoints (the two nodes with the maximum distance) and the diameter length through a limited number of queries.
+
+You can use the following query types:
+
+1. **Node Count Query**: Ask for the total number of nodes N in the tree. Unlimited uses.
+
+2. **Endpoint Comparison Query (ECQ)**: Given a node u, the system returns which of the two hidden special nodes A, B is farther from u (if equal distance, return the one with smaller ID), along with the corresponding distance d(u,e).
+   - Maximum 12 such queries allowed
+   - At least 5 ECQ queries must be completed before submitting the final answer
+
+3. **Distance Query (DQ)**: Ask for the distance between any two nodes x and y. Maximum 2 uses.
+
+4. **Diameter Check Query (DCQ)**: Ask whether the distance between two nodes p and q equals the tree's diameter length (the maximum distance between any two nodes in the tree). The system answers "Yes" or "No". Unlimited uses.
+
+5. **Path Reveal Query (PRQ)**: Can only be used once after a DCQ returns "Yes". Input the confirmed diameter endpoints p,q, and the system returns the complete path node sequence from p to q and the path length. Maximum 1 use.
+
+Each query must contain only one tag. Use the following XML format:
+
+- Node Count Query:
+<query_n></query_n>
+
+- Endpoint Comparison Query (e.g., query node 5):
+<query_ecq>5</query_ecq>
+
+- Distance Query (e.g., query distance between nodes 3 and 7):
+<query_dq>3,7</query_dq>
+
+- Diameter Check Query (e.g., check if nodes 2 and 8 are diameter endpoints):
+<query_dcq>2,8</query_dcq>
+
+- Path Reveal Query (e.g., get path from node 2 to 8):
+<query_prq>2,8</query_prq>
+
+When submitting the final answer, you must include diameter endpoints and diameter length. If PRQ was used, also include the path sequence. Format:
+
+<answer>endpoints=2,8, diameter=5, path=2,3,5,7,8</answer>
+
+Or (when PRQ was not used):
+
+<answer>endpoints=2,8, diameter=5</answer>
+"""
+
+    tags = ["answer", "query_n", "query_ecq", "query_dq", "query_dcq", "query_prq"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "n": 4,
-                "edges": "v1-v2",  # 两个连通分量：{v1,v2}, {v3}, {v4}
-                "answer": 3
-            },
-            2: {
-                "n": 6,
-                "edges": "v1-v2,v2-v3,v4-v5",  # 三个连通分量：{v1,v2,v3}, {v4,v5}, {v6}
-                "answer": 3
-            },
-            3: {
-                "n": 8,
-                "edges": "v1-v2,v1-v3,v2-v3,v4-v5,v6-v7,v6-v8",  # 三个连通分量
-                "answer": 3
-            },
-            4: {
-                "n": 10,
-                "edges": "v1-v2,v1-v3,v2-v4,v3-v4,v5-v6,v5-v7,v6-v7,v8-v9",  # 四个连通分量
-                "answer": 4
-            },
-            5: {
-                "n": 12,
-                "edges": "v1-v2,v1-v3,v2-v3,v2-v4,v4-v5,v6-v7,v6-v8,v7-v8,v7-v9,v10-v11,v11-v12",
-                # [BUG FIX] 原问题：配置中的 answer 为 4，但提供的 edge 列表实际上只构成了 3 个连通分量。
-                # 导致 _initialize_game 中的断言失败。
-                # 修改：将 answer 改为 3 以匹配边集数据。
-                "answer": 3 
-            },
+            1: {"n": 6, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6)], "hidden_a": 1, "hidden_b": 6},
+            2: {"n": 8, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (3, 6), (6, 7), (7, 8)], "hidden_a": 5, "hidden_b": 8},
+            3: {"n": 10, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (2, 6), (6, 7), (7, 8), (8, 9), (9, 10)], "hidden_a": 5, "hidden_b": 10},
+            4: {"n": 12, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (3, 7), (7, 8), (8, 9), (2, 10), (10, 11), (11, 12)], "hidden_a": 6, "hidden_b": 12},
+            5: {"n": 15, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (3, 8), (8, 9), (9, 10), (2, 11), (11, 12), (12, 13), (13, 14), (14, 15)], "hidden_a": 7, "hidden_b": 15},
         },
         "en": {
-            1: {
-                "n": 4,
-                "edges": "v1-v2",
-                "answer": 3
-            },
-            2: {
-                "n": 6,
-                "edges": "v1-v2,v2-v3,v4-v5",
-                "answer": 3
-            },
-            3: {
-                "n": 8,
-                "edges": "v1-v2,v1-v3,v2-v3,v4-v5,v6-v7,v6-v8",
-                "answer": 3
-            },
-            4: {
-                "n": 10,
-                "edges": "v1-v2,v1-v3,v2-v4,v3-v4,v5-v6,v5-v7,v6-v7,v8-v9",
-                "answer": 4
-            },
-            5: {
-                "n": 12,
-                "edges": "v1-v2,v1-v3,v2-v3,v2-v4,v4-v5,v6-v7,v6-v8,v7-v8,v7-v9,v10-v11,v11-v12",
-                # [BUG FIX] 同上，修复英文配置中的答案错误
-                "answer": 3
-            },
+            1: {"n": 6, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6)], "hidden_a": 1, "hidden_b": 6},
+            2: {"n": 8, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (3, 6), (6, 7), (7, 8)], "hidden_a": 5, "hidden_b": 8},
+            3: {"n": 10, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (2, 6), (6, 7), (7, 8), (8, 9), (9, 10)], "hidden_a": 5, "hidden_b": 10},
+            4: {"n": 12, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (3, 7), (7, 8), (8, 9), (2, 10), (10, 11), (11, 12)], "hidden_a": 6, "hidden_b": 12},
+            5: {"n": 15, "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (3, 8), (8, 9), (9, 10), (2, 11), (11, 12), (12, 13), (13, 14), (14, 15)], "hidden_a": 7, "hidden_b": 15},
         },
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 总查询计数
-        self.neighbor_query_count = 0  # 邻居查询计数
+        self.ecq_count = 0
+        self.dq_count = 0
+        self.prq_count = 0
+        self.prq_available = False
+        self.confirmed_diameter_pair = None
         super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -525,234 +568,335 @@ where K is a positive integer.
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         n = cfg["n"]
+        edges = cfg["edges"]
+        
         self._game_info["n"] = n
         
-        # 生成节点列表
-        self.nodes = [f"v{i+1}" for i in range(n)]
-        self._game_info["node_list"] = ", ".join(self.nodes)
+        self.adj = {i: [] for i in range(1, n + 1)}
+        for u, v in edges:
+            self.adj[u].append(v)
+            self.adj[v].append(u)
         
-        # 解析边集
-        self.edges = set()
-        self.adj_list = {node: set() for node in self.nodes}
+        self.hidden_a = cfg["hidden_a"]
+        self.hidden_b = cfg["hidden_b"]
         
-        if cfg["edges"]:
-            for edge in cfg["edges"].split(","):
-                u, v = edge.strip().split("-")
-                self.edges.add(frozenset([u, v]))
-                self.adj_list[u].add(v)
-                self.adj_list[v].add(u)
+        self._compute_all_distances()
+        self._compute_diameter()
+
+    def _compute_all_distances(self):
+        self.distances = {}
+        n = self._game_info["n"]
         
-        # 计算连通分量（使用并查集）
-        self.parent = {node: node for node in self.nodes}
+        for start in range(1, n + 1):
+            dist = {start: 0}
+            queue = [start]
+            head = 0
+            
+            while head < len(queue):
+                u = queue[head]
+                head += 1
+                
+                for v in self.adj[u]:
+                    if v not in dist:
+                        dist[v] = dist[u] + 1
+                        queue.append(v)
+            
+            for end in range(1, n + 1):
+                self.distances[(start, end)] = dist[end]
+
+    def _compute_diameter(self):
+        n = self._game_info["n"]
+        max_dist = 0
+        diameter_pairs = []
         
-        def find(x):
-            if self.parent[x] != x:
-                self.parent[x] = find(self.parent[x])
-            return self.parent[x]
+        for i in range(1, n + 1):
+            for j in range(i + 1, n + 1):
+                d = self.distances[(i, j)]
+                if d > max_dist:
+                    max_dist = d
+                    diameter_pairs = [(i, j)]
+                elif d == max_dist:
+                    diameter_pairs.append((i, j))
         
-        def union(x, y):
-            px, py = find(x), find(y)
-            if px != py:
-                self.parent[px] = py
+        self.diameter_length = max_dist
+        self.diameter_pairs = diameter_pairs
+
+    def _get_distance(self, u, v):
+        if u > v:
+            u, v = v, u
+        return self.distances.get((u, v), float('inf'))
+
+    def _get_path(self, start, end):
+        if start == end:
+            return [start]
         
-        for edge in self.edges:
-            u, v = list(edge)
-            union(u, v)
+        parent = {start: None}
+        queue = [start]
+        head = 0
         
-        # 统计连通分量数
-        components = len(set(find(node) for node in self.nodes))
-        self.correct_answer = cfg["answer"]
+        while head < len(queue):
+            u = queue[head]
+            head += 1
+            
+            if u == end:
+                path = []
+                current = end
+                while current is not None:
+                    path.append(current)
+                    current = parent[current]
+                return path[::-1]
+            
+            for v in self.adj[u]:
+                if v not in parent:
+                    parent[v] = u
+                    queue.append(v)
         
-        # 验证配置正确性
-        assert components == self.correct_answer, f"Configuration error: expected {self.correct_answer} components, got {components}"
+        return []
 
     def evaluate(self, parsed_info):
-        # 检查是否进行了至少5次查询
-        if self.query_count < 5:
+        if self.ecq_count < 5:
             return False
         
-        # 解析答案
+        raw_ans = parsed_info["answer"]
+        parts = [x.strip() for x in raw_ans.split(",")]
+        ans_dict = {}
+        
+        i = 0
+        while i < len(parts):
+            part = parts[i]
+            if "=" in part:
+                k, v = part.split("=", 1)
+                k = k.strip()
+                v = v.strip()
+                
+                if k == "path":
+                    path_values = [v]
+                    i += 1
+                    while i < len(parts) and "=" not in parts[i]:
+                        path_values.append(parts[i].strip())
+                        i += 1
+                    ans_dict[k] = ",".join(path_values)
+                    continue
+                else:
+                    ans_dict[k] = v
+            i += 1
+        
+        if "endpoints" not in ans_dict or "diameter" not in ans_dict:
+            return False
+        
         try:
-            k = int(parsed_info["answer"].strip())
-            return k == self.correct_answer
+            ep_str = ans_dict["endpoints"]
+            endpoints = tuple(sorted([int(x.strip()) for x in ep_str.split(",")]))
+            if len(endpoints) != 2:
+                return False
         except:
             return False
+        
+        normalized_pairs = [tuple(sorted(p)) for p in self.diameter_pairs]
+        if endpoints not in normalized_pairs:
+            return False
+        
+        try:
+            diameter = int(ans_dict["diameter"])
+            if diameter != self.diameter_length:
+                return False
+        except:
+            return False
+        
+        if "path" in ans_dict:
+            try:
+                path = [int(x.strip()) for x in ans_dict["path"].split(",")]
+                if len(path) - 1 != self.diameter_length:
+                    return False
+                if sorted([path[0], path[-1]]) != list(endpoints):
+                    return False
+                for i in range(len(path) - 1):
+                    if path[i + 1] not in self.adj[path[i]]:
+                        return False
+            except:
+                return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_format = "错误：格式无效或节点不存在。"
-            error_neighbor_limit = "错误：邻居查询次数已达上限（3次）。"
-            error_query_limit = "查询次数超过限制（40次）。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            error_format = "Error: Invalid format or node does not exist."
-            error_neighbor_limit = "Error: Neighbor query limit reached (3 times)."
-            error_query_limit = "Query count exceeds limit (40 times)."
-
-        # 检查查询总数是否超过40次（在增加之前检查）
-        if self.query_count >= 40:
-            raise ValueError(error_query_limit)
-
-        # 处理边存在性查询
-        if "query_edge" in parsed_info:
-            try:
-                raw = parsed_info["query_edge"]
-                u, v = [x.strip() for x in raw.split(",")]
-                if u not in self.nodes or v not in self.nodes:
-                    return error_format
-                self.query_count += 1
-                return yes_res if frozenset([u, v]) in self.edges else no_res
-            except Exception:
-                return error_format
-
-        # 处理连通性查询
-        elif "query_connected" in parsed_info:
-            try:
-                raw = parsed_info["query_connected"]
-                u, v = [x.strip() for x in raw.split(",")]
-                if u not in self.nodes or v not in self.nodes:
-                    return error_format
-                
-                self.query_count += 1
-                
-                # 使用并查集判断连通性
-                def find(x):
-                    if self.parent[x] != x:
-                        self.parent[x] = find(self.parent[x])
-                    return self.parent[x]
-                
-                return yes_res if find(u) == find(v) else no_res
-            except Exception:
-                return error_format
-
-        # 处理邻居枚举查询
-        elif "query_neighbors" in parsed_info:
-            # 检查邻居查询次数
-            if self.neighbor_query_count >= 3:
-                return error_neighbor_limit
+        lang = self.config.language
+        
+        if "query_n" in parsed_info:
+            return f"N = {self._game_info['n']}"
+        
+        elif "query_ecq" in parsed_info:
+            if self.ecq_count >= 12:
+                return "错误：ECQ 查询次数已达上限（12次）。" if lang == "zh" else "Error: ECQ query limit reached (12 times)."
             
             try:
-                node = parsed_info["query_neighbors"].strip()
-                if node not in self.nodes:
-                    return error_format
+                u = int(parsed_info["query_ecq"].strip())
+                if u < 1 or u > self._game_info["n"]:
+                    raise ValueError
+            except:
+                return "错误：无效的节点编号。" if lang == "zh" else "Error: Invalid node ID."
+            
+            self.ecq_count += 1
+            
+            dist_a = self._get_distance(u, self.hidden_a)
+            dist_b = self._get_distance(u, self.hidden_b)
+            
+            if dist_a > dist_b:
+                farther_node = self.hidden_a
+                distance = dist_a
+            elif dist_b > dist_a:
+                farther_node = self.hidden_b
+                distance = dist_b
+            else:
+                farther_node = min(self.hidden_a, self.hidden_b)
+                distance = dist_a
+            
+            if lang == "zh":
+                return f"节点 {farther_node}，距离 = {distance}"
+            else:
+                return f"Node {farther_node}, distance = {distance}"
+        
+        elif "query_dq" in parsed_info:
+            if self.dq_count >= 2:
+                return "错误：DQ 查询次数已达上限（2次）。" if lang == "zh" else "Error: DQ query limit reached (2 times)."
+            
+            try:
+                raw = parsed_info["query_dq"]
+                x, y = [int(v.strip()) for v in raw.split(",")]
+                if x < 1 or x > self._game_info["n"] or y < 1 or y > self._game_info["n"]:
+                    raise ValueError
+            except:
+                return "错误：无效的节点编号或格式。" if lang == "zh" else "Error: Invalid node IDs or format."
+            
+            self.dq_count += 1
+            dist = self._get_distance(x, y)
+            
+            if lang == "zh":
+                return f"距离({x}, {y}) = {dist}"
+            else:
+                return f"distance({x}, {y}) = {dist}"
+        
+        elif "query_dcq" in parsed_info:
+            try:
+                raw = parsed_info["query_dcq"]
+                p, q = [int(v.strip()) for v in raw.split(",")]
+                if p < 1 or p > self._game_info["n"] or q < 1 or q > self._game_info["n"]:
+                    raise ValueError
+            except:
+                return "错误：无效的节点编号或格式。" if lang == "zh" else "Error: Invalid node IDs or format."
+            
+            dist = self._get_distance(p, q)
+            is_diameter = (dist == self.diameter_length)
+            
+            if is_diameter:
+                self.prq_available = True
+                self.confirmed_diameter_pair = tuple(sorted([p, q]))
+            
+            if lang == "zh":
+                return "是" if is_diameter else "否"
+            else:
+                return "Yes" if is_diameter else "No"
+        
+        elif "query_prq" in parsed_info:
+            if self.prq_count >= 1:
+                return "错误：PRQ 查询次数已达上限（1次）。" if lang == "zh" else "Error: PRQ query limit reached (1 time)."
+            
+            if not self.prq_available:
+                return "错误：只能在 DCQ 返回是后使用 PRQ。" if lang == "zh" else "Error: PRQ can only be used after a DCQ returns 'Yes'."
+            
+            try:
+                raw = parsed_info["query_prq"]
+                p, q = [int(v.strip()) for v in raw.split(",")]
+                query_pair = tuple(sorted([p, q]))
                 
-                # 只有查询有效时才消耗次数
-                self.query_count += 1
-                self.neighbor_query_count += 1
-                
-                neighbors = sorted(list(self.adj_list[node]))
-                if not neighbors:
-                    if self.config.language == "zh":
-                        return "（空）"
-                    else:
-                        return "(empty)"
-                return ",".join(neighbors)
-            except Exception:
-                return error_format
-
+                if query_pair != self.confirmed_diameter_pair:
+                    return "错误：PRQ 只能查询已通过 DCQ 确认的直径端点对。" if lang == "zh" else "Error: PRQ can only query the diameter pair confirmed by DCQ."
+            except:
+                return "错误：无效的节点编号或格式。" if lang == "zh" else "Error: Invalid node IDs or format."
+            
+            self.prq_count += 1
+            path = self._get_path(p, q)
+            path_str = ",".join(map(str, path))
+            
+            if lang == "zh":
+                return f"路径: {path_str}，长度 = {len(path) - 1}"
+            else:
+                return f"Path: {path_str}, length = {len(path) - 1}"
+        
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct):
-        # 若 correct 是纯整数字符串
-        if correct.strip().isdigit():
-            return str(int(correct.strip()) + 1)
-        
-        # 关键词替换（中文）
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-        
-        # 关键词替换（英文，忽略大小写，保持风格）
-        correct_lower = correct.lower().strip()
-        if correct_lower == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if correct_lower == "no":
-            return "Yes" if correct[0].isupper() else "yes"
-        
-        # 空回复的处理
-        if correct in ("（空）", "(empty)"):
-            # 返回一个假的邻居
-            return self.nodes[0] if self.nodes else "v1"
-        
-        # 邻居列表：尝试移除或添加一个节点
-        parts = [p.strip() for p in correct.split(",")]
-        if len(parts) > 1 and all(p in self.nodes for p in parts):
-            # 移除第一个邻居
-            return ",".join(parts[1:])
-        elif len(parts) == 1 and parts[0] in self.nodes:
-            # 只有一个邻居，换成另一个节点
-            for node in self.nodes:
-                if node != parts[0]:
-                    return node
-        
-        # 兜底
-        return f"{correct}_WRONG"
-
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        
-        包括：
-        1. 所有节点对的边存在性查询 (query_edge)
-        2. 所有节点对的连通性查询 (query_connected)
-        3. 所有节点的邻居查询 (query_neighbors)
-        """
         results = []
+        lang = self.config.language
         n = self._game_info["n"]
-        
-        # 确定语言对应的回答关键词
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
-            
-        # 辅助函数：只读查找根节点（避免副作用修改 path compression）
-        def find_root_readonly(x):
-            while self.parent[x] != x:
-                x = self.parent[x]
-            return x
 
-        # 枚举所有节点对 (u, v) where u < v
-        # 无向图中 (u, v) 和 (v, u) 等价，这里只生成一种顺序即可覆盖信息
-        for i in range(n):
-            for j in range(i + 1, n):
-                u = self.nodes[i]
-                v = self.nodes[j]
-                
-                # 1. 边存在性查询
-                is_edge = frozenset([u, v]) in self.edges
-                ans_edge = yes_res if is_edge else no_res
-                results.append({
-                    "query": f"<query_edge>{u},{v}</query_edge>",
-                    "answer": ans_edge
-                })
-                
-                # 2. 连通性查询
-                is_connected = find_root_readonly(u) == find_root_readonly(v)
-                ans_conn = yes_res if is_connected else no_res
-                results.append({
-                    "query": f"<query_connected>{u},{v}</query_connected>",
-                    "answer": ans_conn
-                })
-        
-        # 3. 邻居枚举查询
-        # 对每个节点生成查询（注意：这里不考虑游戏过程中的次数限制，只枚举合法输入）
-        for node in self.nodes:
-            neighbors = sorted(list(self.adj_list[node]))
-            if not neighbors:
-                if self.config.language == "zh":
-                    ans_neigh = "（空）"
-                else:
-                    ans_neigh = "(empty)"
+        q_str_n = "<query_n></query_n>"
+        ans_n = f"N = {n}"
+        results.append({"query": q_str_n, "answer": ans_n})
+
+        for u in range(1, n + 1):
+            q_str = f"<query_ecq>{u}</query_ecq>"
+            dist_a = self._get_distance(u, self.hidden_a)
+            dist_b = self._get_distance(u, self.hidden_b)
+            if dist_a > dist_b:
+                farther_node = self.hidden_a
+                distance = dist_a
+            elif dist_b > dist_a:
+                farther_node = self.hidden_b
+                distance = dist_b
             else:
-                ans_neigh = ",".join(neighbors)
+                farther_node = min(self.hidden_a, self.hidden_b)
+                distance = dist_a
             
-            results.append({
-                "query": f"<query_neighbors>{node}</query_neighbors>",
-                "answer": ans_neigh
-            })
-            
+            if lang == "zh":
+                ans = f"节点 {farther_node}，距离 = {distance}"
+            else:
+                ans = f"Node {farther_node}, distance = {distance}"
+            results.append({"query": q_str, "answer": ans})
+
+        for i in range(1, n + 1):
+            for j in range(i + 1, n + 1):
+                q_str = f"<query_dq>{i},{j}</query_dq>"
+                dist = self._get_distance(i, j)
+                if lang == "zh":
+                    ans = f"距离({i}, {j}) = {dist}"
+                else:
+                    ans = f"distance({i}, {j}) = {dist}"
+                results.append({"query": q_str, "answer": ans})
+
+        for i in range(1, n + 1):
+            for j in range(i + 1, n + 1):
+                q_str = f"<query_dcq>{i},{j}</query_dcq>"
+                dist = self._get_distance(i, j)
+                is_diameter = (dist == self.diameter_length)
+                if lang == "zh":
+                    ans = "是" if is_diameter else "否"
+                else:
+                    ans = "Yes" if is_diameter else "No"
+                results.append({"query": q_str, "answer": ans})
+
+        for (p, q) in self.diameter_pairs:
+            q_str = f"<query_prq>{p},{q}</query_prq>"
+            path = self._get_path(p, q)
+            path_str = ",".join(map(str, path))
+            if lang == "zh":
+                ans = f"路径: {path_str}，长度 = {len(path) - 1}"
+            else:
+                ans = f"Path: {path_str}, length = {len(path) - 1}"
+            results.append({"query": q_str, "answer": ans})
+
         return results
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        if "是" in correct:
+            return correct.replace("是", "否")
+        if "否" in correct:
+            return correct.replace("否", "是")
+        if "Yes" in correct:
+            return correct.replace("Yes", "No")
+        if "No" in correct:
+            return correct.replace("No", "Yes")
+        return correct + "_WRONG"
+

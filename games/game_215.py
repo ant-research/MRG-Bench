@@ -1,645 +1,621 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   路径最大边权：两节点间所有路径中最小的最大边权是多少
-# ============================================================
-
 from .base import Game
-import random
 import re
+import itertools
 
-class BottleneckPathGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "图"
-    tags = ["query_probe", "answer"]
+class TotalOrderGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"瓶颈路径推理"游戏，规则如下：
+我们来玩一个"隐藏全序推理"游戏，规则如下：
 
-游戏设定了一张加权无向图 G，其中：
-- 顶点集合 V 已公开：包含编号 1 到 {n} 的顶点。
-- 边集合 E 和权重函数 w 未公开。每条边的权重是 1 到 {M} 之间的正整数。
-- 给定起点 S={S} 和终点 T={T}。
-- 图在整个游戏过程中保持不变。
+游戏设定了一个包含 {n} 个符号的集合 S={{{symbols}}}。这些符号仅用于区分，它们之间没有任何既定的大小关系。
 
-你的目标是推断出从 S 到 T 的所有路径中，最小瓶颈值 R*。其定义为：在所有 S 到 T 的路径中，找出每条路径上边权的最大值，然后取这些最大值中的最小值。
+存在一个在 S 上的隐藏且固定的严格全序关系，但你并不知道。你的目标是通过与我的交互，推断出这个全序关系，并给出按从小到大排列的完整序列。
 
-## 可用查询
+你可以进行两种操作：
 
-你可以进行以下两种操作：
+1. **试探查询**：提交一个长度为 m（2 到 {n} 之间）的序列，序列中的元素来自 S 且两两不同。
+   - 我会判断该序列是否满足非降序（即每个元素小于等于下一个元素）。
+   - 如果满足，我会回答"是"。
+   - 如果不满足，我会回答"否，断点=i"，其中 i 是第一个出现逆序的位置（即第 i 个元素大于第 i+1 个元素）。
+   - 如果输入包含重复元素或不在 S 中的元素，我会回答"无效输入"。
 
-1. **探测查询 (Probe)**：询问在仅使用权重小于等于 R 的边构成的子图中，S 和 T 是否连通。
-   - 输入：一个整数 R（1 到 {M} 之间）
-   - 输出："可达" 或 "不可达"
+2. **最终提交**：提交一个长度为 {n} 的完整序列，包含 S 中所有元素且不重复，表示你猜测的从小到大的排序。
+   - 如果与隐藏的全序完全一致，游戏成功。
+   - 否则，我会告诉你第一个逆序的位置，游戏失败。
 
-2. **提交答案 (Answer)**：提交你认为的瓶颈值 R*。
-   - 输入：一个整数 R（1 到 {M} 之间）
+- 你至少需要进行 4 次试探查询后，才能进行首次最终提交。
+- 请尽可能用较少的次数完成推理。
 
-## 约束条件
+**试探查询**（例如查询 K1,K3,K2 的顺序）：
+<query>K1,K3,K2</query>
 
-- 你最多可以进行 {Q} 次探测查询（Probe）。
-- 你只有一次提交答案的机会，一旦提交错误答案，游戏将失败。
-- 请尽可能少地使用查询次数来推断出正确答案。
+**最终提交**（例如提交完整排序）：
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-## 查询和答案格式
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 探测查询（例如询问 R=5 时的连通性）：
-<query_probe>5</query_probe>
-
-- 提交最终答案（例如认为瓶颈值是 7）：
-<answer>7</answer>
-
-提示：由于探测查询的结果具有单调性（如果 R1 小于 R2，且 R1 可达，则 R2 也必然可达），你可以利用这一性质设计高效的查询策略。
+注意：每次只能包含一个标签（query 或 answer），元素之间用英文逗号分隔，不要有多余空格。
 """
 
     game_rule_en = """\
-Let's play a "Bottleneck Path Inference" game. Here are the rules:
+Let's play a "Hidden Total Order Inference" game. Here are the rules:
 
-The game features a weighted undirected graph G, where:
-- Vertex set V is public: contains vertices numbered 1 to {n}.
-- Edge set E and weight function w are hidden. Each edge weight is a positive integer between 1 and {M}.
-- Given start vertex S={S} and target vertex T={T}.
-- The graph remains unchanged throughout the game.
+The game defines a set S={{{symbols}}} containing {n} symbols. These symbols are only used for distinction and have no predefined size relationship.
 
-Your goal is to infer the minimum bottleneck value R* for all paths from S to T. It is defined as: among all paths from S to T, find the maximum edge weight on each path, then take the minimum of these maximum values.
+There exists a hidden and fixed strict total order on S, which you don't know. Your goal is to infer this total order through interaction with me and provide the complete sequence sorted from smallest to largest.
 
-## Available Queries
+You can perform two types of operations:
 
-You can perform the following two operations:
+1. **Probe Query**: Submit a sequence of length m (between 2 and {n}), with elements from S and all distinct.
+   - I will judge whether the sequence satisfies non-decreasing order (each element is less than or equal to the next).
+   - If satisfied, I will answer "Yes".
+   - If not satisfied, I will answer "No, breakpoint=i", where i is the first position where inverse order occurs (the i-th element is greater than the (i+1)-th element).
+   - If the input contains duplicate elements or elements not in S, I will answer "Invalid input".
 
-1. **Probe Query**: Ask whether S and T are connected in the subgraph formed by edges with weight less than or equal to R.
-   - Input: An integer R (between 1 and {M})
-   - Output: "Reachable" or "Unreachable"
+2. **Final Submission**: Submit a complete sequence of length {n}, containing all elements in S without repetition, representing your guessed sorting from smallest to largest.
+   - If it completely matches the hidden total order, the game succeeds.
+   - Otherwise, I will tell you the first inverse position, and the game fails.
 
-2. **Submit Answer**: Submit what you believe to be the bottleneck value R*.
-   - Input: An integer R (between 1 and {M})
+- You need to perform at least 4 probe queries before making your first final submission.
+- Please complete the inference with as few attempts as possible.
 
-## Constraints
+**Probe Query** (e.g., query the order of K1,K3,K2):
+<query>K1,K3,K2</query>
 
-- You can perform at most {Q} probe queries.
-- You have only one chance to submit an answer. Submitting a wrong answer will fail the game.
-- Try to use as few queries as possible to infer the correct answer.
+**Final Submission** (e.g., submit complete sorting):
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-## Query and Answer Format
-
-Each operation must contain only one tag. Use the following XML format:
-
-- Probe Query (e.g., asking about connectivity at R=5):
-<query_probe>5</query_probe>
-
-- Submit Final Answer (e.g., believing the bottleneck value is 7):
-<answer>7</answer>
-
-Hint: Since probe query results have monotonicity (if R1 is less than R2 and R1 is reachable, then R2 must also be reachable), you can leverage this property to design an efficient query strategy.
+Note: Each time only one tag (query or answer) can be included, elements are separated by commas without extra spaces.
 """
 
     contextualized_rule_zh_1 = """\
-我们来玩一个"高危路网运输规划"游戏，规则如下：
+欢迎进入智能交通调度系统。我们要进行一场“路权优先级排查”演练。
 
-系统设定了一张城市道路交通网络图 G，其中：
-- 交叉路口集合 V 已公开：包含编号 1 到 {n} 的路口。
-- 道路连接 E 和每条道路的风险评估指数 w 未公开。每条道路的风险指数是 1 到 {M} 之间的正整数。
-- 给定物资出发地 S={S} 和目的地 T={T}。
-- 路网状况在整个规划过程中保持不变。
+系统内包含 {n} 个关键交通节点，代号集合为 S={{{symbols}}}。
+这些节点之间存在一个隐藏且严格的“路权优先级”全序关系（从最低优先级到最高优先级排布），你需要通过测试来推断出完整的优先级序列。
 
-你的目标是推断出从 S 到 T 的所有可行运输路线中，最低的路径风险瓶颈值 R*。其定义为：在所有 S 到 T 的路线中，找出每条路线上单段道路的最高风险指数，然后取这些最高风险指数中的最小值，即最安全的路线所对应的最大风险。
+你可以进行两种操作：
 
-## 可用查询
+1. **试探查询**：提交一个长度为 m（2 到 {n} 之间）的节点序列，序列中的节点必须来自 S 且两两不同。
+   - 系统将测试该路径是否满足优先级非降序（即每个节点的优先级小于或等于下一个节点）。
+   - 如果测试通过，系统会反馈“是”。
+   - 如果发生优先级冲突（即某节点优先级高于下一个节点），系统会反馈“否，断点=i”，其中 i 是第一个出现逆序的节点位置（从 1 开始计数）。
+   - 如果输入包含重复节点或不存在的节点，系统会反馈“无效输入”。
 
-你可以进行以下两种操作：
+2. **最终提交**：提交一个长度为 {n} 的完整路线，包含 S 中所有节点且不重复，代表你推断的从最低到最高优先级的排序。
+   - 如果与系统底层的优先级序列完全一致，演练成功。
+   - 否则，系统会告诉你第一个发生逆序的位置，演练失败。
 
-1. **探测查询 (Probe)**：询问在仅使用风险指数小于等于 R 的道路路段时，出发地 S 和目的地 T 是否连通。
-   - 输入：一个整数 R（1 到 {M} 之间）
-   - 输出："可达" 或 "不可达"
+- 在进行首次最终提交前，你至少需要进行 4 次试探查询。
+- 请尽可能用较少的查询次数完成调度推断。
 
-2. **提交答案 (Answer)**：提交你推断的路径风险瓶颈值 R*。
-   - 输入：一个整数 R（1 到 {M} 之间）
+**试探查询**（例如查询 K1,K3,K2 的优先级顺序）：
+<query>K1,K3,K2</query>
 
-## 约束条件
+**最终提交**（例如提交完整的优先级序列）：
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- 你最多可以进行 {Q} 次探测查询（Probe）。
-- 你只有一次提交答案的机会，一旦提交错误答案，游戏将失败。
-- 请尽可能少地使用查询次数来推断出正确答案。
-
-## 查询和答案格式
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 探测查询（例如询问允许最大风险 R=5 时的连通性）：
-<query_probe>5</query_probe>
-
-- 提交最终答案（例如认为风险瓶颈值是 7）：
-<answer>7</answer>
-
-提示：由于探测查询的结果具有单调性（如果 R1 小于 R2，且允许 R1 时可达，则允许 R2 时必然也可达），你可以利用这一性质设计高效的查询策略。
+注意：每次只能包含一个标签（query 或 answer），元素之间用英文逗号分隔，不要有多余空格。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's play a "Hazardous Transport Route Planning" game. Here are the rules:
+Welcome to the Intelligent Traffic Dispatch System. Let's conduct a "Right-of-Way Priority Inference" drill.
 
-The system features an urban traffic network graph G, where:
-- The set of intersections V is public: contains intersections numbered 1 to {n}.
-- The road connections E and the risk assessment index w of each road are hidden. Each road's risk index is a positive integer between 1 and {M}.
-- Given the dispatch origin S={S} and the destination T={T}.
-- The network conditions remain unchanged throughout the planning process.
+The system contains {n} key traffic nodes, defined by the set S={{{symbols}}}.
+There exists a hidden and fixed strict total order of "right-of-way priority" (from lowest to highest) among these nodes. Your objective is to infer this complete priority sequence through testing.
 
-Your goal is to infer the minimum path risk bottleneck value R* among all feasible routes from S to T. It is defined as: among all paths from S to T, find the highest road risk index on each path, and then take the minimum of these highest indices, representing the maximum risk of the safest possible route.
+You can perform two types of operations:
 
-## Available Queries
+1. **Probe Query**: Submit a route sequence of length m (between 2 and {n}), with nodes from S and all distinct.
+   - The system will check whether the route satisfies a non-decreasing priority order (each node's priority is less than or equal to the next).
+   - If it complies, the system answers "Yes".
+   - If a priority conflict occurs (a node has a higher priority than the subsequent one), the system answers "No, breakpoint=i", where i is the first position of the inverse order (1-based index).
+   - If the input contains duplicate nodes or nodes not in S, the system answers "Invalid input".
 
-You can perform the following two operations:
+2. **Final Submission**: Submit a complete sequence of length {n}, containing all nodes in S without repetition, representing your inferred sorting from lowest to highest priority.
+   - If it perfectly matches the underlying total order, the drill succeeds.
+   - Otherwise, the system will notify you of the first inverse position, and the drill fails.
 
-1. **Probe Query**: Ask whether the origin S and destination T are connected using only road segments with a risk index less than or equal to R.
-   - Input: An integer R (between 1 and {M})
-   - Output: "Reachable" or "Unreachable"
+- You must perform at least 4 probe queries before making your first final submission.
+- Please complete the priority inference with as few queries as possible.
 
-2. **Submit Answer**: Submit what you believe to be the risk bottleneck value R*.
-   - Input: An integer R (between 1 and {M})
+**Probe Query** (e.g., test the priority order of K1,K3,K2):
+<query>K1,K3,K2</query>
 
-## Constraints
+**Final Submission** (e.g., submit the complete priority sorting):
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- You can perform at most {Q} probe queries.
-- You have only one chance to submit an answer. Submitting a wrong answer will fail the game.
-- Try to use as few queries as possible to infer the correct answer.
-
-## Query and Answer Format
-
-Each operation must contain only one tag. Use the following XML format:
-
-- Probe Query (e.g., asking about connectivity at maximum risk R=5):
-<query_probe>5</query_probe>
-
-- Submit Final Answer (e.g., believing the risk bottleneck value is 7):
-<answer>7</answer>
-
-Hint: Since probe query results have monotonicity (if R1 is less than R2 and connectivity is achieved at R1, then it must also be achieved at R2), you can leverage this property to design an efficient query strategy.
+Note: Each time, only one tag (query or answer) is permitted. Elements must be separated by commas with no extra spaces.
 """
 
     contextualized_rule_zh_2 = """\
-我们来玩一个"微创手术导管路径规划"游戏，规则如下：
+欢迎使用临床标准操作流排查系统。我们要进行一次“规范诊疗时序推理”任务。
 
-游戏设定了一张人体局部血管网络图 G，其中：
-- 血管分叉节点集合 V 已公开：包含编号 1 到 {n} 的节点。
-- 血管段 E 和对应的手术风险系数 w 未公开。每段血管的风险系数是 1 到 {M} 之间的正整数，代表狭窄或曲折程度。
-- 给定导管穿刺入口 S={S} 和病灶靶点 T={T}。
-- 血管网络状况在整个术前规划中保持不变。
+当前诊疗流程涉及 {n} 项关键医疗操作，代号集合为 S={{{symbols}}}。
+这 {n} 项操作在标准临床指南中存在一个隐藏且严格的先后全序关系，你需要通过排查来推断出标准的执行顺序序列。
 
-你的目标是推断出从入口 S 到病灶 T 的所有可能导管推进路径中，最小的风险瓶颈值 R*。其定义为：在所有 S 到 T 的导管路径中，找出每条路径上血管段的最高风险系数，然后取这些最高系数中的最小值，以确保手术整体面临的最大风险最低。
+你可以进行两种操作：
 
-## 可用查询
+1. **试探查询**：提交一个长度为 m（2 到 {n} 之间）的操作序列，序列中的操作必须来自 S 且两两不同。
+   - 系统将评估该操作序列是否符合临床非降序规范（即每个操作按标准顺序在下一个操作之前或平行）。
+   - 如果符合，系统会反馈“是”。
+   - 如果违背了顺序要求（即某操作被错误地提前安排），系统会反馈“否，断点=i”，其中 i 是第一个出现倒置的位置。
+   - 如果输入包含重复操作或非 S 中的操作，系统会反馈“无效输入”。
 
-你可以进行以下两种操作：
+2. **最终提交**：提交一个长度为 {n} 的完整诊疗流程，包含 S 中所有操作且不重复，代表你推断出的正确先后排序。
+   - 如果与指南全序完全一致，任务成功。
+   - 否则，系统会告诉你第一个顺序倒置的位置，任务失败。
 
-1. **探测查询 (Probe)**：询问在仅使用风险系数小于等于 R 的血管段时，入口 S 和病灶 T 是否能够连通。
-   - 输入：一个整数 R（1 到 {M} 之间）
-   - 输出："可达" 或 "不可达"
+- 在进行首次最终提交前，你至少需要进行 4 次试探查询。
+- 请尽可能用较少的次数还原标准操作流。
 
-2. **提交答案 (Answer)**：提交你认为的手术风险瓶颈值 R*。
-   - 输入：一个整数 R（1 到 {M} 之间）
+**试探查询**（例如查询 K1,K3,K2 的操作顺序）：
+<query>K1,K3,K2</query>
 
-## 约束条件
+**最终提交**（例如提交完整排序）：
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- 你最多可以进行 {Q} 次探测查询（Probe）。
-- 你只有一次提交答案的机会，一旦提交错误答案，规划将失败。
-- 请尽可能少地使用查询次数来推断出正确答案。
-
-## 查询和答案格式
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 探测查询（例如询问允许最大血管风险 R=5 时的连通性）：
-<query_probe>5</query_probe>
-
-- 提交最终答案（例如认为风险瓶颈值是 7）：
-<answer>7</answer>
-
-提示：由于探测查询的结果具有单调性（如果 R1 小于 R2，且允许 R1 时可达，则允许 R2 时必然也可达），你可以利用这一性质设计高效的查询策略。
+注意：每次只能包含一个标签（query 或 answer），元素之间用英文逗号分隔，不要有多余空格。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's play a "Minimally Invasive Surgery Catheter Route Planning" game. Here are the rules:
+Welcome to the Clinical Standard Operating Procedure (SOP) Validation System. Let's perform a "Normative Diagnostic Sequence Inference" task.
 
-The game features a localized human vascular network graph G, where:
-- The set of vascular bifurcation nodes V is public: contains nodes numbered 1 to {n}.
-- The vascular segments E and their corresponding surgical risk coefficients w are hidden. Each segment's risk coefficient is a positive integer between 1 and {M}, representing stricture or tortuosity.
-- Given the catheter insertion point S={S} and the target lesion T={T}.
-- The vascular network remains unchanged throughout the preoperative planning.
+The current diagnostic workflow involves {n} key medical operations, defined by the set S={{{symbols}}}.
+According to standard clinical guidelines, there is a hidden strict total order defining their chronological sequence. Your goal is to infer this standard operational sequence through systematic validation.
 
-Your goal is to infer the minimum risk bottleneck value R* among all possible catheter advancement routes from insertion point S to lesion T. It is defined as: among all paths from S to T, find the highest vascular risk coefficient on each path, and then take the minimum of these highest coefficients, ensuring the overall maximum risk faced during the surgery is minimized.
+You can perform two types of operations:
 
-## Available Queries
+1. **Probe Query**: Submit an operation sequence of length m (between 2 and {n}), with elements from S and all distinct.
+   - The system will evaluate whether the sequence complies with standard non-decreasing chronological order (each step precedes or parallels the next).
+   - If it complies, the system answers "Yes".
+   - If there is a procedural violation (a step is incorrectly advanced), the system answers "No, breakpoint=i", where i is the first position where an inversion occurs.
+   - If the input contains duplicate steps or invalid codes, the system answers "Invalid input".
 
-You can perform the following two operations:
+2. **Final Submission**: Submit a complete workflow of length {n}, containing all operations in S without repetition, representing your inferred chronological sorting.
+   - If it completely matches the guideline's total order, the task succeeds.
+   - Otherwise, the system will pinpoint the first chronological inversion, and the task fails.
 
-1. **Probe Query**: Ask whether the insertion point S and target lesion T are connected using only vascular segments with a risk coefficient less than or equal to R.
-   - Input: An integer R (between 1 and {M})
-   - Output: "Reachable" or "Unreachable"
+- You must conduct at least 4 probe queries prior to your first final submission.
+- Please deduce the standard operating flow using the minimum number of attempts.
 
-2. **Submit Answer**: Submit what you believe to be the surgical risk bottleneck value R*.
-   - Input: An integer R (between 1 and {M})
+**Probe Query** (e.g., validate the procedural order of K1,K3,K2):
+<query>K1,K3,K2</query>
 
-## Constraints
+**Final Submission** (e.g., submit the complete SOP sorting):
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- You can perform at most {Q} probe queries.
-- You have only one chance to submit an answer. Submitting a wrong answer will fail the planning.
-- Try to use as few queries as possible to infer the correct answer.
-
-## Query and Answer Format
-
-Each operation must contain only one tag. Use the following XML format:
-
-- Probe Query (e.g., asking about connectivity at maximum risk R=5):
-<query_probe>5</query_probe>
-
-- Submit Final Answer (e.g., believing the risk bottleneck value is 7):
-<answer>7</answer>
-
-Hint: Since probe query results have monotonicity (if R1 is less than R2 and connectivity is achieved at R1, then it must also be achieved at R2), you can leverage this property to design an efficient query strategy.
+Note: Only one tag (query or answer) may be used per input. Separate elements with commas without extra spaces.
 """
 
     contextualized_rule_zh_3 = """\
-我们来玩一个"学习路径认知负荷控制"游戏，规则如下：
+欢迎进入智能教务排课系统。我们要完成一项“知识点先修链路推理”任务。
 
-系统设定了一张学科知识图谱 G，其中：
-- 知识节点集合 V 已公开：包含编号 1 到 {n} 的知识点。
-- 节点间的认知关联 E 和对应的认知负荷指数 w 未公开。每段学习路径的认知负荷是 1 到 {M} 之间的正整数。
-- 给定学生的已掌握基础 S={S} 和最终学习目标 T={T}。
-- 知识图谱结构在整个规划过程中保持不变。
+课程知识库中包含 {n} 个核心模块，代号集合为 S={{{symbols}}}。
+这些模块之间存在一个隐藏且严格的难度递进与先修全序关系，你需要通过排课试探来推断出从基础到高阶的完整学习序列。
 
-你的目标是推断出从基础 S 到目标 T 的所有可行学习路径中，最低的认知负荷瓶颈值 R*。其定义为：在所有 S 到 T 的路径中，找出每条路径上单步跳跃的最高认知负荷，然后取这些最高负荷中的最小值，以找到一条最不容易让学生产生挫败感的平滑学习路线。
+你可以进行两种操作：
 
-## 可用查询
+1. **试探查询**：提交一个长度为 m（2 到 {n} 之间）的模块序列，序列中的模块来自 S 且两两不同。
+   - 系统会检查该学习路线是否满足非降序（即每个模块的层级不高于其后续模块）。
+   - 如果满足，系统会反馈“是”。
+   - 如果存在先修逻辑冲突（即某模块难度层级高于后续模块），系统会反馈“否，断点=i”，其中 i 是第一个出现倒置的位置。
+   - 如果输入包含重复模块或无效代码，系统会反馈“无效输入”。
 
-你可以进行以下两种操作：
+2. **最终提交**：提交一个长度为 {n} 的完整教学大纲，包含 S 中所有模块且不重复，代表你推测的从基础到高阶的排序。
+   - 如果与隐藏的知识点图谱完全一致，任务成功。
+   - 否则，系统会告诉你大纲中第一个先修倒置的位置，任务失败。
 
-1. **探测查询 (Probe)**：询问在仅允许使用认知负荷小于等于 R 的学习路径时，基础 S 是否能推导连通至目标 T。
-   - 输入：一个整数 R（1 到 {M} 之间）
-   - 输出："可达" 或 "不可达"
+- 你至少需要进行 4 次试探查询后，才能提交最终的教学大纲。
+- 请尽可能以最少的试探次数完成先修链路的梳理。
 
-2. **提交答案 (Answer)**：提交你推断的认知负荷瓶颈值 R*。
-   - 输入：一个整数 R（1 到 {M} 之间）
+**试探查询**（例如查询 K1,K3,K2 的先修顺序）：
+<query>K1,K3,K2</query>
 
-## 约束条件
+**最终提交**（例如提交完整教学大纲）：
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- 你最多可以进行 {Q} 次探测查询（Probe）。
-- 你只有一次提交答案的机会，一旦提交错误答案，规划将失败。
-- 请尽可能少地使用查询次数来推断出正确答案。
-
-## 查询和答案格式
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 探测查询（例如询问允许最大认知负荷 R=5 时的连通性）：
-<query_probe>5</query_probe>
-
-- 提交最终答案（例如认为认知负荷瓶颈值是 7）：
-<answer>7</answer>
-
-提示：由于探测查询的结果具有单调性（如果 R1 小于 R2，且允许 R1 时可连通，则允许 R2 时必然也可连通），你可以利用这一性质设计高效的查询策略。
+注意：每次只能包含一个标签（query 或 answer），元素之间用英文逗号分隔，不要有多余空格。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Learning Path Cognitive Load Control" game. Here are the rules:
+Welcome to the Intelligent Academic Scheduling System. Let's complete an "Academic Prerequisite Link Inference" task.
 
-The system features a subject knowledge graph G, where:
-- The set of knowledge nodes V is public: contains nodes numbered 1 to {n}.
-- The cognitive connections E and their corresponding cognitive load indices w are hidden. Each learning step's cognitive load is a positive integer between 1 and {M}.
-- Given the student's foundational knowledge S={S} and the ultimate learning target T={T}.
-- The knowledge graph remains unchanged throughout the planning process.
+The course knowledge base contains {n} core modules, denoted by the set S={{{symbols}}}.
+There is a hidden, strict total order governing their prerequisite sequence (from foundational to advanced). Your objective is to infer the complete learning sequence through scheduling trials.
 
-Your goal is to infer the minimum cognitive load bottleneck value R* among all feasible learning paths from foundation S to target T. It is defined as: among all paths from S to T, find the highest cognitive load on each path, and then take the minimum of these highest loads. This represents the smoothest learning route that minimizes student frustration.
+You can perform two types of operations:
 
-## Available Queries
+1. **Probe Query**: Submit a module sequence of length m (between 2 and {n}), chosen from S with no duplicates.
+   - The system verifies if the learning path satisfies a non-decreasing order (no module has a higher prerequisite level than its successor).
+   - If valid, the system answers "Yes".
+   - If a prerequisite conflict exists (an advanced module precedes a foundational one incorrectly), the system answers "No, breakpoint=i", where i is the first position of inversion.
+   - If the input contains duplicate or invalid modules, the system answers "Invalid input".
 
-You can perform the following two operations:
+2. **Final Submission**: Submit the complete curriculum of length {n}, containing all modules in S without repetition, representing your inferred sorting from foundational to advanced.
+   - If it perfectly matches the hidden knowledge graph, the task succeeds.
+   - Otherwise, the system identifies the first position of inversion, and the task fails.
 
-1. **Probe Query**: Ask whether the foundation S can logically connect to the target T using only learning steps with a cognitive load less than or equal to R.
-   - Input: An integer R (between 1 and {M})
-   - Output: "Reachable" or "Unreachable"
+- You must perform at least 4 probe queries before submitting your final curriculum.
+- Please map out the prerequisite link using the minimum number of attempts.
 
-2. **Submit Answer**: Submit what you believe to be the cognitive load bottleneck value R*.
-   - Input: An integer R (between 1 and {M})
+**Probe Query** (e.g., query the prerequisite order of K1,K3,K2):
+<query>K1,K3,K2</query>
 
-## Constraints
+**Final Submission** (e.g., submit the complete curriculum):
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- You can perform at most {Q} probe queries.
-- You have only one chance to submit an answer. Submitting a wrong answer will fail the planning.
-- Try to use as few queries as possible to infer the correct answer.
-
-## Query and Answer Format
-
-Each operation must contain only one tag. Use the following XML format:
-
-- Probe Query (e.g., asking about connectivity at maximum cognitive load R=5):
-<query_probe>5</query_probe>
-
-- Submit Final Answer (e.g., believing the cognitive load bottleneck value is 7):
-<answer>7</answer>
-
-Hint: Since probe query results have monotonicity (if R1 is less than R2 and connectivity is achieved at R1, then it must also be achieved at R2), you can leverage this property to design an efficient query strategy.
+Note: Each input must contain only one tag (query or answer), with elements separated by commas and no extra spaces.
 """
 
     contextualized_rule_zh_4 = """\
-我们来玩一个"供应链抗风险网络重构"游戏，规则如下：
+欢迎使用智能柔性制造控制系统。我们要进行“工艺装配顺位推理”测试。
 
-系统设定了一张全球供应链物流网络图 G，其中：
-- 物流枢纽节点集合 V 已公开：包含编号 1 到 {n} 的枢纽。
-- 运输线路 E 和每条线路的中断风险指数 w 未公开。每条线路的风险指数是 1 到 {M} 之间的正整数。
-- 给定核心原材料产地 S={S} 和总装工厂 T={T}。
-- 供应链网络拓扑在整个评估期内保持不变。
+当前流水线分配了 {n} 个生产环节，代号集合为 S={{{symbols}}}。
+这些环节在工艺标准中存在一个隐藏且严格的装配全序关系，你需要通过工艺测试来推断出这套正确的加工流水线排序。
 
-你的目标是推断出从产地 S 到工厂 T 的所有可行物流方案中，最低的线路风险瓶颈值 R*。其定义为：在所有 S 到 T 的运输路线中，找出每条路线上单段线路的最高中断风险指数，然后取这些最高风险指数中的最小值，即寻找一条抗毁性最强的物流大动脉。
+你可以进行两种操作：
 
-## 可用查询
+1. **试探查询**：提交一个长度为 m（2 到 {n} 之间）的工序序列，序列中的环节来自 S 且两两不同。
+   - 系统将验证该工序是否满足工艺非降序（即前道工序不会落后于后道工序）。
+   - 如果满足，系统会反馈“是”。
+   - 如果发生工序冲突（即前序步骤被安排在了不该有的高级阶段），系统会反馈“否，断点=i”，其中 i 是第一个出现逆向装配的位置。
+   - 如果输入包含重复环节或不属于 S 的环节，系统会反馈“无效输入”。
 
-你可以进行以下两种操作：
+2. **最终提交**：提交一个长度为 {n} 的完整工艺流水线，包含 S 中所有环节且不重复，代表你推断的从头到尾的加工排序。
+   - 如果与隐藏的工艺全序完全一致，测试成功。
+   - 否则，系统会告诉你第一个发生工序逆反的位置，测试失败。
 
-1. **探测查询 (Probe)**：询问在仅使用风险指数小于等于 R 的运输线路时，产地 S 和工厂 T 之间是否连通。
-   - 输入：一个整数 R（1 到 {M} 之间）
-   - 输出："可达" 或 "不可达"
+- 在进行首次最终提交前，你至少需要进行 4 次试探查询。
+- 请尽可能用最少的测试次数复原整条工艺流水线。
 
-2. **提交答案 (Answer)**：提交你推断的线路风险瓶颈值 R*。
-   - 输入：一个整数 R（1 到 {M} 之间）
+**试探查询**（例如测试 K1,K3,K2 的组装顺序）：
+<query>K1,K3,K2</query>
 
-## 约束条件
+**最终提交**（例如提交完整流水线）：
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- 你最多可以进行 {Q} 次探测查询（Probe）。
-- 你只有一次提交答案的机会，一旦提交错误答案，重构评估将失败。
-- 请尽可能少地使用查询次数来推断出正确答案。
-
-## 查询和答案格式
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 探测查询（例如询问允许最大风险 R=5 时的连通性）：
-<query_probe>5</query_probe>
-
-- 提交最终答案（例如认为风险瓶颈值是 7）：
-<answer>7</answer>
-
-提示：由于探测查询的结果具有单调性（如果 R1 小于 R2，且允许 R1 时可达，则允许 R2 时必然也可达），你可以利用这一性质设计高效的查询策略。
+注意：每次只能包含一个标签（query 或 answer），元素之间用英文逗号分隔，不要有多余空格。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Let's play a "Supply Chain Risk-Resilient Network Reconstruction" game. Here are the rules:
+[Industry Scenario]
+Welcome to the Intelligent Flexible Manufacturing Control System. Let's conduct a "Process Assembly Sequence Inference" test.
 
-The system features a global supply chain logistics network graph G, where:
-- The set of logistics hub nodes V is public: contains nodes numbered 1 to {n}.
-- The transport routes E and their disruption risk indices w are hidden. Each route's risk index is a positive integer between 1 and {M}.
-- Given the core raw material origin S={S} and the final assembly plant T={T}.
-- The supply chain network topology remains unchanged throughout the assessment period.
+The current assembly line involves {n} production stages, denoted by the set S={{{symbols}}}.
+According to manufacturing standards, these stages follow a hidden, strict total order of assembly. Your task is to infer this exact processing sequence through procedural testing.
 
-Your goal is to infer the minimum route risk bottleneck value R* among all feasible logistics plans from origin S to plant T. It is defined as: among all paths from S to T, find the highest disruption risk index on each path, and then take the minimum of these highest indices. This represents the most resilient logistical artery.
+You can perform two types of operations:
 
-## Available Queries
+1. **Probe Query**: Submit a process sequence of length m (between 2 and {n}), consisting of distinct stages from S.
+   - The system checks if the sequence satisfies a non-decreasing process order (no preceding step is delayed behind a subsequent one).
+   - If it complies, the system answers "Yes".
+   - If an assembly conflict occurs (a preceding step is wrongly placed in a later phase), the system answers "No, breakpoint=i", indicating the first position of reverse assembly.
+   - If the input contains duplicate or invalid stages, the system answers "Invalid input".
 
-You can perform the following two operations:
+2. **Final Submission**: Submit the complete assembly line of length {n}, containing all stages in S without repetition, representing your inferred start-to-finish processing sequence.
+   - If it exactly matches the hidden total order, the test succeeds.
+   - Otherwise, the system reports the first instance of process inversion, and the test fails.
 
-1. **Probe Query**: Ask whether the origin S and plant T are connected using only transport routes with a risk index less than or equal to R.
-   - Input: An integer R (between 1 and {M})
-   - Output: "Reachable" or "Unreachable"
+- You must complete at least 4 probe queries before making your first final submission.
+- Please reconstruct the entire assembly line with the fewest possible tests.
 
-2. **Submit Answer**: Submit what you believe to be the route risk bottleneck value R*.
-   - Input: An integer R (between 1 and {M})
+**Probe Query** (e.g., test the assembly sequence of K1,K3,K2):
+<query>K1,K3,K2</query>
 
-## Constraints
+**Final Submission** (e.g., submit the complete assembly line):
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- You can perform at most {Q} probe queries.
-- You have only one chance to submit an answer. Submitting a wrong answer will fail the assessment.
-- Try to use as few queries as possible to infer the correct answer.
-
-## Query and Answer Format
-
-Each operation must contain only one tag. Use the following XML format:
-
-- Probe Query (e.g., asking about connectivity at maximum risk R=5):
-<query_probe>5</query_probe>
-
-- Submit Final Answer (e.g., believing the risk bottleneck value is 7):
-<answer>7</answer>
-
-Hint: Since probe query results have monotonicity (if R1 is less than R2 and connectivity is achieved at R1, then it must also be achieved at R2), you can leverage this property to design an efficient query strategy.
+Note: Use only one tag (query or answer) per submission. Separate stages with commas without extra spaces.
 """
 
     contextualized_rule_zh_5 = """\
-我们来玩一个"洗钱网络资金流向穿透"游戏，规则如下：
+欢迎进入司法程序辅助审查系统。我们要进行一次“证据链采信顺位推理”演练。
 
-系统截获了一张地下资金洗白网络图 G，其中：
-- 涉案实体账户集合 V 已公开：包含编号 1 到 {n} 的账户。
-- 资金转账记录 E 和每次转账的隐蔽层级 w 未公开。每次转账的隐蔽层级是 1 到 {M} 之间的正整数。
-- 给定赃款源头账户 S={S} 和最终沉淀资产账户 T={T}。
-- 资金网络拓扑在整个侦查期内保持不变。
+本案卷宗涉及 {n} 个核心证据节点，代号集合为 S={{{symbols}}}。
+根据法定审查程序，这些节点存在一个隐藏且严格的采信全序关系，你需要通过程序推演，梳理出合法的审查顺位。
 
-你的目标是推断出从源头 S 到终点 T 的所有潜在洗钱链路中，最低的隐蔽层级瓶颈值 R*。其定义为：在所有 S 到 T 的资金链路中，找出每条链路上单次转账的最高隐蔽层级，然后取这些最高层级中的最小值，即寻找一条取证难度最低的完整证据链。
+你可以进行两种操作：
 
-## 可用查询
+1. **试探查询**：提交一个长度为 m（2 到 {n} 之间）的审查序列，序列中的节点来自 S 且两两不同。
+   - 系统将核实该程序是否符合法定顺位非降序（即前置程序的优先级应当低于或等于后置程序）。
+   - 如果符合，系统会反馈“是”。
+   - 如果发生程序倒置（即高顺位节点被非法前置），系统会反馈“否，断点=i”，其中 i 是第一个程序逆序的节点位置。
+   - 如果输入包含重复节点或非本案卷宗的节点，系统会反馈“无效输入”。
 
-你可以进行以下两种操作：
+2. **最终提交**：提交一个长度为 {n} 的完整审查链条，包含 S 中所有节点且不重复，代表你推断出的法定审查全序。
+   - 如果与法定的采信全序完全一致，推演成功。
+   - 否则，系统会指出首个程序倒置的节点位置，推演失败。
 
-1. **探测查询 (Probe)**：询问在仅追踪隐蔽层级小于等于 R 的转账记录时，源头 S 和终点 T 之间是否连通（即能否闭合证据链）。
-   - 输入：一个整数 R（1 到 {M} 之间）
-   - 输出："可达" 或 "不可达"
+- 在进行首次最终证据链提交前，你至少需要进行 4 次试探查询。
+- 请在确保程序合法的前提下，以尽可能少的次数完成顺位推理。
 
-2. **提交答案 (Answer)**：提交你推断的隐蔽层级瓶颈值 R*。
-   - 输入：一个整数 R（1 到 {M} 之间）
+**试探查询**（例如推演 K1,K3,K2 的审查顺序）：
+<query>K1,K3,K2</query>
 
-## 约束条件
+**最终提交**（例如提交完整的证据链审查排序）：
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- 你最多可以进行 {Q} 次探测查询（Probe）。
-- 你只有一次提交答案的机会，一旦提交错误答案，穿透侦查将失败。
-- 请尽可能少地使用查询次数来推断出正确答案。
-
-## 查询和答案格式
-
-每次操作只能包含一个标签。请使用以下 XML 格式：
-
-- 探测查询（例如询问允许最大隐蔽层级 R=5 时的连通性）：
-<query_probe>5</query_probe>
-
-- 提交最终答案（例如认为隐蔽层级瓶颈值是 7）：
-<answer>7</answer>
-
-提示：由于探测查询的结果具有单调性（如果 R1 小于 R2，且允许 R1 时可达，则允许 R2 时必然也可达），你可以利用这一性质设计高效的查询策略。
+注意：每次只能包含一个标签（query 或 answer），元素之间用英文逗号分隔，不要有多余空格。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's play a "Money Laundering Fund Tracing" game. Here are the rules:
+Welcome to the Judicial Procedural Auxiliary Review System. Let's perform a "Chain of Evidence Admissibility Inference" drill.
 
-The system has intercepted an underground money laundering network graph G, where:
-- The set of involved entity accounts V is public: contains accounts numbered 1 to {n}.
-- The fund transfer records E and the concealment level w of each transfer are hidden. Each transfer's concealment level is a positive integer between 1 and {M}.
-- Given the illicit fund source account S={S} and the final asset settlement account T={T}.
-- The financial network topology remains unchanged throughout the investigation period.
+This case file involves {n} core evidentiary nodes, represented by the set S={{{symbols}}}.
+Under statutory procedures, these nodes possess a hidden, strict total order of admissibility priority. You must deduce the lawful review sequence through procedural deduction.
 
-Your goal is to infer the minimum concealment level bottleneck value R* among all potential money laundering chains from source S to settlement T. It is defined as: among all paths from S to T, find the highest concealment level of a single transfer on each chain, and then take the minimum of these highest levels. This represents the complete chain of evidence with the lowest overall investigative difficulty.
+You can perform two types of operations:
 
-## Available Queries
+1. **Probe Query**: Submit a review sequence of length m (between 2 and {n}), comprising distinct nodes from S.
+   - The system verifies if the procedure adheres to a non-decreasing statutory priority (preceding procedures have a priority lower than or equal to subsequent ones).
+   - If lawful, the system answers "Yes".
+   - If procedural inversion occurs (a high-priority node is illegally prioritized earlier), the system answers "No, breakpoint=i", pointing to the first invalid position.
+   - If the input contains duplicate or non-case-related nodes, the system answers "Invalid input".
 
-You can perform the following two operations:
+2. **Final Submission**: Submit a complete review chain of length {n}, containing all nodes in S without repetition, representing your deduced statutory total order.
+   - If it perfectly aligns with the statutory admissibility order, the deduction succeeds.
+   - Otherwise, the system points out the first position of procedural inversion, and the drill fails.
 
-1. **Probe Query**: Ask whether the source S and settlement T are connected (i.e., the chain of evidence can be closed) when tracing only transfer records with a concealment level less than or equal to R.
-   - Input: An integer R (between 1 and {M})
-   - Output: "Reachable" or "Unreachable"
+- You must conduct at least 4 probe queries before your first final chain submission.
+- Please complete the priority inference with the fewest attempts while ensuring procedural legality.
 
-2. **Submit Answer**: Submit what you believe to be the concealment level bottleneck value R*.
-   - Input: An integer R (between 1 and {M})
+**Probe Query** (e.g., deduce the review order of K1,K3,K2):
+<query>K1,K3,K2</query>
 
-## Constraints
+**Final Submission** (e.g., submit the complete sequence of evidence review):
+<answer>K2,K1,K4,K3,K5,K6</answer>
 
-- You can perform at most {Q} probe queries.
-- You have only one chance to submit an answer. Submitting a wrong answer will fail the investigation.
-- Try to use as few queries as possible to infer the correct answer.
-
-## Query and Answer Format
-
-Each operation must contain only one tag. Use the following XML format:
-
-- Probe Query (e.g., asking about connectivity at maximum concealment level R=5):
-<query_probe>5</query_probe>
-
-- Submit Final Answer (e.g., believing the concealment level bottleneck value is 7):
-<answer>7</answer>
-
-Hint: Since probe query results have monotonicity (if R1 is less than R2 and connectivity is achieved at R1, then it must also be achieved at R2), you can leverage this property to design an efficient query strategy.
+Note: Only one tag (query or answer) is permitted at a time. Elements should be comma-separated with no extraneous spaces.
 """
 
-    def _initialize_game(self):
-        seed = getattr(self.config, 'seed', None)
-        if seed is not None:
-            self._rng = random.Random(seed)
-        else:
-            self._rng = random.Random()
-        
-        self.n = self._rng.randint(15, 30)
-        self.M = self._rng.randint(20, 50)
-        self.Q = 15
-        self.S = self._rng.randint(1, self.n)
-        self.T = self._rng.randint(1, self.n)
-        while self.S == self.T:
-            self.T = self._rng.randint(1, self.n)
-            
-        self.edges = []
-        nodes = list(range(1, self.n + 1))
-        self._rng.shuffle(nodes)
-        for i in range(1, self.n):
-            u = nodes[self._rng.randint(0, i - 1)]
-            v = nodes[i]
-            w = self._rng.randint(1, self.M)
-            self.edges.append((u, v, w))
-            
-        extra_edges = self._rng.randint(self.n, self.n * 2)
-        for _ in range(extra_edges):
-            u = self._rng.randint(1, self.n)
-            v = self._rng.randint(1, self.n)
-            if u != v:
-                w = self._rng.randint(1, self.M)
-                self.edges.append((u, v, w))
-                
-        left, right = 1, self.M
-        self.ans = self.M
-        while left <= right:
-            mid = (left + right) // 2
-            if self._check_connectivity(mid):
-                self.ans = mid
-                right = mid - 1
-            else:
-                left = mid + 1
-                
-        self._game_info = {
-            "n": self.n,
-            "M": self.M,
-            "Q": self.Q,
-            "S": self.S,
-            "T": self.T
-        }
-        self.query_count = 0
+    tags = ["query", "answer"]
+    reasoning_type = "归纳推理"
+    data_structure = "序列"
 
-    def _check_connectivity(self, R):
-        adj = {i: [] for i in range(1, self.n + 1)}
-        for u, v, w in self.edges:
-            if w <= R:
-                adj[u].append(v)
-                adj[v].append(u)
-                
-        visited = set([self.S])
-        queue = [self.S]
-        while queue:
-            curr = queue.pop(0)
-            if curr == self.T:
-                return True
-            for nxt in adj[curr]:
-                if nxt not in visited:
-                    visited.add(nxt)
-                    queue.append(nxt)
-        return False
+    DIFFICULTY_CONFIG = {
+        "zh": {
+            1: {
+                "n": 4,
+                "symbols": "A,B,C,D",
+                "hidden_order": ["C", "A", "D", "B"],
+            },
+            2: {
+                "n": 5,
+                "symbols": "A,B,C,D,E",
+                "hidden_order": ["E", "C", "A", "B", "D"],
+            },
+            3: {
+                "n": 6,
+                "symbols": "A,B,C,D,E,F",
+                "hidden_order": ["B", "F", "D", "A", "C", "E"],
+            },
+            4: {
+                "n": 7,
+                "symbols": "A,B,C,D,E,F,G",
+                "hidden_order": ["E", "C", "A", "G", "F", "B", "D"],
+            },
+            5: {
+                "n": 8,
+                "symbols": "A,B,C,D,E,F,G,H",
+                "hidden_order": ["D", "H", "F", "A", "C", "G", "E", "B"],
+            },
+        },
+        "en": {
+            1: {
+                "n": 4,
+                "symbols": "A,B,C,D",
+                "hidden_order": ["C", "A", "D", "B"],
+            },
+            2: {
+                "n": 5,
+                "symbols": "A,B,C,D,E",
+                "hidden_order": ["E", "C", "A", "B", "D"],
+            },
+            3: {
+                "n": 6,
+                "symbols": "A,B,C,D,E,F",
+                "hidden_order": ["B", "F", "D", "A", "C", "E"],
+            },
+            4: {
+                "n": 7,
+                "symbols": "A,B,C,D,E,F,G",
+                "hidden_order": ["E", "C", "A", "G", "F", "B", "D"],
+            },
+            5: {
+                "n": 8,
+                "symbols": "A,B,C,D,E,F,G,H",
+                "hidden_order": ["D", "H", "F", "A", "C", "G", "E", "B"],
+            },
+        },
+    }
+
+    def __init__(self, config):
+        self.query_count = 0
+        self.answer_count = 0
+        super().__init__(config)
+
+    def _initialize_game(self):
+        lang = self.config.language
+        diff = int(self.config.difficulty)
+
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
+            raise KeyError(f"Unsupported difficulty: {diff}")
+
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["symbols"] = cfg["symbols"]
+        
+        self.symbols = set(s.strip() for s in cfg["symbols"].split(","))
+        self.hidden_order = cfg["hidden_order"]
+        self.order_index = {sym: idx for idx, sym in enumerate(self.hidden_order)}
+
+    def _validate_sequence(self, seq_str):
+        if not seq_str:
+            return False, [], "Empty sequence"
+        
+        symbols = [s.strip() for s in seq_str.split(",")]
+        
+        if any(not s for s in symbols):
+            return False, [], "Empty element in sequence"
+        
+        for sym in symbols:
+            if sym not in self.symbols:
+                return False, [], f"Invalid symbol: {sym}"
+        
+        if len(symbols) != len(set(symbols)):
+            return False, [], "Duplicate elements"
+        
+        return True, symbols, ""
+
+    def _check_order(self, symbols_list):
+        for i in range(len(symbols_list) - 1):
+            curr_sym = symbols_list[i]
+            next_sym = symbols_list[i + 1]
+            
+            if self.order_index[curr_sym] > self.order_index[next_sym]:
+                return False, i + 1
+        
+        return True, -1
 
     def evaluate(self, parsed_info):
-        try:
-            ans_val = int(parsed_info["answer"])
-            return ans_val == self.ans
-        except (ValueError, TypeError):
+        raw_ans = parsed_info["answer"]
+        is_valid, symbols_list, error_msg = self._validate_sequence(raw_ans)
+        
+        if not is_valid:
             return False
+        
+        if len(symbols_list) != self._game_info["n"]:
+            return False
+        
+        if set(symbols_list) != self.symbols:
+            return False
+        
+        return symbols_list == self.hidden_order
 
     def _cf_core_produce(self, parsed_info):
-        if "query_probe" in parsed_info:
-            self.query_count += 1
-            if self.query_count > self.Q:
-                if self.config.language == "zh":
-                    return "查询次数已耗尽，请直接提交你的答案。"
-                else:
-                    return "Query limit exceeded. Please submit your answer directly."
-            
-            try:
-                R = int(parsed_info["query_probe"])
-            except ValueError:
-                if self.config.language == "zh":
-                    return "探测查询的输入必须是整数。"
-                else:
-                    return "Probe query input must be an integer."
-                    
-            if R < 1 or R > self.M:
-                if self.config.language == "zh":
-                    return f"探测查询的输入 R 必须在 1 到 {self.M} 之间。"
-                else:
-                    return f"Probe query input R must be between 1 and {self.M}."
-                
-            is_connected = self._check_connectivity(R)
-            if self.config.language == "zh":
-                return "可达" if is_connected else "不可达"
-            else:
-                return "Reachable" if is_connected else "Unreachable"
+        if "query" not in parsed_info:
+            raise ValueError("Invalid query format")
         
-        if self.config.language == "zh":
-            return "无效查询，请使用正确的查询格式。"
-        else:
-            return "Invalid query. Please use the correct query format."
-
-    def get_all_possible_queries(self):
-        results = []
-        for r in range(1, self.M + 1):
-            is_connected = self._check_connectivity(r)
+        raw_query = parsed_info["query"]
+        is_valid, symbols_list, error_msg = self._validate_sequence(raw_query)
+        
+        if not is_valid:
             if self.config.language == "zh":
-                answer = "可达" if is_connected else "不可达"
+                return "无效输入"
             else:
-                answer = "Reachable" if is_connected else "Unreachable"
-            results.append({
-                "query": f"<query_probe>{r}</query_probe>",
-                "answer": answer
-            })
-        return results
+                return "Invalid input"
+        
+        if len(symbols_list) < 2 or len(symbols_list) > self._game_info["n"]:
+            if self.config.language == "zh":
+                return "无效输入"
+            else:
+                return "Invalid input"
+        
+        self.query_count += 1
+        
+        is_ordered, breakpoint_pos = self._check_order(symbols_list)
+        
+        if is_ordered:
+            return "是" if self.config.language == "zh" else "Yes"
+        else:
+            if self.config.language == "zh":
+                return f"否，断点={breakpoint_pos}"
+            else:
+                return f"No, breakpoint={breakpoint_pos}"
 
-    def _cf_make_wrong(self, correct):
-        if correct == "可达": return "不可达"
-        if correct == "不可达": return "可达"
-        if correct == "Reachable": return "Unreachable"
-        if correct == "Unreachable": return "Reachable"
-        return correct
+    def _cf_make_wrong(self, correct: str) -> str:
+        if self.config.language == "zh":
+            if correct == "是":
+                return "否，断点=1"
+            if correct.startswith("否"):
+                return "是"
+            if correct == "无效输入":
+                return "是"
+        else:
+            if correct == "Yes":
+                return "No, breakpoint=1"
+            if correct.startswith("No"):
+                return "Yes"
+            if correct == "Invalid input":
+                return "Yes"
+        
+        return "Yes" if self.config.language == "en" else "是"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        if not hasattr(self, "symbols") or not self.symbols:
+            return []
+
+        symbols_list = sorted(list(self.symbols))
+        
+        for perm in itertools.permutations(symbols_list, 2):
+            query_str = ",".join(perm)
+            
+            seq_list = list(perm)
+            is_ordered, breakpoint_pos = self._check_order(seq_list)
+            
+            if is_ordered:
+                ans = "是" if self.config.language == "zh" else "Yes"
+            else:
+                if self.config.language == "zh":
+                    ans = f"否，断点={breakpoint_pos}"
+                else:
+                    ans = f"No, breakpoint={breakpoint_pos}"
+            
+            queries.append({
+                "query": f"<query>{query_str}</query>",
+                "answer": ans
+            })
+        
+        return queries
+
+    def step(self, response: str):
+        try:
+            parsed_info = self.parse(response)
+            
+            if "answer" in parsed_info:
+                if self.query_count < 4:
+                    if self.config.language == "zh":
+                        res = f"错误：至少需要进行 4 次试探查询后才能提交最终答案。当前查询次数：{self.query_count}"
+                    else:
+                        res = f"Error: At least 4 probe queries are required before final submission. Current queries: {self.query_count}"
+                    self.state.add_message("user", res)
+                else:
+                    self.answer_count += 1
+                    is_success = self.evaluate(parsed_info)
+                    
+                    if is_success:
+                        res = "答案正确" if self.config.language == "zh" else "Correct answer."
+                        self.state.set_state("success", "success")
+                        self.state.add_message("user", res)
+                    else:
+                        raw_ans = parsed_info["answer"]
+                        is_valid, symbols_list, _ = self._validate_sequence(raw_ans)
+                        
+                        if is_valid and len(symbols_list) == self._game_info["n"] and set(symbols_list) == self.symbols:
+                            _, breakpoint_pos = self._check_order(symbols_list)
+                            if self.config.language == "zh":
+                                res = f"答案错误，断点={breakpoint_pos}"
+                            else:
+                                res = f"Incorrect answer, breakpoint={breakpoint_pos}"
+                        else:
+                            res = "答案格式错误或元素不完整" if self.config.language == "zh" else "Invalid answer format or incomplete elements"
+                        
+                        self.state.set_state("failed", "incorrect answer")
+                        self.state.add_message("user", res)
+                        
+            elif "query" in parsed_info:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+            else:
+                raise ValueError("No valid tag found")
+                
+        except Exception as e:
+            self.state.set_state("failed", str(e))
+        
+        return self.state

@@ -1,804 +1,416 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   多条件子集：同时满足多个条件的元素构成的子集是什么
-# ============================================================
-
 from .base import Game
-import re
-import itertools
-from typing import List, Dict
+import random
 
-
-class AttributeDeductionGame(Game):
+class TreeHeightQueryGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"属性推理"游戏，规则如下：
+我们现在来玩一个"树高度推理"游戏，规则如下：
 
-游戏设定了一个包含 {n} 个元素的集合 U，元素分别以 {elements} 标识。每个元素具有四个二元属性 α, β, γ, δ，每个属性的取值为 0 或 1，但具体取值是隐藏的。
+游戏设定了一棵固定的有根树，包含 {n} 个互不相同的节点，节点编号为 {node_list}。每条边长度为 1。这棵树的结构对你不可见，但树的根和边的连接关系是固定的。
 
-你的目标是找出满足特定目标条件 T 的所有元素。目标条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
+1. 叶子节点：没有子节点的节点。
+2. 节点高度 H(u)：从节点 u 出发，向下到达其子树中某个叶子的最长路径的边数。例如，叶子节点的高度为 0。
 
-你可以通过 COUNT 查询来获取信息，每次查询需要指定一个子集和一些条件，系统会告诉你该子集中有多少元素满足这些条件。当你收集足够信息后，请提交最终答案。
+你需要推断出目标节点集合 {target_nodes} 中每个节点的精确高度值 H(u)，并提交最终答案。你应该用尽可能少的查询次数完成推理。
 
-## COUNT 查询格式
+你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实的树结构如实回答：
 
-每次 COUNT 查询需要指定：
-1. 一个子集 S，包含至少 3 个元素
-2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
+{query_types_description}
 
-查询格式如下：
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-或者使用两个条件：
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- 阈值查询（例如询问节点 5 的高度是否大于等于 3）：
+<query_threshold>5,3</query_threshold>
 
-系统会返回一个非负整数，表示子集 S 中满足所有指定条件的元素数量。
+{additional_query_formats}
 
-注意事项：
-- 子集 S 必须包含至少 3 个元素
-- 条件集 L 最多包含 2 条原子条件
-- 属性名必须是 α, β, γ, δ 之一
-- 属性值必须是 0 或 1
+当你收集足够信息后，请提交最终答案。答案格式为节点编号和对应高度的配对，用分号分隔：
 
-## 提交答案格式
+<answer>1=2;3=0;5=1</answer>
 
-当你准备好提交答案时，请列出所有满足目标条件 T 的元素（用逗号分隔，顺序不限）：
-
-<answer>A,C,E</answer>
-
-如果你认为没有元素满足条件，请提交空集：
-
-<answer></answer>
-
-请尽可能用最少的查询次数找到正确答案。
+注意：答案中必须包含所有目标节点 {target_nodes} 的高度值。若答案错误或格式不符，游戏失败。
 """
 
     game_rule_en = """\
-Let's play an "Attribute Deduction" game. Here are the rules:
+Let's play a "Tree Height Inference" game. Here are the rules:
 
-The game has a set U containing {n} elements, identified as {elements}. Each element has four binary attributes α, β, γ, δ, where each attribute takes value 0 or 1, but the specific values are hidden.
+There is a fixed rooted tree with {n} distinct nodes, numbered as {node_list}. Each edge has length 1. The tree structure is hidden from you, but the root and edge connections are fixed.
 
-Your goal is to find all elements that satisfy a specific target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
+1. Leaf node: A node with no children.
+2. Node height H(u): The maximum number of edges from node u downward to any leaf in its subtree. For example, a leaf node has height 0.
 
-You can obtain information through COUNT queries. Each query requires specifying a subset and some conditions, and the system will tell you how many elements in that subset satisfy those conditions. When you have collected enough information, submit your final answer.
+You need to infer the exact height value H(u) for each node in the target set {target_nodes} and submit your final answer. You should complete the inference using as few queries as possible.
 
-## COUNT Query Format
+You can repeatedly ask me the following queries (one query per turn), and I will answer truthfully based on the real tree structure:
 
-Each COUNT query needs to specify:
-1. A subset S containing at least 3 elements
-2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
+{query_types_description}
 
-Query format:
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+Each query must contain only one tag. Use the following XML format:
 
-Or using two conditions:
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- Threshold Query (e.g., asking if node 5's height is greater than or equal to 3):
+<query_threshold>5,3</query_threshold>
 
-The system will return a non-negative integer indicating the number of elements in subset S that satisfy all specified conditions.
+{additional_query_formats}
 
-Notes:
-- Subset S must contain at least 3 elements
-- Condition set L can contain at most 2 atomic conditions
-- Attribute names must be one of α, β, γ, δ
-- Attribute values must be 0 or 1
+When you have enough information, submit your final answer. The format is node ID paired with its height, separated by semicolons:
 
-## Answer Submission Format
+<answer>1=2;3=0;5=1</answer>
 
-When you are ready to submit your answer, list all elements that satisfy the target condition T (comma-separated, order does not matter):
-
-<answer>A,C,E</answer>
-
-If you believe no elements satisfy the condition, submit an empty set:
-
-<answer></answer>
-
-Please try to find the correct answer with the minimum number of queries.
+Note: The answer must include height values for all target nodes {target_nodes}. If the answer is wrong or the format is invalid, the game fails.
 """
 
     contextualized_rule_zh_1 = """\
-我们现在来进行一项"自动驾驶风险排查"任务，规则如下：
+我们现在来玩一个"路网层级推理"系统，规则如下：
 
-系统记录了一个包含 {n} 辆自动驾驶测试车辆的集合 U，车辆分别以 {elements} 标识。每辆车具有四个二元配置属性 α, β, γ, δ，每个属性的状态为 0 或 1，具体状态被系统加密隐藏。
+[交通运输场景] 这是一个区域公路网的层级分析任务。网络由核心枢纽向外辐射，直到各个无路可走的末端小镇。
+游戏设定了一棵固定的有根树（代表路网拓扑），包含 {n} 个互不相同的节点（代表路网交汇点），节点编号为 {node_list}。每条边长度为 1（代表一段公路）。这棵树的结构对你不可见，但路网的起点枢纽和连接关系是固定的。
 
-你的目标是找出满足高风险目标条件 T 的所有车辆。目标条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
+1. 叶子节点（末端小镇）：没有下级公路连接的交汇点。
+2. 节点高度 H(u)（最远可达深度）：从交汇点 u 出发，向下到达其覆盖范围中某个末端小镇的最长路径的公路段数。例如，末端小镇的高度为 0。
 
-你可以通过 COUNT 查询来获取批量数据，每次查询需要指定一个车辆子集和一些条件，系统会告诉你该子集中有多少辆车满足这些条件。当你收集足够信息后，请提交最终的排查结果。
+你需要推断出目标节点集合 {target_nodes} 中每个节点（交汇点）的精确高度值 H(u)，并提交最终答案。你应该用尽可能少的查询次数完成推理。
 
-## COUNT 查询格式
+你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实的路网结构如实回答：
 
-每次 COUNT 查询需要指定：
-1. 一个车辆子集 S，包含至少 3 辆车
-2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
+{query_types_description}
 
-查询格式如下：
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-或者使用两个条件：
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- 阈值查询（例如询问节点 5 的高度是否大于等于 3）：
+<query_threshold>5,3</query_threshold>
 
-系统会返回一个非负整数，表示子集 S 中满足所有指定条件的车辆数量。
+{additional_query_formats}
 
-注意事项：
-- 车辆子集 S 必须包含至少 3 辆车
-- 条件集 L 最多包含 2 条原子条件
-- 属性名必须是 α, β, γ, δ 之一
-- 属性值必须是 0 或 1
+当你收集足够信息后，请提交最终答案。答案格式为节点编号和对应高度的配对，用分号分隔：
 
-## 提交答案格式
+<answer>1=2;3=0;5=1</answer>
 
-当你准备好提交排查结果时，请列出所有满足目标条件 T 的车辆（用逗号分隔，顺序不限）：
-
-<answer>A,C,E</answer>
-
-如果你认为没有任何车辆满足条件，请提交空集：
-
-<answer></answer>
-
-请尽可能用最少的查询次数找到所有高风险车辆。
+注意：答案中必须包含所有目标节点 {target_nodes} 的高度值。若答案错误或格式不符，系统验证失败。
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-Let's perform an "Autonomous Driving Risk Assessment" task. Here are the rules:
+Let's play a "Road Network Hierarchy Inference" game. Here are the rules:
 
-The system has logged a set U containing {n} autonomous test vehicles, identified as {elements}. Each vehicle has four binary configuration attributes α, β, γ, δ, where each attribute takes a state of 0 or 1, but the specific states are encrypted and hidden.
+This is a hierarchical analysis task for a regional road network. The network radiates from a central hub down to various dead-end towns.
+There is a fixed rooted tree representing the road network topology with {n} distinct nodes (intersections), numbered as {node_list}. Each edge has length 1 (representing a road segment). The network structure is hidden from you, but the root hub and connections are fixed.
 
-Your goal is to find all vehicles that satisfy the high-risk target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
+1. Leaf node (Dead-end town): An intersection with no further downward road connections.
+2. Node height H(u) (Max route depth): The maximum number of road segments from intersection u downward to any dead-end town in its coverage. For example, a dead-end town has a height of 0.
 
-You can obtain batch data through COUNT queries. Each query requires specifying a subset of vehicles and some conditions, and the system will tell you how many vehicles in that subset satisfy those conditions. When you have collected enough information, submit your final assessment result.
+You need to infer the exact height value H(u) for each node in the target set {target_nodes} and submit your final answer. You should complete the inference using as few queries as possible.
 
-## COUNT Query Format
+You can repeatedly ask me the following queries (one query per turn), and I will answer truthfully based on the real network structure:
 
-Each COUNT query needs to specify:
-1. A vehicle subset S containing at least 3 vehicles
-2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
+{query_types_description}
 
-Query format:
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+Each query must contain only one tag. Use the following XML format:
 
-Or using two conditions:
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- Threshold Query (e.g., asking if node 5's height is greater than or equal to 3):
+<query_threshold>5,3</query_threshold>
 
-The system will return a non-negative integer indicating the number of vehicles in subset S that satisfy all specified conditions.
+{additional_query_formats}
 
-Notes:
-- Vehicle subset S must contain at least 3 vehicles
-- Condition set L can contain at most 2 atomic conditions
-- Attribute names must be one of α, β, γ, δ
-- Attribute values must be 0 or 1
+When you have enough information, submit your final answer. The format is node ID paired with its height, separated by semicolons:
 
-## Answer Submission Format
+<answer>1=2;3=0;5=1</answer>
 
-When you are ready to submit your assessment result, list all vehicles that satisfy the target condition T (comma-separated, order does not matter):
-
-<answer>A,C,E</answer>
-
-If you believe no vehicles satisfy the condition, submit an empty set:
-
-<answer></answer>
-
-Please try to find all high-risk vehicles with the minimum number of queries.
+Note: The answer must include height values for all target nodes {target_nodes}. If the answer is wrong or the format is invalid, the system verification fails.
 """
 
     contextualized_rule_zh_2 = """\
-我们现在来进行一项"罕见综合征确诊"任务，规则如下：
+我们现在来玩一个"传播链层级推理"系统，规则如下：
 
-医疗数据库中包含一个有 {n} 份患者病历的集合 U，病历分别以 {elements} 标识。每份病历记录了四个二元临床指标 α, β, γ, δ，每个指标的检验结果为 0 或 1，但具体结果目前被隐藏。
+[医疗场景] 这是一个病毒传播链的溯源与分析任务。网络由零号病人/原始毒株开始，向下不断传播突变，直到不再引发感染的末端病例。
+游戏设定了一棵固定的有根树（代表传播链条），包含 {n} 个互不相同的节点（代表病例/毒株），节点编号为 {node_list}。每条边长度为 1（代表一次传染代际）。这棵树的结构对你不可见，但传播源头和感染路径是固定的。
 
-你的目标是找出满足确诊目标条件 T 的所有病历。确诊条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
+1. 叶子节点（末端病例）：没有造成进一步二次感染的病例。
+2. 节点高度 H(u)（最远传播深度）：从病例 u 出发，向下追踪到达其传播分支中某个末端病例的最大代际数。例如，末端病例的高度为 0。
 
-你可以通过 COUNT 抽查来获取统计信息，每次查询需要指定一个病历子集和一些指标条件，系统会告诉你该子集中有多少份病历满足这些条件。当你收集足够信息后，请提交最终的确诊名单。
+你需要推断出目标节点集合 {target_nodes} 中每个节点（病例）的精确高度值 H(u)，并提交最终答案。你应该用尽可能少的查询次数完成推理。
 
-## COUNT 查询格式
+你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实的传播链结构如实回答：
 
-每次 COUNT 查询需要指定：
-1. 一个病历子集 S，包含至少 3 份病历
-2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
+{query_types_description}
 
-查询格式如下：
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-或者使用两个条件：
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- 阈值查询（例如询问节点 5 的高度是否大于等于 3）：
+<query_threshold>5,3</query_threshold>
 
-系统会返回一个非负整数，表示子集 S 中满足所有指定条件的病历数量。
+{additional_query_formats}
 
-注意事项：
-- 病历子集 S 必须包含至少 3 份病历
-- 条件集 L 最多包含 2 条原子条件
-- 属性名必须是 α, β, γ, δ 之一
-- 属性值必须是 0 或 1
+当你收集足够信息后，请提交最终答案。答案格式为节点编号和对应高度的配对，用分号分隔：
 
-## 提交答案格式
+<answer>1=2;3=0;5=1</answer>
 
-当你准备好提交确诊名单时，请列出所有满足目标条件 T 的病历（用逗号分隔，顺序不限）：
-
-<answer>A,C,E</answer>
-
-如果你认为没有任何病历满足条件，请提交空集：
-
-<answer></answer>
-
-请尽可能用最少的查询次数找到所有确诊病历。
+注意：答案中必须包含所有目标节点 {target_nodes} 的高度值。若答案错误或格式不符，溯源任务失败。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's perform a "Rare Syndrome Diagnosis" task. Here are the rules:
+Let's play a "Transmission Chain Hierarchy Inference" game. Here are the rules:
 
-The medical database has a set U containing {n} patient records, identified as {elements}. Each record has four binary clinical indicators α, β, γ, δ, where each indicator takes a result of 0 or 1, but the specific results are currently hidden.
+This is a traceability and analysis task for a viral transmission chain. The network starts from patient zero / original strain and spreads downwards until reaching terminal cases with no further infections.
+There is a fixed rooted tree representing the transmission chain with {n} distinct nodes (cases/strains), numbered as {node_list}. Each edge has length 1 (representing one transmission generation). The chain structure is hidden from you, but the source and transmission paths are fixed.
 
-Your goal is to find all records that satisfy the diagnostic target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
+1. Leaf node (Terminal case): A case that caused no further secondary infections.
+2. Node height H(u) (Max transmission depth): The maximum number of generations from case u downward to any terminal case in its transmission branch. For example, a terminal case has a height of 0.
 
-You can obtain statistical information through COUNT queries. Each query requires specifying a subset of medical records and some indicator conditions, and the system will tell you how many records in that subset satisfy those conditions. When you have collected enough information, submit your final diagnostic list.
+You need to infer the exact height value H(u) for each node in the target set {target_nodes} and submit your final answer. You should complete the inference using as few queries as possible.
 
-## COUNT Query Format
+You can repeatedly ask me the following queries (one query per turn), and I will answer truthfully based on the real transmission structure:
 
-Each COUNT query needs to specify:
-1. A medical record subset S containing at least 3 records
-2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
+{query_types_description}
 
-Query format:
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+Each query must contain only one tag. Use the following XML format:
 
-Or using two conditions:
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- Threshold Query (e.g., asking if node 5's height is greater than or equal to 3):
+<query_threshold>5,3</query_threshold>
 
-The system will return a non-negative integer indicating the number of records in subset S that satisfy all specified conditions.
+{additional_query_formats}
 
-Notes:
-- Medical record subset S must contain at least 3 records
-- Condition set L can contain at most 2 atomic conditions
-- Attribute names must be one of α, β, γ, δ
-- Attribute values must be 0 or 1
+When you have enough information, submit your final answer. The format is node ID paired with its height, separated by semicolons:
 
-## Answer Submission Format
+<answer>1=2;3=0;5=1</answer>
 
-When you are ready to submit your diagnostic list, list all records that satisfy the target condition T (comma-separated, order does not matter):
-
-<answer>A,C,E</answer>
-
-If you believe no records satisfy the condition, submit an empty set:
-
-<answer></answer>
-
-Please try to find all confirmed records with the minimum number of queries.
+Note: The answer must include height values for all target nodes {target_nodes}. If the answer is wrong or the format is invalid, the traceability task fails.
 """
 
     contextualized_rule_zh_3 = """\
-我们现在来进行一项"创新潜能学生筛查"任务，规则如下：
+我们现在来玩一个"知识图谱层级推理"系统，规则如下：
 
-教育系统中包含一个有 {n} 名学生档案的集合 U，学生分别以 {elements} 标识。每名学生拥有四个二元能力指标 α, β, γ, δ，每个指标的评估等级为 0 或 1，但具体评估结果处于保密状态。
+[教育场景] 这是一个学科知识依赖体系的解析任务。体系由基础核心概念发散，不断细分延伸，直到无需进一步前置学习的专业末端课题。
+游戏设定了一棵固定的有根树（代表课程依赖图谱），包含 {n} 个互不相同的节点（代表知识点），节点编号为 {node_list}。每条边长度为 1（代表一阶前置依赖）。这棵树的结构对你不可见，但核心起点和依赖关系是固定的。
 
-你的目标是找出满足潜能开发目标条件 T 的所有学生。目标条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
+1. 叶子节点（末端课题）：没有衍生出更高级知识点的内容。
+2. 节点高度 H(u)（最深延展深度）：从知识点 u 出发，向下延展到达其后续体系中某个末端课题的最长前置路径步数。例如，末端课题的高度为 0。
 
-你可以通过 COUNT 评估来获取群体分析信息，每次查询需要指定一个学生子集和一些指标条件，系统会告诉你该子集中有多少名学生满足这些条件。当你收集足够信息后，请提交最终的入选名单。
+你需要推断出目标节点集合 {target_nodes} 中每个节点（知识点）的精确高度值 H(u)，并提交最终答案。你应该用尽可能少的查询次数完成推理。
 
-## COUNT 查询格式
+你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实的知识图谱结构如实回答：
 
-每次 COUNT 查询需要指定：
-1. 一个学生子集 S，包含至少 3 名学生
-2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
+{query_types_description}
 
-查询格式如下：
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-或者使用两个条件：
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- 阈值查询（例如询问节点 5 的高度是否大于等于 3）：
+<query_threshold>5,3</query_threshold>
 
-系统会返回一个非负整数，表示子集 S 中满足所有指定条件的学生数量。
+{additional_query_formats}
 
-注意事项：
-- 学生子集 S 必须包含至少 3 名学生
-- 条件集 L 最多包含 2 条原子条件
-- 属性名必须是 α, β, γ, δ 之一
-- 属性值必须是 0 或 1
+当你收集足够信息后，请提交最终答案。答案格式为节点编号和对应高度的配对，用分号分隔：
 
-## 提交答案格式
+<answer>1=2;3=0;5=1</answer>
 
-当你准备好提交入选名单时，请列出所有满足目标条件 T 的学生（用逗号分隔，顺序不限）：
-
-<answer>A,C,E</answer>
-
-如果你认为没有任何学生满足条件，请提交空集：
-
-<answer></answer>
-
-请尽可能用最少的查询次数找到所有具备潜能的学生。
+注意：答案中必须包含所有目标节点 {target_nodes} 的高度值。若答案错误或格式不符，解析任务失败。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's perform an "Innovative Potential Student Screening" task. Here are the rules:
+Let's play a "Knowledge Graph Hierarchy Inference" game. Here are the rules:
 
-The education system has a set U containing {n} student profiles, identified as {elements}. Each student has four binary ability indicators α, β, γ, δ, where each indicator takes an evaluation level of 0 or 1, but the specific evaluation results are classified.
+This is an analysis task for a subject knowledge dependency structure. The structure stems from foundational concepts and branches out into highly specialized end-topics requiring no further prerequisites.
+There is a fixed rooted tree representing the curriculum dependency graph with {n} distinct nodes (knowledge points), numbered as {node_list}. Each edge has length 1 (representing a single-step prerequisite). The graph structure is hidden from you, but the foundation and dependencies are fixed.
 
-Your goal is to find all students that satisfy the potential development target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
+1. Leaf node (End-topic): A knowledge point that does not act as a prerequisite for any advanced topics.
+2. Node height H(u) (Max study depth): The maximum number of prerequisite steps from knowledge point u downward to any end-topic in its derivative branches. For example, an end-topic has a height of 0.
 
-You can obtain cohort analysis information through COUNT queries. Each query requires specifying a subset of students and some indicator conditions, and the system will tell you how many students in that subset satisfy those conditions. When you have collected enough information, submit your final shortlist.
+You need to infer the exact height value H(u) for each node in the target set {target_nodes} and submit your final answer. You should complete the inference using as few queries as possible.
 
-## COUNT Query Format
+You can repeatedly ask me the following queries (one query per turn), and I will answer truthfully based on the real curriculum structure:
 
-Each COUNT query needs to specify:
-1. A student subset S containing at least 3 students
-2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
+{query_types_description}
 
-Query format:
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+Each query must contain only one tag. Use the following XML format:
 
-Or using two conditions:
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- Threshold Query (e.g., asking if node 5's height is greater than or equal to 3):
+<query_threshold>5,3</query_threshold>
 
-The system will return a non-negative integer indicating the number of students in subset S that satisfy all specified conditions.
+{additional_query_formats}
 
-Notes:
-- Student subset S must contain at least 3 students
-- Condition set L can contain at most 2 atomic conditions
-- Attribute names must be one of α, β, γ, δ
-- Attribute values must be 0 or 1
+When you have enough information, submit your final answer. The format is node ID paired with its height, separated by semicolons:
 
-## Answer Submission Format
+<answer>1=2;3=0;5=1</answer>
 
-When you are ready to submit your shortlist, list all students that satisfy the target condition T (comma-separated, order does not matter):
-
-<answer>A,C,E</answer>
-
-If you believe no students satisfy the condition, submit an empty set:
-
-<answer></answer>
-
-Please try to find all qualified students with the minimum number of queries.
+Note: The answer must include height values for all target nodes {target_nodes}. If the answer is wrong or the format is invalid, the analysis task fails.
 """
 
     contextualized_rule_zh_4 = """\
-我们现在来进行一项"装配线缺陷零件排查"任务，规则如下：
+我们现在来玩一个"BOM(物料清单)层级推理"系统，规则如下：
 
-质检系统锁定了一个包含 {n} 个关键零部件的集合 U，零部件分别以 {elements} 标识。每个零部件具有四个二元工艺属性 α, β, γ, δ，每个属性的检测值为 0 或 1，但具体检测结果尚未直接公开。
+[制造业/工业场景] 这是一个复杂产品的组件拆解分析任务。结构由最终主干产品向下按层级拆解，直到不可分割的基础原材料。
+游戏设定了一棵固定的有根树（代表产品BOM结构），包含 {n} 个互不相同的节点（代表组件/物料），节点编号为 {node_list}。每条边长度为 1（代表一层装配关系）。这棵树的结构对你不可见，但总成件与子件的构成关系是固定的。
 
-你的目标是找出满足特定缺陷目标条件 T 的所有零部件。缺陷条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
+1. 叶子节点（基础原材料）：不可再向下拆分出子组件的底层物料。
+2. 节点高度 H(u)（最大拆解深度）：从组件 u 出发，向下按层级拆解到达其分支中某个基础原材料所需的最大装配层次数。例如，基础原材料的高度为 0。
 
-你可以通过 COUNT 质检来获取抽样反馈，每次查询需要指定一个零部件子集和一些工艺条件，系统会告诉你该子集中有多少个零部件满足这些条件。当你收集足够信息后，请提交最终的缺陷零件清单。
+你需要推断出目标节点集合 {target_nodes} 中每个节点（组件）的精确高度值 H(u)，并提交最终答案。你应该用尽可能少的查询次数完成推理。
 
-## COUNT 查询格式
+你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实的BOM层级如实回答：
 
-每次 COUNT 查询需要指定：
-1. 一个零部件子集 S，包含至少 3 个零部件
-2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
+{query_types_description}
 
-查询格式如下：
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-或者使用两个条件：
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- 阈值查询（例如询问节点 5 的高度是否大于等于 3）：
+<query_threshold>5,3</query_threshold>
 
-系统会返回一个非负整数，表示子集 S 中满足所有指定条件的零部件数量。
+{additional_query_formats}
 
-注意事项：
-- 零部件子集 S 必须包含至少 3 个零部件
-- 条件集 L 最多包含 2 条原子条件
-- 属性名必须是 α, β, γ, δ 之一
-- 属性值必须是 0 或 1
+当你收集足够信息后，请提交最终答案。答案格式为节点编号和对应高度的配对，用分号分隔：
 
-## 提交答案格式
+<answer>1=2;3=0;5=1</answer>
 
-当你准备好提交清单时，请列出所有满足目标条件 T 的零部件（用逗号分隔，顺序不限）：
-
-<answer>A,C,E</answer>
-
-如果你认为没有任何零部件满足条件，请提交空集：
-
-<answer></answer>
-
-请尽可能用最少的查询次数找到所有缺陷零部件。
+注意：答案中必须包含所有目标节点 {target_nodes} 的高度值。若答案错误或格式不符，拆解分析失败。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Let's perform an "Assembly Line Defective Parts Troubleshooting" task. Here are the rules:
+[Manufacturing/Industrial Scenario]
+Let's play a "BOM (Bill of Materials) Hierarchy Inference" game. Here are the rules:
 
-The quality control system has a set U containing {n} key components, identified as {elements}. Each component has four binary process attributes α, β, γ, δ, where each attribute takes a test value of 0 or 1, but the specific test results are not yet directly disclosed.
+This is a component breakdown analysis task for a complex product. The structure breaks down hierarchically from the final main assembly down to indivisible base raw materials.
+There is a fixed rooted tree representing the BOM structure with {n} distinct nodes (components/materials), numbered as {node_list}. Each edge has length 1 (representing one level of assembly). The structure is hidden from you, but the main assembly and component relationships are fixed.
 
-Your goal is to find all components that satisfy the specific defect target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
+1. Leaf node (Base raw material): A low-level material that cannot be broken down into further sub-components.
+2. Node height H(u) (Max breakdown depth): The maximum number of assembly levels required to break down component u into any base raw material in its sub-assemblies. For example, a base raw material has a height of 0.
 
-You can obtain sampling feedback through COUNT queries. Each query requires specifying a subset of components and some process conditions, and the system will tell you how many components in that subset satisfy those conditions. When you have collected enough information, submit your final defective parts list.
+You need to infer the exact height value H(u) for each node in the target set {target_nodes} and submit your final answer. You should complete the inference using as few queries as possible.
 
-## COUNT Query Format
+You can repeatedly ask me the following queries (one query per turn), and I will answer truthfully based on the real BOM hierarchy:
 
-Each COUNT query needs to specify:
-1. A component subset S containing at least 3 components
-2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
+{query_types_description}
 
-Query format:
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+Each query must contain only one tag. Use the following XML format:
 
-Or using two conditions:
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- Threshold Query (e.g., asking if node 5's height is greater than or equal to 3):
+<query_threshold>5,3</query_threshold>
 
-The system will return a non-negative integer indicating the number of components in subset S that satisfy all specified conditions.
+{additional_query_formats}
 
-Notes:
-- Component subset S must contain at least 3 components
-- Condition set L can contain at most 2 atomic conditions
-- Attribute names must be one of α, β, γ, δ
-- Attribute values must be 0 or 1
+When you have enough information, submit your final answer. The format is node ID paired with its height, separated by semicolons:
 
-## Answer Submission Format
+<answer>1=2;3=0;5=1</answer>
 
-When you are ready to submit your list, list all components that satisfy the target condition T (comma-separated, order does not matter):
-
-<answer>A,C,E</answer>
-
-If you believe no components satisfy the condition, submit an empty set:
-
-<answer></answer>
-
-Please try to find all defective components with the minimum number of queries.
+Note: The answer must include height values for all target nodes {target_nodes}. If the answer is wrong or the format is invalid, the breakdown analysis fails.
 """
 
     contextualized_rule_zh_5 = """\
-我们现在来进行一项"连环商业诈骗案嫌疑公司锁定"任务，规则如下：
+我们现在来玩一个"股权穿透层级推理"系统，规则如下：
 
-工商稽查库中包含一个有 {n} 家嫌疑公司的集合 U，公司分别以 {elements} 标识。每家公司涉及四个二元工商财务特征 α, β, γ, δ，每个特征的判定值为 0 或 1，但具体档案处于封存状态。
+[法律场景] 这是一个企业股权结构的穿透调查任务。架构由顶层控股母公司向下延伸，通过层层全资控股，直到无对外投资的底层壳公司。
+游戏设定了一棵固定的有根树（代表股权架构），包含 {n} 个互不相同的节点（代表公司实体），节点编号为 {node_list}。每条边长度为 1（代表一层控股关系）。这棵树的结构对你不可见，但母公司和下属投资关系是固定的。
 
-你的目标是找出满足高嫌疑目标条件 T 的所有公司。高嫌疑条件 T 定义为：α=1 且 β=0 且 γ=1 且 δ=0。
+1. 叶子节点（底层壳公司）：没有任何对外下级投资的实体。
+2. 节点高度 H(u)（最大穿透深度）：从公司 u 出发，向下层层穿透到达其控制链中某个底层壳公司的最大控股层次数。例如，底层壳公司的高度为 0。
 
-你可以通过 COUNT 核查来获取协查通报，每次查询需要指定一个公司子集和一些特征条件，系统会告诉你该子集中有多少家公司满足这些条件。当你收集足够信息后，请提交最终的嫌疑公司名单。
+你需要推断出目标节点集合 {target_nodes} 中每个节点（公司实体）的精确高度值 H(u)，并提交最终答案。你应该用尽可能少的查询次数完成推理。
 
-## COUNT 查询格式
+你可以反复向我提出以下查询（每次仅限一个查询），我会根据真实的股权架构如实回答：
 
-每次 COUNT 查询需要指定：
-1. 一个公司子集 S，包含至少 3 家公司
-2. 一个条件集 L，由 1 或 2 条原子条件构成，每条原子条件形如 "α=0"、"β=1"、"γ=0"、"δ=1" 等
+{query_types_description}
 
-查询格式如下：
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-或者使用两个条件：
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- 阈值查询（例如询问节点 5 的高度是否大于等于 3）：
+<query_threshold>5,3</query_threshold>
 
-系统会返回一个非负整数，表示子集 S 中满足所有指定条件的公司数量。
+{additional_query_formats}
 
-注意事项：
-- 公司子集 S 必须包含至少 3 家公司
-- 条件集 L 最多包含 2 条原子条件
-- 属性名必须是 α, β, γ, δ 之一
-- 属性值必须是 0 或 1
+当你收集足够信息后，请提交最终答案。答案格式为节点编号和对应高度的配对，用分号分隔：
 
-## 提交答案格式
+<answer>1=2;3=0;5=1</answer>
 
-当你准备好提交名单时，请列出所有满足目标条件 T 的公司（用逗号分隔，顺序不限）：
-
-<answer>A,C,E</answer>
-
-如果你认为没有任何公司满足条件，请提交空集：
-
-<answer></answer>
-
-请尽可能用最少的查询次数锁定所有嫌疑公司。
+注意：答案中必须包含所有目标节点 {target_nodes} 的高度值。若答案错误或格式不符，穿透调查失败。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Let's perform a "Serial Commercial Fraud Suspect Company Targeting" task. Here are the rules:
+[Law Scenario]
+Let's play an "Equity Penetration Hierarchy Inference" game. Here are the rules:
 
-The business inspection database has a set U containing {n} suspect companies, identified as {elements}. Each company involves four binary business and financial features α, β, γ, δ, where each feature takes a judgment value of 0 or 1, but the specific files are sealed.
+This is a penetration investigation task into corporate equity structures. The architecture extends downward from the top holding parent company through layers of wholly-owned subsidiaries, until reaching ultimate shell companies with no outbound investments.
+There is a fixed rooted tree representing the equity architecture with {n} distinct nodes (corporate entities), numbered as {node_list}. Each edge has length 1 (representing one layer of holding relationship). The architecture is hidden from you, but the parent company and investment relationships are fixed.
 
-Your goal is to find all companies that satisfy the high-suspicion target condition T. The target condition T is defined as: α=1 and β=0 and γ=1 and δ=0.
+1. Leaf node (Ultimate shell company): An entity that has no outbound lower-level investments.
+2. Node height H(u) (Max penetration depth): The maximum number of holding layers from entity u downward to penetrate to any ultimate shell company in its control chain. For example, an ultimate shell company has a height of 0.
 
-You can obtain inspection bulletins through COUNT queries. Each query requires specifying a subset of companies and some feature conditions, and the system will tell you how many companies in that subset satisfy those conditions. When you have collected enough information, submit your final suspect company list.
+You need to infer the exact height value H(u) for each node in the target set {target_nodes} and submit your final answer. You should complete the inference using as few queries as possible.
 
-## COUNT Query Format
+You can repeatedly ask me the following queries (one query per turn), and I will answer truthfully based on the real equity architecture:
 
-Each COUNT query needs to specify:
-1. A company subset S containing at least 3 companies
-2. A condition set L consisting of 1 or 2 atomic conditions, each atomic condition is like "α=0", "β=1", "γ=0", "δ=1", etc.
+{query_types_description}
 
-Query format:
-<query_count>
-S = A,B,C
-CONDITIONS = α=1
-</query_count>
+Each query must contain only one tag. Use the following XML format:
 
-Or using two conditions:
-<query_count>
-S = A,B,C,D
-CONDITIONS = α=1,β=0
-</query_count>
+- Threshold Query (e.g., asking if node 5's height is greater than or equal to 3):
+<query_threshold>5,3</query_threshold>
 
-The system will return a non-negative integer indicating the number of companies in subset S that satisfy all specified conditions.
+{additional_query_formats}
 
-Notes:
-- Company subset S must contain at least 3 companies
-- Condition set L can contain at most 2 atomic conditions
-- Attribute names must be one of α, β, γ, δ
-- Attribute values must be 0 or 1
+When you have enough information, submit your final answer. The format is node ID paired with its height, separated by semicolons:
 
-## Answer Submission Format
+<answer>1=2;3=0;5=1</answer>
 
-When you are ready to submit your list, list all companies that satisfy the target condition T (comma-separated, order does not matter):
-
-<answer>A,C,E</answer>
-
-If you believe no companies satisfy the condition, submit an empty set:
-
-<answer></answer>
-
-Please try to find all suspect companies with the minimum number of queries.
+Note: The answer must include height values for all target nodes {target_nodes}. If the answer is wrong or the format is invalid, the penetration investigation fails.
 """
 
-    tags = ["answer", "query_count"]
+    tags = ["answer", "query_threshold", "query_compare", "query_count"]
     
     reasoning_type = "演绎推理"
-    data_structure = "集合"
+    data_structure = "树"
 
-    # 难度说明：
-    # 1 (简单)      - 12个元素，2个满足目标条件
-    # 2 (中等偏下)  - 12个元素，3个满足目标条件
-    # 3 (中等偏上)  - 12个元素，1个满足目标条件
-    # 4 (较难)      - 12个元素，4个满足目标条件
-    # 5 (难)        - 12个元素，0个满足目标条件
+    _BASE_CONFIG = {
+        1: {
+            "n": 5,
+            "tree_edges": "1-2,1-3,2-4,2-5",
+            "root": 1,
+            "target_nodes": [2],
+            "enable_compare": False,
+            "enable_count": False,
+        },
+        2: {
+            "n": 7,
+            "tree_edges": "1-2,1-3,2-4,3-5,3-6,5-7",
+            "root": 1,
+            "target_nodes": [1, 3],
+            "enable_compare": False,
+            "enable_count": False,
+        },
+        3: {
+            "n": 8,
+            "tree_edges": "1-2,1-3,2-4,2-5,3-6,5-7,5-8",
+            "root": 1,
+            "target_nodes": [1, 2, 5],
+            "enable_compare": True,
+            "enable_count": False,
+        },
+        4: {
+            "n": 10,
+            "tree_edges": "1-2,1-3,2-4,2-5,3-6,3-7,5-8,6-9,6-10",
+            "root": 1,
+            "target_nodes": [1, 2, 3, 6],
+            "enable_compare": True,
+            "enable_count": False,
+        },
+        5: {
+            "n": 12,
+            "tree_edges": "1-2,1-3,2-4,2-5,3-6,3-7,5-8,5-9,6-10,7-11,7-12",
+            "root": 1,
+            "target_nodes": [1, 2, 3, 5, 7],
+            "enable_compare": True,
+            "enable_count": True,
+        },
+    }
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                # 目标条件：α=1 且 β=0 且 γ=1 且 δ=0
-                "attributes": {
-                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "B": {"α": 0, "β": 0, "γ": 1, "δ": 0},
-                    "C": {"α": 1, "β": 1, "γ": 1, "δ": 0},
-                    "D": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "E": {"α": 1, "β": 0, "γ": 1, "δ": 1},
-                    "F": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "G": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "H": {"α": 1, "β": 1, "γ": 0, "δ": 0},
-                    "I": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                    "J": {"α": 1, "β": 0, "γ": 0, "δ": 1},
-                    "K": {"α": 0, "β": 1, "γ": 1, "δ": 0},
-                    "L": {"α": 1, "β": 1, "γ": 1, "δ": 1},
-                }
-            },
-            2: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                "attributes": {
-                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "B": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "C": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "D": {"α": 1, "β": 1, "γ": 1, "δ": 0},
-                    "E": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                    "F": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "G": {"α": 0, "β": 1, "γ": 1, "δ": 1},
-                    "H": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "I": {"α": 1, "β": 1, "γ": 0, "δ": 0},
-                    "J": {"α": 0, "β": 0, "γ": 1, "δ": 1},
-                    "K": {"α": 1, "β": 0, "γ": 0, "δ": 1},
-                    "L": {"α": 0, "β": 1, "γ": 0, "δ": 0},
-                }
-            },
-            3: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                "attributes": {
-                    "A": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "B": {"α": 1, "β": 1, "γ": 1, "δ": 0},
-                    "C": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                    "D": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "E": {"α": 0, "β": 1, "γ": 1, "δ": 1},
-                    "F": {"α": 1, "β": 0, "γ": 1, "δ": 1},
-                    "G": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "H": {"α": 0, "β": 1, "γ": 0, "δ": 0},
-                    "I": {"α": 1, "β": 1, "γ": 0, "δ": 1},
-                    "J": {"α": 0, "β": 0, "γ": 1, "δ": 0},
-                    "K": {"α": 1, "β": 1, "γ": 1, "δ": 1},
-                    "L": {"α": 0, "β": 0, "γ": 0, "δ": 0},
-                }
-            },
-            4: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                "attributes": {
-                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "B": {"α": 1, "β": 1, "γ": 0, "δ": 1},
-                    "C": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "D": {"α": 0, "β": 1, "γ": 0, "δ": 0},
-                    "E": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "F": {"α": 0, "β": 0, "γ": 1, "δ": 1},
-                    "G": {"α": 1, "β": 1, "γ": 1, "δ": 1},
-                    "H": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "I": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "J": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # 满足
-                    "K": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                    "L": {"α": 1, "β": 1, "γ": 0, "δ": 0},
-                }
-            },
-            5: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                "attributes": {
-                    "A": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "B": {"α": 1, "β": 1, "γ": 1, "δ": 1},
-                    "C": {"α": 0, "β": 0, "γ": 0, "δ": 0},
-                    "D": {"α": 1, "β": 1, "γ": 0, "δ": 0},
-                    "E": {"α": 0, "β": 1, "γ": 1, "δ": 1},
-                    "F": {"α": 1, "β": 0, "γ": 0, "δ": 1},
-                    "G": {"α": 0, "β": 0, "γ": 1, "δ": 1},
-                    "H": {"α": 1, "β": 1, "γ": 0, "δ": 1},
-                    "I": {"α": 0, "β": 1, "γ": 0, "δ": 0},
-                    "J": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "K": {"α": 1, "β": 1, "γ": 1, "δ": 0},
-                    "L": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                }
-            },
-        },
-        "en": {
-            1: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                "attributes": {
-                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "B": {"α": 0, "β": 0, "γ": 1, "δ": 0},
-                    "C": {"α": 1, "β": 1, "γ": 1, "δ": 0},
-                    "D": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "E": {"α": 1, "β": 0, "γ": 1, "δ": 1},
-                    "F": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "G": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "H": {"α": 1, "β": 1, "γ": 0, "δ": 0},
-                    "I": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                    "J": {"α": 1, "β": 0, "γ": 0, "δ": 1},
-                    "K": {"α": 0, "β": 1, "γ": 1, "δ": 0},
-                    "L": {"α": 1, "β": 1, "γ": 1, "δ": 1},
-                }
-            },
-            2: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                "attributes": {
-                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "B": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "C": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "D": {"α": 1, "β": 1, "γ": 1, "δ": 0},
-                    "E": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                    "F": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "G": {"α": 0, "β": 1, "γ": 1, "δ": 1},
-                    "H": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "I": {"α": 1, "β": 1, "γ": 0, "δ": 0},
-                    "J": {"α": 0, "β": 0, "γ": 1, "δ": 1},
-                    "K": {"α": 1, "β": 0, "γ": 0, "δ": 1},
-                    "L": {"α": 0, "β": 1, "γ": 0, "δ": 0},
-                }
-            },
-            3: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                "attributes": {
-                    "A": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "B": {"α": 1, "β": 1, "γ": 1, "δ": 0},
-                    "C": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                    "D": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "E": {"α": 0, "β": 1, "γ": 1, "δ": 1},
-                    "F": {"α": 1, "β": 0, "γ": 1, "δ": 1},
-                    "G": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "H": {"α": 0, "β": 1, "γ": 0, "δ": 0},
-                    "I": {"α": 1, "β": 1, "γ": 0, "δ": 1},
-                    "J": {"α": 0, "β": 0, "γ": 1, "δ": 0},
-                    "K": {"α": 1, "β": 1, "γ": 1, "δ": 1},
-                    "L": {"α": 0, "β": 0, "γ": 0, "δ": 0},
-                }
-            },
-            4: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                "attributes": {
-                    "A": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "B": {"α": 1, "β": 1, "γ": 0, "δ": 1},
-                    "C": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "D": {"α": 0, "β": 1, "γ": 0, "δ": 0},
-                    "E": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "F": {"α": 0, "β": 0, "γ": 1, "δ": 1},
-                    "G": {"α": 1, "β": 1, "γ": 1, "δ": 1},
-                    "H": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "I": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "J": {"α": 1, "β": 0, "γ": 1, "δ": 0},  # satisfies
-                    "K": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                    "L": {"α": 1, "β": 1, "γ": 0, "δ": 0},
-                }
-            },
-            5: {
-                "n": 12,
-                "elements": "A,B,C,D,E,F,G,H,I,J,K,L",
-                "attributes": {
-                    "A": {"α": 0, "β": 1, "γ": 0, "δ": 1},
-                    "B": {"α": 1, "β": 1, "γ": 1, "δ": 1},
-                    "C": {"α": 0, "β": 0, "γ": 0, "δ": 0},
-                    "D": {"α": 1, "β": 1, "γ": 0, "δ": 0},
-                    "E": {"α": 0, "β": 1, "γ": 1, "δ": 1},
-                    "F": {"α": 1, "β": 0, "γ": 0, "δ": 1},
-                    "G": {"α": 0, "β": 0, "γ": 1, "δ": 1},
-                    "H": {"α": 1, "β": 1, "γ": 0, "δ": 1},
-                    "I": {"α": 0, "β": 1, "γ": 0, "δ": 0},
-                    "J": {"α": 1, "β": 0, "γ": 0, "δ": 0},
-                    "K": {"α": 1, "β": 1, "γ": 1, "δ": 0},
-                    "L": {"α": 0, "β": 0, "γ": 0, "δ": 1},
-                }
-            },
-        }
+        "zh": _BASE_CONFIG,
+        "en": _BASE_CONFIG,
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据语言和难度选择配置"""
         lang = self.config.language
         diff = int(self.config.difficulty)
 
@@ -808,248 +420,266 @@ Please try to find all suspect companies with the minimum number of queries.
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["elements"] = cfg["elements"]
+        n = cfg["n"]
+        self._game_info["n"] = n
+        self._game_info["node_list"] = ", ".join(str(i) for i in range(1, n + 1))
+        self._game_info["target_nodes"] = ", ".join(str(t) for t in cfg["target_nodes"])
         
-        # 存储每个元素的属性
-        self.attributes = cfg["attributes"]
+        self.target_nodes = cfg["target_nodes"]
+        self.enable_compare = cfg["enable_compare"]
+        self.enable_count = cfg["enable_count"]
+        self.root = cfg["root"]
         
-        # 计算满足目标条件 T (α=1 且 β=0 且 γ=1 且 δ=0) 的元素集合
-        self.target_elements = set()
-        for elem, attrs in self.attributes.items():
-            if attrs["α"] == 1 and attrs["β"] == 0 and attrs["γ"] == 1 and attrs["δ"] == 0:
-                self.target_elements.add(elem)
+        self.children = {i: [] for i in range(1, n + 1)}
+        for edge in cfg["tree_edges"].split(","):
+            parent, child = map(int, edge.split("-"))
+            self.children[parent].append(child)
+        
+        self.node_heights = {}
+        self._compute_heights(self.root)
+        
+        self._prepare_query_descriptions()
 
-    def _parse_query_count(self, query_str):
-        """
-        解析 COUNT 查询字符串
-        返回：(subset, conditions) 或抛出异常
-        """
-        lines = [line.strip() for line in query_str.strip().split('\n') if line.strip()]
+    def _compute_heights(self, node):
+        if not self.children[node]:
+            self.node_heights[node] = 0
+            return 0
         
-        subset = None
-        conditions = None
+        max_height = 0
+        for child in self.children[node]:
+            child_height = self._compute_heights(child)
+            max_height = max(max_height, child_height + 1)
         
-        for line in lines:
-            if line.startswith("S =") or line.startswith("S="):
-                subset_str = line.split('=', 1)[1].strip()
-                subset = set(e.strip() for e in subset_str.split(',') if e.strip())
-            elif line.startswith("CONDITIONS =") or line.startswith("CONDITIONS="):
-                cond_str = line.split('=', 1)[1].strip()
-                conditions = [c.strip() for c in cond_str.split(',') if c.strip()]
-        
-        if subset is None or conditions is None:
-            raise ValueError("Query format error: missing S or CONDITIONS")
-        
-        return subset, conditions
+        self.node_heights[node] = max_height
+        return max_height
 
-    def _validate_and_count(self, subset, conditions):
-        """
-        验证查询并返回计数结果
-        """
-        # 验证子集大小
-        if len(subset) < 3:
-            if self.config.language == "zh":
-                return "INVALID: 子集 S 必须包含至少 3 个元素"
-            else:
-                return "INVALID: Subset S must contain at least 3 elements"
-        
-        # 验证元素是否有效
-        for elem in subset:
-            if elem not in self.attributes:
-                if self.config.language == "zh":
-                    return f"INVALID: 元素 {elem} 不在集合 U 中"
-                else:
-                    return f"INVALID: Element {elem} is not in set U"
-        
-        # 验证条件数量
-        if len(conditions) == 0 or len(conditions) > 2:
-            if self.config.language == "zh":
-                return "INVALID: 条件数量必须为 1 或 2"
-            else:
-                return "INVALID: Number of conditions must be 1 or 2"
-        
-        # 属性名归一化映射：支持多种可能的输入形式
-        ATTR_NORMALIZE = {
-            'α': 'α', 'alpha': 'α', 'ɑ': 'α',
-            'β': 'β', 'beta': 'β',
-            'γ': 'γ', 'gamma': 'γ',
-            'δ': 'δ', 'delta': 'δ',
-        }
-        
-        # 解析并验证条件
-        parsed_conditions = []
-        for cond in conditions:
-            # 更宽松的匹配：允许各种属性名写法
-            match = re.match(r'^(\S+)\s*=\s*([01])$', cond.strip())
-            if not match:
-                if self.config.language == "zh":
-                    return f"INVALID: 条件格式错误: {cond}"
-                else:
-                    return f"INVALID: Invalid condition format: {cond}"
-            raw_attr, attr_value = match.groups()
-            normalized_attr = ATTR_NORMALIZE.get(raw_attr.lower(), raw_attr)
+    def _prepare_query_descriptions(self):
+        if self.config.language == "zh":
+            threshold_desc = "1. 阈值查询：询问节点 u 的高度是否大于等于 d。格式：Threshold(u, d)。回答是或否。"
+            compare_desc = "2. 比较查询：询问节点 u 和节点 v 的高度大小关系。格式：Compare(u, v)。回答u大于v、u等于v或u小于v。"
+            count_desc = "3. 计数查询：询问从节点 u 向下恰好距离 d 处的叶子个数。格式：Count(u, d)。回答一个非负整数。"
             
-            if normalized_attr not in ['α', 'β', 'γ', 'δ']:
-                if self.config.language == "zh":
-                    return f"INVALID: 未知的属性名: {raw_attr}"
-                else:
-                    return f"INVALID: Unknown attribute name: {raw_attr}"
+            compare_format = """- 比较查询（例如比较节点 5 和节点 3）：
+<query_compare>5,3</query_compare>
+"""
+            count_format = """- 计数查询（例如询问节点 5 向下距离 2 处的叶子个数）：
+<query_count>5,2</query_count>
+"""
+        else:
+            threshold_desc = "1. Threshold Query: Ask if node u's height is greater than or equal to d. Format: Threshold(u, d). Answer \"Yes\" or \"No\"."
+            compare_desc = "2. Comparison Query: Ask about the height relationship between node u and node v. Format: Compare(u, v). Answer \"u>v\", \"u=v\", or \"u<v\"."
+            count_desc = "3. Count Query: Ask for the number of leaves at exactly distance d downward from node u. Format: Count(u, d). Answer a non-negative integer."
             
-            parsed_conditions.append((normalized_attr, int(attr_value)))
+            compare_format = """- Comparison Query (e.g., comparing node 5 and node 3):
+<query_compare>5,3</query_compare>
+"""
+            count_format = """- Count Query (e.g., asking for the number of leaves at distance 2 from node 5):
+<query_count>5,2</query_count>
+"""
         
-        # 计算满足条件的元素数量
-        count = 0
-        for elem in subset:
-            elem_attrs = self.attributes[elem]
-            satisfies_all = True
-            for attr_name, attr_value in parsed_conditions:
-                if elem_attrs[attr_name] != attr_value:
-                    satisfies_all = False
-                    break
-            if satisfies_all:
-                count += 1
+        descriptions = [threshold_desc]
+        formats = []
         
-        return str(count)
+        if self.enable_compare:
+            descriptions.append(compare_desc)
+            formats.append(compare_format)
+        
+        if self.enable_count:
+            descriptions.append(count_desc)
+            formats.append(count_format)
+        
+        self._game_info["query_types_description"] = "\n".join(descriptions)
+        self._game_info["additional_query_formats"] = "\n".join(formats) if formats else ""
 
     def evaluate(self, parsed_info):
-        """评估提交的答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"]
         
-        # 处理空答案
-        if not raw_ans:
-            submitted_elements = set()
-        else:
-            submitted_elements = set(e.strip() for e in raw_ans.split(',') if e.strip())
+        try:
+            pairs = [x.strip() for x in raw_ans.split(";") if "=" in x]
+            ans_dict = {}
+            for pair in pairs:
+                node, height = pair.split("=")
+                ans_dict[int(node.strip())] = int(height.strip())
+        except:
+            return False
         
-        # 检查提交的元素是否都在集合 U 中
-        for elem in submitted_elements:
-            if elem not in self.attributes:
+        if set(ans_dict.keys()) != set(self.target_nodes):
+            return False
+        
+        for node in self.target_nodes:
+            if ans_dict[node] != self.node_heights[node]:
                 return False
         
-        # 比较提交的集合与真实的目标集合
-        return submitted_elements == self.target_elements
+        return True
+
+    def _cf_make_wrong(self, correct):
+        lang = self.config.language
+        if lang == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+        
+        if correct == yes_res:
+            return no_res
+        elif correct == no_res:
+            return yes_res
+        
+        if lang == "zh":
+            if "大于" in correct:
+                return correct.replace("大于", "小于")
+            elif "小于" in correct:
+                return correct.replace("小于", "大于")
+            elif "等于" in correct:
+                return correct.replace("等于", "大于")
+        else:
+            if ">" in correct and "=" not in correct:
+                return correct.replace(">", "<")
+            elif "<" in correct:
+                return correct.replace("<", ">")
+            elif "=" in correct:
+                return correct.replace("=", ">")
+        
+        try:
+            val = int(correct)
+            return str(val + 1)
+        except ValueError:
+            pass
+        
+        return correct + " [wrong]"
 
     def _cf_core_produce(self, parsed_info):
-        """原始的 produce_response 逻辑"""
-        if "query_count" in parsed_info:
-            query_str = parsed_info["query_count"]
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            error_node = "错误：节点编号无效。"
+            error_format = "错误：查询格式无效。"
+            error_disabled = "错误：该查询类型在当前难度下不可用。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            error_node = "Error: Invalid node ID."
+            error_format = "Error: Invalid query format."
+            error_disabled = "Error: This query type is not available at current difficulty."
+        
+        if "query_threshold" in parsed_info:
             try:
-                subset, conditions = self._parse_query_count(query_str)
-                result = self._validate_and_count(subset, conditions)
-                return result
-            except Exception as e:
+                raw = parsed_info["query_threshold"]
+                node, threshold = [x.strip() for x in raw.split(",")]
+                node, threshold = int(node), int(threshold)
+                
+                if node < 1 or node > self._game_info["n"]:
+                    return error_node
+                
+                return yes_res if self.node_heights[node] >= threshold else no_res
+            except:
+                return error_format
+        
+        elif "query_compare" in parsed_info:
+            if not self.enable_compare:
+                return error_disabled
+            
+            try:
+                raw = parsed_info["query_compare"]
+                node1, node2 = [x.strip() for x in raw.split(",")]
+                node1, node2 = int(node1), int(node2)
+                
+                if node1 < 1 or node1 > self._game_info["n"] or node2 < 1 or node2 > self._game_info["n"]:
+                    return error_node
+                
+                h1, h2 = self.node_heights[node1], self.node_heights[node2]
+                
                 if self.config.language == "zh":
-                    return f"INVALID: 查询解析错误 - {str(e)}"
+                    if h1 > h2:
+                        return f"H({node1})大于H({node2})"
+                    elif h1 == h2:
+                        return f"H({node1})等于H({node2})"
+                    else:
+                        return f"H({node1})小于H({node2})"
                 else:
-                    return f"INVALID: Query parsing error - {str(e)}"
+                    if h1 > h2:
+                        return f"H({node1})>H({node2})"
+                    elif h1 == h2:
+                        return f"H({node1})=H({node2})"
+                    else:
+                        return f"H({node1})<H({node2})"
+            except:
+                return error_format
+        
+        elif "query_count" in parsed_info:
+            if not self.enable_count:
+                return error_disabled
+            
+            try:
+                raw = parsed_info["query_count"]
+                node, distance = [x.strip() for x in raw.split(",")]
+                node, distance = int(node), int(distance)
+                
+                if node < 1 or node > self._game_info["n"]:
+                    return error_node
+                
+                count = self._count_leaves_at_distance(node, distance)
+                return str(count)
+            except:
+                return error_format
+        
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct):
-        """根据正确答案生成错误答案"""
-        if correct.startswith("INVALID"):
-            return correct + "_WRONG"
-            
-        # 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
+    def _count_leaves_at_distance(self, node, distance):
+        if distance == 0:
+            return 1 if not self.children[node] else 0
         
-        # 否则替换关键词
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            elif "否" in correct:
-                return correct.replace("否", "是")
-        else:
-            # 简单的大小写不敏感匹配替换（这里简化处理，因为本游戏主要返回数字）
-            if re.search(r'(?i)yes', correct):
-                return re.sub(r'(?i)yes', 'No', correct)
-            elif re.search(r'(?i)no', correct):
-                return re.sub(r'(?i)no', 'Yes', correct)
+        count = 0
+        for child in self.children[node]:
+            count += self._count_leaves_at_distance(child, distance - 1)
         
-        # 若都不匹配
-        return correct + "_WRONG"
+        return count
 
-    def get_all_possible_queries(self) -> List[Dict]:
-        """
-        枚举具有代表性的合法查询并返回对应的正确答案。
-        
-        使用不同子集和条件组合来提供足够的信息，
-        使得可以唯一确定每个元素的属性值。
-        """
+    def get_all_possible_queries(self) -> list[dict]:
         queries = []
+        n = self._game_info["n"]
+        lang = self.config.language
         
-        elements = [e.strip() for e in self._game_info["elements"].split(',')]
-        
-        attrs = ['α', 'β', 'γ', 'δ']
-        vals = [0, 1]
-        
-        # 为每个属性生成一系列能区分各元素的查询
-        # 策略：使用大小为 3 的滑动窗口子集，对每个属性进行单条件查询
-        subsets_to_query = []
-        n = len(elements)
-        # 使用大小为 3 的连续子集
-        for i in range(n - 2):
-            subsets_to_query.append(elements[i:i+3])
-        # 额外添加一些跨越式子集以增加区分度
-        for i in range(0, n, 3):
-            end = min(i + 3, n)
-            if end - i >= 3:
-                subsets_to_query.append(elements[i:end])
-        # 去重
-        seen = set()
-        unique_subsets = []
-        for s in subsets_to_query:
-            key = tuple(s)
-            if key not in seen:
-                seen.add(key)
-                unique_subsets.append(s)
-        
-        # 对每个子集，查询每个属性=1的计数
-        for subset_list in unique_subsets:
-            subset_set = set(subset_list)
-            subset_str = ",".join(subset_list)
-            for attr in attrs:
-                cond = f"{attr}=1"
-                query_text = f"S = {subset_str}\nCONDITIONS = {cond}"
-                full_query = f"<query_count>\n{query_text}\n</query_count>"
-                
-                try:
-                    ans = self._validate_and_count(subset_set, [cond])
-                except Exception:
-                    ans = "0"
-                
-                queries.append({
-                    "query": full_query,
-                    "answer": ans
-                })
-        
-        # 同时保留全集的双条件查询（目标条件组合），用于直接推理
-        full_subset_set = set(elements)
-        full_subset_str = ",".join(elements)
-        target_conds = [
-            ["α=1", "β=0"],
-            ["α=1", "γ=1"],
-            ["α=1", "δ=0"],
-            ["β=0", "γ=1"],
-            ["β=0", "δ=0"],
-            ["γ=1", "δ=0"],
-        ]
-        for conds in target_conds:
-            cond_str = ",".join(conds)
-            query_text = f"S = {full_subset_str}\nCONDITIONS = {cond_str}"
-            full_query = f"<query_count>\n{query_text}\n</query_count>"
-            
-            try:
-                ans = self._validate_and_count(full_subset_set, conds)
-            except Exception:
-                ans = "0"
-            
-            queries.append({
-                "query": full_query,
-                "answer": ans
-            })
-        
-        return queries
+        if lang == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
 
+        for u in range(1, n + 1):
+            for d in range(0, n + 1):
+                query_content = f"{u},{d}"
+                query_xml = f"<query_threshold>{query_content}</query_threshold>"
+                ans = yes_res if self.node_heights[u] >= d else no_res
+                queries.append({"query": query_xml, "answer": ans})
+
+        if self.enable_compare:
+            for u in range(1, n + 1):
+                for v in range(1, n + 1):
+                    query_content = f"{u},{v}"
+                    query_xml = f"<query_compare>{query_content}</query_compare>"
+                    h1 = self.node_heights[u]
+                    h2 = self.node_heights[v]
+                    if lang == "zh":
+                        if h1 > h2:
+                            ans = f"H({u})大于H({v})"
+                        elif h1 == h2:
+                            ans = f"H({u})等于H({v})"
+                        else:
+                            ans = f"H({u})小于H({v})"
+                    else:
+                        if h1 > h2:
+                            ans = f"H({u})>H({v})"
+                        elif h1 == h2:
+                            ans = f"H({u})=H({v})"
+                        else:
+                            ans = f"H({u})<H({v})"
+                    queries.append({"query": query_xml, "answer": ans})
+
+        if self.enable_count:
+            for u in range(1, n + 1):
+                for d in range(0, n + 1):
+                    query_content = f"{u},{d}"
+                    query_xml = f"<query_count>{query_content}</query_count>"
+                    count = self._count_leaves_at_distance(u, d)
+                    ans = str(count)
+                    queries.append({"query": query_xml, "answer": ans})
+                    
+        return queries

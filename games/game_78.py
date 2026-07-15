@@ -1,656 +1,737 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   限距节点数：从某节点出发距离不超过k的节点共有多少个
-# ============================================================
-
 from .base import Game
 import random
-from collections import deque
 
-class TreeSearchGame(Game):
+class TreeParentRuleGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"树搜索"的推理游戏，规则如下：
+我们来玩一个"交互式规则归纳与目标父节点识别"游戏，规则如下：
 
-游戏设定了一棵未知的有限无向树 T，节点数为 {n}。给定正整数 K = {k}。
+游戏设定了一棵含 {n} 个节点的无向树。每个节点 v 具有以下公开属性：
+- 唯一 ID（范围 1 到 {n}）
+- 整数特征值 s(v)
+- 度数 deg(v)（由边列表可得）
 
-定义距离 dist(u, v) 为树上 u 到 v 的最短路径边数。
-定义函数 E(v) 为从节点 v 出发，距离小于等于 K 的节点总数（包括 v 自己）。
+隐藏信息：存在一个全局一致的、对你隐藏的父选择规则 f，使得每个非根节点 v 在其邻居中选择且仅选择一个邻居作为其父节点 p(v)。该规则满足：
+- 局部性：p(v) 仅由 v 及其邻居的公开属性（如 ID、s(·)、deg(·) 及其确定性组合）决定
+- 确定性与唯一性：对每个非根节点，p(v) 唯一确定
+- 全局固定：同一局内对所有节点使用同一条规则，不随查询改变
 
-每个节点 v 的所有邻居在本地以端口 1 到 deg(v) 的整数编号标识，编号固定但对你未知；不同节点的端口编号彼此无关。
+公开信息（开局时提供）：
+- 边列表：{edges}
+- 每个节点的特征值：{features}
+- 目标节点 T = {target}（保证非根，即存在父节点）
 
-你从起始节点 S 开始。游戏保证：
-- 存在唯一节点 H 使 E(H) 严格最大。
-- 对任意节点 u 不等于 H，如果 w 是 u 到 H 的唯一路径上的相邻下一节点，则 E(w) 大于 E(u)（沿指向 H 的路径严格单调上升）。
+交互查询模型：
 
-你的目标是通过尽可能少的交互次数，找到并宣告这个唯一使 E(v) 最大的节点 H。
+1. 信息查询（不限次数）：
+   - 邻居查询：询问节点 x 的邻居列表
+   - 属性查询：询问节点 x 的特征值 s(x)
 
-你可以反复向我提出以下五类操作（每次仅限一个操作），我会根据真实设定如实回答：
+2. 训练标注查询（总计不超过 {quota} 次）：
+   - 是否父判定：询问"u 是 x 的父节点吗？"（要求 x 不等于 T 且 u 是 x 的邻居）
+   - 直接父节点：询问"x 的父节点是谁？"（要求 x 不等于 T）
+   - 若请求非法（如针对 T 发起训练或询问非邻居），返回"非法请求"，不计入配额
 
-1. 询问度数：询问当前节点的度数（邻居数量）。回答一个非负整数。
-2. 询问值：询问当前节点的 E 值。回答一个正整数。
-3. 移动：沿当前节点的第 j 号端口移动到相邻节点。若端口存在则返回"已移动"，否则返回"无此端口"且位置不变。
-4. 回退：返回到上一个节点。若可以回退则返回"已返回"，否则返回"无法返回"。
-5. 宣告：宣告当前节点为目标节点 H。若正确则游戏成功，否则游戏失败。
+3. 最终作答（结束交互）：
+   - 提交"目标节点 T 的父节点是 u"（要求 u 是 T 的邻居）
 
-## 询问与宣告的格式（必须严格遵守）
+目标：
+在尽可能少的训练标注查询次数下，通过对非目标节点的样本标注与公开结构/属性进行归纳，推断隐藏的局部父选择规则，并据此唯一确定目标节点 T 的父节点 p(T)。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 询问度数：
-<query_degree></query_degree>
+- 邻居查询（例如查询节点 5 的邻居）：
+<query_neighbors>5</query_neighbors>
 
-- 询问值：
-<query_value></query_value>
+- 属性查询（例如查询节点 3 的特征值）：
+<query_feature>3</query_feature>
 
-- 移动到第 j 号端口（例如移动到端口 2）：
-<move>2</move>
+- 是否父判定（例如询问节点 2 是否是节点 5 的父节点）：
+<query_is_parent>5,2</query_is_parent>
 
-- 回退到上一个节点：
-<back></back>
+- 直接父节点查询（例如查询节点 4 的父节点）：
+<query_parent>4</query_parent>
 
-- 宣告当前节点为目标：
-<answer></answer>
+提交最终答案时，必须说明目标节点 T 的父节点 ID，格式如下：
+<answer>6</answer>
 """
 
     game_rule_en = """\
-Let's play a "Tree Search" deduction game. Here are the rules:
+Let's play a "Tree Parent Rule Inference" game. Here are the rules:
 
-There is an unknown finite undirected tree T with {n} nodes. Given a positive integer K = {k}.
+The game features an undirected tree with {n} nodes. Each node v has the following public attributes:
+- Unique ID (from 1 to {n})
+- Integer feature value s(v)
+- Degree deg(v) (can be derived from edge list)
 
-Define dist(u, v) as the number of edges in the shortest path from u to v in the tree.
-Define function E(v) as the count of nodes reachable from node v within distance K (including v itself).
+Hidden Information: There exists a globally consistent, hidden parent selection rule f that allows each non-root node v to select exactly one neighbor as its parent node p(v). The rule satisfies:
+- Locality: p(v) is determined solely by the public attributes of v and its neighbors (e.g., ID, s(·), deg(·), and their deterministic combinations)
+- Determinism and Uniqueness: For each non-root node, p(v) is uniquely determined
+- Global Consistency: The same rule is used for all nodes within a game instance and does not change with queries
 
-Each node v has neighbors locally identified by port numbers 1 to deg(v), where deg(v) is the degree of v. The numbering is fixed but unknown to you; port numbering at different nodes are independent.
+Public Information (provided at game start):
+- Edge list: {edges}
+- Feature value for each node: {features}
+- Target node T = {target} (guaranteed to be non-root, i.e., has a parent)
 
-You start at a starting node S. The game guarantees:
-- There exists a unique node H such that E(H) is strictly maximum.
-- For any node u not equal to H, if w is the adjacent next node on the unique path from u to H, then E(w) is greater than E(u) (strictly monotonically increasing along the path toward H).
+Query Model:
 
-Your goal is to find and declare the unique node H that maximizes E(v) using as few interactions as possible.
+1. Information Queries (unlimited):
+   - Neighbor Query: Ask for the neighbor list of node x
+   - Attribute Query: Ask for the feature value s(x) of node x
 
-You can repeatedly perform one of the following five operations (one per turn), and I will respond truthfully:
+2. Training Label Queries (total limit: {quota}):
+   - Parent Check: Ask "Is u the parent of x?" (requires x ≠ T and u is a neighbor of x)
+   - Direct Parent: Ask "Who is the parent of x?" (requires x ≠ T)
+   - If the request is illegal (e.g., querying about T or asking about non-neighbors), return "Illegal request" without counting toward quota
 
-1. Query degree: Ask for the degree of the current node (number of neighbors). Answer is a non-negative integer.
-2. Query value: Ask for the E value of the current node. Answer is a positive integer.
-3. Move: Move along the j-th port of the current node to an adjacent node. Returns "Moved" if the port exists, otherwise "No such port" and position remains unchanged.
-4. Back: Return to the previous node. Returns "Returned" if possible, otherwise "Cannot return".
-5. Declare: Declare the current node as the target node H. Game succeeds if correct, otherwise fails.
+3. Final Answer (ends interaction):
+   - Submit "The parent of target node T is u" (requires u to be a neighbor of T)
 
-## Query and Declaration Format (strictly required)
+Goal:
+Using as few training label queries as possible, infer the hidden local parent selection rule through sample labels on non-target nodes and public structure/attributes, and thereby uniquely determine the parent node p(T) of target node T.
 
-Each operation must contain only one tag. Use the following XML format:
+Each query must contain only one tag. Use the following XML format:
 
-- Query degree:
-<query_degree></query_degree>
+- Neighbor Query (e.g., querying neighbors of node 5):
+<query_neighbors>5</query_neighbors>
 
-- Query value:
-<query_value></query_value>
+- Feature Query (e.g., querying feature value of node 3):
+<query_feature>3</query_feature>
 
-- Move to port j (e.g., move to port 2):
-<move>2</move>
+- Parent Check (e.g., asking if node 2 is the parent of node 5):
+<query_is_parent>5,2</query_is_parent>
 
-- Back to previous node:
-<back></back>
+- Direct Parent Query (e.g., querying parent of node 4):
+<query_parent>4</query_parent>
 
-- Declare current node as target:
-<answer></answer>
+When submitting the final answer, specify the parent node ID of target node T using this format:
+<answer>6</answer>
 """
 
-    # ==========================================
-    # 场景 1：交通
-    # ==========================================
     contextualized_rule_zh_1 = """\
-欢迎进入“核心枢纽勘测”交通调度任务，规则如下：
+欢迎进入智能交通调度系统控制台。我们面临一个"区域路网主控节点识别"的任务。
 
-我们的城市路网系统设计为一棵未知的有限无向树 T（无环路），枢纽节点数为 {n}。给定通勤范围限制 K = {k}。
+路网设定为一个包含 {n} 个路口的拓扑树。每个路口 v 具有以下公开属性：
+- 唯一路口 ID（范围 1 到 {n}）
+- 车流量指数 s(v)
+- 连通路段数 deg(v)（由路网拓扑可得）
 
-定义距离 dist(u, v) 为路网上枢纽 u 到 v 的最少路段数。
-定义指标 E(v) 为从枢纽 v 出发，在距离小于等于 K 的范围内能辐射到的枢纽总数（包括 v 自己）。
+隐藏调度协议：系统中存在一个全局一致但保密的路由分配规则 f。除了总控中心（根节点）外，每个路口 v 必须在其相连的相邻路口中，选择且仅选择一个作为其主控路口 p(v)。该协议满足：
+- 局部响应：p(v) 仅由路口 v 及其相邻路口的公开属性（如 ID、s(·)、deg(·) 的确定性组合）决定。
+- 确定性与唯一性：对于每个非总控路口，p(v) 唯一确定。
+- 全局一致：同一网络内所有路口遵循相同的路由分配规则，不随查询改变。
 
-每个枢纽 v 的相连路段在本地以端口 1 到 deg(v) 的整数编号标识，编号固定但对你未知；不同枢纽的端口编号彼此无关。
+公开路网信息：
+- 路网拓扑（边列表）：{edges}
+- 各路口车流量指数：{features}
+- 待排查路口 T = {target}（保证存在主控路口）
 
-你从起始枢纽 S 开始调度。系统保证：
-- 存在唯一一个核心枢纽 H，使得 E(H) 严格最大。
-- 对任意非 H 的枢纽 u，如果 w 是 u 到 H 的唯一路径上的相邻下一枢纽，则 E(w) 大于 E(u)（即沿着指向 H 的路径，辐射能力严格单调上升）。
+交互诊断系统：
 
-你的目标是通过尽可能少的交互次数，找到并宣告这个唯一使 E(v) 最大的核心枢纽 H。
+1. 拓扑及状态查询（不限次数）：
+   - 相邻查询：查询路口 x 的所有相邻路口列表
+   - 流量查询：查询路口 x 的车流量指数 s(x)
 
-你可以反复向我提出以下五类操作（每次仅限一个操作），我会根据真实路网状态如实回答：
+2. 抽样侦测（总计不超过 {quota} 次）：
+   - 验证主控：询问"路口 u 是路口 x 的主控路口吗？"（要求 x 不等于 T 且 u 是 x 的相邻路口）
+   - 直接读取：询问"路口 x 的主控路口是哪个？"（要求 x 不等于 T）
+   - 若请求非法（如针对 T 侦测或询问非相邻路口），返回"非法请求"，不计入配额。
 
-1. 询问直达路线：询问当前枢纽的度数（直接相连的枢纽数量）。回答一个非负整数。
-2. 询问辐射力：询问当前枢纽的 E 值。回答一个正整数。
-3. 移动：沿当前枢纽的第 j 号端口路段移动到相邻枢纽。若路线存在则返回"已移动"，否则返回"无此端口"且位置不变。
-4. 回退：返回到上一个枢纽。若可以回退则返回"已返回"，否则返回"无法返回"。
-5. 宣告：宣告当前枢纽为核心枢纽 H。若正确则任务成功，否则失败。
+3. 最终判定（结束交互）：
+   - 提交"待排查路口 T 的主控路口是 u"（要求 u 是 T 的相邻路口）
 
-## 询问与宣告的格式（必须严格遵守）
+目标：
+在尽可能少的抽样侦测次数下，通过对非排查对象的样本数据进行归纳，推断隐藏的局部调度协议，并据此唯一确定待排查路口 T 的主控路口 p(T)。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 询问直达路线（度数）：
-<query_degree></query_degree>
+- 相邻查询（例如查询路口 5 的相邻路口）：
+<query_neighbors>5</query_neighbors>
 
-- 询问辐射力（E值）：
-<query_value></query_value>
+- 流量查询（例如查询路口 3 的车流量指数）：
+<query_feature>3</query_feature>
 
-- 移动到第 j 号端口路线（例如移动到端口 2）：
-<move>2</move>
+- 验证主控（例如询问路口 2 是否是路口 5 的主控路口）：
+<query_is_parent>5,2</query_is_parent>
 
-- 回退到上一个枢纽：
-<back></back>
+- 直接读取（例如查询路口 4 的主控路口）：
+<query_parent>4</query_parent>
 
-- 宣告当前枢纽为目标：
-<answer></answer>
+提交最终判定时，必须说明待排查路口 T 的主控路口 ID，格式如下：
+<answer>6</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Welcome to the "Core Hub Survey" transportation dispatch task. Here are the rules:
+[Traffic Scenario]
+Welcome to the Intelligent Traffic Dispatch System Console. We face a task of "Identifying the Primary Controller Node in a Regional Road Network."
 
-Our city road network is designed as an unknown finite undirected tree T (no cycles) with {n} hub nodes. Given a commute range limit K = {k}.
+The road network is configured as a topology tree with {n} intersections. Each intersection v has the following public attributes:
+- Unique intersection ID (from 1 to {n})
+- Traffic Volume Index s(v)
+- Number of connected roads deg(v) (derived from the network topology)
 
-Define dist(u, v) as the minimum number of road segments from hub u to v.
-Define function E(v) as the total number of hubs reachable from hub v within a distance of K (including v itself).
+Hidden Dispatch Protocol: There is a globally consistent but undisclosed routing assignment rule f. Except for the central control center (root node), each intersection v must select exactly one of its adjacent intersections as its primary controller p(v). This protocol satisfies:
+- Local Responsiveness: p(v) is determined solely by the public attributes of intersection v and its adjacent intersections (e.g., deterministic combinations of ID, s(·), and deg(·)).
+- Determinism and Uniqueness: For each non-central intersection, p(v) is uniquely determined.
+- Global Consistency: All intersections within the network follow the same routing assignment rule, which remains invariant during queries.
 
-Each hub v has connected road segments locally identified by port numbers 1 to deg(v), where deg(v) is its degree. The numbering is fixed but unknown to you; port numbering at different hubs are independent.
+Public Network Information:
+- Network Topology (Edge List): {edges}
+- Traffic Volume Index for each intersection: {features}
+- Target Intersection for Diagnosis T = {target} (guaranteed to have a primary controller)
 
-You start at a starting hub S. The system guarantees:
-- There exists a unique core hub H such that E(H) is strictly maximum.
-- For any hub u not equal to H, if w is the adjacent next hub on the unique path from u to H, then E(w) is greater than E(u) (strictly monotonically increasing radiation capacity along the path toward H).
+Interactive Diagnostic System:
 
-Your goal is to find and declare the unique core hub H that maximizes E(v) using as few interactions as possible.
+1. Topology and Status Queries (Unlimited):
+   - Adjacent Query: Ask for the list of adjacent intersections for intersection x
+   - Volume Query: Ask for the Traffic Volume Index s(x) of intersection x
 
-You can repeatedly perform one of the following five operations (one per turn), and I will respond truthfully based on the actual network state:
+2. Sampling Detection (Total limit: {quota}):
+   - Controller Verification: Ask "Is intersection u the primary controller of intersection x?" (requires x ≠ T and u is adjacent to x)
+   - Direct Read: Ask "Which intersection is the primary controller of intersection x?" (requires x ≠ T)
+   - If a request is invalid (e.g., detecting T or querying non-adjacent intersections), returns "Illegal request," not counted towards the quota.
 
-1. Query degree: Ask for the degree of the current hub (number of directly connected hubs). Answer is a non-negative integer.
-2. Query value: Ask for the E value (radiation capacity) of the current hub. Answer is a positive integer.
-3. Move: Move along the j-th port road segment of the current hub to an adjacent hub. Returns "Moved" if the port exists, otherwise "No such port" and position remains unchanged.
-4. Back: Return to the previous hub. Returns "Returned" if possible, otherwise "Cannot return".
-5. Declare: Declare the current hub as the target core hub H. Task succeeds if correct, otherwise fails.
+3. Final Judgment (Ends interaction):
+   - Submit "The primary controller of target intersection T is u" (requires u to be adjacent to T)
 
-## Query and Declaration Format (strictly required)
+Goal:
+With the minimum number of sampling detections, induce the hidden local dispatch protocol using sample data from non-target intersections, and thereby uniquely determine the primary controller p(T) of the target intersection T.
 
-Each operation must contain only one tag. Use the following XML format:
+Each query must contain only one XML tag:
 
-- Query degree (number of direct routes):
-<query_degree></query_degree>
+- Adjacent Query:
+<query_neighbors>5</query_neighbors>
 
-- Query value (radiation capacity):
-<query_value></query_value>
+- Volume Query:
+<query_feature>3</query_feature>
 
-- Move to port j route (e.g., move to port 2):
-<move>2</move>
+- Controller Verification:
+<query_is_parent>5,2</query_is_parent>
 
-- Back to previous hub:
-<back></back>
+- Direct Read:
+<query_parent>4</query_parent>
 
-- Declare current hub as target:
-<answer></answer>
+When submitting the final judgment, specify the ID of the primary controller for target T:
+<answer>6</answer>
 """
 
-    # ==========================================
-    # 场景 2：医疗
-    # ==========================================
     contextualized_rule_zh_2 = """\
-欢迎进入“区域医疗协同”转诊网络调度任务，规则如下：
+欢迎使用医院分级诊疗与资源调度分析系统。我们需要进行一次"科室资源调配链追踪"。
 
-我们的分级诊疗网络构成了一棵未知的有限无向树 T，医疗机构节点数为 {n}。给定紧急医疗响应距离限制 K = {k}。
+医疗联合体被建模为一棵包含 {n} 个科室的协作树。每个科室 v 具有以下公开属性：
+- 唯一科室编号（范围 1 到 {n}）
+- 床位负载率 s(v)
+- 协作通道数 deg(v)（由转诊通道网络可得）
 
-定义距离 dist(u, v) 为网络中机构 u 到 v 的最少转诊通道数。
-定义指标 E(v) 为从机构 v 出发，在距离小于等于 K 的范围内能直接调度的医疗机构总数（包括 v 自己）。
+隐藏管理机制：医院存在一个全局一致但对你隐藏的资源调配规则 f。除核心调度中心（根节点）外，每个科室 v 必须在其有转诊通道的相邻科室中，选择且仅选择一个作为其上级调配科室 p(v)。该机制满足：
+- 局部决策：p(v) 仅由科室 v 及其相邻科室的公开属性（如编号、s(·)、deg(·) 的确定性组合）决定。
+- 确定性与唯一性：对于每个非核心科室，p(v) 唯一确定。
+- 全局固定：同一次评估中所有科室使用同一条调配规则，不随查询改变。
 
-每个机构 v 的直接转诊通道在本地以端口 1 到 deg(v) 的整数编号标识，编号固定但对你未知；不同机构的端口编号彼此无关。
+公开协作网络：
+- 转诊通道（边列表）：{edges}
+- 各科室床位负载率：{features}
+- 重点评估科室 T = {target}（保证存在上级调配科室）
 
-你从首诊机构 S 开始。系统保证：
-- 存在唯一一个医疗调度中心 H，使得 E(H) 严格最大。
-- 对任意非 H 的机构 u，如果 w 是 u 到 H 的唯一路径上的相邻下一机构，则 E(w) 大于 E(u)（即沿着指向 H 的路径，区域协同救治能力严格单调上升）。
+交互审计平台：
 
-你的目标是通过尽可能少的交互次数，找到并宣告这个唯一使 E(v) 最大的医疗调度中心 H。
+1. 信息检索（不限次数）：
+   - 通道查询：查询科室 x 的所有相邻协作科室列表
+   - 负载查询：查询科室 x 的床位负载率 s(x)
 
-你可以反复向我提出以下五类操作（每次仅限一个操作），我会根据真实医疗网络状态如实回答：
+2. 档案调阅（总计不超过 {quota} 次）：
+   - 隶属验证：询问"科室 u 是科室 x 的上级调配科室吗？"（要求 x 不等于 T 且 u 是 x 的相邻科室）
+   - 直接溯源：询问"科室 x 的上级调配科室是哪个？"（要求 x 不等于 T）
+   - 若请求非法（如针对 T 调阅或询问无通道的科室），返回"非法请求"，不计入配额。
 
-1. 询问转诊通道数：询问当前机构的度数（直接相连的机构数量）。回答一个非负整数。
-2. 询问救治能力：询问当前机构的 E 值。回答一个正整数。
-3. 移动：沿当前机构的第 j 号端口通道前往相邻机构。若通道存在则返回"已移动"，否则返回"无此端口"且位置不变。
-4. 回退：返回到上一个就诊机构。若可以回退则返回"已返回"，否则返回"无法返回"。
-5. 宣告：宣告当前机构为医疗调度中心 H。若正确则任务成功，否则失败。
+3. 最终结论（结束交互）：
+   - 提交"重点评估科室 T 的上级调配科室是 u"（要求 u 是 T 的相邻科室）
 
-## 询问与宣告的格式（必须严格遵守）
+目标：
+在尽可能少的档案调阅次数下，通过对其他科室的层级关系进行归纳，推断隐藏的局部资源调配机制，并据此唯一确定重点评估科室 T 的上级调配科室 p(T)。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 询问转诊通道数（度数）：
-<query_degree></query_degree>
+- 通道查询（例如查询科室 5 的协作科室）：
+<query_neighbors>5</query_neighbors>
 
-- 询问救治能力（E值）：
-<query_value></query_value>
+- 负载查询（例如查询科室 3 的床位负载率）：
+<query_feature>3</query_feature>
 
-- 移动到第 j 号端口通道（例如移动到端口 2）：
-<move>2</move>
+- 隶属验证（例如询问科室 2 是否是科室 5 的上级调配科室）：
+<query_is_parent>5,2</query_is_parent>
 
-- 回退到上一个就诊机构：
-<back></back>
+- 直接溯源（例如查询科室 4 的上级调配科室）：
+<query_parent>4</query_parent>
 
-- 宣告当前机构为目标：
-<answer></answer>
+提交最终结论时，必须说明重点评估科室 T 的上级科室编号，格式如下：
+<answer>6</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Regional Medical Synergy" referral network dispatch task. Here are the rules:
+Welcome to the Hospital Tiered Diagnosis and Resource Dispatch Analysis System. We are conducting a "Department Resource Allocation Chain Trace."
 
-Our tiered diagnosis and treatment network is structured as an unknown finite undirected tree T with {n} medical institution nodes. Given an emergency medical response distance limit K = {k}.
+The medical consortium is modeled as a collaboration tree of {n} clinical departments. Each department v has the following public attributes:
+- Unique department ID (from 1 to {n})
+- Bed Load Rate s(v)
+- Collaboration channels deg(v) (derived from the referral network)
 
-Define dist(u, v) as the minimum number of referral channels from institution u to v.
-Define function E(v) as the total number of institutions directly dispatchable from institution v within a distance of K (including v itself).
+Hidden Management Mechanism: There exists a globally consistent, hidden resource allocation rule f. Except for the core dispatch center (root node), each department v must select exactly one adjacent department via its referral channels as its primary allocation department p(v). This mechanism satisfies:
+- Local Decision-Making: p(v) is determined exclusively by the public attributes of v and its adjacent departments.
+- Determinism and Uniqueness: For every non-core department, p(v) is uniquely determined.
+- Global Consistency: The identical allocation rule applies to all departments in this assessment.
 
-Each institution v has direct referral channels locally identified by port numbers 1 to deg(v), where deg(v) is its degree. The numbering is fixed but unknown to you; port numbering at different institutions are independent.
+Public Collaboration Network:
+- Referral Channels (Edge List): {edges}
+- Bed Load Rate for each department: {features}
+- Target Evaluation Department T = {target} (guaranteed to have a primary allocation department)
 
-You start at the initial diagnostic institution S. The system guarantees:
-- There exists a unique medical dispatch center H such that E(H) is strictly maximum.
-- For any institution u not equal to H, if w is the adjacent next institution on the unique path from u to H, then E(w) is greater than E(u) (strictly monotonically increasing regional synergistic treatment capacity along the path toward H).
+Interactive Audit Platform:
 
-Your goal is to find and declare the unique medical dispatch center H that maximizes E(v) using as few interactions as possible.
+1. Information Retrieval (Unlimited):
+   - Channel Query: Ask for the adjacent collaborating departments of department x
+   - Load Query: Ask for the Bed Load Rate s(x) of department x
 
-You can repeatedly perform one of the following five operations (one per turn), and I will respond truthfully based on the actual medical network state:
+2. File Review (Total limit: {quota}):
+   - Affiliation Verification: Ask "Is department u the primary allocation department of x?" (requires x ≠ T and u is adjacent to x)
+   - Direct Trace: Ask "Which is the primary allocation department of x?" (requires x ≠ T)
+   - Invalid requests (e.g., reviewing T or non-adjacent departments) return "Illegal request" and do not consume the quota.
 
-1. Query degree: Ask for the degree of the current institution (number of directly connected institutions). Answer is a non-negative integer.
-2. Query value: Ask for the E value (regional synergistic treatment capacity) of the current institution. Answer is a positive integer.
-3. Move: Move along the j-th port channel of the current institution to an adjacent institution. Returns "Moved" if the port exists, otherwise "No such port" and position remains unchanged.
-4. Back: Return to the previous institution. Returns "Returned" if possible, otherwise "Cannot return".
-5. Declare: Declare the current institution as the target medical dispatch center H. Task succeeds if correct, otherwise fails.
+3. Final Conclusion (Ends interaction):
+   - Submit "The primary allocation department for target T is u" (requires u to be adjacent to T)
 
-## Query and Declaration Format (strictly required)
+Goal:
+Using minimal file reviews, deduce the hidden local resource allocation mechanism from hierarchical relationships of other departments, thereby uniquely identifying the primary allocation department p(T) for target T.
 
-Each operation must contain only one tag. Use the following XML format:
+Each query must contain only one XML tag:
 
-- Query degree (number of referral channels):
-<query_degree></query_degree>
+- Channel Query:
+<query_neighbors>5</query_neighbors>
 
-- Query value (synergistic treatment capacity):
-<query_value></query_value>
+- Load Query:
+<query_feature>3</query_feature>
 
-- Move to port j channel (e.g., move to port 2):
-<move>2</move>
+- Affiliation Verification:
+<query_is_parent>5,2</query_is_parent>
 
-- Back to previous institution:
-<back></back>
+- Direct Trace:
+<query_parent>4</query_parent>
 
-- Declare current institution as target:
-<answer></answer>
+When submitting the final conclusion, specify the ID of the primary allocation department for target T:
+<answer>6</answer>
 """
 
-    # ==========================================
-    # 场景 3：教育
-    # ==========================================
     contextualized_rule_zh_3 = """\
-欢迎进入“教育资源共享”网络优化任务，规则如下：
+欢迎使用区域教育质量监控与协同平台。我们需要完成"跨学科教研牵头组识别"任务。
 
-我们的区域教育网络构建为一棵未知的有限无向树 T，学校节点数为 {n}。给定资源调拨允许的最大传递层级 K = {k}。
+区域教研网络构成了一棵包含 {n} 个教研组的协同树。每个教研组 v 具有以下公开属性：
+- 唯一教研组代码（范围 1 到 {n}）
+- 综合教研指数 s(v)
+- 协同伙伴数 deg(v)（由教研网络拓扑可得）
 
-定义距离 dist(u, v) 为网络中学校 u 到 v 的最少共享专线数。
-定义指标 E(v) 为从学校 v 出发，在不超过 K 个层级内能共享到的学校总数（包括 v 自己）。
+隐藏协同机制：平台存在一个全局一致但隐藏的牵头组分配规则 f。除总指导中心（根节点）外，每个教研组 v 必须在其协作伙伴中，选择且仅选择一个作为其牵头教研组 p(v)。该机制满足：
+- 局部评估：p(v) 仅由教研组 v 及其伙伴的公开属性（如代码、s(·)、deg(·) 的确定性组合）决定。
+- 确定性与唯一性：对于每个非中心教研组，p(v) 唯一确定。
+- 全局统一：当前学期内所有教研组均适用该规则，不随查询改变。
 
-每个学校 v 的共享专线在本地以端口 1 到 deg(v) 的整数编号标识，编号固定但对你未知；不同学校的端口编号彼此无关。
+公开教研网络：
+- 协同链路（边列表）：{edges}
+- 各组综合教研指数：{features}
+- 待定位教研组 T = {target}（保证存在牵头教研组）
 
-你从起始学校 S 开始访问。系统保证：
-- 存在唯一一个主教育资源汇聚中心 H，使得 E(H) 严格最大。
-- 对任意非 H 的学校 u，如果 w 是 u 到 H 的唯一路径上的相邻下一学校，则 E(w) 大于 E(u)（即沿着指向 H 的路径，教育资源辐射力严格单调上升）。
+交互调研系统：
 
-你的目标是通过尽可能少的交互次数，找到并宣告这个唯一使 E(v) 最大的汇聚中心 H。
+1. 网络及指标查询（不限次数）：
+   - 伙伴查询：查询教研组 x 的所有协作伙伴列表
+   - 指数查询：查询教研组 x 的综合教研指数 s(x)
 
-你可以反复向我提出以下五类操作（每次仅限一个操作），我会根据真实网络状态如实回答：
+2. 调研抽测（总计不超过 {quota} 次）：
+   - 牵头验证：询问"教研组 u 是教研组 x 的牵头教研组吗？"（要求 x 不等于 T 且 u 是 x 的协作伙伴）
+   - 直接定级：询问"教研组 x 的牵头教研组是哪个？"（要求 x 不等于 T）
+   - 若请求非法（如针对 T 抽测或询问非伙伴），返回"非法请求"，不计入配额。
 
-1. 询问共享专线数：询问当前学校的度数（直接合作的学校数量）。回答一个非负整数。
-2. 询问辐射力：询问当前学校的 E 值。回答一个正整数。
-3. 移动：通过当前学校的第 j 号端口专线访问相邻学校。若专线存在则返回"已移动"，否则返回"无此端口"且位置不变。
-4. 回退：撤回到上一个访问的学校。若可以回退则返回"已返回"，否则返回"无法返回"。
-5. 宣告：确立当前学校为主教育资源汇聚中心 H。若正确则任务成功，否则失败。
+3. 最终报告（结束交互）：
+   - 提交"待定位教研组 T 的牵头教研组是 u"（要求 u 是 T 的协作伙伴）
 
-## 询问与宣告的格式（必须严格遵守）
+目标：
+在尽可能少的调研抽测次数下，通过对其他教研组的指导关系进行归纳，推断隐藏的局部协同机制，并据此唯一确定待定位教研组 T 的牵头教研组 p(T)。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 询问共享专线数（度数）：
-<query_degree></query_degree>
+- 伙伴查询（例如查询教研组 5 的协作伙伴）：
+<query_neighbors>5</query_neighbors>
 
-- 询问辐射力（E值）：
-<query_value></query_value>
+- 指数查询（例如查询教研组 3 的综合教研指数）：
+<query_feature>3</query_feature>
 
-- 移动到第 j 号端口专线（例如移动到端口 2）：
-<move>2</move>
+- 牵头验证（例如询问教研组 2 是否是教研组 5 的牵头组）：
+<query_is_parent>5,2</query_is_parent>
 
-- 回退到上一个访问的学校：
-<back></back>
+- 直接定级（例如查询教研组 4 的牵头组）：
+<query_parent>4</query_parent>
 
-- 宣告当前学校为目标：
-<answer></answer>
+提交最终报告时，必须说明待定位教研组 T 的牵头教研组代码，格式如下：
+<answer>6</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Educational Resource Sharing" network optimization task. Here are the rules:
+Welcome to the Regional Education Quality Monitoring and Collaboration Platform. Our task is "Identifying the Lead Interdisciplinary Teaching Group."
 
-Our regional education network is built as an unknown finite undirected tree T with {n} school nodes. Given a maximum transmission tier limit for resource allocation K = {k}.
+The regional teaching research network forms a collaborative tree of {n} teaching groups. Each group v possesses these public attributes:
+- Unique group code (from 1 to {n})
+- Academic Index s(v)
+- Number of collaborative ties deg(v) (derived from the network topology)
 
-Define dist(u, v) as the minimum number of sharing dedicated lines from school u to v.
-Define function E(v) as the total number of schools that can be shared with from school v within K tiers (including v itself).
+Hidden Collaboration Mechanism: There is a globally consistent but hidden assignment rule f for lead groups. Excluding the central guidance center (root node), each group v must select exactly one of its collaborative partners as its lead teaching group p(v). This mechanism satisfies:
+- Local Evaluation: p(v) depends strictly on the public attributes of v and its partners.
+- Determinism and Uniqueness: For every non-central group, p(v) is uniquely fixed.
+- Global Uniformity: The same rule is enforced across all groups for the current semester.
 
-Each school v has sharing dedicated lines locally identified by port numbers 1 to deg(v), where deg(v) is its degree. The numbering is fixed but unknown to you; port numbering at different schools are independent.
+Public Teaching Network:
+- Collaborative Ties (Edge List): {edges}
+- Academic Index for each group: {features}
+- Target Teaching Group T = {target} (guaranteed to have a lead group)
 
-You start at the initial school S. The system guarantees:
-- There exists a unique main educational resource convergence center H such that E(H) is strictly maximum.
-- For any school u not equal to H, if w is the adjacent next school on the unique path from u to H, then E(w) is greater than E(u) (strictly monotonically increasing resource radiation capability along the path toward H).
+Interactive Survey System:
 
-Your goal is to find and declare the unique convergence center H that maximizes E(v) using as few interactions as possible.
+1. Network & Metric Queries (Unlimited):
+   - Partner Query: Ask for the collaborative partners of group x
+   - Index Query: Ask for the Academic Index s(x) of group x
 
-You can repeatedly perform one of the following five operations (one per turn), and I will respond truthfully based on the actual network state:
+2. Survey Sampling (Total limit: {quota}):
+   - Lead Verification: Ask "Is group u the lead teaching group of x?" (requires x ≠ T and u is a partner of x)
+   - Direct Classification: Ask "Which is the lead teaching group of x?" (requires x ≠ T)
+   - Invalid requests (e.g., sampling T or non-partners) return "Illegal request" without quota penalty.
 
-1. Query degree: Ask for the degree of the current school (number of directly cooperating schools). Answer is a non-negative integer.
-2. Query value: Ask for the E value (resource radiation capability) of the current school. Answer is a positive integer.
-3. Move: Visit an adjacent school through the j-th port dedicated line of the current school. Returns "Moved" if the line exists, otherwise "No such port" and position remains unchanged.
-4. Back: Withdraw to the previously visited school. Returns "Returned" if possible, otherwise "Cannot return".
-5. Declare: Establish the current school as the main educational resource convergence center H. Task succeeds if correct, otherwise fails.
+3. Final Report (Ends interaction):
+   - Submit "The lead teaching group for target T is u" (requires u to be a partner of T)
 
-## Query and Declaration Format (strictly required)
+Goal:
+With minimum survey samplings, generalize the hidden local collaboration mechanism from the guidance relationships of other groups to uniquely determine the lead teaching group p(T) of target T.
 
-Each operation must contain only one tag. Use the following XML format:
+Each query must contain only one XML tag:
 
-- Query degree (number of sharing dedicated lines):
-<query_degree></query_degree>
+- Partner Query:
+<query_neighbors>5</query_neighbors>
 
-- Query value (resource radiation capability):
-<query_value></query_value>
+- Index Query:
+<query_feature>3</query_feature>
 
-- Move to port j dedicated line (e.g., move to port 2):
-<move>2</move>
+- Lead Verification:
+<query_is_parent>5,2</query_is_parent>
 
-- Back to previous school:
-<back></back>
+- Direct Classification:
+<query_parent>4</query_parent>
 
-- Declare current school as target:
-<answer></answer>
+When submitting the final report, specify the group code of the lead teaching group for target T:
+<answer>6</answer>
 """
 
-    # ==========================================
-    # 场景 4：制造业/工业
-    # ==========================================
     contextualized_rule_zh_4 = """\
-欢迎进入“工业供应链”物流拓扑分析任务，规则如下：
+欢迎接入智能制造供应链追溯系统。请协助完成"核心供料流向回溯"任务。
 
-我们的工厂生产线物流拓扑构成了一棵未知的有限无向树 T，生产/仓储节点数为 {n}。给定物料配送的中转次数上限 K = {k}。
+工厂的物料流转网络呈现为一棵包含 {n} 个生产车间的树状结构。每个车间 v 具有以下公开属性：
+- 唯一车间代码（范围 1 到 {n}）
+- 标准产能 s(v)
+- 流转通道数 deg(v)（由物料链路可得）
 
-定义距离 dist(u, v) 为拓扑中节点 u 到 v 的最少运输线路数。
-定义指标 E(v) 为从节点 v 出发，在不超过 K 次中转的范围内能送达的节点总数（包括 v 自己）。
+隐藏流转协议：系统内置了一个全局一致但隐蔽的主供料线规则 f。除总仓（根节点）外，每个车间 v 必须在其相连的协作车间中，选择且仅选择一个作为其上游主供料车间 p(v)。该协议满足：
+- 局部逻辑：p(v) 仅由车间 v 及其相邻协作车间的公开属性（如代码、s(·)、deg(·) 的确定性组合）决定。
+- 确定性与唯一性：对于每个非总仓车间，p(v) 唯一确定。
+- 全局恒定：同一批次生产中所有车间执行相同供料规则，不随查询改变。
 
-每个节点 v 的运输线路在本地以端口 1 到 deg(v) 的整数编号标识，编号固定但对你未知；不同节点的端口编号彼此无关。
+公开展板数据：
+- 物料链路（边列表）：{edges}
+- 各车间标准产能：{features}
+- 异常排查车间 T = {target}（保证存在主供料车间）
 
-你从起始节点 S 开始排查。系统保证：
-- 存在唯一一个主干仓储分发中心 H，使得 E(H) 严格最大。
-- 对任意非 H 的节点 u，如果 w 是 u 到 H 的唯一路径上的相邻下一节点，则 E(w) 大于 E(u)（即沿着指向 H 的路径，物流覆盖度严格单调上升）。
+交互追溯控制台：
 
-你的目标是通过尽可能少的交互次数，找到并宣告这个唯一使 E(v) 最大的主干仓储分发中心 H。
+1. 链路与产能查询（不限次数）：
+   - 通道查询：查询车间 x 的所有协作车间列表
+   - 产能查询：查询车间 x 的标准产能 s(x)
 
-你可以反复向我提出以下五类操作（每次仅限一个操作），我会根据真实物流拓扑如实回答：
+2. 流向探测（总计不超过 {quota} 次）：
+   - 供料核验：询问"车间 u 是车间 x 的主供料车间吗？"（要求 x 不等于 T 且 u 是 x 的协作车间）
+   - 线路读取：询问"车间 x 的主供料车间是哪个？"（要求 x 不等于 T）
+   - 若请求非法（如针对 T 探测或跨通道询问），返回"非法请求"，不计入配额。
 
-1. 询问运输线数：询问当前节点的度数（直接相连的节点数量）。回答一个非负整数。
-2. 询问物流覆盖度：询问当前节点的 E 值。回答一个正整数。
-3. 移动：沿当前节点的第 j 号端口线路前往相邻节点。若线路存在则返回"已移动"，否则返回"无此端口"且位置不变。
-4. 回退：退回上一个物流节点。若可以回退则返回"已返回"，否则返回"无法返回"。
-5. 宣告：确认该节点为主干仓储分发中心 H。若正确则任务成功，否则失败。
+3. 最终定位（结束交互）：
+   - 提交"异常排查车间 T 的主供料车间是 u"（要求 u 是 T 的协作车间）
 
-## 询问与宣告的格式（必须严格遵守）
+目标：
+在尽可能少的探测次数下，通过对正常车间的流向数据进行归纳，推断隐藏的局部供料协议，并据此唯一确定异常排查车间 T 的主供料车间 p(T)。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 询问运输线数（度数）：
-<query_degree></query_degree>
+- 通道查询（例如查询车间 5 的协作车间）：
+<query_neighbors>5</query_neighbors>
 
-- 询问物流覆盖度（E值）：
-<query_value></query_value>
+- 产能查询（例如查询车间 3 的标准产能）：
+<query_feature>3</query_feature>
 
-- 移动到第 j 号端口线路（例如移动到端口 2）：
-<move>2</move>
+- 供料核验（例如询问车间 2 是否是车间 5 的主供料车间）：
+<query_is_parent>5,2</query_is_parent>
 
-- 回退到上一个物流节点：
-<back></back>
+- 线路读取（例如查询车间 4 的主供料车间）：
+<query_parent>4</query_parent>
 
-- 宣告当前节点为目标：
-<answer></answer>
+提交最终定位时，必须说明异常车间 T 的主供料车间代码，格式如下：
+<answer>6</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing/Industry Scenario]
-Welcome to the "Industrial Supply Chain" logistics topology analysis task. Here are the rules:
+Welcome to the Smart Manufacturing Supply Chain Traceability System. Please assist in the "Core Supply Flow Traceback" task.
 
-Our factory production line logistics topology forms an unknown finite undirected tree T with {n} production/storage nodes. Given a maximum number of transits for material delivery K = {k}.
+The factory's material flow network is structured as a tree of {n} production workshops. Each workshop v has the following public attributes:
+- Unique workshop code (from 1 to {n})
+- Standard Capacity s(v)
+- Material flow channels deg(v) (derived from material links)
 
-Define dist(u, v) as the minimum number of transport routes from node u to v.
-Define function E(v) as the total number of nodes reachable from node v within K transits (including v itself).
+Hidden Flow Protocol: The system utilizes a globally consistent but concealed primary supply line rule f. Aside from the main warehouse (root node), each workshop v must select exactly one adjacent collaborative workshop as its primary supply workshop p(v). This protocol satisfies:
+- Local Logic: p(v) is entirely determined by the public attributes of v and its adjacent workshops.
+- Determinism and Uniqueness: For every non-main warehouse, p(v) is exclusively determined.
+- Global Constancy: All workshops in the same production batch execute the identical supply rule.
 
-Each node v has transport routes locally identified by port numbers 1 to deg(v), where deg(v) is its degree. The numbering is fixed but unknown to you; port numbering at different nodes are independent.
+Public Dashboard Data:
+- Material Links (Edge List): {edges}
+- Standard Capacity for each workshop: {features}
+- Anomaly Inspection Workshop T = {target} (guaranteed to have a primary supply workshop)
 
-You start at the initial node S. The system guarantees:
-- There exists a unique backbone storage distribution center H such that E(H) is strictly maximum.
-- For any node u not equal to H, if w is the adjacent next node on the unique path from u to H, then E(w) is greater than E(u) (strictly monotonically increasing logistics coverage along the path toward H).
+Interactive Traceback Console:
 
-Your goal is to find and declare the unique backbone storage distribution center H that maximizes E(v) using as few interactions as possible.
+1. Link and Capacity Queries (Unlimited):
+   - Channel Query: Ask for the adjacent collaborative workshops of workshop x
+   - Capacity Query: Ask for the Standard Capacity s(x) of workshop x
 
-You can repeatedly perform one of the following five operations (one per turn), and I will respond truthfully based on the actual logistics topology:
+2. Flow Probing (Total limit: {quota}):
+   - Supply Verification: Ask "Is workshop u the primary supply workshop of x?" (requires x ≠ T and u is adjacent to x)
+   - Route Reading: Ask "Which is the primary supply workshop of x?" (requires x ≠ T)
+   - Invalid requests (e.g., probing T or unlinked workshops) return "Illegal request" and do not use up quota.
 
-1. Query degree: Ask for the degree of the current node (number of directly connected nodes). Answer is a non-negative integer.
-2. Query value: Ask for the E value (logistics coverage) of the current node. Answer is a positive integer.
-3. Move: Proceed to an adjacent node along the j-th port route of the current node. Returns "Moved" if the route exists, otherwise "No such port" and position remains unchanged.
-4. Back: Return to the previous logistics node. Returns "Returned" if possible, otherwise "Cannot return".
-5. Declare: Confirm the current node as the backbone storage distribution center H. Task succeeds if correct, otherwise fails.
+3. Final Localization (Ends interaction):
+   - Submit "The primary supply workshop for target T is u" (requires u to be adjacent to T)
 
-## Query and Declaration Format (strictly required)
+Goal:
+With the fewest probing attempts, induce the hidden local supply protocol from the flow data of normal workshops, thereby definitively localizing the primary supply workshop p(T) of the anomaly inspection workshop T.
 
-Each operation must contain only one tag. Use the following XML format:
+Each query must contain only one XML tag:
 
-- Query degree (number of transport routes):
-<query_degree></query_degree>
+- Channel Query:
+<query_neighbors>5</query_neighbors>
 
-- Query value (logistics coverage):
-<query_value></query_value>
+- Capacity Query:
+<query_feature>3</query_feature>
 
-- Move to port j route (e.g., move to port 2):
-<move>2</move>
+- Supply Verification:
+<query_is_parent>5,2</query_is_parent>
 
-- Back to previous logistics node:
-<back></back>
+- Route Reading:
+<query_parent>4</query_parent>
 
-- Declare current node as target:
-<answer></answer>
+When submitting the final localization, specify the code of the primary supply workshop for target T:
+<answer>6</answer>
 """
 
-    # ==========================================
-    # 场景 5：法律
-    # ==========================================
     contextualized_rule_zh_5 = """\
-欢迎进入“司法协作网络”线索追踪任务，规则如下：
+欢迎进入司法管辖权与案件移交分析系统。我们需要进行"上诉复核管辖地推演"。
 
-我们的司法管辖协作网络被映射为一棵未知的有限无向树 T，司法机关节点数为 {n}。给定协查权限允许的传递层级 K = {k}。
+区域司法网络被梳理为一棵包含 {n} 个法庭的层级树。每个法庭 v 具有以下公开属性：
+- 唯一机构代码（范围 1 到 {n}）
+- 案件积压指数 s(v)
+- 协作通道数 deg(v)（由司法联络网可得）
 
-定义距离 dist(u, v) 为网络中机关 u 到 v 的最少协查通道数。
-定义指标 E(v) 为从机关 v出发，在不超过 K 个层级内可发起协查请求的机关总数（包括 v 自己）。
+隐藏司法解释：司法体系中存在一个全局一致但未公开的上诉移交规则 f。除最高法院（根节点）外，每个法庭 v 必须在其具有联络通道的相邻法庭中，选择且仅选择一个作为其上级复核法院 p(v)。该机制满足：
+- 局部法定：p(v) 仅由法庭 v 及其相邻法庭的公开属性（如代码、s(·)、deg(·) 的确定性组合）决定。
+- 确定性与唯一性：对于每个下级法庭，p(v) 唯一确定。
+- 全局适用：同一司法周期内所有法庭遵从该移交规则，不随查询改变。
 
-每个机关 v 的直接协查通道在本地以端口 1 到 deg(v) 的整数编号标识，编号固定但对你未知；不同机关的端口编号彼此无关。
+公开司法网络：
+- 联络通道（边列表）：{edges}
+- 各法庭案件积压指数：{features}
+- 争议法庭 T = {target}（保证存在上级复核法院）
 
-你从首个接入的机关 S 开始调查。系统保证：
-- 存在唯一一个案件联合指挥中心 H，使得 E(H) 严格最大。
-- 对任意非 H 的机关 u，如果 w 是 u 到 H 的唯一路径上的相邻下一机关，则 E(w) 大于 E(u)（即沿着指向 H 的路径，协查覆盖广度严格单调上升）。
+交互质证系统：
 
-你的目标是通过尽可能少的交互次数，找到并宣告这个唯一使 E(v) 最大的案件联合指挥中心 H。
+1. 案卷信息调取（不限次数）：
+   - 通道查询：查询法庭 x 的所有相邻法庭列表
+   - 积压查询：查询法庭 x 的案件积压指数 s(x)
 
-你可以反复向我提出以下五类操作（每次仅限一个操作），我会根据真实司法网络状态如实回答：
+2. 判例查阅（总计不超过 {quota} 次）：
+   - 移交质证：询问"法庭 u 是法庭 x 的上级复核法院吗？"（要求 x 不等于 T 且 u 是 x 的相邻法庭）
+   - 直接释明：询问"法庭 x 的上级复核法院是哪个？"（要求 x 不等于 T）
+   - 若请求非法（如针对 T 查阅或跨区询问），返回"非法请求"，不计入配额。
 
-1. 询问协查通道数：询问当前机关的度数（直接协作的机关数量）。回答一个非负整数。
-2. 询问协查广度：询问当前机关的 E 值。回答一个正整数。
-3. 移动：沿当前机关的第 j 号端口通道前往相邻司法机关。若通道存在则返回"已移动"，否则返回"无此端口"且位置不变。
-4. 回退：撤回到上一个请求机关。若可以回退则返回"已返回"，否则返回"无法返回"。
-5. 宣告：确定该机关为案件联合指挥中心 H。若正确则任务成功，否则失败。
+3. 最终裁定（结束交互）：
+   - 提交"争议法庭 T 的上级复核法院是 u"（要求 u 是 T 的相邻法庭）
 
-## 询问与宣告的格式（必须严格遵守）
+目标：
+在尽可能少的判例查阅次数下，通过对其他法庭的移交实例进行归纳，推断隐藏的管辖地指派规则，并据此唯一确定争议法庭 T 的上级复核法院 p(T)。
 
-每次操作只能包含一个标签。请使用以下 XML 格式：
+每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 询问协查通道数（度数）：
-<query_degree></query_degree>
+- 通道查询（例如查询法庭 5 的相邻法庭）：
+<query_neighbors>5</query_neighbors>
 
-- 询问协查广度（E值）：
-<query_value></query_value>
+- 积压查询（例如查询法庭 3 的案件积压指数）：
+<query_feature>3</query_feature>
 
-- 移动到第 j 号端口通道（例如移动到端口 2）：
-<move>2</move>
+- 移交质证（例如询问法庭 2 是否是法庭 5 的复核法院）：
+<query_is_parent>5,2</query_is_parent>
 
-- 回退到上一个请求机关：
-<back></back>
+- 直接释明（例如查询法庭 4 的复核法院）：
+<query_parent>4</query_parent>
 
-- 宣告当前机关为目标：
-<answer></answer>
+提交最终裁定时，必须说明争议法庭 T 的复核法院代码，格式如下：
+<answer>6</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the "Judicial Collaboration Network" clue tracking task. Here are the rules:
+[Legal Scenario]
+Welcome to the Jurisdiction and Case Transfer Analysis System. We need to conduct an "Appellate Jurisdiction Deduction."
 
-Our judicial jurisdiction collaboration network is mapped as an unknown finite undirected tree T with {n} judicial authority nodes. Given a transmission tier limit permitted by investigation authority K = {k}.
+The regional judicial network is organized as a hierarchical tree of {n} courts. Each court v possesses these public attributes:
+- Unique institution code (from 1 to {n})
+- Case Backlog Index s(v)
+- Judicial collaboration channels deg(v) (derived from the judicial liaison network)
 
-Define dist(u, v) as the minimum number of investigation channels from authority u to v.
-Define function E(v) as the total number of authorities that can be requested for joint investigation from authority v within K tiers (including v itself).
+Hidden Judicial Interpretation: There is a globally consistent but undisclosed appellate transfer rule f within the system. Except for the Supreme Court (root node), each court v must select exactly one adjacent court with a liaison channel as its appellate court p(v). This mechanism satisfies:
+- Local Statutory Basis: p(v) is strictly determined by the public attributes of v and its adjacent courts.
+- Determinism and Uniqueness: For every subordinate court, p(v) is unequivocally established.
+- Global Applicability: All courts abide by this transfer rule within the current judicial cycle.
 
-Each authority v has direct investigation channels locally identified by port numbers 1 to deg(v), where deg(v) is its degree. The numbering is fixed but unknown to you; port numbering at different authorities are independent.
+Public Judicial Network:
+- Liaison Channels (Edge List): {edges}
+- Case Backlog Index for each court: {features}
+- Disputed Court T = {target} (guaranteed to have an appellate court)
 
-You start at the initial accessed authority S. The system guarantees:
-- There exists a unique joint case command center H such that E(H) is strictly maximum.
-- For any authority u not equal to H, if w is the adjacent next authority on the unique path from u to H, then E(w) is greater than E(u) (strictly monotonically increasing investigation coverage breadth along the path toward H).
+Interactive Cross-Examination System:
 
-Your goal is to find and declare the unique joint case command center H that maximizes E(v) using as few interactions as possible.
+1. Case File Retrieval (Unlimited):
+   - Channel Query: Ask for the adjacent courts of court x
+   - Backlog Query: Ask for the Case Backlog Index s(x) of court x
 
-You can repeatedly perform one of the following five operations (one per turn), and I will respond truthfully based on the actual judicial network state:
+2. Precedent Review (Total limit: {quota}):
+   - Transfer Examination: Ask "Is court u the appellate court of x?" (requires x ≠ T and u is adjacent to x)
+   - Direct Clarification: Ask "Which is the appellate court of x?" (requires x ≠ T)
+   - Invalid requests (e.g., reviewing T or non-adjacent courts) return "Illegal request" and are exempt from quota limits.
 
-1. Query degree: Ask for the degree of the current authority (number of directly collaborating authorities). Answer is a non-negative integer.
-2. Query value: Ask for the E value (investigation coverage breadth) of the current authority. Answer is a positive integer.
-3. Move: Proceed to an adjacent judicial authority along the j-th port channel of the current authority. Returns "Moved" if the channel exists, otherwise "No such port" and position remains unchanged.
-4. Back: Withdraw to the previously requesting authority. Returns "Returned" if possible, otherwise "Cannot return".
-5. Declare: Determine the current authority as the joint case command center H. Task succeeds if correct, otherwise fails.
+3. Final Ruling (Ends interaction):
+   - Submit "The appellate court for the disputed court T is u" (requires u to be adjacent to T)
 
-## Query and Declaration Format (strictly required)
+Goal:
+Using minimal precedent reviews, infer the hidden jurisdictional assignment rule from transfer instances of other courts, and thereby uniquely adjudicate the appellate court p(T) for the disputed court T.
 
-Each operation must contain only one tag. Use the following XML format:
+Each query must contain only one XML tag:
 
-- Query degree (number of investigation channels):
-<query_degree></query_degree>
+- Channel Query:
+<query_neighbors>5</query_neighbors>
 
-- Query value (investigation coverage breadth):
-<query_value></query_value>
+- Backlog Query:
+<query_feature>3</query_feature>
 
-- Move to port j channel (e.g., move to port 2):
-<move>2</move>
+- Transfer Examination:
+<query_is_parent>5,2</query_is_parent>
 
-- Back to previous requesting authority:
-<back></back>
+- Direct Clarification:
+<query_parent>4</query_parent>
 
-- Declare current authority as target:
-<answer></answer>
+When submitting the final ruling, specify the code of the appellate court for the disputed court T:
+<answer>6</answer>
 """
 
-    tags = ["answer", "query_degree", "query_value", "move", "back"]
-    reasoning_type = "演绎推理"
-    data_structure = "树"
-    enable_counterfactual = False   # 设为 True 时开启反事实干预模式
+    tags = ["answer", "query_neighbors", "query_feature", "query_is_parent", "query_parent"]
 
-    # 难度配置：
-    # 1 (简单)       - N=5,  K=1, 简单链状结构
-    # 2 (中等偏下)   - N=7,  K=1, 简单树结构
-    # 3 (中等偏上)   - N=10, K=2, 中等复杂度树
-    # 4 (较难)       - N=12, K=2, 较复杂树结构
-    # 5 (难)         - N=15, K=2, 复杂树结构
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
                 "n": 5,
-                "k": 1,
-                # 简单链状：1-2-3-4-5，目标为中心节点3
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
-                "start": 1,
-                "target": 3,
+                "edges": "1-2,1-3,2-4,2-5",
+                "features": "1:10,2:5,3:8,4:3,5:7",
+                "target": 4,
+                "quota": 10,
+                "rule": "min_feature",
             },
             2: {
                 "n": 7,
-                "k": 1,
-                # 星形结构：4为中心，连接1,2,3,5,6,7
-                "edges": [(4, 1), (4, 2), (4, 3), (4, 5), (4, 6), (4, 7)],
-                "start": 1,
-                "target": 4,
+                "edges": "1-2,1-3,2-4,2-5,3-6,3-7",
+                "features": "1:15,2:10,3:12,4:8,5:20,6:5,7:18",
+                "target": 5,
+                "quota": 8,
+                "rule": "max_id",
             },
             3: {
-                "n": 10,
-                "k": 2,
-                # 中等树：5为中心节点
-                "edges": [(5, 3), (3, 1), (3, 2), (5, 7), (7, 6), (7, 8), (5, 9), (9, 4), (9, 10)],
-                "start": 1,
-                "target": 5,
+                "n": 8,
+                "edges": "1-2,1-3,2-4,3-5,3-6,4-7,4-8",
+                "features": "1:50,2:30,3:40,4:20,5:10,6:15,7:25,8:35",
+                "target": 6,
+                "quota": 7,
+                "rule": "max_degree",
             },
             4: {
-                "n": 12,
-                "k": 2,
-                # 较复杂树：6为中心节点
-                "edges": [(6, 3), (3, 1), (3, 2), (6, 8), (8, 7), (8, 9), (6, 11), (11, 10), (11, 12), (6, 4), (4, 5)],
-                "start": 1,
-                "target": 6,
+                "n": 9,
+                "edges": "1-2,1-3,2-4,2-5,3-6,4-7,5-8,6-9",
+                "features": "1:100,2:95,3:105,4:92,5:98,6:108,7:90,8:96,9:110",
+                "target": 7,
+                "quota": 6,
+                "rule": "min_diff",
             },
             5: {
-                "n": 15,
-                "k": 2,
-                # 复杂树：8为中心节点
-                "edges": [(8, 5), (5, 2), (2, 1), (5, 3), (3, 4), (8, 10), (10, 9), (10, 11), (11, 12), 
-                         (8, 14), (14, 13), (14, 15), (8, 6), (6, 7)],
-                "start": 1,
-                "target": 8,
+                "n": 12,
+                "edges": "1-2,1-3,2-4,2-5,3-6,3-7,4-8,5-9,6-10,7-11,8-12",
+                "features": "1:20,2:15,3:25,4:10,5:18,6:22,7:30,8:12,9:16,10:28,11:35,12:8",
+                "target": 9,
+                "quota": 5,
+                "rule": "max_feature_plus_degree",
             },
         },
         "en": {
             1: {
                 "n": 5,
-                "k": 1,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
-                "start": 1,
-                "target": 3,
+                "edges": "1-2,1-3,2-4,2-5",
+                "features": "1:10,2:5,3:8,4:3,5:7",
+                "target": 4,
+                "quota": 10,
+                "rule": "min_feature",
             },
             2: {
                 "n": 7,
-                "k": 1,
-                "edges": [(4, 1), (4, 2), (4, 3), (4, 5), (4, 6), (4, 7)],
-                "start": 1,
-                "target": 4,
+                "edges": "1-2,1-3,2-4,2-5,3-6,3-7",
+                "features": "1:15,2:10,3:12,4:8,5:20,6:5,7:18",
+                "target": 5,
+                "quota": 8,
+                "rule": "max_id",
             },
             3: {
-                "n": 10,
-                "k": 2,
-                "edges": [(5, 3), (3, 1), (3, 2), (5, 7), (7, 6), (7, 8), (5, 9), (9, 4), (9, 10)],
-                "start": 1,
-                "target": 5,
+                "n": 8,
+                "edges": "1-2,1-3,2-4,3-5,3-6,4-7,4-8",
+                "features": "1:50,2:30,3:40,4:20,5:10,6:15,7:25,8:35",
+                "target": 6,
+                "quota": 7,
+                "rule": "max_degree",
             },
             4: {
-                "n": 12,
-                "k": 2,
-                "edges": [(6, 3), (3, 1), (3, 2), (6, 8), (8, 7), (8, 9), (6, 11), (11, 10), (11, 12), (6, 4), (4, 5)],
-                "start": 1,
-                "target": 6,
+                "n": 9,
+                "edges": "1-2,1-3,2-4,2-5,3-6,4-7,5-8,6-9",
+                "features": "1:100,2:95,3:105,4:92,5:98,6:108,7:90,8:96,9:110",
+                "target": 7,
+                "quota": 6,
+                "rule": "min_diff",
             },
             5: {
-                "n": 15,
-                "k": 2,
-                "edges": [(8, 5), (5, 2), (2, 1), (5, 3), (3, 4), (8, 10), (10, 9), (10, 11), (11, 12), 
-                         (8, 14), (14, 13), (14, 15), (8, 6), (6, 7)],
-                "start": 1,
-                "target": 8,
+                "n": 12,
+                "edges": "1-2,1-3,2-4,2-5,3-6,3-7,4-8,5-9,6-10,7-11,8-12",
+                "features": "1:20,2:15,3:25,4:10,5:18,6:22,7:30,8:12,9:16,10:28,11:35,12:8",
+                "target": 9,
+                "quota": 5,
+                "rule": "max_feature_plus_degree",
             },
         },
     }
@@ -659,9 +740,11 @@ Each operation must contain only one tag. Use the following XML format:
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：构建树结构、计算E值、设置起始位置"""
         lang = self.config.language
         diff = self.config.difficulty
+
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -670,201 +753,201 @@ Each operation must contain only one tag. Use the following XML format:
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         self._game_info["n"] = cfg["n"]
-        self._game_info["k"] = cfg["k"]
+        self._game_info["target"] = cfg["target"]
+        self._game_info["quota"] = cfg["quota"]
         
-        n = cfg["n"]
-        k = cfg["k"]
-        edges = cfg["edges"]
+        self.edges = []
+        self.adj = {}
+        for i in range(1, cfg["n"] + 1):
+            self.adj[i] = []
         
-        # 构建邻接表（节点从1到n）
-        self.adj = {i: [] for i in range(1, n + 1)}
-        for u, v in edges:
+        for edge_str in cfg["edges"].split(","):
+            u, v = map(int, edge_str.split("-"))
+            self.edges.append((u, v))
             self.adj[u].append(v)
             self.adj[v].append(u)
         
-        # 为每个节点的邻居分配端口编号（使用固定种子以保证可复现性）
-        self.ports = {}  # ports[node] = {port_num: neighbor_node}
-        rng = random.Random(42)
-        for node in range(1, n + 1):
-            neighbors = sorted(self.adj[node])  # 先排序保证确定性输入
-            rng.shuffle(neighbors)  # 使用固定种子的随机数生成器
-            self.ports[node] = {i + 1: neighbors[i] for i in range(len(neighbors))}
+        self._game_info["edges"] = cfg["edges"]
         
-        # 计算每个节点的E值（BFS计算K-邻域大小）
-        self.e_values = {}
-        for node in range(1, n + 1):
-            self.e_values[node] = self._calculate_e_value(node, k)
+        self.features = {}
+        for pair in cfg["features"].split(","):
+            node, feat = pair.split(":")
+            self.features[int(node)] = int(feat)
         
-        # 设置起始节点和目标节点
-        self.start_node = cfg["start"]
-        self.target_node = cfg["target"]
-        self.current_node = self.start_node
+        self._game_info["features"] = cfg["features"]
         
-        # 记录移动历史，用于回退
-        self.move_history = []  # 栈，存储(from_node, to_node)
+        self.degrees = {node: len(neighbors) for node, neighbors in self.adj.items()}
+        
+        self.rule_type = cfg["rule"]
+        self.parents = {}
+        self._compute_parents()
+        
+        self.target = cfg["target"]
+        
+        self.training_query_count = 0
+        self.quota = cfg["quota"]
 
-    def _calculate_e_value(self, start, k):
-        """BFS计算从start节点出发，距离小于等于k的节点数量"""
-        visited = {start: 0}
-        queue = deque([start])
-        count = 0
+    def _compute_parents(self):
+        root = 1
+        visited = {root}
+        queue = [root]
         
         while queue:
-            node = queue.popleft()
-            dist = visited[node]
-            count += 1
-            
-            if dist < k:
-                for neighbor in self.adj[node]:
-                    if neighbor not in visited:
-                        visited[neighbor] = dist + 1
-                        queue.append(neighbor)
+            node = queue.pop(0)
+            for neighbor in self.adj[node]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+                    self.parents[neighbor] = self._select_parent(neighbor, self.adj[neighbor])
+
+    def _select_parent(self, node, neighbors):
+        if self.rule_type == "min_feature":
+            return min(neighbors, key=lambda x: (self.features[x], x))
         
-        return count
-
-    def evaluate(self, parsed_info):
-        """评估答案：检查当前节点是否为目标节点"""
-        return self.current_node == self.target_node
-
-    def _cf_core_produce(self, parsed_info):
-        """原始的游戏响应逻辑"""
-        if self.config.language == "zh":
-            moved_msg = "已移动"
-            no_port_msg = "无此端口"
-            returned_msg = "已返回"
-            cannot_return_msg = "无法返回"
+        elif self.rule_type == "max_id":
+            return max(neighbors, key=lambda x: x)
+        
+        elif self.rule_type == "max_degree":
+            return max(neighbors, key=lambda x: (self.degrees[x], -x))
+        
+        elif self.rule_type == "min_diff":
+            return min(neighbors, key=lambda x: (abs(self.features[x] - self.features[node]), x))
+        
+        elif self.rule_type == "max_feature_plus_degree":
+            return max(neighbors, key=lambda x: (self.features[x] + self.degrees[x], -x))
+        
         else:
-            moved_msg = "Moved"
-            no_port_msg = "No such port"
-            returned_msg = "Returned"
-            cannot_return_msg = "Cannot return"
+            raise ValueError(f"Unknown rule type: {self.rule_type}")
 
-        # 优先级：query_degree > query_value > move > back
-        if "query_degree" in parsed_info:
-            # 返回当前节点的度数
-            degree = len(self.adj[self.current_node])
-            return str(degree)
-        
-        elif "query_value" in parsed_info:
-            # 返回当前节点的E值
-            return str(self.e_values[self.current_node])
-        
-        elif "move" in parsed_info:
-            # 尝试移动到指定端口
-            try:
-                port = int(parsed_info["move"].strip())
-                if port in self.ports[self.current_node]:
-                    next_node = self.ports[self.current_node][port]
-                    self.move_history.append((self.current_node, next_node))
-                    self.current_node = next_node
-                    return moved_msg
-                else:
-                    return no_port_msg
-            except (ValueError, KeyError):
-                return no_port_msg
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        由于游戏状态依赖当前节点位置，这里枚举所有节点上的所有操作。
-        """
-        results = []
+    def get_all_possible_queries(self) -> list:
+        queries = []
         n = self._game_info["n"]
 
-        if self.config.language == "zh":
-            moved_msg = "已移动"
-            no_port_msg = "无此端口"
-            returned_msg = "已返回"
-            cannot_return_msg = "无法返回"
-        else:
-            moved_msg = "Moved"
-            no_port_msg = "No such port"
-            returned_msg = "Returned"
-            cannot_return_msg = "Cannot return"
+        original_count = self.training_query_count
+        original_quota = self.quota
+        self.training_query_count = 0
+        self.quota = float('inf')
 
-        for node in range(1, n + 1):
-            # 1. query_degree：在节点 node 处询问度数
-            results.append({
-                "query": "<query_degree></query_degree>",
-                "answer": str(len(self.adj[node])),
-                "context": f"at_node={node}",
-            })
-
-            # 2. query_value：在节点 node 处询问E值
-            results.append({
-                "query": "<query_value></query_value>",
-                "answer": str(self.e_values[node]),
-                "context": f"at_node={node}",
-            })
-
-            # 3. move：枚举所有端口（有效端口 + 至少一个无效端口）
-            max_port = len(self.ports[node])
-            for port in range(1, max_port + 1):
-                # 有效端口
-                neighbor = self.ports[node][port]
-                results.append({
-                    "query": f"<move>{port}</move>",
-                    "answer": moved_msg,
-                    "context": f"at_node={node}",
-                })
-            # 一个必然无效的端口
-            invalid_port = max_port + 1
-            results.append({
-                "query": f"<move>{invalid_port}</move>",
-                "answer": no_port_msg,
-                "context": f"at_node={node}",
-            })
-
-            # 4. back：在节点 node 处回退
-            # 若 move_history 非空则可回退，否则不可
-            # 这里枚举两种情况
-            results.append({
-                "query": "<back></back>",
-                "answer": returned_msg,
-                "context": f"at_node={node},has_history=True",
-            })
-            results.append({
-                "query": "<back></back>",
-                "answer": cannot_return_msg,
-                "context": f"at_node={node},has_history=False",
-            })
-
-        return results
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """将正确的查询响应篡改为错误值，用于反事实干预"""
-        if self.config.language == "zh":
-            moved_msg = "已移动"
-            no_port_msg = "无此端口"
-            returned_msg = "已返回"
-            cannot_return_msg = "无法返回"
-        else:
-            moved_msg = "Moved"
-            no_port_msg = "No such port"
-            returned_msg = "Returned"
-            cannot_return_msg = "Cannot return"
-
-        # 移动结果取反
-        if correct == moved_msg:
-            return no_port_msg
-        if correct == no_port_msg:
-            return moved_msg
-
-        # 回退结果取反
-        if correct == returned_msg:
-            return cannot_return_msg
-        if correct == cannot_return_msg:
-            return returned_msg
-
-        # 数字类响应（度数或E值）：加1篡改
         try:
-            val = int(correct)
-            wrong = val + 1
-            # 避免与正确值相同（理论上不会，但保险起见）
-            if wrong == val:
-                wrong = val + 2
-            return str(wrong)
-        except ValueError:
-            pass
+            for node in range(1, n + 1):
+                if node in self.adj:
+                    q_str = f"<query_neighbors>{node}</query_neighbors>"
+                    answer = self._cf_core_produce({"query_neighbors": str(node)})
+                    queries.append({"query": q_str, "answer": answer})
 
+            for node in range(1, n + 1):
+                if node in self.features:
+                    q_str = f"<query_feature>{node}</query_feature>"
+                    answer = self._cf_core_produce({"query_feature": str(node)})
+                    queries.append({"query": q_str, "answer": answer})
+
+            for node in range(1, n + 1):
+                if node == self.target:
+                    continue
+                for candidate in self.adj.get(node, []):
+                    q_str = f"<query_is_parent>{node},{candidate}</query_is_parent>"
+                    answer = self._cf_core_produce({"query_is_parent": f"{node},{candidate}"})
+                    queries.append({"query": q_str, "answer": answer})
+
+            for node in range(1, n + 1):
+                if node == self.target:
+                    continue
+                if node in self.parents:
+                    q_str = f"<query_parent>{node}</query_parent>"
+                    answer = self._cf_core_produce({"query_parent": str(node)})
+                    queries.append({"query": q_str, "answer": answer})
+        finally:
+            self.training_query_count = original_count
+            self.quota = original_quota
+
+        return queries
+
+    def evaluate(self, parsed_info):
+        try:
+            answer_node = int(parsed_info["answer"].strip())
+            return answer_node == self.parents.get(self.target)
+        except:
+            return False
+
+    def _cf_core_produce(self, parsed_info):
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            illegal_res = "非法请求"
+            quota_exceeded_res = f"训练标注查询次数已超过配额 {self.quota}"
+        else:
+            yes_res, no_res = "Yes", "No"
+            illegal_res = "Illegal request"
+            quota_exceeded_res = f"Training label query quota {self.quota} exceeded"
+
+        if "query_neighbors" in parsed_info:
+            try:
+                node = int(parsed_info["query_neighbors"].strip())
+                if node not in self.adj:
+                    return illegal_res
+                neighbors = sorted(self.adj[node])
+                return ",".join(map(str, neighbors))
+            except:
+                return illegal_res
+
+        elif "query_feature" in parsed_info:
+            try:
+                node = int(parsed_info["query_feature"].strip())
+                if node not in self.features:
+                    return illegal_res
+                return str(self.features[node])
+            except:
+                return illegal_res
+
+        elif "query_is_parent" in parsed_info:
+            if self.training_query_count >= self.quota:
+                return quota_exceeded_res
+            
+            try:
+                raw = parsed_info["query_is_parent"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return illegal_res
+                node, candidate = int(parts[0]), int(parts[1])
+                
+                if node == self.target or candidate not in self.adj.get(node, []):
+                    return illegal_res
+                
+                self.training_query_count += 1
+                return yes_res if self.parents.get(node) == candidate else no_res
+            except:
+                return illegal_res
+
+        elif "query_parent" in parsed_info:
+            if self.training_query_count >= self.quota:
+                return quota_exceeded_res
+            
+            try:
+                node = int(parsed_info["query_parent"].strip())
+                
+                if node == self.target or node not in self.parents:
+                    return illegal_res
+                
+                self.training_query_count += 1
+                return str(self.parents[node])
+            except:
+                return illegal_res
+
+        else:
+            raise ValueError("No valid query tag found.")
+
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if self.config.language == "zh":
+            if correct == "是":
+                return "否"
+            elif correct == "否":
+                return "是"
+        else:
+            if correct.lower() == "yes":
+                return "No" if correct[0].isupper() else "no"
+            elif correct.lower() == "no":
+                return "Yes" if correct[0].isupper() else "yes"
+        
         return correct + "_WRONG"

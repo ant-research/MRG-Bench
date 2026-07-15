@@ -1,668 +1,539 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   单源距离和：从某节点到所有其他节点的最短距离之和是多少
-# ============================================================
-
 from .base import Game
 import random
+import re
+import itertools
 
-class HiddenGraphDistanceGame(Game):
-
-    reasoning_type = "演绎推理"
+class GraphIsolatedNodesGame(Game):
+    
+    reasoning_type = "归纳推理"
     data_structure = "图"
 
     game_rule_zh = """\
-我们来玩一个"隐藏图距离推理"游戏，规则如下：
+我们来玩一个"图孤立节点推理"游戏，规则如下：
 
-游戏设定了一个固定但未知的无向、无权、连通图 G，图中有 {n} 个顶点，顶点编号为 {vertex_list}。
-我已选定一个源点 s = {source}，你的目标是推断出从源点 s 到所有其他顶点的最短路径距离之和 S。
+游戏设定了一个未知的无向图 G，其中节点集合 V 包含编号 1 到 {n} 的节点，但边集合 E 是未知的。已知图中至少存在一个非孤立节点（度数大于等于1），且至少存在一个度数为 1 的节点。
 
-隐藏信息：图的边集合（即哪些顶点之间存在边）对你是未知的。
-已知信息：顶点数量、顶点列表、源点。
+我提供了 {num_testers} 个测试器（编号为 1 到 {num_testers}）。每个测试器 f 对任意节点 v 的响应由一个未知的布尔函数 P_f(度数) 决定，该函数满足以下性质：
+- 对度数为 0 的节点返回负反馈
+- 对度数单调不减（度数越高，越可能返回正反馈）
+- 至少存在一个测试器对所有度数大于等于 1 的节点都返回正反馈
 
-你可以通过以下五种查询来收集信息（每次只能进行一种查询）：
+你的目标是通过查询确定所有孤立节点（度数为 0 的节点）的精确集合。你可以使用以下三种查询方式（每次仅限一个查询）：
 
-1. **层波计数查询**：询问距离源点恰好为 t 的顶点数量，记为 L(t)。
-2. **累计覆盖查询**：询问距离源点不超过 t 的顶点总数，记为 C(t)。
-3. **相邻判定查询**：询问两个顶点 x 和 y 之间是否存在边。
-4. **度数查询**：询问某个顶点 x 的度数（即与它直接相连的边数）。
-5. **相对远近比较查询**：比较两个顶点 x 和 y 到源点的距离，判断哪个更近或是否等距。
+1. 探测查询：测试单个节点 v 在测试器 f 下的响应。返回"正反馈"或"负反馈"。
+2. 比较查询：比较两个节点 x 和 y 在测试器 f 下的响应。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
+3. 计数查询：统计节点集合 S 中有多少个节点在测试器 f 下返回正反馈。返回一个非负整数。
 
-你需要尽可能少地进行查询，最终给出距离和 S 的数值。
+当你收集足够信息后，请提交你认为的孤立节点集合。若答案正确则游戏成功；若错误，我会告知误报数（你提交的集合中实际非孤立的节点数）和漏报数（实际孤立但你未提交的节点数）。
 
-## 查询格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 探测查询（例如用测试器 2 探测节点 5）：
+<query_probe>v=5, f=2</query_probe>
 
-- 层波计数查询（例如询问距离为 2 的顶点数）：
-<query_layer>2</query_layer>
+- 比较查询（例如用测试器 1 比较节点 3 和 7）：
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- 累计覆盖查询（例如询问距离不超过 2 的顶点总数）：
-<query_cumulative>2</query_cumulative>
+- 计数查询（例如用测试器 3 统计节点集合 {{1,2,5}}）：
+<query_count>S=1,2,5, f=3</query_count>
 
-- 相邻判定查询（例如询问顶点 1 和顶点 3 是否相邻）：
-<query_adjacent>1,3</query_adjacent>
+提交最终答案时，列出所有孤立节点的编号（用逗号隔开，顺序不限）。如果认为没有孤立节点，提交空集：
 
-- 度数查询（例如询问顶点 5 的度数）：
-<query_degree>5</query_degree>
+<answer>isolated=1,3,5</answer>
 
-- 相对远近比较查询（例如比较顶点 2 和顶点 4 到源点的距离）：
-<query_compare>2,4</query_compare>
+或
 
-## 提交答案格式
-
-当你确定答案后，请提交距离和 S 的值：
-
-<answer>{answer_value}</answer>
-
-其中 {answer_value} 为你推断出的整数。
+<answer>isolated=</answer>
 """
 
     game_rule_en = """\
-Let's play a "Hidden Graph Distance Inference" game. Here are the rules:
+Let's play a "Graph Isolated Nodes Inference" game. Here are the rules:
 
-The game is based on a fixed but unknown undirected, unweighted, connected graph G with {n} vertices, labeled as {vertex_list}.
-I have selected a source vertex s = {source}. Your goal is to infer the sum S of shortest path distances from source s to all other vertices.
+The game involves an unknown undirected graph G, where the vertex set V contains nodes numbered from 1 to {n}, but the edge set E is unknown. It is known that the graph has at least one non-isolated node (degree greater than or equal to 1), and at least one node with degree 1.
 
-Hidden information: The edge set of the graph (i.e., which vertices are connected) is unknown to you.
-Known information: Number of vertices, vertex list, source vertex.
+I provide {num_testers} testers (numbered 1 to {num_testers}). Each tester f responds to any node v according to an unknown boolean function P_f(degree), which satisfies:
+- Returns negative feedback for nodes with degree 0
+- Monotone non-decreasing with respect to degree (higher degree is more likely to return positive feedback)
+- At least one tester returns positive feedback for all nodes with degree greater than or equal to 1
 
-You can collect information through the following five types of queries (only one query per turn):
+Your goal is to determine the exact set of isolated nodes (nodes with degree 0) through queries. You can use the following three query types (one query at a time):
 
-1. **Layer Count Query**: Ask for the number of vertices at exactly distance t from the source, denoted as L(t).
-2. **Cumulative Coverage Query**: Ask for the total number of vertices at distance at most t from the source, denoted as C(t).
-3. **Adjacency Query**: Ask whether there is an edge between two vertices x and y.
-4. **Degree Query**: Ask for the degree of a vertex x (i.e., the number of edges connected to it).
-5. **Distance Comparison Query**: Compare the distances of two vertices x and y from the source, determining which is closer or if they are equidistant.
+1. Probe Query: Test a single node v using tester f. Returns "positive" or "negative".
+2. Compare Query: Compare two nodes x and y using tester f. Returns "only x positive", "only y positive", "both positive", or "both negative".
+3. Count Query: Count how many nodes in set S return positive feedback using tester f. Returns a non-negative integer.
 
-You should perform as few queries as possible and finally provide the value of distance sum S.
-
-## Query Format (strictly required)
+When you have enough information, submit the set of isolated nodes you believe. If correct, the game succeeds; if wrong, I will tell you the number of false positives (non-isolated nodes you included) and false negatives (actual isolated nodes you missed).
 
 Each query must contain only one tag. Use the following XML format:
 
-- Layer Count Query (e.g., asking for vertices at distance 2):
-<query_layer>2</query_layer>
+- Probe Query (e.g., probe node 5 with tester 2):
+<query_probe>v=5, f=2</query_probe>
 
-- Cumulative Coverage Query (e.g., asking for vertices at distance at most 2):
-<query_cumulative>2</query_cumulative>
+- Compare Query (e.g., compare nodes 3 and 7 with tester 1):
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- Adjacency Query (e.g., asking if vertices 1 and 3 are adjacent):
-<query_adjacent>1,3</query_adjacent>
+- Count Query (e.g., count nodes {{1,2,5}} with tester 3):
+<query_count>S=1,2,5, f=3</query_count>
 
-- Degree Query (e.g., asking for the degree of vertex 5):
-<query_degree>5</query_degree>
+When submitting the final answer, list all isolated node IDs (comma-separated, order does not matter). If you believe there are no isolated nodes, submit an empty set:
 
-- Distance Comparison Query (e.g., comparing distances of vertices 2 and 4 from source):
-<query_compare>2,4</query_compare>
+<answer>isolated=1,3,5</answer>
 
-## Answer Submission Format
+or
 
-When you have determined the answer, submit the distance sum S:
-
-<answer>{answer_value}</answer>
-
-Where {answer_value} is the integer you inferred.
+<answer>isolated=</answer>
 """
 
-    # ================= 场景改造类属性 =================
-
-    # 场景 1：交通
     contextualized_rule_zh_1 = """\
-欢迎使用“城市物流调度系统”。
+我们来模拟一个"城市交通路网连通性排查"任务，规则如下：
 
-本系统监控着一个未知的连通物流网络 G，其中包含 {n} 个站点，编号为 {vertex_list}。
-我们已设定中央调度中心 s = {source}，你的目标是评估整体网络效率，即推断出从调度中心 s 到所有其他站点的最少中转跳数之和 S。
+系统设定了一个未知的城市交通路网 G，其中节点集合 V 包含编号 1 到 {n} 的交通路口，但路口之间的直达道路集合 E 是未知的。已知路网中至少存在一个正常连通的路口（至少有一条道路相连），且至少存在一个仅有一条道路相连的末端路口。
 
-隐藏信息：各站点之间的直达路线对你是未知的。
-已知信息：站点总数、站点列表、中央调度中心。
+指挥中心分配了 {num_testers} 个不同灵敏度的交通流量监测站（编号 1 到 {num_testers}）。每个监测站 f 对任意路口 v 的活动反馈由一个未知的布尔函数 P_f(连通道路数) 决定，该函数满足以下性质：
+- 对没有任何连通道路的“废弃孤立路口”始终返回负反馈
+- 对道路数单调不减（连通的道路越多，越可能返回正反馈）
+- 至少存在一个监测站对所有连通道路数大于等于 1 的路口都返回正反馈
 
-你可以通过以下五种查询来收集物流网络结构信息（每次只能进行一种查询）：
+你的目标是通过查询指令，精确找出所有“废弃孤立路口”（连通道路数为 0 的路口）的集合。你可以使用以下三种指令（每次仅限一个）：
 
-1. **层波计数查询**：询问需要恰好 t 次中转跳数才能到达的站点数量，记为 L(t)。
-2. **累计覆盖查询**：询问中转跳数不超过 t 的站点总数，记为 C(t)。
-3. **相邻判定查询**：询问两个站点 x 和 y 之间是否存在直达路线。
-4. **度数查询**：询问某个站点 x 的直达路线数（即与其直接相连的站点数）。
-5. **相对远近比较查询**：比较站点 x 和 y 到调度中心的物流层级，判断哪个更近或是否等距。
+1. 探测查询：用监测站 f 探测单个路口 v 的车流活动。返回"正反馈"或"负反馈"。
+2. 比较查询：用监测站 f 比较路口 x 和 y 的车流活跃表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
+3. 计数查询：用监测站 f 统计路口集合 S 中有多少个路口返回正反馈。返回一个非负整数。
 
-你需要尽可能少地进行查询，最终给出中转跳数之和 S。
+当你收集足够信息后，请提交你认为的废弃孤立路口集合。若答案正确则排查成功；若错误，我会告知误报数（提交中实际非孤立的路口数）和漏报数（实际孤立但未提交的路口数）。
 
-## 查询格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 探测查询（例如用监测站 2 探测路口 5）：
+<query_probe>v=5, f=2</query_probe>
 
-- 层波计数查询（例如询问中转跳数为 2 的站点数）：
-<query_layer>2</query_layer>
+- 比较查询（例如用监测站 1 比较路口 3 和 7）：
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- 累计覆盖查询（例如询问中转跳数不超过 2 的站点总数）：
-<query_cumulative>2</query_cumulative>
+- 计数查询（例如用监测站 3 统计路口集合 {{1,2,5}}）：
+<query_count>S=1,2,5, f=3</query_count>
 
-- 相邻判定查询（例如询问站点 1 和 3 是否直达）：
-<query_adjacent>1,3</query_adjacent>
+提交最终答案时，列出所有孤立路口的编号（用逗号隔开，顺序不限）。如果认为没有孤立路口，提交空集：
 
-- 度数查询（例如询问站点 5 的直达路线数）：
-<query_degree>5</query_degree>
+<answer>isolated=1,3,5</answer>
 
-- 相对远近比较查询（例如比较站点 2 和 4 到调度中心的远近）：
-<query_compare>2,4</query_compare>
+或
 
-## 提交答案格式
-
-当你确定答案后，请提交跳数之和 S：
-
-<answer>{answer_value}</answer>
-
-其中 {answer_value} 为你推断出的整数。
+<answer>isolated=</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "City Logistics Dispatch System".
+Let's simulate a "City Traffic Network Connectivity Inspection" task. Here are the rules:
 
-This system monitors an unknown connected logistics network G, which includes {n} stations labeled as {vertex_list}.
-We have designated the central dispatch center s = {source}. Your goal is to evaluate the overall network efficiency by inferring the sum S of the minimum transit jumps from the dispatch center s to all other stations.
+The system involves an unknown city traffic network G, where the junction set V contains traffic junctions numbered from 1 to {n}, but the direct road set E between junctions is unknown. It is known that the network has at least one normally connected junction (with at least one connecting road), and at least one dead-end junction with exactly one connecting road.
 
-Hidden information: The direct routes between stations are unknown to you.
-Known information: Total number of stations, station list, central dispatch center.
+The command center provides {num_testers} traffic flow monitoring stations of varying sensitivities (numbered 1 to {num_testers}). Each station f responds to any junction v based on an unknown boolean function P_f(number of connecting roads), which satisfies:
+- Returns negative feedback for "abandoned isolated junctions" with no connecting roads
+- Monotone non-decreasing with respect to the number of connecting roads (more roads make positive feedback more likely)
+- At least one station returns positive feedback for all junctions with 1 or more connecting roads
 
-You can collect network structure information through the following five types of queries (only one query per turn):
+Your goal is to precisely determine the set of all "abandoned isolated junctions" (junctions with 0 connecting roads) through query commands. You can use the following three types of commands (one query at a time):
 
-1. **Layer Count Query**: Ask for the number of stations requiring exactly t transit jumps, denoted as L(t).
-2. **Cumulative Coverage Query**: Ask for the total number of stations reachable within at most t transit jumps, denoted as C(t).
-3. **Adjacency Query**: Ask whether there is a direct route between stations x and y.
-4. **Degree Query**: Ask for the number of direct routes of station x (i.e., stations directly connected to it).
-5. **Distance Comparison Query**: Compare the transit levels of stations x and y from the dispatch center, determining which is closer or if they are equidistant.
+1. Probe Query: Detect traffic activity at a single junction v using station f. Returns "positive" or "negative".
+2. Compare Query: Compare traffic activity between junctions x and y using station f. Returns "only x positive", "only y positive", "both positive", or "both negative".
+3. Count Query: Count how many junctions in set S return positive feedback using station f. Returns a non-negative integer.
 
-You should perform as few queries as possible and finally provide the transit jump sum S.
-
-## Query Format (strictly required)
+When you have gathered enough information, submit the set of abandoned isolated junctions you believe. If correct, the inspection succeeds; if wrong, I will tell you the number of false positives (non-isolated junctions you included) and false negatives (actual isolated junctions you missed).
 
 Each query must contain only one tag. Use the following XML format:
 
-- Layer Count Query (e.g., asking for stations at 2 jumps):
-<query_layer>2</query_layer>
+- Probe Query (e.g., probe junction 5 with station 2):
+<query_probe>v=5, f=2</query_probe>
 
-- Cumulative Coverage Query (e.g., asking for stations at most 2 jumps away):
-<query_cumulative>2</query_cumulative>
+- Compare Query (e.g., compare junctions 3 and 7 with station 1):
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- Adjacency Query (e.g., asking if stations 1 and 3 are directly connected):
-<query_adjacent>1,3</query_adjacent>
+- Count Query (e.g., count junction set {{1,2,5}} with station 3):
+<query_count>S=1,2,5, f=3</query_count>
 
-- Degree Query (e.g., asking for the direct routes of station 5):
-<query_degree>5</query_degree>
+When submitting the final answer, list all isolated junction IDs (comma-separated, order does not matter). If you believe there are no isolated junctions, submit an empty set:
 
-- Distance Comparison Query (e.g., comparing distances of stations 2 and 4 from the center):
-<query_compare>2,4</query_compare>
+<answer>isolated=1,3,5</answer>
 
-## Answer Submission Format
+or
 
-When you have determined the answer, submit the jump sum S:
-
-<answer>{answer_value}</answer>
-
-Where {answer_value} is the integer you inferred.
+<answer>isolated=</answer>
 """
 
-    # 场景 2：医疗
     contextualized_rule_zh_2 = """\
-欢迎进入“流行病接触追踪溯源系统”。
+我们来进行一项"蛋白互作网络失活排查"任务，规则如下：
 
-本系统正在分析一个未知的连通接触者网络 G，其中涉及 {n} 名人员，编号为 {vertex_list}。
-我们已确认零号病人 s = {source}。你的任务是评估疫情的传播广度，即推断出从零号病人 s 到所有其他人员的最短传播代数（传播链长度）之和 S。
+系统映射了一个未知的生物体内蛋白互作网络 G，其中节点集合 V 包含编号 1 到 {n} 的蛋白质簇，但蛋白之间的结合链路集合 E 是未知的。已知网络中至少存在一个正常活性的蛋白簇（至少有一条相互作用链路），且至少存在一个仅有一条链路的边缘蛋白簇。
 
-隐藏信息：人员之间的直接接触史（即边集合）对你是未知的。
-已知信息：人员总数、人员编号列表、零号病人。
+实验室配置了 {num_testers} 种不同浓度的生化试剂（编号 1 到 {num_testers}）。每种试剂 f 对任意蛋白簇 v 的生化反应由一个未知的布尔函数 P_f(结合链路数) 决定，该函数满足以下性质：
+- 对没有任何链路的“失活孤立蛋白”始终返回负反馈
+- 对链路数单调不减（链路越多，空间结构越稳定，越可能返回正反馈）
+- 至少存在一种试剂对所有结合链路数大于等于 1 的蛋白簇都返回正反馈
 
-你可以通过以下五种查询来收集传播链信息（每次只能进行一种查询）：
+你的目标是通过实验查询，精确找出所有“失活孤立蛋白”（链路数为 0 的蛋白簇）的集合。你可以使用以下三种实验指令（每次仅限一个）：
 
-1. **层波计数查询**：询问传播代数恰好为 t 的人数，记为 L(t)。
-2. **累计覆盖查询**：询问传播代数不超过 t 的总人数，记为 C(t)。
-3. **相邻判定查询**：询问两名人员 x 和 y 是否有过直接接触。
-4. **度数查询**：询问某人员 x 的密切接触者数量。
-5. **相对远近比较查询**：比较两名人员 x 和 y 距离零号病人的传播代数，判断谁更近或是否等距。
+1. 探测查询：用试剂 f 测试单个蛋白簇 v 的生化反应。返回"正反馈"或"负反馈"。
+2. 比较查询：用试剂 f 比较蛋白簇 x 和 y 的反应强度表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
+3. 计数查询：用试剂 f 统计蛋白簇集合 S 中有多少个蛋白呈现正反馈反应。返回一个非负整数。
 
-你需要尽可能少地进行查询，最终给出传播代数之和 S。
+当你收集足够信息后，请提交你排查出的失活孤立蛋白集合。若答案正确则任务成功；若错误，我会告知误报数（提交中实际具有活性的蛋白数）和漏报数（实际失活但未提交的蛋白数）。
 
-## 查询格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 探测查询（例如用试剂 2 探测蛋白簇 5）：
+<query_probe>v=5, f=2</query_probe>
 
-- 层波计数查询（例如询问传播代数为 2 的人数）：
-<query_layer>2</query_layer>
+- 比较查询（例如用试剂 1 比较蛋白簇 3 和 7）：
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- 累计覆盖查询（例如询问传播代数不超过 2 的总人数）：
-<query_cumulative>2</query_cumulative>
+- 计数查询（例如用试剂 3 统计蛋白簇集合 {{1,2,5}}）：
+<query_count>S=1,2,5, f=3</query_count>
 
-- 相邻判定查询（例如询问人员 1 和 3 是否直接接触）：
-<query_adjacent>1,3</query_adjacent>
+提交最终答案时，列出所有失活蛋白的编号（用逗号隔开，顺序不限）。如果认为没有失活蛋白，提交空集：
 
-- 度数查询（例如询问人员 5 的密接人数）：
-<query_degree>5</query_degree>
+<answer>isolated=1,3,5</answer>
 
-- 相对远近比较查询（例如比较人员 2 和 4 到零号病人的传播链远近）：
-<query_compare>2,4</query_compare>
+或
 
-## 提交答案格式
-
-当你确定答案后，请提交传播代数之和 S：
-
-<answer>{answer_value}</answer>
-
-其中 {answer_value} 为你推断出的整数。
+<answer>isolated=</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Epidemic Contact Tracing and Sourcing System".
+Let's perform a "Protein Interaction Network Inactivation Screening" task. Here are the rules:
 
-This system is analyzing an unknown connected network of contacts G, involving {n} individuals labeled as {vertex_list}.
-We have identified patient zero s = {source}. Your task is to evaluate the spread of the epidemic by inferring the sum S of the shortest transmission generations (chain lengths) from patient zero s to all other individuals.
+The system maps an unknown biological protein interaction network G, where the node set V contains protein clusters numbered from 1 to {n}, but the binding link set E between proteins is unknown. It is known that the network has at least one normally active protein cluster (with at least one interaction link), and at least one marginal cluster with exactly one link.
 
-Hidden information: The direct contact history between individuals (i.e., the edges) is unknown to you.
-Known information: Total number of individuals, individual list, patient zero.
+The laboratory is equipped with {num_testers} biochemical reagents of varying concentrations (numbered 1 to {num_testers}). Each reagent f responds to any protein cluster v based on an unknown boolean function P_f(number of links), which satisfies:
+- Returns negative feedback for "inactivated isolated proteins" with no links
+- Monotone non-decreasing with respect to the number of links (more links mean higher stability, making positive feedback more likely)
+- At least one reagent returns positive feedback for all clusters with 1 or more links
 
-You can collect transmission chain information through the following five types of queries (only one query per turn):
+Your goal is to precisely determine the set of all "inactivated isolated proteins" (clusters with 0 links) through experimental queries. You can use the following three types of queries (one query at a time):
 
-1. **Layer Count Query**: Ask for the number of individuals at exactly transmission generation t, denoted as L(t).
-2. **Cumulative Coverage Query**: Ask for the total number of individuals within at most transmission generation t, denoted as C(t).
-3. **Adjacency Query**: Ask whether individuals x and y had direct contact.
-4. **Degree Query**: Ask for the number of close contacts of individual x.
-5. **Distance Comparison Query**: Compare the transmission generations of individuals x and y from patient zero, determining who is closer or if they are equidistant.
+1. Probe Query: Test the biochemical reaction of a single cluster v using reagent f. Returns "positive" or "negative".
+2. Compare Query: Compare the reaction intensity between clusters x and y using reagent f. Returns "only x positive", "only y positive", "both positive", or "both negative".
+3. Count Query: Count how many clusters in set S show positive reactions using reagent f. Returns a non-negative integer.
 
-You should perform as few queries as possible and finally provide the transmission generation sum S.
-
-## Query Format (strictly required)
+When you have gathered enough information, submit the set of inactivated isolated proteins. If correct, the screening succeeds; if wrong, I will tell you the number of false positives (active proteins you included) and false negatives (actual inactivated proteins you missed).
 
 Each query must contain only one tag. Use the following XML format:
 
-- Layer Count Query (e.g., asking for individuals at generation 2):
-<query_layer>2</query_layer>
+- Probe Query (e.g., probe cluster 5 with reagent 2):
+<query_probe>v=5, f=2</query_probe>
 
-- Cumulative Coverage Query (e.g., asking for individuals up to generation 2):
-<query_cumulative>2</query_cumulative>
+- Compare Query (e.g., compare clusters 3 and 7 with reagent 1):
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- Adjacency Query (e.g., asking if individuals 1 and 3 had direct contact):
-<query_adjacent>1,3</query_adjacent>
+- Count Query (e.g., count cluster set {{1,2,5}} with reagent 3):
+<query_count>S=1,2,5, f=3</query_count>
 
-- Degree Query (e.g., asking for the number of close contacts of individual 5):
-<query_degree>5</query_degree>
+When submitting the final answer, list all inactivated protein IDs (comma-separated, order does not matter). If you believe there are no inactivated proteins, submit an empty set:
 
-- Distance Comparison Query (e.g., comparing transmission distances of individuals 2 and 4):
-<query_compare>2,4</query_compare>
+<answer>isolated=1,3,5</answer>
 
-## Answer Submission Format
+or
 
-When you have determined the answer, submit the transmission generation sum S:
-
-<answer>{answer_value}</answer>
-
-Where {answer_value} is the integer you inferred.
+<answer>isolated=</answer>
 """
 
-    # 场景 3：教育
     contextualized_rule_zh_3 = """\
-欢迎来到“课程依赖图谱分析平台”。
+我们来开展一次"学生知识图谱盲区诊断"任务，规则如下：
 
-本平台存储着一个未知的连通课程依赖网络 G，包含 {n} 个知识模块，编号为 {vertex_list}。
-系统设定了基础导论课 s = {source}。你的目标是评估整体学习难度，即推断出从导论课 s 到所有其他模块的最短前置依赖层级之和 S。
+系统调取了一名学生的综合知识图谱 G，其中节点集合 V 包含编号 1 到 {n} 的核心知识模块，但模块之间的认知关联集合 E 是未知的。已知图谱中至少存在一个被正常关联的模块（至少能与其他一个模块联系起来），且至少存在一个仅有一个跨模块关联的节点。
 
-隐藏信息：各模块之间的直接前置/后续关联（边集合）对你是未知的。
-已知信息：模块总数、模块编号列表、基础导论课。
+教研组提供了 {num_testers} 个不同难度的评估模型（编号 1 到 {num_testers}）。每个模型 f 对任意模块 v 的掌握度反馈由一个未知的布尔函数 P_f(认知关联数) 决定，该函数满足以下性质：
+- 对没有任何认知关联的“孤立盲区模块”始终返回负反馈（未达标）
+- 对关联数单调不减（能建立联系的知识点越多，越可能返回正反馈）
+- 至少存在一个基础评估模型对所有关联数大于等于 1 的模块都返回正反馈
 
-你可以通过以下五种查询来探索课程结构（每次只能进行一种查询）：
+你的目标是通过诊断指令，精确找出所有“孤立盲区模块”（认知关联数为 0 的模块）的集合。你可以使用以下三种指令（每次仅限一个）：
 
-1. **层波计数查询**：询问依赖层级恰好为 t 的知识模块数量，记为 L(t)。
-2. **累计覆盖查询**：询问依赖层级不超过 t 的知识模块总数，记为 C(t)。
-3. **相邻判定查询**：询问两个模块 x 和 y 是否互为直接依赖关联。
-4. **度数查询**：询问某个模块 x 的直接关联模块数。
-5. **相对远近比较查询**：比较模块 x 和 y 距离基础导论课的依赖深度，判断哪个更浅或是否同级。
+1. 探测查询：用评估模型 f 测试单个模块 v 的掌握情况。返回"正反馈"或"负反馈"。
+2. 比较查询：用评估模型 f 比较模块 x 和 y 的掌握表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
+3. 计数查询：用评估模型 f 统计模块集合 S 中有多少个模块返回正反馈。返回一个非负整数。
 
-你需要尽可能少地进行查询，最终给出依赖层级之和 S。
+当你收集足够信息后，请提交你诊断出的孤立盲区模块集合。若答案正确则诊断成功；若错误，我会告知误报数（提交中实际有认知关联的模块数）和漏报数（实际是盲区但未提交的模块数）。
 
-## 查询格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 探测查询（例如用评估模型 2 测试模块 5）：
+<query_probe>v=5, f=2</query_probe>
 
-- 层波计数查询（例如询问依赖层级为 2 的模块数）：
-<query_layer>2</query_layer>
+- 比较查询（例如用评估模型 1 比较模块 3 和 7）：
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- 累计覆盖查询（例如询问依赖层级不超过 2 的模块总数）：
-<query_cumulative>2</query_cumulative>
+- 计数查询（例如用评估模型 3 统计模块集合 {{1,2,5}}）：
+<query_count>S=1,2,5, f=3</query_count>
 
-- 相邻判定查询（例如询问模块 1 和 3 是否直接关联）：
-<query_adjacent>1,3</query_adjacent>
+提交最终答案时，列出所有盲区模块的编号（用逗号隔开，顺序不限）。如果认为没有盲区模块，提交空集：
 
-- 度数查询（例如询问模块 5 的直接关联数）：
-<query_degree>5</query_degree>
+<answer>isolated=1,3,5</answer>
 
-- 相对远近比较查询（例如比较模块 2 和 4 到导论课的依赖深度）：
-<query_compare>2,4</query_compare>
+或
 
-## 提交答案格式
-
-当你确定答案后，请提交依赖层级之和 S：
-
-<answer>{answer_value}</answer>
-
-其中 {answer_value} 为你推断出的整数。
+<answer>isolated=</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Course Dependency Graph Analysis Platform".
+Let's conduct a "Student Knowledge Graph Blind Spot Diagnosis" task. Here are the rules:
 
-This platform stores an unknown connected course dependency network G, containing {n} knowledge modules labeled as {vertex_list}.
-The system has set the foundational introductory course s = {source}. Your goal is to evaluate the overall learning difficulty by inferring the sum S of the shortest prerequisite dependency levels from the introductory course s to all other modules.
+The system retrieves a student's comprehensive knowledge graph G, where the node set V contains core knowledge modules numbered from 1 to {n}, but the cognitive association set E between modules is unknown. It is known that the graph has at least one normally associated module (linked to at least one other module), and at least one module with exactly one cross-module association.
 
-Hidden information: The direct prerequisite/successor associations between modules (i.e., the edges) are unknown to you.
-Known information: Total number of modules, module list, foundational introductory course.
+The teaching research group provides {num_testers} evaluation models of varying difficulties (numbered 1 to {num_testers}). Each model f responds to any module v based on an unknown boolean function P_f(number of associations), which satisfies:
+- Returns negative feedback for "isolated blind spot modules" with no cognitive associations
+- Monotone non-decreasing with respect to the number of associations (more linked knowledge makes positive feedback more likely)
+- At least one baseline model returns positive feedback for all modules with 1 or more associations
 
-You can explore the course structure through the following five types of queries (only one query per turn):
+Your goal is to precisely determine the set of all "isolated blind spot modules" (modules with 0 associations) through diagnostic queries. You can use the following three types of queries (one query at a time):
 
-1. **Layer Count Query**: Ask for the number of knowledge modules at exactly dependency level t, denoted as L(t).
-2. **Cumulative Coverage Query**: Ask for the total number of knowledge modules within at most dependency level t, denoted as C(t).
-3. **Adjacency Query**: Ask whether modules x and y have a direct dependency association.
-4. **Degree Query**: Ask for the number of directly associated modules of module x.
-5. **Distance Comparison Query**: Compare the dependency depths of modules x and y from the introductory course, determining which is shallower or if they are on the same level.
+1. Probe Query: Test the mastery of a single module v using model f. Returns "positive" or "negative".
+2. Compare Query: Compare the mastery performance between modules x and y using model f. Returns "only x positive", "only y positive", "both positive", or "both negative".
+3. Count Query: Count how many modules in set S return positive feedback using model f. Returns a non-negative integer.
 
-You should perform as few queries as possible and finally provide the dependency level sum S.
-
-## Query Format (strictly required)
+When you have gathered enough information, submit the set of blind spot modules you diagnosed. If correct, the diagnosis succeeds; if wrong, I will tell you the number of false positives (associated modules you included) and false negatives (actual blind spots you missed).
 
 Each query must contain only one tag. Use the following XML format:
 
-- Layer Count Query (e.g., asking for modules at dependency level 2):
-<query_layer>2</query_layer>
+- Probe Query (e.g., test module 5 with model 2):
+<query_probe>v=5, f=2</query_probe>
 
-- Cumulative Coverage Query (e.g., asking for modules up to level 2):
-<query_cumulative>2</query_cumulative>
+- Compare Query (e.g., compare modules 3 and 7 with model 1):
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- Adjacency Query (e.g., asking if modules 1 and 3 are directly associated):
-<query_adjacent>1,3</query_adjacent>
+- Count Query (e.g., count module set {{1,2,5}} with model 3):
+<query_count>S=1,2,5, f=3</query_count>
 
-- Degree Query (e.g., asking for the direct associations of module 5):
-<query_degree>5</query_degree>
+When submitting the final answer, list all blind spot module IDs (comma-separated, order does not matter). If you believe there are no blind spot modules, submit an empty set:
 
-- Distance Comparison Query (e.g., comparing dependency depths of modules 2 and 4):
-<query_compare>2,4</query_compare>
+<answer>isolated=1,3,5</answer>
 
-## Answer Submission Format
+or
 
-When you have determined the answer, submit the dependency level sum S:
-
-<answer>{answer_value}</answer>
-
-Where {answer_value} is the integer you inferred.
+<answer>isolated=</answer>
 """
 
-    # 场景 4：制造业/工业
     contextualized_rule_zh_4 = """\
-欢迎使用“智能工厂装配流水线诊断系统”。
+我们来执行一项"工厂物联网设备断连排查"任务，规则如下：
 
-系统中存在一个未知的连通工序流转图 G，包含 {n} 个生产节点，编号为 {vertex_list}。
-我们设定了核心原料仓 s = {source}。你的任务是评估车间整体的制造延迟指数，即推断出从原料仓 s 到所有其他生产节点的最少流转环节数目之和 S。
+系统记录了一个未知的工厂控制网络 G，其中节点集合 V 包含编号 1 到 {n} 的设备节点，但设备之间的通信链路集合 E 是未知的。已知网络中至少存在一台正常连网的设备（至少有一条通信链路），且至少存在一台位于网络末端、仅有一条链路的设备。
 
-隐藏信息：生产节点之间的直接物料交接通道对你是未知的。
-已知信息：生产节点总数、节点编号列表、核心原料仓。
+运维部门提供了 {num_testers} 个不同频段的网络信号嗅探器（编号 1 到 {num_testers}）。每个嗅探器 f 对任意设备 v 的在线反馈由一个未知的布尔函数 P_f(通信链路数) 决定，该函数满足以下性质：
+- 对没有任何通信链路的“断连孤立设备”始终返回负反馈（无法嗅探）
+- 对链路数单调不减（连接路径越多，信号越强，越可能返回正反馈）
+- 至少存在一个高敏嗅探器对所有链路数大于等于 1 的设备都返回正反馈
 
-你可以通过以下五种查询来获取装配线架构（每次只能进行一种查询）：
+你的目标是通过查询指令，精确找出所有“断连孤立设备”（通信链路数为 0 的设备节点）的集合。你可以使用以下三种指令（每次仅限一个）：
 
-1. **层波计数查询**：询问距离原料仓恰好 t 个流转环节的节点数量，记为 L(t)。
-2. **累计覆盖查询**：询问流转环节不超过 t 的生产节点总数，记为 C(t)。
-3. **相邻判定查询**：询问两个节点 x 和 y 之间是否有直接的物料交接通道。
-4. **度数查询**：询问某个节点 x 的直接上下游节点数。
-5. **相对远近比较查询**：比较节点 x 和 y 距离原料仓的流转远近，判断哪个更近或是否等距。
+1. 探测查询：用嗅探器 f 探测单个设备 v 的在线状态反馈。返回"正反馈"或"负反馈"。
+2. 比较查询：用嗅探器 f 比较设备 x 和 y 的信号连通性表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
+3. 计数查询：用嗅探器 f 统计设备集合 S 中有多少台设备返回正反馈。返回一个非负整数。
 
-你需要尽可能少地进行查询，最终给出流转环节数目之和 S。
+当你收集足够信息后，请提交你排查出的断连孤立设备集合。若答案正确则排查成功；若错误，我会告知误报数（提交中实际在线的设备数）和漏报数（实际已断连但未提交的设备数）。
 
-## 查询格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 探测查询（例如用嗅探器 2 探测设备 5）：
+<query_probe>v=5, f=2</query_probe>
 
-- 层波计数查询（例如询问流转环节为 2 的节点数）：
-<query_layer>2</query_layer>
+- 比较查询（例如用嗅探器 1 比较设备 3 和 7）：
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- 累计覆盖查询（例如询问流转环节不超过 2 的节点总数）：
-<query_cumulative>2</query_cumulative>
+- 计数查询（例如用嗅探器 3 统计设备集合 {{1,2,5}}）：
+<query_count>S=1,2,5, f=3</query_count>
 
-- 相邻判定查询（例如询问节点 1 和 3 是否直接交接）：
-<query_adjacent>1,3</query_adjacent>
+提交最终答案时，列出所有断连设备的编号（用逗号隔开，顺序不限）。如果认为没有断连设备，提交空集：
 
-- 度数查询（例如询问节点 5 的直接上下游数）：
-<query_degree>5</query_degree>
+<answer>isolated=1,3,5</answer>
 
-- 相对远近比较查询（例如比较节点 2 和 4 到原料仓的流转距离）：
-<query_compare>2,4</query_compare>
+或
 
-## 提交答案格式
-
-当你确定答案后，请提交流转环节数目之和 S：
-
-<answer>{answer_value}</answer>
-
-其中 {answer_value} 为你推断出的整数。
+<answer>isolated=</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Smart Factory Assembly Line Diagnostic System".
+[Industry Scenario]
+Let's execute a "Factory IoT Device Disconnection Inspection" task. Here are the rules:
 
-The system involves an unknown connected process flow graph G, containing {n} production nodes labeled as {vertex_list}.
-We have designated the core raw material warehouse s = {source}. Your task is to evaluate the overall manufacturing delay index of the workshop by inferring the sum S of the minimum transfer steps from the warehouse s to all other production nodes.
+The system records an unknown factory control network G, where the node set V contains device nodes numbered from 1 to {n}, but the communication link set E between devices is unknown. It is known that the network has at least one normally online device (with at least one communication link), and at least one end-point device with exactly one link.
 
-Hidden information: The direct material handover channels between production nodes are unknown to you.
-Known information: Total number of production nodes, node list, core raw material warehouse.
+The operations department provides {num_testers} network signal sniffers of different frequency bands (numbered 1 to {num_testers}). Each sniffer f responds to any device v based on an unknown boolean function P_f(number of links), which satisfies:
+- Returns negative feedback for "disconnected isolated devices" with no communication links
+- Monotone non-decreasing with respect to the number of links (more connection paths yield stronger signals, making positive feedback more likely)
+- At least one high-sensitivity sniffer returns positive feedback for all devices with 1 or more links
 
-You can obtain assembly line architecture information through the following five types of queries (only one query per turn):
+Your goal is to precisely determine the set of all "disconnected isolated devices" (devices with 0 links) through query commands. You can use the following three types of commands (one query at a time):
 
-1. **Layer Count Query**: Ask for the number of nodes at exactly t transfer steps from the warehouse, denoted as L(t).
-2. **Cumulative Coverage Query**: Ask for the total number of production nodes within at most t transfer steps, denoted as C(t).
-3. **Adjacency Query**: Ask whether there is a direct material handover channel between nodes x and y.
-4. **Degree Query**: Ask for the number of direct upstream/downstream nodes for node x.
-5. **Distance Comparison Query**: Compare the transfer distances of nodes x and y from the warehouse, determining which is closer or if they are equidistant.
+1. Probe Query: Detect the online status feedback of a single device v using sniffer f. Returns "positive" or "negative".
+2. Compare Query: Compare the signal connectivity between devices x and y using sniffer f. Returns "only x positive", "only y positive", "both positive", or "both negative".
+3. Count Query: Count how many devices in set S return positive feedback using sniffer f. Returns a non-negative integer.
 
-You should perform as few queries as possible and finally provide the transfer steps sum S.
-
-## Query Format (strictly required)
+When you have gathered enough information, submit the set of disconnected isolated devices. If correct, the inspection succeeds; if wrong, I will tell you the number of false positives (online devices you included) and false negatives (actual disconnected devices you missed).
 
 Each query must contain only one tag. Use the following XML format:
 
-- Layer Count Query (e.g., asking for nodes at 2 transfer steps):
-<query_layer>2</query_layer>
+- Probe Query (e.g., probe device 5 with sniffer 2):
+<query_probe>v=5, f=2</query_probe>
 
-- Cumulative Coverage Query (e.g., asking for nodes up to 2 transfer steps):
-<query_cumulative>2</query_cumulative>
+- Compare Query (e.g., compare devices 3 and 7 with sniffer 1):
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- Adjacency Query (e.g., asking if nodes 1 and 3 hand over directly):
-<query_adjacent>1,3</query_adjacent>
+- Count Query (e.g., count device set {{1,2,5}} with sniffer 3):
+<query_count>S=1,2,5, f=3</query_count>
 
-- Degree Query (e.g., asking for the direct upstream/downstream count of node 5):
-<query_degree>5</query_degree>
+When submitting the final answer, list all disconnected device IDs (comma-separated, order does not matter). If you believe there are no disconnected devices, submit an empty set:
 
-- Distance Comparison Query (e.g., comparing transfer distances of nodes 2 and 4):
-<query_compare>2,4</query_compare>
+<answer>isolated=1,3,5</answer>
 
-## Answer Submission Format
+or
 
-When you have determined the answer, submit the transfer steps sum S:
-
-<answer>{answer_value}</answer>
-
-Where {answer_value} is the integer you inferred.
+<answer>isolated=</answer>
 """
 
-    # 场景 5：法律
     contextualized_rule_zh_5 = """\
-欢迎使用“经济犯罪资金链穿透分析系统”。
+我们来进行一次"案件证据链效力审查"任务，规则如下：
 
-本系统正在侦测一个未知的连通资金网络 G，其中包含 {n} 个涉案实体，编号为 {vertex_list}。
-我们已锁定主犯实体 s = {source}。你的目标是量化整个洗钱网络的复杂程度，即推断出从主犯 s 到所有其他实体的最少资金流转层级之和 S。
+法庭构建了一个未知的案件证据网络 G，其中节点集合 V 包含编号 1 到 {n} 的证据线索，但证据之间的逻辑印证关系集合 E 是未知的。已知网络中至少存在一份具备关联效力的证据（至少能与另一份证据相互印证），且至少存在一份仅有一条单线印证关系的边缘证据。
 
-隐藏信息：各实体之间的直接资金交易记录（边集合）对你是未知的。
-已知信息：涉案实体总数、实体编号列表、主犯实体。
+司法系统接入了 {num_testers} 套具有不同审查标准的交叉检验程序（编号 1 到 {num_testers}）。每套程序 f 对任意证据 v 的采信反馈由一个未知的布尔函数 P_f(印证关系数) 决定，该函数满足以下性质：
+- 对没有任何逻辑印证的“无效孤证”始终返回负反馈（不予采信）
+- 对印证数单调不减（能互相印证的节点越多，证据链越完整，越可能返回正反馈）
+- 至少存在一套宽口径审查程序对所有印证关系数大于等于 1 的证据都返回正反馈
 
-你可以通过以下五种查询来调查资金链网络（每次只能进行一种查询）：
+你的目标是通过审查指令，精确找出所有“无效孤证”（逻辑印证数为 0 的证据）的集合。你可以使用以下三种指令（每次仅限一个）：
 
-1. **层波计数查询**：询问距离主犯恰好为 t 个洗钱层级的实体数量，记为 L(t)。
-2. **累计覆盖查询**：询问洗钱层级不超过 t 的涉案实体总数，记为 C(t)。
-3. **相邻判定查询**：询问两个实体 x 和 y 之间是否存在直接的资金交易。
-4. **度数查询**：询问某个实体 x 的直接交易对象数量。
-5. **相对远近比较查询**：比较实体 x 和 y 与主犯在资金流转上的远近，判断哪个层级更浅或是否等深。
+1. 探测查询：用审查程序 f 核查单份证据 v 的采信情况。返回"正反馈"或"负反馈"。
+2. 比较查询：用审查程序 f 比较证据 x 和 y 的可信度表现。返回"仅x正"、"仅y正"、"两者皆正"或"两者皆负"。
+3. 计数查询：用审查程序 f 统计证据集合 S 中有多少份证据被认为具备关联效力并返回正反馈。返回一个非负整数。
 
-你需要尽可能少地进行查询，最终给出资金流转层级之和 S。
+当你收集足够信息后，请提交你审查出的无效孤证集合。若答案正确则审查成功；若错误，我会告知误报数（提交中实际有印证效力的证据数）和漏报数（实际是孤证但未提交的证据数）。
 
-## 查询格式（必须严格遵守）
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-每次查询只能包含一个标签，使用以下 XML 格式：
+- 探测查询（例如用审查程序 2 核查证据 5）：
+<query_probe>v=5, f=2</query_probe>
 
-- 层波计数查询（例如询问洗钱层级为 2 的实体数）：
-<query_layer>2</query_layer>
+- 比较查询（例如用审查程序 1 比较证据 3 和 7）：
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- 累计覆盖查询（例如询问洗钱层级不超过 2 的实体总数）：
-<query_cumulative>2</query_cumulative>
+- 计数查询（例如用审查程序 3 统计证据集合 {{1,2,5}}）：
+<query_count>S=1,2,5, f=3</query_count>
 
-- 相邻判定查询（例如询问实体 1 和 3 是否有直接交易）：
-<query_adjacent>1,3</query_adjacent>
+提交最终答案时，列出所有无效孤证的编号（用逗号隔开，顺序不限）。如果认为没有无效孤证，提交空集：
 
-- 度数查询（例如询问实体 5 的直接交易对象数）：
-<query_degree>5</query_degree>
+<answer>isolated=1,3,5</answer>
 
-- 相对远近比较查询（例如比较实体 2 和 4 到主犯的洗钱层级深浅）：
-<query_compare>2,4</query_compare>
+或
 
-## 提交答案格式
-
-当你确定答案后，请提交流转层级之和 S：
-
-<answer>{answer_value}</answer>
-
-其中 {answer_value} 为你推断出的整数。
+<answer>isolated=</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the "Economic Crime Capital Chain Penetration Analysis System".
+[Law Scenario]
+Let's conduct a "Case Evidence Chain Validity Review" task. Here are the rules:
 
-This system is detecting an unknown connected capital network G, containing {n} involved entities labeled as {vertex_list}.
-We have locked onto the prime culprit entity s = {source}. Your goal is to quantify the complexity of the entire money laundering network by inferring the sum S of the minimum capital transfer levels from the prime culprit s to all other entities.
+The court structures an unknown case evidence network G, where the node set V contains evidence clues numbered from 1 to {n}, but the logical corroboration relationship set E between evidence is unknown. It is known that the network has at least one piece of valid associated evidence (corroborating with at least one other piece), and at least one marginal evidence clue with exactly one corroboration.
 
-Hidden information: The direct financial transaction records (i.e., edges) between entities are unknown to you.
-Known information: Total number of involved entities, entity list, prime culprit entity.
+The judicial system incorporates {num_testers} cross-examination procedures with different review standards (numbered 1 to {num_testers}). Each procedure f responds to any evidence v based on an unknown boolean function P_f(number of corroborations), which satisfies:
+- Returns negative feedback for "invalid isolated evidence" with no corroborations (inadmissible)
+- Monotone non-decreasing with respect to the number of corroborations (more corroborating nodes make the chain stronger, increasing the likelihood of positive feedback)
+- At least one broad-standard procedure returns positive feedback for all evidence with 1 or more corroborations
 
-You can investigate the capital chain network through the following five types of queries (only one query per turn):
+Your goal is to precisely determine the set of all "invalid isolated evidence" (evidence with 0 corroborations) through review commands. You can use the following three types of commands (one query at a time):
 
-1. **Layer Count Query**: Ask for the number of entities at exactly t money laundering levels from the prime culprit, denoted as L(t).
-2. **Cumulative Coverage Query**: Ask for the total number of involved entities within at most t money laundering levels, denoted as C(t).
-3. **Adjacency Query**: Ask whether there are direct financial transactions between entities x and y.
-4. **Degree Query**: Ask for the number of direct transaction partners of entity x.
-5. **Distance Comparison Query**: Compare the capital transfer levels of entities x and y from the prime culprit, determining which is shallower or if they are at the same level.
+1. Probe Query: Verify the admissibility of a single piece of evidence v using procedure f. Returns "positive" or "negative".
+2. Compare Query: Compare the credibility performance between evidence x and y using procedure f. Returns "only x positive", "only y positive", "both positive", or "both negative".
+3. Count Query: Count how many pieces of evidence in set S are deemed valid and return positive feedback using procedure f. Returns a non-negative integer.
 
-You should perform as few queries as possible and finally provide the capital transfer level sum S.
-
-## Query Format (strictly required)
+When you have gathered enough information, submit the set of invalid isolated evidence you identified. If correct, the review succeeds; if wrong, I will tell you the number of false positives (valid evidence you included) and false negatives (actual isolated evidence you missed).
 
 Each query must contain only one tag. Use the following XML format:
 
-- Layer Count Query (e.g., asking for entities at money laundering level 2):
-<query_layer>2</query_layer>
+- Probe Query (e.g., verify evidence 5 with procedure 2):
+<query_probe>v=5, f=2</query_probe>
 
-- Cumulative Coverage Query (e.g., asking for entities up to level 2):
-<query_cumulative>2</query_cumulative>
+- Compare Query (e.g., compare evidence 3 and 7 with procedure 1):
+<query_compare>x=3, y=7, f=1</query_compare>
 
-- Adjacency Query (e.g., asking if entities 1 and 3 have direct transactions):
-<query_adjacent>1,3</query_adjacent>
+- Count Query (e.g., count evidence set {{1,2,5}} with procedure 3):
+<query_count>S=1,2,5, f=3</query_count>
 
-- Degree Query (e.g., asking for the direct transaction partners of entity 5):
-<query_degree>5</query_degree>
+When submitting the final answer, list all isolated evidence IDs (comma-separated, order does not matter). If you believe there is no isolated evidence, submit an empty set:
 
-- Distance Comparison Query (e.g., comparing money laundering levels of entities 2 and 4):
-<query_compare>2,4</query_compare>
+<answer>isolated=1,3,5</answer>
 
-## Answer Submission Format
+or
 
-When you have determined the answer, submit the transfer level sum S:
-
-<answer>{answer_value}</answer>
-
-Where {answer_value} is the integer you inferred.
+<answer>isolated=</answer>
 """
 
-    tags = ["answer", "query_layer", "query_cumulative", "query_adjacent", "query_degree", "query_compare"]
-
-    # 难度配置：
-    # 1 (简单)       - N=4, 路径图
-    # 2 (中等偏下)   - N=6, 星形图
-    # 3 (中等偏上)   - N=7, 简单树
-    # 4 (较难)       - N=8, 复杂图
-    # 5 (难)         - N=10, 稠密图
+    tags = ["answer", "query_probe", "query_compare", "query_count"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 4,
-                "vertices": [1, 2, 3, 4],
-                "source": 1,
-                "edges": [(1, 2), (2, 3), (3, 4)],  # 路径图: 1-2-3-4
+                "n": 5,
+                "edges": [(1, 2), (2, 3), (3, 4)],
+                "num_testers": 2,
+                "tester_thresholds": [1, 2],
             },
             2: {
-                "n": 6,
-                "vertices": [1, 2, 3, 4, 5, 6],
-                "source": 1,
-                "edges": [(1, 2), (1, 3), (1, 4), (1, 5), (1, 6)],  # 星形图，中心为1
+                "n": 7,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
+                "num_testers": 3,
+                "tester_thresholds": [1, 2, 3],
             },
             3: {
-                "n": 7,
-                "vertices": [1, 2, 3, 4, 5, 6, 7],
-                "source": 1,
-                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],  # 二叉树
+                "n": 8,
+                "edges": [(1, 2), (1, 3), (2, 3), (3, 4), (4, 5), (5, 6)],
+                "num_testers": 3,
+                "tester_thresholds": [1, 2, 3],
             },
             4: {
-                "n": 8,
-                "vertices": [1, 2, 3, 4, 5, 6, 7, 8],
-                "source": 1,
-                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (5, 8), (6, 7)],  # 复杂树+环
+                "n": 10,
+                "edges": [(1, 2), (2, 3), (2, 4), (3, 4), (4, 5), (5, 6), (6, 7)],
+                "num_testers": 4,
+                "tester_thresholds": [1, 2, 2, 3],
             },
             5: {
-                "n": 10,
-                "vertices": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                "source": 1,
-                "edges": [(1, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 6), (3, 7), 
-                         (4, 7), (4, 8), (5, 9), (6, 9), (7, 10), (8, 10), (9, 10)],  # 稠密连通图
+                "n": 12,
+                "edges": [(1, 2), (1, 3), (2, 3), (2, 4), (3, 5), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9)],
+                "num_testers": 4,
+                "tester_thresholds": [1, 2, 3, 3],
             },
         },
         "en": {
             1: {
-                "n": 4,
-                "vertices": [1, 2, 3, 4],
-                "source": 1,
+                "n": 5,
                 "edges": [(1, 2), (2, 3), (3, 4)],
+                "num_testers": 2,
+                "tester_thresholds": [1, 2],
             },
             2: {
-                "n": 6,
-                "vertices": [1, 2, 3, 4, 5, 6],
-                "source": 1,
-                "edges": [(1, 2), (1, 3), (1, 4), (1, 5), (1, 6)],
+                "n": 7,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
+                "num_testers": 3,
+                "tester_thresholds": [1, 2, 3],
             },
             3: {
-                "n": 7,
-                "vertices": [1, 2, 3, 4, 5, 6, 7],
-                "source": 1,
-                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
+                "n": 8,
+                "edges": [(1, 2), (1, 3), (2, 3), (3, 4), (4, 5), (5, 6)],
+                "num_testers": 3,
+                "tester_thresholds": [1, 2, 3],
             },
             4: {
-                "n": 8,
-                "vertices": [1, 2, 3, 4, 5, 6, 7, 8],
-                "source": 1,
-                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (5, 8), (6, 7)],
+                "n": 10,
+                "edges": [(1, 2), (2, 3), (2, 4), (3, 4), (4, 5), (5, 6), (6, 7)],
+                "num_testers": 4,
+                "tester_thresholds": [1, 2, 2, 3],
             },
             5: {
-                "n": 10,
-                "vertices": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                "source": 1,
-                "edges": [(1, 2), (1, 3), (1, 4), (2, 5), (2, 6), (3, 6), (3, 7), 
-                         (4, 7), (4, 8), (5, 9), (6, 9), (7, 10), (8, 10), (9, 10)],
+                "n": 12,
+                "edges": [(1, 2), (1, 3), (2, 3), (2, 4), (3, 5), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9)],
+                "num_testers": 4,
+                "tester_thresholds": [1, 2, 3, 3],
             },
         },
     }
@@ -672,7 +543,10 @@ Where {answer_value} is the integer you inferred.
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保 difficulty 为整数
+        diff = self.config.difficulty
+
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -680,274 +554,213 @@ Where {answer_value} is the integer you inferred.
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["num_testers"] = cfg["num_testers"]
         
-        # 初始化图信息
         self.n = cfg["n"]
-        self.vertices = cfg["vertices"]
-        self.source = cfg["source"]
-        self.edges = set()
+        self.num_testers = cfg["num_testers"]
+        self.degrees = {str(i): 0 for i in range(1, self.n + 1)}
+        
         for u, v in cfg["edges"]:
-            self.edges.add((min(u, v), max(u, v)))  # 标准化边的表示
+            self.degrees[str(u)] += 1
+            self.degrees[str(v)] += 1
         
-        # 构建邻接表
-        self.adj = {v: [] for v in self.vertices}
-        for u, v in self.edges:
-            self.adj[u].append(v)
-            self.adj[v].append(u)
+        self.isolated_nodes = {node for node, deg in self.degrees.items() if deg == 0}
         
-        # 使用BFS计算从源点到所有顶点的距离
-        self.distances = self._compute_distances()
-        
-        # 计算目标答案 S（距离和）
-        self.target_sum = sum(self.distances.values())
-        
-        # 计算层波计数 L(t) 和累计覆盖 C(t)
-        self.layer_count = {}  # L(t): 距离恰好为 t 的顶点数
-        self.cumulative_count = {}  # C(t): 距离不超过 t 的顶点数
-        
-        for dist in self.distances.values():
-            self.layer_count[dist] = self.layer_count.get(dist, 0) + 1
-        
-        max_dist = max(self.distances.values()) if self.distances else 0
-        cumulative = 0
-        for t in range(max_dist + 1):
-            cumulative += self.layer_count.get(t, 0)
-            self.cumulative_count[t] = cumulative
-        
-        # 为游戏规则准备格式化信息
-        self._game_info["n"] = self.n
-        self._game_info["vertex_list"] = ", ".join(map(str, self.vertices))
-        self._game_info["source"] = self.source
-        self._game_info["answer_value"] = "S"
+        self.tester_thresholds = cfg["tester_thresholds"]
 
-    def _compute_distances(self):
-        """使用BFS计算从源点到所有顶点的最短距离"""
-        from collections import deque
+    def _tester_response(self, node_id: str, tester_id: int) -> bool:
+        if node_id not in self.degrees:
+            return False
         
-        distances = {v: float('inf') for v in self.vertices}
-        distances[self.source] = 0
-        queue = deque([self.source])
-        
-        while queue:
-            u = queue.popleft()
-            for v in self.adj[u]:
-                if distances[v] == float('inf'):
-                    distances[v] = distances[u] + 1
-                    queue.append(v)
-        
-        return distances
+        deg = self.degrees[node_id]
+        threshold = self.tester_thresholds[tester_id - 1]
+        return deg >= threshold
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        try:
-            answer = int(parsed_info["answer"].strip())
-            return answer == self.target_sum
-        except:
+        raw_ans = parsed_info["answer"]
+        
+        if "isolated=" not in raw_ans:
             return False
+        
+        isolated_str = raw_ans.split("isolated=", 1)[1].strip()
+        
+        if isolated_str == "":
+            submitted_isolated = set()
+        else:
+            try:
+                submitted_isolated = set(x.strip() for x in isolated_str.split(",") if x.strip())
+            except:
+                return False
+        
+        return submitted_isolated == self.isolated_nodes
 
     def _cf_core_produce(self, parsed_info):
-        """原始的响应生成逻辑"""
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            closer_res, farther_res, equal_res = "更近", "更远", "等距"
-            error_vertex = "错误：顶点编号无效。"
-            error_format = "错误：查询格式无效。"
+            positive, negative = "正反馈", "负反馈"
+            only_x, only_y, both_pos, both_neg = "仅x正", "仅y正", "两者皆正", "两者皆负"
+            error_msg = "错误：参数格式无效或节点/测试器编号超出范围。"
         else:
-            yes_res, no_res = "Yes", "No"
-            closer_res, farther_res, equal_res = "closer", "farther", "equidistant"
-            error_vertex = "Error: Invalid vertex ID."
-            error_format = "Error: Invalid query format."
+            positive, negative = "positive", "negative"
+            only_x, only_y, both_pos, both_neg = "only x positive", "only y positive", "both positive", "both negative"
+            error_msg = "Error: Invalid parameter format or node/tester ID out of range."
 
-        # 处理层波计数查询
-        if "query_layer" in parsed_info:
+        if "query_probe" in parsed_info:
             try:
-                t = int(parsed_info["query_layer"].strip())
-                if t < 0:
-                    return error_format
-                return str(self.layer_count.get(t, 0))
+                raw = parsed_info["query_probe"]
+                params = {}
+                for pair in raw.split(","):
+                    if not pair.strip():
+                        continue
+                    k, v = pair.split("=")
+                    params[k.strip()] = v.strip()
+                
+                node_id = params["v"]
+                tester_id = int(params["f"])
+                
+                if node_id not in self.degrees or tester_id < 1 or tester_id > self.num_testers:
+                    return error_msg
+                
+                result = self._tester_response(node_id, tester_id)
+                return positive if result else negative
             except:
-                return error_format
+                return error_msg
 
-        # 处理累计覆盖查询
-        elif "query_cumulative" in parsed_info:
-            try:
-                t = int(parsed_info["query_cumulative"].strip())
-                if t < 0:
-                    return error_format
-                max_dist = max(self.distances.values()) if self.distances else 0
-                if t > max_dist:
-                    return str(self.n)  # 超过最大距离，返回所有顶点数
-                return str(self.cumulative_count.get(t, 0))
-            except:
-                return error_format
-
-        # 处理相邻判定查询
-        elif "query_adjacent" in parsed_info:
-            try:
-                raw = parsed_info["query_adjacent"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_format
-                u, v = int(parts[0]), int(parts[1])
-                if u not in self.vertices or v not in self.vertices:
-                    return error_vertex
-                edge = (min(u, v), max(u, v))
-                return yes_res if edge in self.edges else no_res
-            except:
-                return error_format
-
-        # 处理度数查询
-        elif "query_degree" in parsed_info:
-            try:
-                v = int(parsed_info["query_degree"].strip())
-                if v not in self.vertices:
-                    return error_vertex
-                return str(len(self.adj[v]))
-            except:
-                return error_format
-
-        # 处理相对远近比较查询
         elif "query_compare" in parsed_info:
             try:
-                raw = parsed_info["query_compare"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_format
-                x, y = int(parts[0]), int(parts[1])
-                if x not in self.vertices or y not in self.vertices:
-                    return error_vertex
+                raw = parsed_info["query_compare"]
+                params = {}
+                for pair in raw.split(","):
+                    if not pair.strip():
+                        continue
+                    k, v = pair.split("=")
+                    params[k.strip()] = v.strip()
                 
-                dist_x = self.distances[x]
-                dist_y = self.distances[y]
+                x_id = params["x"]
+                y_id = params["y"]
+                tester_id = int(params["f"])
                 
-                if self.config.language == "zh":
-                    if dist_x < dist_y:
-                        return f"{x} 距离源点更近"
-                    elif dist_x > dist_y:
-                        return f"{x} 距离源点更远"
-                    else:
-                        return f"{x} 和 {y} 等距"
+                if (x_id not in self.degrees or y_id not in self.degrees or 
+                    tester_id < 1 or tester_id > self.num_testers):
+                    return error_msg
+                
+                x_result = self._tester_response(x_id, tester_id)
+                y_result = self._tester_response(y_id, tester_id)
+                
+                if x_result and y_result:
+                    return both_pos
+                elif x_result and not y_result:
+                    return only_x
+                elif not x_result and y_result:
+                    return only_y
                 else:
-                    if dist_x < dist_y:
-                        return f"{x} is {closer_res}"
-                    elif dist_x > dist_y:
-                        return f"{x} is {farther_res}"
-                    else:
-                        return f"{x} and {y} are {equal_res}"
+                    return both_neg
             except:
-                return error_format
+                return error_msg
+
+        elif "query_count" in parsed_info:
+            try:
+                raw = parsed_info["query_count"]
+                
+                match = re.search(r'S=(.*?),\s*f=(\d+)', raw, re.IGNORECASE)
+                
+                if not match:
+                    return error_msg
+
+                node_set_str = match.group(1).strip()
+                tester_id = int(match.group(2))
+                
+                if tester_id < 1 or tester_id > self.num_testers:
+                    return error_msg
+                
+                if node_set_str == "":
+                    node_set = set()
+                else:
+                    node_set = set(x.strip() for x in node_set_str.split(",") if x.strip())
+                
+                for node_id in node_set:
+                    if node_id not in self.degrees:
+                        return error_msg
+                
+                count = sum(1 for node_id in node_set if self._tester_response(node_id, tester_id))
+                return str(count)
+            except:
+                return error_msg
 
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        # 1. 若 correct 是纯整数字符串
-        if correct.lstrip('-').isdigit():
-            return str(int(correct) + 1)
-        
-        # 2. 关键词替换（中文）
-        if self.config.language == "zh":
-            if correct == "是":
-                return "否"
-            elif correct == "否":
-                return "是"
-            # 比较查询结果处理
-            if "更近" in correct:
-                return correct.replace("更近", "更远")
-            if "更远" in correct:
-                return correct.replace("更远", "更近")
-            if "等距" in correct:
-                return correct.replace("等距", "更近")
-        else:
-            lower_correct = correct.lower()
-            if lower_correct == "yes":
-                if correct.istitle(): return "No"
-                if correct.isupper(): return "NO"
-                return "no"
-            elif lower_correct == "no":
-                if correct.istitle(): return "Yes"
-                if correct.isupper(): return "YES"
-                return "yes"
-            # 比较查询结果处理
-            if "closer" in correct:
-                return correct.replace("closer", "farther")
-            if "farther" in correct:
-                return correct.replace("farther", "closer")
-            if "equidistant" in correct:
-                return correct.replace("equidistant", "closer")
+        if correct.startswith("Error:") or correct.startswith("错误："):
+            return correct
 
-        # 3. 都不匹配
+        if correct.isdigit():
+            val = int(correct)
+            return str(val + 1)
+        
+        if self.config.language == "zh":
+            zh_flip = {
+                "正反馈": "负反馈",
+                "负反馈": "正反馈",
+                "仅x正": "仅y正",
+                "仅y正": "仅x正",
+                "两者皆正": "两者皆负",
+                "两者皆负": "两者皆正",
+            }
+            if correct in zh_flip:
+                return zh_flip[correct]
+        else:
+            en_flip = {
+                "positive": "negative",
+                "negative": "positive",
+                "only x positive": "only y positive",
+                "only y positive": "only x positive",
+                "both positive": "both negative",
+                "both negative": "both positive",
+            }
+            if correct in en_flip:
+                return en_flip[correct]
+        
         return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
+        results = []
         
-        # 1. 层波计数查询 (Layer Count) & 2. 累计覆盖查询 (Cumulative Coverage)
-        # 距离范围从 0 到 n (虽然最大距离通常小于 n，但遍历到 n 可以覆盖所有可能性)
-        for t in range(self.n + 1):
-            str_t = str(t)
-            
-            # Layer
-            parsed_layer = {"query_layer": str_t}
-            ans_layer = self._cf_core_produce(parsed_layer)
-            queries.append({
-                "query": f"<query_layer>{str_t}</query_layer>",
-                "answer": ans_layer
-            })
-            
-            # Cumulative
-            parsed_cum = {"query_cumulative": str_t}
-            ans_cum = self._cf_core_produce(parsed_cum)
-            queries.append({
-                "query": f"<query_cumulative>{str_t}</query_cumulative>",
-                "answer": ans_cum
-            })
+        if not hasattr(self, "n") or not hasattr(self, "num_testers"):
+            return results
 
-        # 3. 相邻判定 (Adjacent), 4. 度数 (Degree), 5. 比较 (Compare)
-        n_vertices = len(self.vertices)
+        n = self.n
+        nodes = [str(i) for i in range(1, n + 1)]
+
+        for v in nodes:
+            content = f"v={v}, f=1"
+            parsed_info = {"query_probe": content}
+            answer = self._cf_core_produce(parsed_info)
+            query_str = f"<query_probe>{content}</query_probe>"
+            results.append({"query": query_str, "answer": answer})
+
+        for x, y in itertools.combinations(nodes, 2):
+            content = f"x={x}, y={y}, f=1"
+            parsed_info = {"query_compare": content}
+            answer = self._cf_core_produce(parsed_info)
+            query_str = f"<query_compare>{content}</query_compare>"
+            results.append({"query": query_str, "answer": answer})
+
+        max_subset_size = min(2, n)
+        for r in range(max_subset_size + 1):
+            for subset in itertools.combinations(nodes, r):
+                subset_str = ",".join(subset)
+                content = f"S={subset_str}, f=1"
+                parsed_info = {"query_count": content}
+                answer = self._cf_core_produce(parsed_info)
+                query_str = f"<query_count>{content}</query_count>"
+                results.append({"query": query_str, "answer": answer})
         
-        for i in range(n_vertices):
-            u = self.vertices[i]
-            
-            # Degree Query
-            parsed_deg = {"query_degree": str(u)}
-            ans_deg = self._cf_core_produce(parsed_deg)
-            queries.append({
-                "query": f"<query_degree>{u}</query_degree>",
-                "answer": ans_deg
-            })
-            
-            for j in range(n_vertices):
-                v = self.vertices[j]
-                
-                # Compare Query (x, y) - 枚举所有排列，因为 x vs y 和 y vs x 的描述不同
-                if u != v:
-                    val_cmp = f"{u},{v}"
-                    parsed_cmp = {"query_compare": val_cmp}
-                    ans_cmp = self._cf_core_produce(parsed_cmp)
-                    queries.append({
-                        "query": f"<query_compare>{val_cmp}</query_compare>",
-                        "answer": ans_cmp
-                    })
-                
-                # Adjacent Query (u, v) - 无向图，枚举组合 (i < j) 即可
-                if i < j:
-                    val_adj = f"{u},{v}"
-                    parsed_adj = {"query_adjacent": val_adj}
-                    ans_adj = self._cf_core_produce(parsed_adj)
-                    queries.append({
-                        "query": f"<query_adjacent>{val_adj}</query_adjacent>",
-                        "answer": ans_adj
-                    })
-                    
-        return queries
+        subset_str = ",".join(nodes)
+        content = f"S={subset_str}, f=1"
+        parsed_info = {"query_count": content}
+        answer = self._cf_core_produce(parsed_info)
+        query_str = f"<query_count>{content}</query_count>"
+        results.append({"query": query_str, "answer": answer})
+
+        return results

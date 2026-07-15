@@ -1,596 +1,525 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   子串匹配：某模式串是否作为连续子串出现在序列中
-# ============================================================
-
 from .base import Game
 import re
+import itertools
 
+class CyclicSubsetInferenceGame(Game):
 
-class SubstringMatchingGame(Game):
+    reasoning_type = "归纳推理"
+    data_structure = "集合"
 
     game_rule_zh = """\
-我们现在来玩一个"隐藏序列匹配"的推理游戏，规则如下：
+我们现在来玩一个"周期子集推理"游戏，规则如下：
 
-游戏设定：
-- 存在一个字母表Σ（包含所有大写英文字母A到Z）。
-- 有一个长度为 {n} 的隐藏序列 S，其中每个位置的字符都来自字母表Σ。序列索引从1开始，即 S[1] 到 S[{n}]。
-- 有一个长度为 {m} 的公开模式串 P = "{pattern}"。
+游戏设定了一个有限集合 U = {{1, 2, ..., {n}}}。我已秘密选定了一个周期长度 K（K 可能是 2、3 或 4），以及 K 个非空子集 R1, R2, ..., RK，它们构成一个循环序列。游戏从第 1 轮开始，每一轮都有一个"当前目标子集"：
 
-你的目标：
-判断是否存在某个起点位置 j（1 小于等于 j 小于等于 {max_start}），使得模式串 P 作为连续子串完整出现在隐藏序列 S 中，即 S[j] 到 S[j+{m}-1] 与 P[1] 到 P[{m}] 完全相同。
+- 第 t 轮的当前目标子集为：R_((t-1) mod K + 1)
+- 例如：若 K=3，则第 1 轮目标是 R1，第 2 轮是 R2，第 3 轮是 R3，第 4 轮又回到 R1，依此类推。
 
-可用的查询类型（每次只能发起一个查询）：
+你的目标是通过尽可能少的测试，推断出周期长度 K 以及所有目标子集 R1, ..., RK 的具体元素。
 
-1. 对齐查询 Align(i)：
-   - 询问从位置 i 开始，隐藏序列 S 与模式串 P 的最长前缀匹配长度。
-   - 返回一个整数 L(i)，表示最大的 t（0 小于等于 t 小于等于 min({m}, {n} - i + 1)），使得 S[i] 到 S[i+t-1] 与 P[1] 到 P[t] 完全匹配。
-   - 格式：<query_align>i</query_align>
-   - 例如：<query_align>5</query_align>
+每次你可以选择以下三种操作之一：
 
-2. 区间存在性查询 Sweep(l, r, k)：
-   - 询问在起点范围 [l, r]（1 小于等于 l 小于等于 r 小于等于 {max_start}）内，是否存在某个位置 j 使得 Align(j) 大于等于 k。
-   - 注意：k 必须严格小于 {m}，不能直接询问是否存在完整匹配。
-   - 返回"是"或"否"。
-   - 格式：<query_sweep>l,r,k</query_sweep>
-   - 例如：<query_sweep>1,10,3</query_sweep>
+1. **子集包含测试**：提交一个子集 S（用逗号分隔的编号），我会告诉你：
+   - 当前目标子集是否完全包含在 S 中（"是"或"否"）
+   - 当前目标子集中有多少元素不在 S 中（一个非负整数，若包含判定为"是"，则为 0）
 
-提交答案：
-当你收集到足够信息后，请提交最终判定结果：
+2. **推进轮次**：请求进入下一轮，当前目标子集将按周期切换到下一个。
 
-- 若判定存在匹配，必须给出一个具体的起点位置 j，格式如下：
-  <answer>存在,j={{j}}</answer>
-  
-- 若判定不存在匹配，格式如下：
-  <answer>不存在</answer>
+3. **提交最终答案**：当你认为已经推断出答案时，提交周期长度 K 以及所有子集 R1, ..., RK。
 
-重要提示：
-- 若判定"存在"，你必须确保该起点 j 的 Align(j) 等于 {m}（通过 Align 查询确认）。
-- 若判定"不存在"，你需要通过查询证明所有可能的起点位置都不满足完整匹配。
-- 请尽可能少地使用查询次数来完成判定。
-- 答案错误或格式不符将导致游戏失败。
+每次只能提交一个操作标签。请使用以下 XML 格式：
+
+- 子集包含测试（例如测试子集 {{1,2,3}}）：
+<test_subset>1,2,3</test_subset>
+
+- 推进轮次（内容为空）：
+<next_round></next_round>
+
+- 提交最终答案（例如 K=3，R1={{1,2}}, R2={{3}}, R3={{1,4}}）：
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+注意：
+- 提交答案时，子集顺序很重要，必须与实际的循环序列对应（允许循环位移，例如 R1,R2,R3 和 R2,R3,R1 视为等价）
+- 若答案错误累计三次，游戏失败
+- 空集不能包含在测试或答案中
 """
 
     game_rule_en = """\
-Let's play a "Hidden Sequence Matching" deduction game. Here are the rules:
+Let's play a "Cyclic Subset Inference" game. Here are the rules:
 
-Game Setup:
-- There is an alphabet Σ (containing all uppercase English letters A to Z).
-- There is a hidden sequence S of length {n}, where each position contains a character from alphabet Σ. The sequence is indexed starting from 1, i.e., S[1] to S[{n}].
-- There is a public pattern string P = "{pattern}" of length {m}.
+The game has a finite set U = {{1, 2, ..., {n}}}. I have secretly chosen a cycle length K (K can be 2, 3, or 4), and K non-empty subsets R1, R2, ..., RK that form a cyclic sequence. The game starts from round 1, and each round has a "current target subset":
 
-Your Goal:
-Determine whether there exists a starting position j (1 less than or equal to j less than or equal to {max_start}) such that pattern P appears as a complete consecutive substring in hidden sequence S, i.e., S[j] to S[j+{m}-1] exactly matches P[1] to P[{m}].
+- The current target subset of round t is: R_((t-1) mod K + 1)
+- For example: if K=3, round 1's target is R1, round 2's is R2, round 3's is R3, round 4's is R1 again, and so on.
 
-Available Query Types (only one query per turn):
+Your goal is to infer the cycle length K and all target subsets R1, ..., RK with as few tests as possible.
 
-1. Align Query Align(i):
-   - Ask for the longest prefix match length between hidden sequence S starting at position i and pattern P.
-   - Returns an integer L(i), the maximum t (0 less than or equal to t less than or equal to min({m}, {n} - i + 1)) such that S[i] to S[i+t-1] exactly matches P[1] to P[t].
-   - Format: <query_align>i</query_align>
-   - Example: <query_align>5</query_align>
+Each time you can choose one of the following three operations:
 
-2. Interval Existence Query Sweep(l, r, k):
-   - Ask whether there exists a position j in the range [l, r] (1 less than or equal to l less than or equal to r less than or equal to {max_start}) such that Align(j) is greater than or equal to k.
-   - Note: k must be strictly less than {m}; you cannot directly ask if a complete match exists.
-   - Returns "Yes" or "No".
-   - Format: <query_sweep>l,r,k</query_sweep>
-   - Example: <query_sweep>1,10,3</query_sweep>
+1. **Subset Containment Test**: Submit a subset S (comma-separated IDs), and I will tell you:
+   - Whether the current target subset is fully contained in S ("Yes" or "No")
+   - How many elements of the current target subset are not in S (a non-negative integer; 0 if containment is "Yes")
 
-Submitting Answer:
-When you have gathered enough information, submit your final determination:
+2. **Advance Round**: Request to move to the next round, and the current target subset will switch to the next one in the cycle.
 
-- If you determine a match exists, you must provide a specific starting position j in this format:
-  <answer>exists,j={{j}}</answer>
-  
-- If you determine no match exists, use this format:
-  <answer>not_exists</answer>
+3. **Submit Final Answer**: When you think you have inferred the answer, submit the cycle length K and all subsets R1, ..., RK.
 
-Important Notes:
-- If you determine "exists", you must ensure that Align(j) equals {m} for the position j (confirmed via Align query).
-- If you determine "not exists", you need to prove through queries that all possible starting positions do not satisfy a complete match.
-- Please use as few queries as possible to complete the determination.
-- Incorrect answers or invalid formats will result in game failure.
+Each submission must contain only one operation tag. Use the following XML format:
+
+- Subset Containment Test (e.g., testing subset {{1,2,3}}):
+<test_subset>1,2,3</test_subset>
+
+- Advance Round (empty content):
+<next_round></next_round>
+
+- Submit Final Answer (e.g., K=3, R1={{1,2}}, R2={{3}}, R3={{1,4}}):
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+Note:
+- When submitting the answer, the order of subsets matters and must correspond to the actual cyclic sequence (cyclic shifts are allowed, e.g., R1,R2,R3 and R2,R3,R1 are considered equivalent)
+- If the answer is wrong three times in total, the game fails
+- Empty sets cannot be included in tests or answers
 """
 
-    # ================= 场景改造 1：交通 =================
     contextualized_rule_zh_1 = """\
-欢迎使用智能交通调度分析系统。我们需要在庞大的车流记录中追踪一支特定的目标车队。
+我们现在来进行"交通信号灯相位调度"推演，规则如下：
 
-系统设定：
-- 存在一个车辆特征编码字母表Σ（包含所有大写英文字母A到Z）。
-- 存在一条长度为 {n} 的隐藏车流记录序列 S，其中每个位置的字符代表一辆经过卡口的车辆特征。序列索引从1开始，即 S[1] 到 S[{n}]。
-- 我们正在追踪一支长度为 {m} 的公开目标车队特征序列 P = "{pattern}"。
+系统设定了一个复杂的交叉路口，共有流量方向集合 U = {{1, 2, ..., {n}}}。智能交通系统秘密选用了一个相位周期长度 K（K 可能是 2、3 或 4），以及 K 个非空通行流向集合 R1, R2, ..., RK，它们构成一个循环的相位序列。推演从第 1 个相位（轮次）开始，每个相位都有一个"当前通行流向集合"：
 
-你的目标：
-判断是否存在某个起始卡口记录位置 j（1 小于等于 j 小于等于 {max_start}），使得目标车队 P 作为连续的车流完整出现在隐藏记录序列 S 中，即 S[j] 到 S[j+{m}-1] 与 P[1] 到 P[{m}] 完全相同。
+- 第 t 个相位的当前通行集合为：R_((t-1) mod K + 1)
+- 例如：若 K=3，则第 1 个相位通行 R1，第 2 个相位通行 R2，第 3 个相位通行 R3，第 4 个相位又回到 R1，依此类推。
 
-可用的调查手段（每次只能发起一个查询）：
+你的目标是通过尽可能少的监控测试，推断出周期长度 K 以及所有通行流向集合 R1, ..., RK 的具体编号。
 
-1. 连续追踪查询 Align(i)：
-   - 询问从记录位置 i 开始，实际车流序列 S 与目标车队 P 的最长连续匹配车辆数。
-   - 返回一个整数 L(i)，表示最大的 t（0 小于等于 t 小于等于 min({m}, {n} - i + 1)），使得 S[i] 到 S[i+t-1] 与 P[1] 到 P[t] 完全匹配。
-   - 格式：<query_align>i</query_align>
-   - 例如：<query_align>5</query_align>
+每次你可以选择以下三种操作之一：
 
-2. 区间扫描查询 Sweep(l, r, k)：
-   - 询问在起始记录范围 [l, r]（1 小于等于 l 小于等于 r 小于等于 {max_start}）内，是否存在某个位置 j 使得连续追踪查询 Align(j) 大于等于 k。
-   - 注意：k 必须严格小于 {m}，不能直接询问是否存在完整的车队匹配。
-   - 返回"是"或"否"。
-   - 格式：<query_sweep>l,r,k</query_sweep>
-   - 例如：<query_sweep>1,10,3</query_sweep>
+1. **监控覆盖测试**：提交一个监控流向集合 S（用逗号分隔的编号），系统会返回：
+   - 当前相位的通行流向是否完全被包含在监控集合 S 中（"是"或"否"）
+   - 当前相位有多少个通行流向未被 S 监控覆盖（一个非负整数，若判定为"是"，则为 0）
 
-提交结案报告：
-当你收集到足够信息后，请提交最终判定结果：
+2. **推进相位**：请求进入下一个相位，当前通行流向集合将按周期切换到下一个。
 
-- 若判定目标车队出现过，必须给出一个具体的起始位置 j，格式如下：
-  <answer>存在,j={{j}}</answer>
-  
-- 若判定目标车队未出现，格式如下：
-  <answer>不存在</answer>
+3. **提交最终调度方案**：当你认为已经推断出系统设置时，提交周期长度 K 以及所有流向集合 R1, ..., RK。
 
-重要提示：
-- 若判定"存在"，你必须确保该起始位置 j 的 Align(j) 等于 {m}（通过连续追踪查询确认）。
-- 若判定"不存在"，你需要通过调查证明所有可能的起始位置都不满足完整匹配。
-- 请尽可能少地使用查询次数来完成判定。
-- 答案错误或格式不符将导致追踪任务失败。
+每次只能提交一个操作标签。请使用以下 XML 格式：
+
+- 监控覆盖测试（例如测试流向 {{1,2,3}}）：
+<test_subset>1,2,3</test_subset>
+
+- 推进相位（内容为空）：
+<next_round></next_round>
+
+- 提交最终调度方案（例如 K=3，R1={{1,2}}, R2={{3}}, R3={{1,4}}）：
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+注意：
+- 提交方案时，集合顺序很重要，必须与实际的相位循环序列对应（允许循环位移，例如 R1,R2,R3 和 R2,R3,R1 视为等价）
+- 若方案错误累计三次，推演失败
+- 空集不能包含在测试或最终方案中
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the Intelligent Traffic Dispatch and Analysis System. We need to track a specific target convoy in a massive stream of vehicle records.
+Let's engage in a "Traffic Signal Phase Scheduling" simulation. Here are the rules:
 
-System Setup:
-- There is a vehicle feature coding alphabet Σ (containing all uppercase English letters A to Z).
-- There is a hidden traffic record sequence S of length {n}, where each position represents a vehicle's feature passing a checkpoint. The sequence is indexed starting from 1, i.e., S[1] to S[{n}].
-- We are tracking a public target convoy signature sequence P = "{pattern}" of length {m}.
+The system involves a complex intersection with a set of traffic flow directions U = {{1, 2, ..., {n}}}. The intelligent traffic system has secretly chosen a phase cycle length K (K can be 2, 3, or 4) and K non-empty allowed flow subsets R1, R2, ..., RK that form a cyclic phase sequence. The simulation starts from phase (round) 1, and each phase has a "current allowed flow subset":
 
-Your Goal:
-Determine whether there exists a starting checkpoint record position j (1 less than or equal to j less than or equal to {max_start}) such that the target convoy P appears as a complete consecutive stream in the hidden traffic sequence S, i.e., S[j] to S[j+{m}-1] exactly matches P[1] to P[{m}].
+- The current allowed flow subset for phase t is: R_((t-1) mod K + 1)
+- For example: if K=3, phase 1 allows R1, phase 2 allows R2, phase 3 allows R3, phase 4 reverts to R1, and so on.
 
-Available Investigative Tools (only one query per turn):
+Your goal is to infer the cycle length K and all allowed flow subsets R1, ..., RK with as few monitoring tests as possible.
 
-1. Continuous Tracking Query Align(i):
-   - Ask for the longest consecutive matching vehicle count between the hidden traffic sequence S starting at record position i and the target convoy P.
-   - Returns an integer L(i), the maximum t (0 less than or equal to t less than or equal to min({m}, {n} - i + 1)) such that S[i] to S[i+t-1] exactly matches P[1] to P[t].
-   - Format: <query_align>i</query_align>
-   - Example: <query_align>5</query_align>
+Each time you can choose one of the following three operations:
 
-2. Interval Scan Query Sweep(l, r, k):
-   - Ask whether there exists a position j in the starting record range [l, r] (1 less than or equal to l less than or equal to r less than or equal to {max_start}) such that the Continuous Tracking Query Align(j) is greater than or equal to k.
-   - Note: k must be strictly less than {m}; you cannot directly ask if a complete convoy match exists.
-   - Returns "Yes" or "No".
-   - Format: <query_sweep>l,r,k</query_sweep>
-   - Example: <query_sweep>1,10,3</query_sweep>
+1. **Monitoring Coverage Test**: Submit a subset of monitored flows S (comma-separated IDs), and the system will return:
+   - Whether the current phase's allowed flows are fully contained in the monitored subset S ("Yes" or "No")
+   - How many allowed flows of the current phase are not covered by S (a non-negative integer; 0 if containment is "Yes")
 
-Submitting Final Report:
-When you have gathered enough information, submit your final determination:
+2. **Advance Phase**: Request to move to the next phase, and the current allowed flow subset will switch to the next one in the cycle.
 
-- If you determine the target convoy appeared, you must provide a specific starting position j in this format:
-  <answer>exists,j={{j}}</answer>
-  
-- If you determine the convoy did not appear, use this format:
-  <answer>not_exists</answer>
+3. **Submit Final Scheduling Plan**: When you think you have inferred the system settings, submit the cycle length K and all subsets R1, ..., RK.
 
-Important Notes:
-- If you determine "exists", you must ensure that Align(j) equals {m} for the position j (confirmed via Continuous Tracking query).
-- If you determine "not exists", you need to prove through investigations that all possible starting positions do not satisfy a complete match.
-- Please use as few queries as possible to complete the determination.
-- Incorrect answers or invalid formats will result in tracking failure.
+Each submission must contain only one operation tag. Use the following XML format:
+
+- Monitoring Coverage Test (e.g., testing flows {{1,2,3}}):
+<test_subset>1,2,3</test_subset>
+
+- Advance Phase (empty content):
+<next_round></next_round>
+
+- Submit Final Scheduling Plan (e.g., K=3, R1={{1,2}}, R2={{3}}, R3={{1,4}}):
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+Note:
+- When submitting the plan, the order of subsets matters and must correspond to the actual cyclic sequence (cyclic shifts are allowed, e.g., R1,R2,R3 and R2,R3,R1 are considered equivalent)
+- If the plan is wrong three times in total, the simulation fails
+- Empty sets cannot be included in tests or the final plan
 """
 
-    # ================= 场景改造 2：医疗 =================
     contextualized_rule_zh_2 = """\
-欢迎使用基因序列筛查系统。我们将从患者的长序列基因图谱中定位特定的致病基因片段。
+我们现在来进行"慢性病周期性联合用药方案"推演，规则如下：
 
-系统设定：
-- 存在一个基因特征字母表Σ（包含所有大写英文字母A到Z）。
-- 存在一条长度为 {n} 的隐藏患者基因序列 S，其中每个位置的字符代表一个特征碱基。序列索引从1开始，即 S[1] 到 S[{n}]。
-- 我们正在寻找一段已知长度为 {m} 的公开致病基因片段 P = "{pattern}"。
+药房备有可用药物集合 U = {{1, 2, ..., {n}}}。医生为患者秘密制定了一个用药周期 K（K 可能是 2、3 或 4 天），以及 K 个非空的日服药物组合 R1, R2, ..., RK，它们构成一个循环用药序列。推演从第 1 天（轮次）开始，每天都有一个"当日处方药物组合"：
 
-你的目标：
-判断是否存在某个起始位点 j（1 小于等于 j 小于等于 {max_start}），使得致病基因片段 P 作为连续序列完整出现在隐藏患者序列 S 中，即 S[j] 到 S[j+{m}-1] 与 P[1] 到 P[{m}] 完全相同。
+- 第 t 天的当日处方药物组合为：R_((t-1) mod K + 1)
+- 例如：若 K=3，则第 1 天服药 R1，第 2 天服药 R2，第 3 天服药 R3，第 4 天又回到 R1，依此类推。
 
-可用的筛查手段（每次只能发起一个查询）：
+你的目标是通过尽可能少的配药测试，推断出用药周期 K 以及所有药物组合 R1, ..., RK 的具体药物编号。
 
-1. 基因表达匹配查询 Align(i)：
-   - 询问从位点 i 开始，隐藏基因序列 S 与致病片段 P 的最长连续前缀匹配长度。
-   - 返回一个整数 L(i)，表示最大的 t（0 小于等于 t 小于等于 min({m}, {n} - i + 1)），使得 S[i] 到 S[i+t-1] 与 P[1] 到 P[t] 完全匹配。
-   - 格式：<query_align>i</query_align>
-   - 例如：<query_align>5</query_align>
+每次你可以选择以下三种操作之一：
 
-2. 区间筛查查询 Sweep(l, r, k)：
-   - 询问在起始位点范围 [l, r]（1 小于等于 l 小于等于 r 小于等于 {max_start}）内，是否存在某个位点 j 使得基因表达匹配查询 Align(j) 大于等于 k。
-   - 注意：k 必须严格小于 {m}，不能直接询问是否存在完整的基因突变匹配。
-   - 返回"是"或"否"。
-   - 格式：<query_sweep>l,r,k</query_sweep>
-   - 例如：<query_sweep>1,10,3</query_sweep>
+1. **配药覆盖测试**：提交一个备选药物包 S（用逗号分隔的编号），系统会返回：
+   - 当日处方药物是否完全包含在备选药物包 S 中（"是"或"否"）
+   - 当日处方药物中有多少种未在 S 中（一个非负整数，若判定为"是"，则为 0）
 
-提交诊断报告：
-当你收集到足够信息后，请提交最终判定结果：
+2. **推进用药日**：请求进入下一天，当日处方药物将按周期切换到下一个组合。
 
-- 若判定致病基因存在，必须给出一个具体的起始位点 j，格式如下：
-  <answer>存在,j={{j}}</answer>
-  
-- 若判定未发现致病基因，格式如下：
-  <answer>不存在</answer>
+3. **提交最终治疗方案**：当你认为已经推断出具体用药时，提交周期 K 以及所有药物组合 R1, ..., RK。
 
-重要提示：
-- 若判定"存在"，你必须确保该起始位点 j 的 Align(j) 等于 {m}（通过基因表达匹配查询确认）。
-- 若判定"不存在"，你需要通过筛查证明所有可能的起始位点都不满足完整表达匹配。
-- 请尽可能少地使用查询次数来完成判定。
-- 答案错误或格式不符将导致诊断失败。
+每次只能提交一个操作标签。请使用以下 XML format：
+
+- 配药覆盖测试（例如测试药物包 {{1,2,3}}）：
+<test_subset>1,2,3</test_subset>
+
+- 推进用药日（内容为空）：
+<next_round></next_round>
+
+- 提交最终治疗方案（例如 K=3，R1={{1,2}}, R2={{3}}, R3={{1,4}}）：
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+注意：
+- 提交方案时，组合顺序很重要，必须与实际的用药循环序列对应（允许循环位移，例如 R1,R2,R3 和 R2,R3,R1 视为等价）
+- 若方案错误累计三次，推演失败
+- 空集不能包含在测试或最终方案中
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the Genomic Sequence Screening System. We need to locate a specific pathogenic gene segment within a patient's extended genetic sequence map.
+[Healthcare Scenario]
+Let's engage in a "Chronic Disease Cyclic Medication Plan" simulation. Here are the rules:
 
-System Setup:
-- There is a genetic feature alphabet Σ (containing all uppercase English letters A to Z).
-- There is a hidden patient genomic sequence S of length {n}, where each position represents a characteristic base pair. The sequence is indexed starting from 1, i.e., S[1] to S[{n}].
-- We are searching for a known public pathogenic gene segment P = "{pattern}" of length {m}.
+The pharmacy has an available medication set U = {{1, 2, ..., {n}}}. The doctor has secretly formulated a medication cycle length K (K can be 2, 3, or 4 days) and K non-empty daily medication combinations R1, R2, ..., RK that form a cyclic medication sequence. The simulation starts from day (round) 1, and each day has a "current prescribed medication combination":
 
-Your Goal:
-Determine whether there exists a starting loci position j (1 less than or equal to j less than or equal to {max_start}) such that the pathogenic gene segment P appears as a complete consecutive sequence in the hidden patient sequence S, i.e., S[j] to S[j+{m}-1] exactly matches P[1] to P[{m}].
+- The current prescribed medication combination for day t is: R_((t-1) mod K + 1)
+- For example: if K=3, day 1 requires R1, day 2 requires R2, day 3 requires R3, day 4 reverts to R1, and so on.
 
-Available Screening Tools (only one query per turn):
+Your goal is to infer the cycle length K and all daily medication combinations R1, ..., RK with as few dispensing tests as possible.
 
-1. Gene Expression Match Query Align(i):
-   - Ask for the longest consecutive prefix match length between the hidden patient sequence S starting at loci i and the pathogenic segment P.
-   - Returns an integer L(i), the maximum t (0 less than or equal to t less than or equal to min({m}, {n} - i + 1)) such that S[i] to S[i+t-1] exactly matches P[1] to P[t].
-   - Format: <query_align>i</query_align>
-   - Example: <query_align>5</query_align>
+Each time you can choose one of the following three operations:
 
-2. Interval Screening Query Sweep(l, r, k):
-   - Ask whether there exists a loci position j in the starting range [l, r] (1 less than or equal to l less than or equal to r less than or equal to {max_start}) such that the Gene Expression Match Query Align(j) is greater than or equal to k.
-   - Note: k must be strictly less than {m}; you cannot directly ask if a complete gene mutation match exists.
-   - Returns "Yes" or "No".
-   - Format: <query_sweep>l,r,k</query_sweep>
-   - Example: <query_sweep>1,10,3</query_sweep>
+1. **Dispensing Coverage Test**: Submit a subset of prepared medications S (comma-separated IDs), and the system will return:
+   - Whether the current day's prescribed medications are fully contained in the prepared subset S ("Yes" or "No")
+   - How many prescribed medications of the current day are missing from S (a non-negative integer; 0 if containment is "Yes")
 
-Submitting Diagnostic Report:
-When you have gathered enough information, submit your final determination:
+2. **Advance Medication Day**: Request to move to the next day, and the current prescribed combination will switch to the next one in the cycle.
 
-- If you determine the pathogenic gene exists, you must provide a specific starting loci position j in this format:
-  <answer>exists,j={{j}}</answer>
-  
-- If you determine the pathogenic gene is not found, use this format:
-  <answer>not_exists</answer>
+3. **Submit Final Treatment Plan**: When you think you have inferred the plan, submit the cycle length K and all subsets R1, ..., RK.
 
-Important Notes:
-- If you determine "exists", you must ensure that Align(j) equals {m} for the loci j (confirmed via Gene Expression Match Query).
-- If you determine "not exists", you need to prove through screening that all possible starting loci do not satisfy a complete expression match.
-- Please use as few queries as possible to complete the determination.
-- Incorrect answers or invalid formats will result in diagnostic failure.
+Each submission must contain only one operation tag. Use the following XML format:
+
+- Dispensing Coverage Test (e.g., testing medications {{1,2,3}}):
+<test_subset>1,2,3</test_subset>
+
+- Advance Medication Day (empty content):
+<next_round></next_round>
+
+- Submit Final Treatment Plan (e.g., K=3, R1={{1,2}}, R2={{3}}, R3={{1,4}}):
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+Note:
+- When submitting the plan, the order of combinations matters and must correspond to the actual cyclic sequence (cyclic shifts are allowed, e.g., R1,R2,R3 and R2,R3,R1 are considered equivalent)
+- If the plan is wrong three times in total, the simulation fails
+- Empty sets cannot be included in tests or the final plan
 """
 
-    # ================= 场景改造 3：教育 =================
     contextualized_rule_zh_3 = """\
-欢迎进入学术诚信检测系统。我们需要核查一份提交的论文中是否完整抄袭了特定的文献段落。
+我们现在来进行"轮动式互动教学课程排班"推演，规则如下：
 
-系统设定：
-- 存在一个文本字符特征字母表Σ（包含所有大写英文字母A到Z）。
-- 系统解析出一段长度为 {n} 的隐藏论文文本序列 S。序列索引从1开始，即 S[1] 到 S[{n}]。
-- 我们正在核查一段疑似被抄袭的长度为 {m} 的公开文献片段 P = "{pattern}"。
+学校开设了总兴趣模块集合 U = {{1, 2, ..., {n}}}。教学组秘密制定了一个周期长度 K（K 可能是 2、3 或 4 周），以及 K 个非空的核心学习模块组合 R1, R2, ..., RK，它们构成一个循环的教学大纲。推演从第 1 周（轮次）开始，每周都有一个"当前核心模块组合"：
 
-你的目标：
-判断是否存在某个起始字符位置 j（1 小于等于 j 小于等于 {max_start}），使得抄袭文献片段 P 作为连续的文本完整出现在隐藏论文序列 S 中，即 S[j] 到 S[j+{m}-1] 与 P[1] 到 P[{m}] 完全相同。
+- 第 t 周的当前核心模块组合为：R_((t-1) mod K + 1)
+- 例如：若 K=3，则第 1 周学习 R1，第 2 周学习 R2，第 3 周学习 R3，第 4 周又回到 R1，依此类推。
 
-可用的查重手段（每次只能发起一个查询）：
+你的目标是通过尽可能少的材料覆盖测试，推断出教学周期 K 以及所有核心模块组合 R1, ..., RK 的具体编号。
 
-1. 文本相似度比对查询 Align(i)：
-   - 询问从文本位置 i 开始，隐藏论文序列 S 与疑似文献 P 的最长连续前缀匹配字符数。
-   - 返回一个整数 L(i)，表示最大的 t（0 小于等于 t 小于等于 min({m}, {n} - i + 1)），使得 S[i] 到 S[i+t-1] 与 P[1] 到 P[t] 完全匹配。
-   - 格式：<query_align>i</query_align>
-   - 例如：<query_align>5</query_align>
+每次你可以选择以下三种操作之一：
 
-2. 章节查重扫描查询 Sweep(l, r, k)：
-   - 询问在起始文本范围 [l, r]（1 小于等于 l 小于等于 r 小于等于 {max_start}）内，是否存在某个位置 j 使得文本相似度比对查询 Align(j) 大于等于 k。
-   - 注意：k 必须严格小于 {m}，不能直接询问是否存在完整的段落抄袭。
-   - 返回"是"或"否"。
-   - 格式：<query_sweep>l,r,k</query_sweep>
-   - 例如：<query_sweep>1,10,3</query_sweep>
+1. **材料覆盖测试**：准备一个教学材料包 S（用逗号分隔的模块编号），系统会返回：
+   - 当前周的核心学习模块是否完全被该材料包 S 覆盖（"是"或"否"）
+   - 当前周的核心模块中有多少个缺少教学材料（一个非负整数，若判定为"是"，则为 0）
 
-提交检测报告：
-当你收集到足够信息后，请提交最终判定结果：
+2.教学**推进教学周**：请求进入下一个教学周，当前核心模块组合将按周期切换到下一个。
 
-- 若判定存在完整抄袭行为，必须给出一个具体的起始位置 j，格式如下：
-  <answer>存在,j={{j}}</answer>
-  
-- 若判定未发生完整抄袭，格式如下：
-  <answer>不存在</answer>
+3. **提交最终教学大纲**：当你认为已经推断出系统设置时，提交周期长度 K 以及所有模块组合 R1, ..., RK。
 
-重要提示：
-- 若判定"存在"，你必须确保该起始位置 j 的 Align(j) 等于 {m}（通过文本相似度比对查询确认）。
-- 若判定"不存在"，你需要通过扫描证明所有可能的起始位置都不满足完整相似度匹配。
-- 请尽可能少地使用查询次数来完成判定。
-- 答案错误或格式不符将导致查重失败。
+每次只能提交一个操作标签。请使用以下 XML 格式：
+
+- 材料覆盖测试（例如测试材料包 {{1,2,3}}）：
+<test_subset>1,2,3</test_subset>
+
+- 推进教学周（内容为空）：
+<next_round></next_round>
+
+- 提交最终教学大纲（例如 K=3，R1={{1,2}}, R2={{3}}, R3={{1,4}}）：
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+注意：
+- 提交大纲时，组合顺序很重要，必须与实际的教学循环序列对应（允许循环位移，例如 R1,R2,R3 和 R2,R3,R1 视为等价）
+- 若大纲错误累计三次，推演失败
+- 空集不能包含在测试或最终大纲中
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Academic Integrity Detection System. We need to verify whether a submitted paper completely plagiarized a specific literature segment.
+Let's engage in a "Rotating Interactive Teaching Syllabus" simulation. Here are the rules:
 
-System Setup:
-- There is a text character feature alphabet Σ (containing all uppercase English letters A to Z).
-- The system parsed a hidden paper text sequence S of length {n}. The sequence is indexed starting from 1, i.e., S[1] to S[{n}].
-- We are verifying a public suspected plagiarized literature segment P = "{pattern}" of length {m}.
+The school offers a total set of interest modules U = {{1, 2, ..., {n}}}. The teaching committee has secretly formulated a teaching cycle length K (K can be 2, 3, or 4 weeks) and K non-empty core learning module combinations R1, R2, ..., RK that form a cyclic syllabus. The simulation starts from week (round) 1, and each week has a "current core module combination":
 
-Your Goal:
-Determine whether there exists a starting character position j (1 less than or equal to j less than or equal to {max_start}) such that the plagiarized literature segment P appears as a complete consecutive text in the hidden paper sequence S, i.e., S[j] to S[j+{m}-1] exactly matches P[1] to P[{m}].
+- The current core module combination for week t is: R_((t-1) mod K + 1)
+- For example: if K=3, week 1 focuses on R1, week 2 focuses on R2, week 3 focuses on R3, week 4 reverts to R1, and so on.
 
-Available Verification Tools (only one query per turn):
+Your goal is to infer the teaching cycle length K and all core module combinations R1, ..., RK with as few material coverage tests as possible.
 
-1. Text Similarity Alignment Query Align(i):
-   - Ask for the longest consecutive matching character count between the hidden paper sequence S starting at text position i and the literature segment P.
-   - Returns an integer L(i), the maximum t (0 less than or equal to t less than or equal to min({m}, {n} - i + 1)) such that S[i] to S[i+t-1] exactly matches P[1] to P[t].
-   - Format: <query_align>i</query_align>
-   - Example: <query_align>5</query_align>
+Each time you can choose one of the following three operations:
 
-2. Section Plagiarism Scan Query Sweep(l, r, k):
-   - Ask whether there exists a position j in the starting text range [l, r] (1 less than or equal to l less than or equal to r less than or equal to {max_start}) such that the Text Similarity Alignment Query Align(j) is greater than or equal to k.
-   - Note: k must be strictly less than {m}; you cannot directly ask if a complete paragraph plagiarism exists.
-   - Returns "Yes" or "No".
-   - Format: <query_sweep>l,r,k</query_sweep>
-   - Example: <query_sweep>1,10,3</query_sweep>
+1. **Material Coverage Test**: Prepare a teaching material package S (comma-separated module IDs), and the system will return:
+   - Whether the current week's core modules are fully covered by the material package S ("Yes" or "No")
+   - How many core modules of the current week lack teaching materials in S (a non-negative integer; 0 if containment is "Yes")
 
-Submitting Detection Report:
-When you have gathered enough information, submit your final determination:
+2. **Advance Teaching Week**: Request to move to the next teaching week, and the current core module combination will switch to the next one in the cycle.
 
-- If you determine complete plagiarism exists, you must provide a specific starting position j in this format:
-  <answer>exists,j={{j}}</answer>
-  
-- If you determine no complete plagiarism occurred, use this format:
-  <answer>not_exists</answer>
+3. **Submit Final Syllabus**: When you think you have inferred the syllabus, submit the cycle length K and all combinations R1, ..., RK.
 
-Important Notes:
-- If you determine "exists", you must ensure that Align(j) equals {m} for the position j (confirmed via Text Similarity Alignment Query).
-- If you determine "not exists", you need to prove through scanning that all possible starting positions do not satisfy a complete similarity match.
-- Please use as few queries as possible to complete the determination.
-- Incorrect answers or invalid formats will result in verification failure.
+Each submission must contain only one operation tag. Use the following XML format:
+
+- Material Coverage Test (e.g., testing package {{1,2,3}}):
+<test_subset>1,2,3</test_subset>
+
+- Advance Teaching Week (empty content):
+<next_round></next_round>
+
+- Submit Final Syllabus (e.g., K=3, R1={{1,2}}, R2={{3}}, R3={{1,4}}):
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+Note:
+- When submitting the syllabus, the order of combinations matters and must correspond to the actual cyclic sequence (cyclic shifts are allowed, e.g., R1,R2,R3 and R2,R3,R1 are considered equivalent)
+- If the syllabus is wrong three times in total, the simulation fails
+- Empty sets cannot be included in tests or the final syllabus
 """
 
-    # ================= 场景改造 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-欢迎使用工业流水线质量质检系统。我们需要在一批流水线产品的状态代码序列中排查特定的严重缺陷特征。
+我们现在来进行"自动化流水线多工序循环加工"推演，规则如下：
 
-系统设定：
-- 存在一个产品状态特征字母表Σ（包含所有大写英文字母A到Z）。
-- 存在一条长度为 {n} 的隐藏产品状态序列 S，其中每个位置的字符代表该批次某个组件的监测代码。序列索引从1开始，即 S[1] 到 S[{n}]。
-- 系统载入了一条长度为 {m} 的公开严重缺陷特征序列 P = "{pattern}"。
+工厂车间具有可用设备集合 U = {{1, 2, ..., {n}}}。系统内部设定了一个工艺节拍周期 K（K 可能是 2、3 或 4 个节拍），以及 K 个非空的并发设备组合 R1, R2, ..., RK，它们构成一个循环运转的加工序列。推演从第 1 节拍（轮次）开始，每个节拍都有一个"当前必需设备组合"：
 
-你的目标：
-判断是否存在某个起始组件位置 j（1 小于等于 j 小于等于 {max_start}），使得严重缺陷特征序列 P 作为连续的错误警报完整出现在隐藏状态序列 S 中，即 S[j] 到 S[j+{m}-1] 与 P[1] 到 P[{m}] 完全相同。
+- 第 t 节拍的当前必需设备组合为：R_((t-1) mod K + 1)
+- 例如：若 K=3，则第 1 节拍启动 R1，第 2 节拍启动 R2，第 3 节拍启动 R3，第 4 节拍又回到 R1，依此类推。
 
-可用的质检排查手段（每次只能发起一个查询）：
+你的目标是通过尽可能少的供电测试，推断出节拍周期 K 以及所有设备组合 R1, ..., RK 的具体编号。
 
-1. 缺陷特征对齐查询 Align(i)：
-   - 询问从组件位置 i 开始，隐藏状态序列 S 与严重缺陷特征 P 的最长连续前缀匹配长度。
-   - 返回一个整数 L(i)，表示最大的 t（0 小于等于 t 小于等于 min({m}, {n} - i + 1)），使得 S[i] 到 S[i+t-1] 与 P[1] 到 P[t] 完全匹配。
-   - 格式：<query_align>i</query_align>
-   - 例如：<query_align>5</query_align>
+每次你可以选择以下三种操作之一：
 
-2. 批次排查查询 Sweep(l, r, k)：
-   - 询问在起始组件范围 [l, r]（1 小于等于 l 小于等于 r 小于等于 {max_start}）内，是否存在某个位置 j 使得缺陷特征对齐查询 Align(j) 大于等于 k。
-   - 注意：k 必须严格小于 {m}，不能直接询问是否存在完整的严重缺陷链。
-   - 返回"是"或"否"。
-   - 格式：<query_sweep>l,r,k</query_sweep>
-   - 例如：<query_sweep>1,10,3</query_sweep>
+1. **设备供电测试**：提交一组通电的设备集合 S（用逗号分隔的编号），系统会返回：
+   - 当前节拍所需的全部设备是否均已包含在供电集合 S 中（"是"或"否"）
+   - 当前节拍有多少台必需设备未被供电（一个非负整数，若判定为"是"，则为 0）
 
-提交质检报告：
-当你收集到足够信息后，请提交最终判定结果：
+2. **推进工艺节拍**：请求进入流水线的下一个节拍，当前必需设备组合将按周期切换到下一个。
 
-- 若判定出现了严重缺陷，必须给出一个具体的起始位置 j，格式如下：
-  <answer>存在,j={{j}}</answer>
-  
-- 若判定未发现该严重缺陷，格式如下：
-  <answer>不存在</answer>
+3. **提交最终工艺流程**：当你认为已经推断出系统设定时，提交节拍周期 K 以及所有设备组合 R1, ..., RK。
 
-重要提示：
-- 若判定"存在"，你必须确保该起始位置 j 的 Align(j) 等于 {m}（通过缺陷特征对齐查询确认）。
-- 若判定"不存在"，你需要通过排查证明所有可能的起始位置都不满足完整缺陷匹配。
-- 请尽可能少地使用查询次数来完成判定。
-- 答案错误或格式不符将导致质检评估失败。
+每次只能提交一个操作标签。请使用以下 XML 格式：
+
+- 设备供电测试（例如为设备 {{1,2,3}} 供电）：
+<test_subset>1,2,3</test_subset>
+
+- 推进工艺节拍（内容为空）：
+<next_round></next_round>
+
+- 提交最终工艺流程（例如 K=3，R1={{1,2}}, R2={{3}}, R3={{1,4}}）：
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+注意：
+- 提交流程时，组合顺序很重要，必须与实际的节拍循环序列对应（允许循环位移，例如 R1,R2,R3 和 R2,R3,R1 视为等价）
+- 若流程错误累计三次，推演失败
+- 空集不能包含在测试或最终流程中
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Welcome to the Industrial Assembly Line Quality Control System. We need to detect a specific critical defect signature in a batch's status code sequence.
+Let's engage in an "Automated Assembly Line Multi-process Cycle" simulation. Here are the rules:
 
-System Setup:
-- There is a product status feature alphabet Σ (containing all uppercase English letters A to Z).
-- There is a hidden product status sequence S of length {n}, where each position represents a monitoring code of a component in the batch. The sequence is indexed starting from 1, i.e., S[1] to S[{n}].
-- The system loaded a public critical defect signature sequence P = "{pattern}" of length {m}.
+The factory floor has a set of available machines U = {{1, 2, ..., {n}}}. The system has secretly configured a process beat cycle length K (K can be 2, 3, or 4 beats) and K non-empty concurrent machine combinations R1, R2, ..., RK that form a cyclic operational sequence. The simulation starts from beat (round) 1, and each beat has a "current required machine combination":
 
-Your Goal:
-Determine whether there exists a starting component position j (1 less than or equal to j less than or equal to {max_start}) such that the critical defect signature P appears as a complete consecutive sequence of error alerts in the hidden status sequence S, i.e., S[j] to S[j+{m}-1] exactly matches P[1] to P[{m}].
+- The current required machine combination for beat t is: R_((t-1) mod K + 1)
+- For example: if K=3, beat 1 activates R1, beat 2 activates R2, beat 3 activates R3, beat 4 reverts to R1, and so on.
 
-Available Inspection Tools (only one query per turn):
+Your goal is to infer the cycle length K and all machine combinations R1, ..., RK with as few power tests as possible.
 
-1. Defect Signature Alignment Query Align(i):
-   - Ask for the longest consecutive prefix match length between the hidden status sequence S starting at component position i and the critical defect signature P.
-   - Returns an integer L(i), the maximum t (0 less than or equal to t less than or equal to min({m}, {n} - i + 1)) such that S[i] to S[i+t-1] exactly matches P[1] to P[t].
-   - Format: <query_align>i</query_align>
-   - Example: <query_align>5</query_align>
+Each time you can choose one of the following three operations:
 
-2. Batch Inspection Query Sweep(l, r, k):
-   - Ask whether there exists a position j in the starting component range [l, r] (1 less than or equal to l less than or equal to r less than or equal to {max_start}) such that the Defect Signature Alignment Query Align(j) is greater than or equal to k.
-   - Note: k must be strictly less than {m}; you cannot directly ask if a complete critical defect chain exists.
-   - Returns "Yes" or "No".
-   - Format: <query_sweep>l,r,k</query_sweep>
-   - Example: <query_sweep>1,10,3</query_sweep>
+1. **Machine Power Test**: Submit a subset of powered machines S (comma-separated IDs), and the system will return:
+   - Whether all required machines for the current beat are fully contained in the powered subset S ("Yes" or "No")
+   - How many required machines of the current beat are not powered in S (a non-negative integer; 0 if containment is "Yes")
 
-Submitting Inspection Report:
-When you have gathered enough information, submit your final determination:
+2. **Advance Process Beat**: Request to move the assembly line to the next beat, and the current required combination will switch to the next one in the cycle.
 
-- If you determine the critical defect exists, you must provide a specific starting position j in this format:
-  <answer>exists,j={{j}}</answer>
-  
-- If you determine the critical defect is not found, use this format:
-  <answer>not_exists</answer>
+3. **Submit Final Process Flow**: When you think you have inferred the system configuration, submit the cycle length K and all subsets R1, ..., RK.
 
-Important Notes:
-- If you determine "exists", you must ensure that Align(j) equals {m} for the position j (confirmed via Defect Signature Alignment Query).
-- If you determine "not exists", you need to prove through inspections that all possible starting positions do not satisfy a complete defect match.
-- Please use as few queries as possible to complete the determination.
-- Incorrect answers or invalid formats will result in quality assessment failure.
+Each submission must contain only one operation tag. Use the following XML format:
+
+- Machine Power Test (e.g., testing machines {{1,2,3}}):
+<test_subset>1,2,3</test_subset>
+
+- Advance Process Beat (empty content):
+<next_round></next_round>
+
+- Submit Final Process Flow (e.g., K=3, R1={{1,2}}, R2={{3}}, R3={{1,4}}):
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+Note:
+- When submitting the flow, the order of combinations matters and must correspond to the actual cyclic sequence (cyclic shifts are allowed, e.g., R1,R2,R3 and R2,R3,R1 are considered equivalent)
+- If the flow is wrong three times in total, the simulation fails
+- Empty sets cannot be included in tests or the final flow
 """
 
-    # ================= 场景改造 5：法律 =================
     contextualized_rule_zh_5 = """\
-欢迎使用金融犯罪取证系统。我们需要在庞杂的交易流水日志中，锁定一条确凿的连环欺诈证据链。
+我们现在来进行"合规审查循环抽检机制"推演，规则如下：
 
-系统设定：
-- 存在一个交易行为特征字母表Σ（包含所有大写英文字母A到Z）。
-- 提取出一条长度为 {n} 的隐藏交易行为记录序列 S，每个位置的字符代表一条时序日志的特征。序列索引从1开始，即 S[1] 到 S[{n}]。
-- 已确立了一条长度为 {m} 的公开连环欺诈特征证据链 P = "{pattern}"。
+公司总共有核心业务部门集合 U = {{1, 2, ..., {n}}}。法务部秘密确立了一个审查周期 K（K 可能是 2、3 或 4 个季度），以及 K 个非空的抽检部门组合 R1, R2, ..., RK，它们构成一个循环的审查序列。推演从第 1 季度（轮次）开始，每个季度都有一个"当前待审部门组合"：
 
-你的目标：
-判断是否存在某个起始交易记录位置 j（1 小于等于 j 小于等于 {max_start}），使得连环欺诈特征 P 作为连续的交易行为完整出现在隐藏审计序列 S 中，即 S[j] 到 S[j+{m}-1] 与 P[1] 到 P[{m}] 完全相同。
+- 第 t 季度的当前待审组合为：R_((t-1) mod K + 1)
+- 例如：若 K=3，则第 1 季度审查 R1，第 2 季度审查 R2，第 3 季度审查 R3，第 4 季度又回到 R1，依此类推。
 
-可用的审计取证手段（每次只能发起一个查询）：
+你的目标是通过尽可能少的档案调取测试，推断出审查周期 K 以及所有待审部门组合 R1, ..., RK 的具体编号。
 
-1. 证据链比对查询 Align(i)：
-   - 询问从交易记录位置 i 开始，隐藏交易序列 S 与欺诈证据链 P 的最长连续前缀匹配长度。
-   - 返回一个整数 L(i)，表示最大的 t（0 小于等于 t 小于等于 min({m}, {n} - i + 1)），使得 S[i] 到 S[i+t-1] 与 P[1] 到 P[t] 完全匹配。
-   - 格式：<query_align>i</query_align>
-   - 例如：<query_align>5</query_align>
+每次你可以选择以下三种操作之一：
 
-2. 审计区间排查查询 Sweep(l, r, k)：
-   - 询问在起始记录范围 [l, r]（1 小于等于 l 小于等于 r 小于等于 {max_start}）内，是否存在某个位置 j 使得证据链比对查询 Align(j) 大于等于 k。
-   - 注意：k 必须严格小于 {m}，不能直接询问是否存在完整的连环欺诈证据链。
-   - 返回"是"或"否"。
-   - 格式：<query_sweep>l,r,k</query_sweep>
-   - 例如：<query_sweep>1,10,3</query_sweep>
+1. **调档覆盖测试**：申请调取一个部门档案集合 S（用逗号分隔的编号），系统会返回：
+   - 当前季度的所有待审部门档案是否都已包含在调取集合 S 中（"是"或"否"）
+   - 当前季度有多少个待审部门的档案未被包含在 S 中（一个非负整数，若判定为"是"，则为 0）
 
-提交取证报告：
-当你收集到足够信息后，请提交最终判定结果：
+2. **推进审查季度**：请求进入下一个财务季度，当前待审部门组合将按周期切换到下一个。
 
-- 若判定该连环欺诈行为成立，必须给出一个具体的起始位置 j，格式如下：
-  <answer>存在,j={{j}}</answer>
-  
-- 若判定缺乏确凿连环欺诈证据，格式如下：
-  <answer>不存在</answer>
+3. **提交最终抽检计划**：当你认为已经推断出法务部机制时，提交审查周期 K 以及所有部门组合 R1, ..., RK。
 
-重要提示：
-- 若判定"存在"，你必须确保该起始位置 j 的 Align(j) 等于 {m}（通过证据链比对查询确认）。
-- 若判定"不存在"，你需要通过排查证明所有可能的起始位置都不满足完整证据链匹配。
-- 请尽可能少地使用查询次数来完成判定。
-- 答案错误或格式不符将导致取证程序失败。
+每次只能提交一个操作标签。请使用以下 XML 格式：
+
+- 调档覆盖测试（例如调取部门 {{1,2,3}}）：
+<test_subset>1,2,3</test_subset>
+
+- 推进审查季度（内容为空）：
+<next_round></next_round>
+
+- 提交最终抽检计划（例如 K=3，R1={{1,2}}, R2={{3}}, R3={{1,4}}）：
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+注意：
+- 提交计划时，组合顺序很重要，必须与实际的审查循环序列对应（允许循环位移，例如 R1,R2,R3 和 R2,R3,R1 视为等价）
+- 若计划错误累计三次，推演失败
+- 空集不能包含在测试或最终计划中
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the Financial Crime Forensics System. We need to pinpoint a definitive serial fraud evidence chain within a massive transaction log.
+Let's engage in a "Compliance Audit Cyclic Sampling Mechanism" simulation. Here are the rules:
 
-System Setup:
-- There is a transaction behavior feature alphabet Σ (containing all uppercase English letters A to Z).
-- A hidden transaction behavior record sequence S of length {n} has been extracted, where each position represents a characteristic of a chronological log entry. The sequence is indexed starting from 1, i.e., S[1] to S[{n}].
-- We have established a public serial fraud signature evidence chain P = "{pattern}" of length {m}.
+The company has a set of core business departments U = {{1, 2, ..., {n}}}. The legal department has secretly established an audit cycle length K (K can be 2, 3, or 4 quarters) and K non-empty targeted department combinations R1, R2, ..., RK that form a cyclic audit sequence. The simulation starts from quarter (round) 1, and each quarter has a "current targeted department combination":
 
-Your Goal:
-Determine whether there exists a starting transaction record position j (1 less than or equal to j less than or equal to {max_start}) such that the serial fraud signature P appears as a complete consecutive transaction behavior in the hidden audit sequence S, i.e., S[j] to S[j+{m}-1] exactly matches P[1] to P[{m}].
+- The current targeted combination for quarter t is: R_((t-1) mod K + 1)
+- For example: if K=3, quarter 1 audits R1, quarter 2 audits R2, quarter 3 audits R3, quarter 4 reverts to R1, and so on.
 
-Available Forensic Tools (only one query per turn):
+Your goal is to infer the cycle length K and all targeted department combinations R1, ..., RK with as few archive retrieval tests as possible.
 
-1. Evidence Chain Alignment Query Align(i):
-   - Ask for the longest consecutive prefix match length between the hidden transaction sequence S starting at record position i and the fraud evidence chain P.
-   - Returns an integer L(i), the maximum t (0 less than or equal to t less than or equal to min({m}, {n} - i + 1)) such that S[i] to S[i+t-1] exactly matches P[1] to P[t].
-   - Format: <query_align>i</query_align>
-   - Example: <query_align>5</query_align>
+Each time you can choose one of the following three operations:
 
-2. Audit Range Scan Query Sweep(l, r, k):
-   - Ask whether there exists a position j in the starting record range [l, r] (1 less than or equal to l less than or equal to r less than or equal to {max_start}) such that the Evidence Chain Alignment Query Align(j) is greater than or equal to k.
-   - Note: k must be strictly less than {m}; you cannot directly ask if a complete serial fraud evidence chain exists.
-   - Returns "Yes" or "No".
-   - Format: <query_sweep>l,r,k</query_sweep>
-   - Example: <query_sweep>1,10,3</query_sweep>
+1. **Archive Retrieval Coverage Test**: Request to retrieve an archive subset S (comma-separated department IDs), and the system will return:
+   - Whether the archives of all targeted departments for the current quarter are fully contained in subset S ("Yes" or "No")
+   - How many targeted departments of the current quarter are missing from the retrieved subset S (a non-negative integer; 0 if containment is "Yes")
 
-Submitting Forensic Report:
-When you have gathered enough information, submit your final determination:
+2. **Advance Audit Quarter**: Request to move to the next financial quarter, and the current targeted combination will switch to the next one in the cycle.
 
-- If you determine the serial fraud behavior occurred, you must provide a specific starting position j in this format:
-  <answer>exists,j={{j}}</answer>
-  
-- If you determine there is no definitive serial fraud evidence, use this format:
-  <answer>not_exists</answer>
+3. **Submit Final Sampling Plan**: When you think you have inferred the legal department's mechanism, submit the cycle length K and all subsets R1, ..., RK.
 
-Important Notes:
-- If you determine "exists", you must ensure that Align(j) equals {m} for the position j (confirmed via Evidence Chain Alignment Query).
-- If you determine "not exists", you need to prove through scanning that all possible starting positions do not satisfy a complete evidence chain match.
-- Please use as few queries as possible to complete the determination.
-- Incorrect answers or invalid formats will result in forensic procedure failure.
+Each submission must contain only one operation tag. Use the following XML format:
+
+- Archive Retrieval Coverage Test (e.g., retrieving departments {{1,2,3}}):
+<test_subset>1,2,3</test_subset>
+
+- Advance Audit Quarter (empty content):
+<next_round></next_round>
+
+- Submit Final Sampling Plan (e.g., K=3, R1={{1,2}}, R2={{3}}, R3={{1,4}}):
+<answer>K=3, R1=1,2, R2=3, R3=1,4</answer>
+
+Note:
+- When submitting the plan, the order of combinations matters and must correspond to the actual cyclic sequence (cyclic shifts are allowed, e.g., R1,R2,R3 and R2,R3,R1 are considered equivalent)
+- If the plan is wrong three times in total, the simulation fails
+- Empty sets cannot be included in tests or the final plan
 """
 
-    tags = ["answer", "query_align", "query_sweep"]
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
+    tags = ["answer", "test_subset", "next_round"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 10,
-                "pattern": "ABC",
-                "sequence": "XYZABCDEFG",
+                "n": 6,
+                "K": 2,
+                "subsets": ["1,2", "4,5,6"],
             },
             2: {
-                "n": 15,
-                "pattern": "ABCD",
-                "sequence": "ABABCABCDXYZABC",
+                "n": 8,
+                "K": 2,
+                "subsets": ["1,2,3", "3,5,7"],
             },
             3: {
-                "n": 20,
-                "pattern": "HELLO",
-                "sequence": "XHELHELLOHELLOXYZABC",
+                "n": 9,
+                "K": 3,
+                "subsets": ["1,2", "4,5,6", "7,8"],
             },
             4: {
-                "n": 23, 
-                "pattern": "MATCH",
-                "sequence": "MATMATCHMATCXMATCMATCHZ",
+                "n": 10,
+                "K": 3,
+                "subsets": ["1,2,3,4", "3,5,7", "2,6,8,9"],
             },
             5: {
-                "n": 30, 
-                "pattern": "PATTERN",
-                "sequence": "PATTERNXPATTERPATTERPATTERNYZX",
+                "n": 12,
+                "K": 4,
+                "subsets": ["1,3,5", "2,4,6,8", "5,7,9", "1,10,11,12"],
             },
         },
         "en": {
             1: {
-                "n": 10,
-                "pattern": "ABC",
-                "sequence": "XYZABCDEFG",
+                "n": 6,
+                "K": 2,
+                "subsets": ["1,2", "4,5,6"],
             },
             2: {
-                "n": 15,
-                "pattern": "ABCD",
-                "sequence": "ABABCABCDXYZABC",
+                "n": 8,
+                "K": 2,
+                "subsets": ["1,2,3", "3,5,7"],
             },
             3: {
-                "n": 20,
-                "pattern": "HELLO",
-                "sequence": "XHELHELLOHELLOXYZABC",
+                "n": 9,
+                "K": 3,
+                "subsets": ["1,2", "4,5,6", "7,8"],
             },
             4: {
-                "n": 23, 
-                "pattern": "MATCH",
-                "sequence": "MATMATCHMATCXMATCMATCHZ",
+                "n": 10,
+                "K": 3,
+                "subsets": ["1,2,3,4", "3,5,7", "2,6,8,9"],
             },
             5: {
-                "n": 30, 
-                "pattern": "PATTERN",
-                "sequence": "PATTERNXPATTERPATTERPATTERNYZX",
+                "n": 12,
+                "K": 4,
+                "subsets": ["1,3,5", "2,4,6,8", "5,7,9", "1,10,11,12"],
             },
         },
     }
 
     def __init__(self, config):
+        self.wrong_answer_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏参数：加载难度配置，设置隐藏序列和模式串"""
         lang = self.config.language
         diff = int(self.config.difficulty)
 
@@ -600,183 +529,221 @@ Important Notes:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
         
-        # 设置游戏参数
-        self.sequence = cfg["sequence"]  # 隐藏序列 S
-        self.pattern = cfg["pattern"]    # 公开模式串 P
-        self.n = cfg["n"]                # 序列长度
-        self.m = len(self.pattern)       # 模式串长度
+        self.K = cfg["K"]
+        self.R_sequence = []
+        for subset_str in cfg["subsets"]:
+            subset = set(x.strip() for x in subset_str.split(",") if x.strip())
+            self.R_sequence.append(subset)
         
-        # 校验序列长度与声明一致
-        assert len(self.sequence) == self.n, \
-            f"Sequence length mismatch: declared n={self.n}, actual len={len(self.sequence)}"
-        
-        self.max_start = self.n - self.m + 1  # 最大可能的起点位置
+        self.current_round = 1
 
-        # 预计算所有位置的对齐结果（用于快速响应查询）
-        self._precompute_alignments()
-        
-        # 用于游戏规则模板的参数
-        self._game_info = {
-            "n": self.n,
-            "m": self.m,
-            "pattern": self.pattern,
-            "max_start": self.max_start,
-        }
-
-    def _precompute_alignments(self):
-        """预计算所有位置的Align值"""
-        self.align_values = {}
-        for i in range(1, self.n + 1):
-            # 计算从位置i开始与模式串P的最长前缀匹配长度
-            max_len = min(self.m, self.n - i + 1)
-            match_len = 0
-            for t in range(max_len):
-                if self.sequence[i - 1 + t] == self.pattern[t]:
-                    match_len += 1
-                else:
-                    break
-            self.align_values[i] = match_len
+    def _get_current_target(self):
+        idx = (self.current_round - 1) % self.K
+        return self.R_sequence[idx]
 
     def evaluate(self, parsed_info):
-        """评估提交的答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"]
         
-        # 判断答案类型（存在 or 不存在）
-        if self.config.language == "zh":
-            if raw_ans.startswith("存在"):
-                # 解析起点位置
-                match = re.search(r'j=(\d+)', raw_ans)
-                if not match:
-                    return False
-                j = int(match.group(1))
-                
-                # 验证：j必须在有效范围内，且Align(j) = M
-                if j < 1 or j > self.max_start:
-                    return False
-                return self.align_values[j] == self.m
+        try:
+            parts = [x.strip() for x in raw_ans.split(",")]
             
-            elif raw_ans == "不存在":
-                # 验证：所有可能的起点都不满足完整匹配
-                for j in range(1, self.max_start + 1):
-                    if self.align_values[j] == self.m:
-                        return False
-                return True
-            else:
-                return False
-        else:  # en
-            if raw_ans.startswith("exists"):
-                match = re.search(r'j=(\d+)', raw_ans)
-                if not match:
-                    return False
-                j = int(match.group(1))
-                
-                if j < 1 or j > self.max_start:
-                    return False
-                return self.align_values[j] == self.m
+            k_part = None
+            r_parts = []
+            temp = []
+            for part in parts:
+                if part.startswith("K="):
+                    k_part = part
+                elif part.startswith("R"):
+                    if temp:
+                        r_parts.append(",".join(temp))
+                    temp = [part]
+                else:
+                    temp.append(part)
+            if temp:
+                r_parts.append(",".join(temp))
             
-            elif raw_ans == "not_exists":
-                for j in range(1, self.max_start + 1):
-                    if self.align_values[j] == self.m:
-                        return False
-                return True
-            else:
+            if not k_part:
                 return False
+            
+            model_K = int(k_part.split("=")[1].strip())
+            
+            if model_K != self.K:
+                return False
+            
+            model_subsets = []
+            for r_part in r_parts:
+                if "=" not in r_part:
+                    continue
+                _, elements_str = r_part.split("=", 1)
+                elements = set(x.strip() for x in elements_str.split(",") if x.strip())
+                if elements:
+                    model_subsets.append(elements)
+            
+            if len(model_subsets) != self.K:
+                return False
+            
+            for offset in range(self.K):
+                match = True
+                for i in range(self.K):
+                    true_idx = i
+                    model_idx = (i + offset) % self.K
+                    if self.R_sequence[true_idx] != model_subsets[model_idx]:
+                        match = False
+                        break
+                if match:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑处理"""
-        is_zh = (self.config.language == "zh")
-        
-        # 处理 Align 查询
-        if "query_align" in parsed_info:
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            round_msg = f"当前是第 {self.current_round} 轮。"
+            next_round_msg = f"已进入第 {self.current_round} 轮。"
+            error_format = "错误：格式无效或编号超出范围。"
+        else:
+            yes_res, no_res = "Yes", "No"
+            round_msg = f"Current round: {self.current_round}."
+            next_round_msg = f"Advanced to round {self.current_round}."
+            error_format = "Error: Invalid format or ID out of range."
+
+        if "test_subset" in parsed_info:
             try:
-                i = int(parsed_info["query_align"].strip())
-                if i < 1 or i > self.n:
-                    return "错误：位置超出范围。" if is_zh else "Error: Position out of range."
+                raw = parsed_info["test_subset"].strip()
+                if not raw:
+                    return error_format
                 
-                align_value = self.align_values[i]
-                return str(align_value)
-            except ValueError:
-                return "错误：无效的位置格式。" if is_zh else "Error: Invalid position format."
-        
-        # 处理 Sweep 查询
-        elif "query_sweep" in parsed_info:
-            try:
-                raw = parsed_info["query_sweep"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 3:
-                    raise ValueError
+                S = set(x.strip() for x in raw.split(",") if x.strip())
                 
-                l, r, k = int(parts[0]), int(parts[1]), int(parts[2])
+                valid_ids = set(str(i) for i in range(1, self._game_info["n"] + 1))
+                if not S.issubset(valid_ids):
+                    return error_format
                 
-                # 验证参数有效性
-                if l < 1 or r > self.max_start or l > r:
-                    return "错误：区间范围无效。" if is_zh else "Error: Invalid range."
-                if k < 1:
-                    return "错误：k 必须为正整数。" if is_zh else "Error: k must be a positive integer."
-                if k >= self.m:
-                    return f"错误：k 必须严格小于 {self.m}。" if is_zh else f"Error: k must be strictly less than {self.m}."
+                R_current = self._get_current_target()
                 
-                # 检查区间内是否存在 Align(j) >= k
-                exists = False
-                for j in range(l, r + 1):
-                    if self.align_values[j] >= k:
-                        exists = True
-                        break
+                is_contained = R_current.issubset(S)
+                missing_count = len(R_current - S)
                 
-                if is_zh:
-                    return "是" if exists else "否"
+                if self.config.language == "zh":
+                    containment_str = yes_res if is_contained else no_res
+                    response = f"{round_msg}\n包含判定：{containment_str}\n缺失元素数量：{missing_count}"
                 else:
-                    return "Yes" if exists else "No"
-                    
-            except (ValueError, IndexError):
-                return "错误：无效的查询格式。" if is_zh else "Error: Invalid query format."
-        
+                    containment_str = yes_res if is_contained else no_res
+                    response = f"{round_msg}\nContainment: {containment_str}\nMissing count: {missing_count}"
+                
+                return response
+                
+            except Exception as e:
+                return error_format
+
+        elif "next_round" in parsed_info:
+            self.current_round += 1
+            return next_round_msg
+
         else:
             raise ValueError("No valid query tag found.")
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        results = []
-        
-        # 1. 枚举 Align 查询
-        for i in range(1, self.n + 1):
-            query_content = str(i)
-            parsed_info = {"query_align": query_content}
-            answer = self._cf_core_produce(parsed_info)
-            results.append({
-                "query": f"<query_align>{query_content}</query_align>",
-                "answer": answer
-            })
-            
-        # 2. 枚举 Sweep 查询
-        for l in range(1, self.max_start + 1):
-            for r in range(l, self.max_start + 1):
-                for k in range(1, self.m):
-                    query_content = f"{l},{r},{k}"
-                    parsed_info = {"query_sweep": query_content}
-                    answer = self._cf_core_produce(parsed_info)
-                    results.append({
-                        "query": f"<query_sweep>{query_content}</query_sweep>",
-                        "answer": answer
-                    })
-                    
-        return results
+        queries = []
+        n = self._game_info["n"]
 
-    def _cf_make_wrong(self, correct):
+        original_round = self.current_round
+
+        for k in range(self.K):
+            self.current_round = k + 1
+            R_current = self._get_current_target()
+
+            if self.config.language == "zh":
+                yes_res, no_res = "是", "否"
+                round_msg = f"当前是第 {self.current_round} 轮。"
+                next_round_msg = f"已进入第 {self.current_round} 轮。"
+            else:
+                yes_res, no_res = "Yes", "No"
+                round_msg = f"Current round: {self.current_round}."
+                next_round_msg = f"Advanced to round {self.current_round}."
+
+            for r in range(1, n + 1):
+                for combo in itertools.combinations(range(1, n + 1), r):
+                    query_content = ",".join(map(str, combo))
+                    query_str = f"<test_subset>{query_content}</test_subset>"
+                    
+                    S = set(str(x) for x in combo)
+                    is_contained = R_current.issubset(S)
+                    missing_count = len(R_current - S)
+
+                    if self.config.language == "zh":
+                        containment_str = yes_res if is_contained else no_res
+                        response = f"{round_msg}\n包含判定：{containment_str}\n缺失元素数量：{missing_count}"
+                    else:
+                        containment_str = yes_res if is_contained else no_res
+                        response = f"{round_msg}\nContainment: {containment_str}\nMissing count: {missing_count}"
+                    
+                    queries.append({
+                        "query": query_str,
+                        "answer": response
+                    })
+            
+            queries.append({
+                "query": "<next_round></next_round>",
+                "answer": next_round_msg
+            })
+
+        self.current_round = original_round
+        return queries
+
+    def _cf_make_wrong(self, correct: str) -> str:
         if correct.isdigit():
             return str(int(correct) + 1)
         
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
+        modified = correct
+        replaced = False
         
-        if correct.lower() == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if correct.lower() == "no":
-            return "Yes" if correct[0].isupper() else "yes"
+        if "是" in modified or "否" in modified:
+            modified = modified.replace("是", "TEMP").replace("否", "是").replace("TEMP", "否")
+            replaced = True
+        
+        elif "Yes" in modified or "No" in modified:
+            modified = modified.replace("Yes", "TEMP").replace("No", "Yes").replace("TEMP", "No")
+            replaced = True
             
-        return correct + "_WRONG"
+        if not replaced:
+            modified += "_WRONG"
+            
+        return modified
+
+    def step(self, response: str) -> 'GameState':
+        try:
+            parsed_info = self.parse(response)
+            
+            if "answer" in parsed_info:
+                is_success = self.evaluate(parsed_info)
+                if is_success:
+                    res = "答案正确！" if self.config.language == "zh" else "Correct answer!"
+                    self.state.set_state("success", "success")
+                    self.state.add_message("user", res)
+                else:
+                    self.wrong_answer_count += 1
+                    if self.wrong_answer_count >= 3:
+                        res = "答案错误，已累计三次错误，游戏失败。" if self.config.language == "zh" else "Incorrect answer. Three wrong attempts reached. Game failed."
+                        self.state.set_state("failed", "three incorrect answers")
+                        self.state.add_message("user", res)
+                    else:
+                        remaining = 3 - self.wrong_answer_count
+                        if self.config.language == "zh":
+                            res = f"答案错误，还有 {remaining} 次机会。"
+                        else:
+                            res = f"Incorrect answer. {remaining} attempt(s) remaining."
+                        self.state.add_message("user", res)
+            else:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+                
+        except Exception as e:
+            self.state.set_state("failed", str(e))    
+        
+        return self.state

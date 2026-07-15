@@ -1,930 +1,617 @@
 from .base import Game
-import re
+import random
+import itertools
 
+class MinSetCoverGame(Game):
 
-class HiddenFunctionDeductionGame(Game):
+    reasoning_type = "归纳推理"
+    data_structure = "集合"
 
     game_rule_zh = """\
-我们现在来玩一个"隐藏函数推理"游戏，规则如下：
+我们来玩一个"最小集合覆盖推理"游戏，规则如下：
 
-游戏设定了一个有限集合 V = {{A, B, C, D, E, F, G, H}}，每个元素都有一个公开的三位数字编码：
-- A: {code_A}
-- B: {code_B}
-- C: {code_C}
-- D: {code_D}
-- E: {code_E}
-- F: {code_F}
-- G: {code_G}
-- H: {code_H}
+存在一个隐藏的元素集合 U，包含若干个元素（记为 E1, E2, ...），以及若干个子集 S1, S2, ...，每个子集覆盖 U 中的部分元素。保证至少存在一种方式，用这些子集的并集完全覆盖 U。
 
-在这个集合上定义了一个无向完全图，任意两个不同元素之间都存在一条边。每条边都有一个权值，由一个隐藏的确定性对称函数 f 计算得出：边权 w(X,Y) = f(code(X), code(Y)).
+你的目标是：找出最小集合覆盖，即用最少数量的子集完全覆盖所有元素，并提交该最小数量及具体选择的子集编号。
 
-该函数 f 具有以下性质：
-1. 对称性：f(x,y) = f(y,x)
-2. 输出为非负整数
-3. 函数在整个游戏过程中保持不变，仅依赖于两端点的三位数字编码
+你可以通过以下五种查询方式获取信息（每次只能提一个问题）：
 
-你的目标是通过有限次的查询，推断出隐藏函数 f 的规律，并在挑战阶段准确预测5条未查询过的边的权值。
+1. 单集揭示：询问某个子集包含哪些元素。
+2. 多集并集计数：询问若干个子集的并集包含多少个元素。
+3. 两组覆盖比较：比较两组子集的并集，哪一组覆盖的元素更多。
+4. 可行性边界：询问是否存在不超过 k 个子集的完整覆盖方案。
+5. 局部增量价值：询问在已有若干子集的基础上，新增某个子集能额外覆盖多少个新元素。
 
-## 可用操作
+当你收集足够信息后，请提交最终答案。答案必须包含最小覆盖大小和具体子集编号。
 
-1. **边权查询**：查询任意两个不同节点之间的边权值
-2. **余量查询**：查询剩余可用的边权查询次数
-3. **发起挑战**：随时可以发起，系统会给出5对未被查询过的节点对，你需要预测它们的边权
-4. **最终预测提交**：对挑战阶段给出的5对节点，提交你预测的边权值
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-## 操作格式（必须严格遵守）
+- 单集揭示（例如查询 S1）：
+<query_reveal>S1</query_reveal>
 
-**边权查询**（查询节点 X 和 Y 之间的边权，X 和 Y 必须不同且都在 {{A,B,C,D,E,F,G,H}} 中）：
-<query_edge>X,Y</query_edge>
+- 多集并集计数（例如查询 S1, S2, S3 的并集大小）：
+<query_union_count>S1,S2,S3</query_union_count>
 
-**余量查询**（查询剩余查询次数）：
-<query_remaining></query_remaining>
+- 两组覆盖比较（例如比较组 [S1,S2] 与组 [S3,S4]）：
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**发起挑战**（请求系统给出5对待预测的节点对）：
-<request_challenge></request_challenge>
+- 可行性边界（例如询问是否存在不超过 3 个子集的覆盖）：
+<query_feasible>3</query_feasible>
 
-**最终预测提交**（对挑战给出的5对节点预测边权，格式为"节点1 节点2 = 权值"，用分号分隔）：
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- 局部增量价值（例如在 [S1,S2] 基础上加入 S3 新增多少元素）：
+<query_incremental>S1,S2|S3</query_incremental>
 
-## 资源限制
-
-- 边权查询总次数上限：{max_queries} 次
-- 必须在用尽查询次数前发起挑战
-
-## 成功与失败条件
-
-**成功**：在挑战阶段对5条目标边全部预测正确（5/5）
-
-**失败**（任一条件成立即失败）：
-1. 用尽所有边权查询次数仍未发起挑战
-2. 挑战后的5条预测未全部命中
-3. 在挑战阶段尝试继续进行边权查询
-4. 查询格式错误或查询无效节点
-
-## 游戏流程示例
-
-1. 你可以先进行若干次边权查询，例如：<query_edge>A,B</query_edge>
-2. 系统返回边权值，例如："边 A-B 的权值为 5"
-3. 你可以随时查询余量：<query_remaining></query_remaining>
-4. 当你认为已经掌握规律时，发起挑战：<request_challenge></request_challenge>
-5. 系统给出5对节点，例如："(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. 你提交预测：<answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. 系统判定是否全部正确
-
-注意：查询设计应覆盖多种编码差异模式，以提高对隐藏函数的辨识度。尽可能用最少的查询次数找出规律。
+提交最终答案时，必须指明最小覆盖大小和子集列表（用逗号隔开），格式如下：
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     game_rule_en = """\
-Let's play a "Hidden Function Deduction" game. Here are the rules:
+Let's play a "Minimum Set Cover Reasoning" game. Here are the rules:
 
-The game defines a finite set V = {{A, B, C, D, E, F, G, H}}, where each element has a public three-digit code:
-- A: {code_A}
-- B: {code_B}
-- C: {code_C}
-- D: {code_D}
-- E: {code_E}
-- F: {code_F}
-- G: {code_G}
-- H: {code_H}
+There exists a hidden element set U containing several elements (denoted as E1, E2, ...), and several subsets S1, S2, ..., each covering some elements in U. It is guaranteed that at least one combination of these subsets can completely cover U.
 
-An undirected complete graph is defined on this set, with an edge between any two different elements. Each edge has a weight calculated by a hidden deterministic symmetric function f: w(X,Y) = f(code(X), code(Y)).
+Your goal is: find the minimum set cover, i.e., use the smallest number of subsets to completely cover all elements, and submit both the minimum size and the specific subset indices.
 
-The function f has the following properties:
-1. Symmetry: f(x,y) = f(y,x)
-2. Outputs non-negative integers
-3. The function remains constant throughout the game and depends only on the three-digit codes of the endpoints
+You can obtain information through five types of queries (one question per turn):
 
-Your goal is to infer the pattern of the hidden function f through limited queries, and accurately predict the weights of 5 unqueried edges in the challenge phase.
+1. Reveal Single Set: Ask which elements a specific subset contains.
+2. Union Count: Ask how many elements are covered by the union of several subsets.
+3. Compare Two Groups: Compare two groups of subsets to determine which covers more elements.
+4. Feasibility Bound: Ask whether there exists a complete cover using at most k subsets.
+5. Incremental Value: Ask how many new elements would be covered by adding a specific subset to an existing collection.
 
-## Available Operations
+When you have enough information, submit your final answer. The answer must include the minimum cover size and specific subset indices.
 
-1. **Edge Weight Query**: Query the edge weight between any two different nodes
-2. **Remaining Query**: Check the number of remaining edge weight queries
-3. **Request Challenge**: Can be initiated at any time; the system will provide 5 pairs of unqueried node pairs for prediction
-4. **Final Prediction Submission**: Submit your predicted edge weights for the 5 pairs given in the challenge phase
+Each query must contain only one tag. Use the following XML format:
 
-## Operation Format (must be strictly followed)
+- Reveal Single Set (e.g., query S1):
+<query_reveal>S1</query_reveal>
 
-**Edge Weight Query** (query edge weight between nodes X and Y, where X and Y must be different and both in {{A,B,C,D,E,F,G,H}}):
-<query_edge>X,Y</query_edge>
+- Union Count (e.g., query union size of S1, S2, S3):
+<query_union_count>S1,S2,S3</query_union_count>
 
-**Remaining Query** (check remaining query count):
-<query_remaining></query_remaining>
+- Compare Two Groups (e.g., compare group [S1,S2] with group [S3,S4]):
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**Request Challenge** (request system to provide 5 pairs of nodes to predict):
-<request_challenge></request_challenge>
+- Feasibility Bound (e.g., ask if cover with at most 3 subsets exists):
+<query_feasible>3</query_feasible>
 
-**Final Prediction Submission** (predict edge weights for the 5 pairs given in challenge, format "node1 node2 = weight", separated by semicolons):
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- Incremental Value (e.g., new elements when adding S3 to [S1,S2]):
+<query_incremental>S1,S2|S3</query_incremental>
 
-## Resource Limits
-
-- Maximum edge weight queries: {max_queries}
-- Must request challenge before exhausting all queries
-
-## Success and Failure Conditions
-
-**Success**: All 5 predictions in the challenge phase are correct (5/5)
-
-**Failure** (game fails if any condition is met):
-1. All edge weight queries exhausted without requesting challenge
-2. Not all 5 predictions in challenge phase are correct
-3. Attempting to continue edge weight queries during challenge phase
-4. Query format error or querying invalid nodes
-
-## Example Game Flow
-
-1. You can start with several edge weight queries, e.g.: <query_edge>A,B</query_edge>
-2. System returns edge weight, e.g.: "Edge A-B has weight 5"
-3. You can check remaining queries anytime: <query_remaining></query_remaining>
-4. When you think you've found the pattern, request challenge: <request_challenge></request_challenge>
-5. System provides 5 pairs, e.g.: "(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. You submit predictions: <answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. System determines if all predictions are correct
-
-Note: Query design should cover various encoding difference patterns to improve identification of the hidden function. Try to find the pattern with as few queries as possible.
+When submitting the final answer, specify the minimum cover size and subset list (comma-separated), using this format:
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用“区域交通通行阻抗评估系统”。
-本系统设定了有限的交通枢纽集合 V = {{A, B, C, D, E, F, G, H}}，每个枢纽都有一个公开的三位枢纽特征码（代表流量、密度、路网等级等）：
-- 枢纽 A: {code_A}
-- 枢纽 B: {code_B}
-- 枢纽 C: {code_C}
-- 枢纽 D: {code_D}
-- 枢纽 E: {code_E}
-- 枢纽 F: {code_F}
-- 枢纽 G: {code_G}
-- 枢纽 H: {code_H}
+我们来玩一个"城市交通监控网络最小化"推理游戏，规则如下：
 
-在规划网络中，任意两个不同枢纽之间都存在一条直达连线。每条连线的建设成本/通行阻抗由一个隐藏的确定性对称评估模型 f 计算得出：通行阻抗 w(X,Y) = f(code(X), code(Y)).
+在一个大型城市中，存在一个隐藏的关键路口集合 U，包含若干个需要监控的核心路口（记为 E1, E2, ...），以及若干个可部署的监控基站 S1, S2, ...。每个基站由于物理位置和视野限制，只能覆盖 U 中的部分路口。系统保证至少存在一种部署方案，用这些基站的并集能够完全监控所有的关键路口。
 
-该模型 f 具有以下性质：
-1. 对称性：f(x,y) = f(y,x)
-2. 输出为非负整数
-3. 评估模型在整个规划过程中保持不变，仅依赖于两端点的三位枢纽特征码
+你的目标是：找出最小监控覆盖方案，即部署最少数量的基站，完全监控所有关键路口，并提交该最小数量及具体选择的基站编号。
 
-你的目标是通过有限次的评估查询，推断出隐藏评估模型 f 的规律，并在挑战阶段准确预测5条未查询过的连线的通行阻抗。
+你可以通过以下五种查询方式获取网络拓扑信息（每次只能提一个问题）：
 
-## 可用操作
+1. 单站覆盖揭示：询问某个基站具体监控哪些路口。
+2. 多站联合覆盖计数：询问若干个基站组成的网络共能监控多少个路口。
+3. 两组方案覆盖比较：比较两组基站部署方案，哪一组监控的路口更多。
+4. 部署可行性边界：询问是否存在不超过 k 个基站的完整监控方案。
+5. 局部增量覆盖价值：询问在已部署若干基站的基础上，新增某个基站能额外监控多少个新路口。
 
-1. **阻抗查询**：查询任意两个不同枢纽之间的通行阻抗
-2. **余量查询**：查询剩余可用的查询次数
-3. **发起挑战**：随时可以发起，系统会给出5对未被查询过的枢纽对，你需要预测它们的阻抗
-4. **最终预测提交**：对挑战阶段给出的5对枢纽，提交你预测的通行阻抗值
+当你收集足够信息后，请提交最终答案。答案必须包含最小基站数量和具体基站编号。
 
-## 操作格式（必须严格遵守）
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-**阻抗查询**（查询枢纽 X 和 Y 之间的阻抗，X 和 Y 必须不同且都在 {{A,B,C,D,E,F,G,H}} 中）：
-<query_edge>X,Y</query_edge>
+- 单站覆盖揭示（例如查询 S1）：
+<query_reveal>S1</query_reveal>
 
-**余量查询**（查询剩余查询次数）：
-<query_remaining></query_remaining>
+- 多站联合覆盖计数（例如查询 S1, S2, S3 的联合监控数量）：
+<query_union_count>S1,S2,S3</query_union_count>
 
-**发起挑战**（请求系统给出5对待预测的枢纽对）：
-<request_challenge></request_challenge>
+- 两组方案覆盖比较（例如比较组 [S1,S2] 与组 [S3,S4]）：
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**最终预测提交**（对挑战给出的5对枢纽预测阻抗，格式为"枢纽1 枢纽2 = 阻抗值"，用分号分隔）：
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- 部署可行性边界（例如询问是否存在不超过 3 个基站的完整监控方案）：
+<query_feasible>3</query_feasible>
 
-## 资源限制
+- 局部增量覆盖价值（例如在 [S1,S2] 基础上加入 S3 新增监控多少路口）：
+<query_incremental>S1,S2|S3</query_incremental>
 
-- 阻抗查询总次数上限：{max_queries} 次
-- 必须在用尽查询次数前发起挑战
-
-## 成功与失败条件
-
-**成功**：在挑战阶段对5条目标连线全部预测正确（5/5）
-
-**失败**（任一条件成立即失败）：
-1. 用尽所有阻抗查询次数仍未发起挑战
-2. 挑战后的5条预测未全部命中
-3. 在挑战阶段尝试继续进行阻抗查询
-4. 查询格式错误或查询无效枢纽
-
-## 游戏流程示例
-
-1. 你可以先进行若干次阻抗查询，例如：<query_edge>A,B</query_edge>
-2. 系统返回阻抗值，例如："边 A-B 的权值为 5"
-3. 你可以随时查询余量：<query_remaining></query_remaining>
-4. 当你认为已经掌握规律时，发起挑战：<request_challenge></request_challenge>
-5. 系统给出5对枢纽，例如："(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. 你提交预测：<answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. 系统判定是否全部正确
-
-注意：查询设计应覆盖多种特征码差异模式，以提高对隐藏评估模型的辨识度。尽可能用最少的查询次数找出规律。
+提交最终答案时，必须指明最小覆盖大小和基站列表（用逗号隔开），格式如下：
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Regional Traffic Impedance Assessment System".
+Let's play an "Urban Traffic Surveillance Minimization" reasoning game. Here are the rules:
 
-The system defines a finite set of traffic hubs V = {{A, B, C, D, E, F, G, H}}, where each hub has a public three-digit feature code (representing traffic volume, density, road network level, etc.):
-- Hub A: {code_A}
-- Hub B: {code_B}
-- Hub C: {code_C}
-- Hub D: {code_D}
-- Hub E: {code_E}
-- Hub F: {code_F}
-- Hub G: {code_G}
-- Hub H: {code_H}
+In a large city, there exists a hidden set U of critical intersections (denoted as E1, E2, ...) that require surveillance, along with several deployable surveillance base stations S1, S2, .... Due to physical locations and field-of-view limits, each base station can only monitor some intersections in U. It is guaranteed that at least one combination of these base stations can completely monitor all critical intersections.
 
-In the planning network, there is a direct link between any two different hubs. The construction cost / traffic impedance of each link is calculated by a hidden deterministic symmetric assessment model f: impedance w(X,Y) = f(code(X), code(Y)).
+Your goal is: find the minimum surveillance cover, i.e., use the smallest number of base stations to completely monitor all critical intersections, and submit both the minimum size and the specific base station indices.
 
-The model f has the following properties:
-1. Symmetry: f(x,y) = f(y,x)
-2. Outputs non-negative integers
-3. The assessment model remains constant throughout the planning process and depends only on the three-digit feature codes of the endpoints
+You can obtain network topology information through five types of queries (one question per turn):
 
-Your goal is to infer the pattern of the hidden assessment model f through limited queries, and accurately predict the impedances of 5 unqueried links in the challenge phase.
+1. Reveal Single Station Coverage: Ask which intersections a specific base station monitors.
+2. Union Coverage Count: Ask how many intersections are monitored by the union of several base stations.
+3. Compare Two Deployment Groups: Compare two groups of base stations to determine which monitors more intersections.
+4. Deployment Feasibility Bound: Ask whether there exists a complete monitoring scheme using at most k base stations.
+5. Incremental Coverage Value: Ask how many new intersections would be monitored by adding a specific base station to an existing network.
 
-## Available Operations
+When you have enough information, submit your final answer. The answer must include the minimum cover size and specific base station indices.
 
-1. **Impedance Query**: Query the traffic impedance between any two different hubs
-2. **Remaining Query**: Check the number of remaining impedance queries
-3. **Request Challenge**: Can be initiated at any time; the system will provide 5 pairs of unqueried hubs for prediction
-4. **Final Prediction Submission**: Submit your predicted impedances for the 5 pairs given in the challenge phase
+Each query must contain only one tag. Use the following XML format:
 
-## Operation Format (must be strictly followed)
+- Reveal Single Station Coverage (e.g., query S1):
+<query_reveal>S1</query_reveal>
 
-**Impedance Query** (query impedance between hubs X and Y, where X and Y must be different and both in {{A,B,C,D,E,F,G,H}}):
-<query_edge>X,Y</query_edge>
+- Union Coverage Count (e.g., query union size of S1, S2, S3):
+<query_union_count>S1,S2,S3</query_union_count>
 
-**Remaining Query** (check remaining query count):
-<query_remaining></query_remaining>
+- Compare Two Deployment Groups (e.g., compare group [S1,S2] with group [S3,S4]):
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**Request Challenge** (request system to provide 5 pairs of hubs to predict):
-<request_challenge></request_challenge>
+- Deployment Feasibility Bound (e.g., ask if a complete scheme with at most 3 stations exists):
+<query_feasible>3</query_feasible>
 
-**Final Prediction Submission** (predict impedances for the 5 pairs given in challenge, format "hub1 hub2 = impedance", separated by semicolons):
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- Incremental Coverage Value (e.g., new intersections when adding S3 to [S1,S2]):
+<query_incremental>S1,S2|S3</query_incremental>
 
-## Resource Limits
-
-- Maximum impedance queries: {max_queries}
-- Must request challenge before exhausting all queries
-
-## Success and Failure Conditions
-
-**Success**: All 5 predictions in the challenge phase are correct (5/5)
-
-**Failure** (game fails if any condition is met):
-1. All impedance queries exhausted without requesting challenge
-2. Not all 5 predictions in challenge phase are correct
-3. Attempting to continue impedance queries during challenge phase
-4. Query format error or querying invalid hubs
-
-## Example Game Flow
-
-1. You can start with several impedance queries, e.g.: <query_edge>A,B</query_edge>
-2. System returns impedance, e.g.: "Edge A-B has weight 5"
-3. You can check remaining queries anytime: <query_remaining></query_remaining>
-4. When you think you've found the pattern, request challenge: <request_challenge></request_challenge>
-5. System provides 5 pairs, e.g.: "(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. You submit predictions: <answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. System determines if all predictions are correct
-
-Note: Query design should cover various encoding difference patterns to improve identification of the hidden assessment model. Try to find the pattern with as few queries as possible.
+When submitting the final answer, specify the minimum cover size and base station list (comma-separated), using this format:
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎进入“靶点药物相互作用测算平台”。
-系统筛选出一个包含核心候选药物分子/靶点蛋白的集合 V = {{A, B, C, D, E, F, G, H}}，每个分子都有一个公开的三位分子特征指纹（代表疏水性、极性、分子量指标）：
-- 分子 A: {code_A}
-- 分子 B: {code_B}
-- 分子 C: {code_C}
-- 分子 D: {code_D}
-- 分子 E: {code_E}
-- 分子 F: {code_F}
-- 分子 G: {code_G}
-- 分子 H: {code_H}
+我们来玩一个"精准联合用药最小化"推理游戏，规则如下：
 
-在这个药理反应网络中，任意两个不同分子之间都存在潜在的相互作用。每次相互作用的强度/协同效能由一个隐藏的确定性对称效能测算机制 f 计算得出：作用强度 w(X,Y) = f(code(X), code(Y)).
+在一次复杂的感染病例中，存在一个隐藏的病原体集合 U，包含若干种必须被清除的病原微生物（记为 E1, E2, ...），以及若干种可选的联合用药方案/抗生素 S1, S2, ...。每种药物具有不同的抗菌谱，能够覆盖 U 中的部分病原体。医学指南保证至少存在一种联合用药方式，能够完全杀灭 U 中的所有病原体。
 
-该机制 f 具有以下性质：
-1. 对称性：f(x,y) = f(y,x)
-2. 输出为非负整数
-3. 测算机制在整个研发过程中保持不变，仅依赖于作用两端的三位分子特征指纹
+你的目标是：找出最小药物覆盖组合，即开具最少数量的药物种类来完全清除所有病原体（以降低副作用和耐药性风险），并提交该最小数量及具体的药物编号。
 
-你的目标是通过有限次的实验测定查询，推断出隐藏效能测算机制 f 的规律，并在挑战阶段准确预测5对未查询过的分子间的相互作用强度。
+你可以通过以下五种查询方式获取药理信息（每次只能提一个问题）：
 
-## 可用操作
+1. 单药抗菌谱揭示：询问某种药物具体覆盖哪些病原体。
+2. 联合用药覆盖计数：询问若干种药物联合使用共能杀灭多少种病原体。
+3. 两组处方覆盖比较：比较两组用药方案，哪一组能覆盖更多的病原体。
+4. 处方可行性边界：询问是否存在不超过 k 种药物的完整清除方案。
+5. 局部增量治疗价值：询问在已有若干药物的基础上，追加某种药物能额外杀灭多少种新病原体。
 
-1. **效能查询**：查询任意两个不同分子之间的协同作用强度
-2. **余量查询**：查询剩余可用的查询次数
-3. **发起挑战**：随时可以发起，系统会给出5对未被查询过的分子对，你需要预测它们的相互作用强度
-4. **最终预测提交**：对挑战阶段给出的5对分子，提交你预测的协同效能值
+当你收集足够信息后，请提交最终答案。答案必须包含最小药物数量和具体药物编号。
 
-## 操作格式（必须严格遵守）
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-**效能查询**（查询分子 X 和 Y 之间的强度，X 和 Y 必须不同且都在 {{A,B,C,D,E,F,G,H}} 中）：
-<query_edge>X,Y</query_edge>
+- 单药抗菌谱揭示（例如查询药物 S1）：
+<query_reveal>S1</query_reveal>
 
-**余量查询**（查询剩余查询次数）：
-<query_remaining></query_remaining>
+- 联合用药覆盖计数（例如查询 S1, S2, S3 的联合覆盖数量）：
+<query_union_count>S1,S2,S3</query_union_count>
 
-**发起挑战**（请求系统给出5对待预测的分子对）：
-<request_challenge></request_challenge>
+- 两组处方覆盖比较（例如比较组 [S1,S2] 与组 [S3,S4]）：
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**最终预测提交**（对挑战给出的5对分子预测强度，格式为"分子1 分子2 = 强度值"，用分号分隔）：
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- 处方可行性边界（例如询问是否存在不超过 3 种药物的完整清除方案）：
+<query_feasible>3</query_feasible>
 
-## 资源限制
+- 局部增量治疗价值（例如在 [S1,S2] 基础上加入 S3 新增覆盖多少种病原体）：
+<query_incremental>S1,S2|S3</query_incremental>
 
-- 效能查询总次数上限：{max_queries} 次
-- 必须在用尽查询次数前发起挑战
-
-## 成功与失败条件
-
-**成功**：在挑战阶段对5对目标分子相互作用强度全部预测正确（5/5）
-
-**失败**（任一条件成立即失败）：
-1. 用尽所有效能查询次数仍未发起挑战
-2. 挑战后的5条预测未全部命中
-3. 在挑战阶段尝试继续进行效能查询
-4. 查询格式错误或查询无效分子
-
-## 游戏流程示例
-
-1. 你可以先进行若干次效能查询，例如：<query_edge>A,B</query_edge>
-2. 系统返回效能值，例如："边 A-B 的权值为 5"
-3. 你可以随时查询余量：<query_remaining></query_remaining>
-4. 当你认为已经掌握规律时，发起挑战：<request_challenge></request_challenge>
-5. 系统给出5对分子，例如："(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. 你提交预测：<answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. 系统判定是否全部正确
-
-注意：查询设计应覆盖多种特征指纹差异模式，以提高对隐藏效能测算机制的辨识度。尽可能用最少的查询次数找出规律。
+提交最终答案时，必须指明最小覆盖大小和药物列表（用逗号隔开），格式如下：
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Target-Drug Interaction Assessment Platform".
+Let's play a "Precision Combination Therapy Minimization" reasoning game. Here are the rules:
 
-The system has screened a core set of candidate drug molecules / target proteins V = {{A, B, C, D, E, F, G, H}}, where each molecule has a public three-digit molecular feature fingerprint (representing hydrophobicity, polarity, and molecular weight indicators):
-- Molecule A: {code_A}
-- Molecule B: {code_B}
-- Molecule C: {code_C}
-- Molecule D: {code_D}
-- Molecule E: {code_E}
-- Molecule F: {code_F}
-- Molecule G: {code_G}
-- Molecule H: {code_H}
+In a complex infection case, there exists a hidden set U of pathogens (denoted as E1, E2, ...) that must be eradicated, along with several optional antibiotic regimens S1, S2, .... Each medication has a distinct antimicrobial spectrum, covering some pathogens in U. Medical guidelines guarantee that at least one combination of these medications can completely eradicate all pathogens in U.
 
-In this pharmacological reaction network, there is potential interaction between any two different molecules. The interaction strength / synergistic efficacy is calculated by a hidden deterministic symmetric efficacy calculation mechanism f: interaction strength w(X,Y) = f(code(X), code(Y)).
+Your goal is: find the minimum medication cover, i.e., prescribe the smallest number of medications to completely clear all pathogens (minimizing side effects and resistance risks), and submit both the minimum size and the specific medication indices.
 
-The mechanism f has the following properties:
-1. Symmetry: f(x,y) = f(y,x)
-2. Outputs non-negative integers
-3. The calculation mechanism remains constant throughout the R&D process and depends only on the three-digit molecular feature fingerprints of the two interacting ends
+You can obtain pharmacological information through five types of queries (one question per turn):
 
-Your goal is to infer the pattern of the hidden efficacy calculation mechanism f through limited experimental queries, and accurately predict the interaction strengths of 5 unqueried molecular pairs in the challenge phase.
+1. Reveal Single Medication Spectrum: Ask which pathogens a specific medication covers.
+2. Combination Therapy Count: Ask how many pathogens are eradicated by the union of several medications.
+3. Compare Two Prescription Groups: Compare two medication groups to determine which covers more pathogens.
+4. Prescription Feasibility Bound: Ask whether there exists a complete eradication scheme using at most k medications.
+5. Incremental Therapeutic Value: Ask how many new pathogens would be eradicated by adding a specific medication to an existing regimen.
 
-## Available Operations
+When you have enough information, submit your final answer. The answer must include the minimum cover size and specific medication indices.
 
-1. **Efficacy Query**: Query the interaction strength between any two different molecules
-2. **Remaining Query**: Check the number of remaining efficacy queries
-3. **Request Challenge**: Can be initiated at any time; the system will provide 5 pairs of unqueried molecules for prediction
-4. **Final Prediction Submission**: Submit your predicted interaction strengths for the 5 pairs given in the challenge phase
+Each query must contain only one tag. Use the following XML format:
 
-## Operation Format (must be strictly followed)
+- Reveal Single Medication Spectrum (e.g., query S1):
+<query_reveal>S1</query_reveal>
 
-**Efficacy Query** (query interaction strength between molecules X and Y, where X and Y must be different and both in {{A,B,C,D,E,F,G,H}}):
-<query_edge>X,Y</query_edge>
+- Combination Therapy Count (e.g., query union size of S1, S2, S3):
+<query_union_count>S1,S2,S3</query_union_count>
 
-**Remaining Query** (check remaining query count):
-<query_remaining></query_remaining>
+- Compare Two Prescription Groups (e.g., compare group [S1,S2] with group [S3,S4]):
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**Request Challenge** (request system to provide 5 pairs of molecules to predict):
-<request_challenge></request_challenge>
+- Prescription Feasibility Bound (e.g., ask if a complete scheme with at most 3 medications exists):
+<query_feasible>3</query_feasible>
 
-**Final Prediction Submission** (predict interaction strengths for the 5 pairs given in challenge, format "molecule1 molecule2 = strength", separated by semicolons):
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- Incremental Therapeutic Value (e.g., new pathogens when adding S3 to [S1,S2]):
+<query_incremental>S1,S2|S3</query_incremental>
 
-## Resource Limits
-
-- Maximum efficacy queries: {max_queries}
-- Must request challenge before exhausting all queries
-
-## Success and Failure Conditions
-
-**Success**: All 5 predictions in the challenge phase are correct (5/5)
-
-**Failure** (game fails if any condition is met):
-1. All efficacy queries exhausted without requesting challenge
-2. Not all 5 predictions in challenge phase are correct
-3. Attempting to continue efficacy queries during challenge phase
-4. Query format error or querying invalid molecules
-
-## Example Game Flow
-
-1. You can start with several efficacy queries, e.g.: <query_edge>A,B</query_edge>
-2. System returns efficacy value, e.g.: "Edge A-B has weight 5"
-3. You can check remaining queries anytime: <query_remaining></query_remaining>
-4. When you think you've found the pattern, request challenge: <request_challenge></request_challenge>
-5. System provides 5 pairs, e.g.: "(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. You submit predictions: <answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. System determines if all predictions are correct
-
-Note: Query design should cover various feature fingerprint difference patterns to improve identification of the hidden efficacy calculation mechanism. Try to find the pattern with as few queries as possible.
+When submitting the final answer, specify the minimum cover size and medication list (comma-separated), using this format:
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎体验“课程体系认知迁移图谱”。
-本系统构建了核心的知识模块集合 V = {{A, B, C, D, E, F, G, H}}，每个模块都有一个公开的三位模块维度系数（分别代表难度、理论性、实践性）：
-- 模块 A: {code_A}
-- 模块 B: {code_B}
-- 模块 C: {code_C}
-- 模块 D: {code_D}
-- 模块 E: {code_E}
-- 模块 F: {code_F}
-- 模块 G: {code_G}
-- 模块 H: {code_H}
+我们来玩一个"核心课程体系最小化"推理游戏，规则如下：
 
-在学习路径图中，任意两个不同模块之间都可进行跨度衔接。两个模块之间的知识迁移成本/学习过渡难度由一个隐藏的确定性对称认知距离函数 f 计算得出：迁移成本 w(X,Y) = f(code(X), code(Y)).
+在某项职业认证考试中，存在一个隐藏的考纲知识点集合 U，包含若干个必须掌握的核心考点（记为 E1, E2, ...），以及若干门可供选修的综合性课程模块 S1, S2, ...。每门课程由于侧重点不同，只能覆盖 U 中的部分考点。教学主管保证至少存在一种选课组合，能够让学生完全覆盖所有的必考考点。
 
-该函数 f 具有以下性质：
-1. 对称性：f(x,y) = f(y,x)
-2. 输出为非负整数
-3. 认知距离函数在整个测评过程中保持不变，仅依赖于两端点的三位模块维度系数
+你的目标是：找出最小课程覆盖方案，即为学生规划最少数量的选修课程来完全覆盖所有核心考点（以最大化学习效率），并提交该最小数量及具体的课程编号。
 
-你的目标是通过有限次的测评查询，推断出隐藏认知距离函数 f 的规律，并在挑战阶段准确预测5对未查询过的模块的知识迁移成本。
+你可以通过以下五种查询方式获取教学大纲信息（每次只能提一个问题）：
 
-## 可用操作
+1. 单课考点揭示：询问某门课程具体涵盖哪些考点。
+2. 多课联合考点计数：询问若干门课程的组合共能涵盖多少个考点。
+3. 两组选课覆盖比较：比较两组选课方案，哪一组涵盖的考点更多。
+4. 学习可行性边界：询问是否存在不超过 k 门课程的完整考点覆盖方案。
+5. 局部增量学习价值：询问在已修读若干课程的基础上，加修某门课程能额外学到多少个新考点。
 
-1. **迁移成本查询**：查询任意两个不同模块之间的知识迁移成本
-2. **余量查询**：查询剩余可用的查询次数
-3. **发起挑战**：随时可以发起，系统会给出5对未被查询过的模块对，你需要预测它们的迁移成本
-4. **最终预测提交**：对挑战阶段给出的5对模块，提交你预测的迁移成本值
+当你收集足够信息后，请提交最终答案。答案必须包含最小覆盖大小和具体课程编号。
 
-## 操作格式（必须严格遵守）
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-**迁移成本查询**（查询模块 X 和 Y 之间的成本，X 和 Y 必须不同且都在 {{A,B,C,D,E,F,G,H}} 中）：
-<query_edge>X,Y</query_edge>
+- 单课考点揭示（例如查询课程 S1）：
+<query_reveal>S1</query_reveal>
 
-**余量查询**（查询剩余查询次数）：
-<query_remaining></query_remaining>
+- 多课联合考点计数（例如查询 S1, S2, S3 的联合考点数量）：
+<query_union_count>S1,S2,S3</query_union_count>
 
-**发起挑战**（请求系统给出5对待预测的模块对）：
-<request_challenge></request_challenge>
+- 两组选课覆盖比较（例如比较组 [S1,S2] 与组 [S3,S4]）：
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**最终预测提交**（对挑战给出的5对模块预测成本，格式为"模块1 模块2 = 成本值"，用分号分隔）：
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- 学习可行性边界（例如询问是否存在不超过 3 门课程的完整覆盖方案）：
+<query_feasible>3</query_feasible>
 
-## 资源限制
+- 局部增量学习价值（例如在 [S1,S2] 基础上加修 S3 新增覆盖多少考点）：
+<query_incremental>S1,S2|S3</query_incremental>
 
-- 成本查询总次数上限：{max_queries} 次
-- 必须在用尽查询次数前发起挑战
-
-## 成功与失败条件
-
-**成功**：在挑战阶段对5对目标模块迁移成本全部预测正确（5/5）
-
-**失败**（任一条件成立即失败）：
-1. 用尽所有成本查询次数仍未发起挑战
-2. 挑战后的5条预测未全部命中
-3. 在挑战阶段尝试继续进行成本查询
-4. 查询格式错误或查询无效模块
-
-## 游戏流程示例
-
-1. 你可以先进行若干次成本查询，例如：<query_edge>A,B</query_edge>
-2. 系统返回成本值，例如："边 A-B 的权值为 5"
-3. 你可以随时查询余量：<query_remaining></query_remaining>
-4. 当你认为已经掌握规律时，发起挑战：<request_challenge></request_challenge>
-5. 系统给出5对模块，例如："(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. 你提交预测：<answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. 系统判定是否全部正确
-
-注意：查询设计应覆盖多种维度系数差异模式，以提高对隐藏认知距离函数的辨识度。尽可能用最少的查询次数找出规律。
+提交最终答案时，必须指明最小课程数量和课程列表（用逗号隔开），格式如下：
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Curriculum System Cognitive Transfer Graph".
+Let's play a "Core Curriculum Minimization" reasoning game. Here are the rules:
 
-The system constructs a core set of knowledge modules V = {{A, B, C, D, E, F, G, H}}, where each module has a public three-digit module dimensional coefficient (representing difficulty, theoretical depth, and practicality respectively):
-- Module A: {code_A}
-- Module B: {code_B}
-- Module C: {code_C}
-- Module D: {code_D}
-- Module E: {code_E}
-- Module F: {code_F}
-- Module G: {code_G}
-- Module H: {code_H}
+In a professional certification exam, there exists a hidden set U of syllabus topics (denoted as E1, E2, ...) that must be mastered, along with several elective course modules S1, S2, .... Due to different academic focuses, each course only covers some topics in U. The academic director guarantees that at least one combination of these courses can completely cover all required topics.
 
-In the learning path graph, any two different modules can be bridged. The knowledge transfer cost / learning transition difficulty between two modules is calculated by a hidden deterministic symmetric cognitive distance function f: transfer cost w(X,Y) = f(code(X), code(Y)).
+Your goal is: find the minimum curriculum cover, i.e., plan the smallest number of elective courses to completely cover all core topics (to maximize learning efficiency), and submit both the minimum size and the specific course indices.
 
-The function f has the following properties:
-1. Symmetry: f(x,y) = f(y,x)
-2. Outputs non-negative integers
-3. The cognitive distance function remains constant throughout the assessment process and depends only on the three-digit module dimensional coefficients of the endpoints
+You can obtain syllabus information through five types of queries (one question per turn):
 
-Your goal is to infer the pattern of the hidden cognitive distance function f through limited assessment queries, and accurately predict the knowledge transfer costs of 5 unqueried module pairs in the challenge phase.
+1. Reveal Single Course Topics: Ask which topics a specific course covers.
+2. Combined Course Topics Count: Ask how many topics are covered by the union of several courses.
+3. Compare Two Curriculum Groups: Compare two course groups to determine which covers more topics.
+4. Study Feasibility Bound: Ask whether there exists a complete topic coverage scheme using at most k courses.
+5. Incremental Learning Value: Ask how many new topics would be covered by adding a specific course to an existing study plan.
 
-## Available Operations
+When you have enough information, submit your final answer. The answer must include the minimum cover size and specific course indices.
 
-1. **Transfer Cost Query**: Query the knowledge transfer cost between any two different modules
-2. **Remaining Query**: Check the number of remaining cost queries
-3. **Request Challenge**: Can be initiated at any time; the system will provide 5 pairs of unqueried modules for prediction
-4. **Final Prediction Submission**: Submit your predicted transfer costs for the 5 pairs given in the challenge phase
+Each query must contain only one tag. Use the following XML format:
 
-## Operation Format (must be strictly followed)
+- Reveal Single Course Topics (e.g., query S1):
+<query_reveal>S1</query_reveal>
 
-**Transfer Cost Query** (query transfer cost between modules X and Y, where X and Y must be different and both in {{A,B,C,D,E,F,G,H}}):
-<query_edge>X,Y</query_edge>
+- Combined Course Topics Count (e.g., query union size of S1, S2, S3):
+<query_union_count>S1,S2,S3</query_union_count>
 
-**Remaining Query** (check remaining query count):
-<query_remaining></query_remaining>
+- Compare Two Curriculum Groups (e.g., compare group [S1,S2] with group [S3,S4]):
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**Request Challenge** (request system to provide 5 pairs of modules to predict):
-<request_challenge></request_challenge>
+- Study Feasibility Bound (e.g., ask if a complete scheme with at most 3 courses exists):
+<query_feasible>3</query_feasible>
 
-**Final Prediction Submission** (predict transfer costs for the 5 pairs given in challenge, format "module1 module2 = cost", separated by semicolons):
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- Incremental Learning Value (e.g., new topics when adding S3 to [S1,S2]):
+<query_incremental>S1,S2|S3</query_incremental>
 
-## Resource Limits
-
-- Maximum transfer cost queries: {max_queries}
-- Must request challenge before exhausting all queries
-
-## Success and Failure Conditions
-
-**Success**: All 5 predictions in the challenge phase are correct (5/5)
-
-**Failure** (game fails if any condition is met):
-1. All cost queries exhausted without requesting challenge
-2. Not all 5 predictions in challenge phase are correct
-3. Attempting to continue cost queries during challenge phase
-4. Query format error or querying invalid modules
-
-## Example Game Flow
-
-1. You can start with several cost queries, e.g.: <query_edge>A,B</query_edge>
-2. System returns cost value, e.g.: "Edge A-B has weight 5"
-3. You can check remaining queries anytime: <query_remaining></query_remaining>
-4. When you think you've found the pattern, request challenge: <request_challenge></request_challenge>
-5. System provides 5 pairs, e.g.: "(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. You submit predictions: <answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. System determines if all predictions are correct
-
-Note: Query design should cover various coefficient difference patterns to improve identification of the hidden cognitive distance function. Try to find the pattern with as few queries as possible.
+When submitting the final answer, specify the minimum cover size and course list (comma-separated), using this format:
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎进入“智能制造工序切换耗损测算系统”。
-本系统定义了关键生产工序的集合 V = {{A, B, C, D, E, F, G, H}}，每个工序都有一个公开的三位工序参数（分别代表加工温度、运行压力、标准时间）：
-- 工序 A: {code_A}
-- 工序 B: {code_B}
-- 工序 C: {code_C}
-- 工序 D: {code_D}
-- 工序 E: {code_E}
-- 工序 F: {code_F}
-- 工序 G: {code_G}
-- 工序 H: {code_H}
+我们来玩一个"工业模块化装配最小化"推理游戏，规则如下：
 
-在柔性生产线上，任意两个不同工序之间都可以进行产线切换。每次切换产生的物流损耗/切换成本由一个隐藏的确定性对称损耗计算函数 f 评估得出：切换损耗 w(X,Y) = f(code(X), code(Y)).
+在一条高端制造装配线中，存在一个隐藏的核心零部件需求集合 U（记为 E1, E2, ...），以及若干个由供应商提供的标准化集成套件 S1, S2, ...。每个集成套件包含 U 中的部分零部件。供应链协议保证，至少存在一种采购组合，通过合并这些集成套件能够凑齐所有必须的零部件。
 
-该损耗计算函数 f 具有以下性质：
-1. 对称性：f(x,y) = f(y,x)
-2. 输出为非负整数
-3. 损耗计算函数在整个排产过程中保持不变，仅依赖于两端工序的三位工序参数
+你的目标是：找出最小套件采购覆盖，即采购最少数量的标准化套件来完全满足所有零部件需求（以降低物流和库存管理成本），并提交该最小数量及具体的套件编号。
 
-你的目标是通过有限次的损耗查询，推断出隐藏损耗计算函数 f 的规律，并在挑战阶段准确预测5对未查询过的工序切换损耗。
+你可以通过以下五种查询方式获取供应链信息（每次只能提一个问题）：
 
-## 可用操作
+1. 单套件清单揭示：询问某个集成套件具体包含哪些零部件。
+2. 多套件联合计数：询问若干个套件组合在一起共包含多少种去重后的零部件。
+3. 两组采购方案比较：比较两组采购方案，哪一组涵盖的零部件种类更多。
+4. 采购可行性边界：询问是否存在不超过 k 个套件的完整物料采购方案。
+5. 局部增量装配价值：询问在已采购若干套件的基础上，增购某个套件能额外提供多少种新的零部件。
 
-1. **损耗查询**：查询任意两个不同工序之间的切换损耗
-2. **余量查询**：查询剩余可用的查询次数
-3. **发起挑战**：随时可以发起，系统会给出5对未被查询过的工序对，你需要预测它们的切换损耗
-4. **最终预测提交**：对挑战阶段给出的5对工序，提交你预测的切换损耗值
+当你收集足够信息后，请提交最终答案。答案必须包含最小套件数量和具体套件编号。
 
-## 操作格式（必须严格遵守）
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-**损耗查询**（查询工序 X 和 Y 之间的损耗，X 和 Y 必须不同且都在 {{A,B,C,D,E,F,G,H}} 中）：
-<query_edge>X,Y</query_edge>
+- 单套件清单揭示（例如查询套件 S1）：
+<query_reveal>S1</query_reveal>
 
-**余量查询**（查询剩余查询次数）：
-<query_remaining></query_remaining>
+- 多套件联合计数（例如查询 S1, S2, S3 的联合零部件数量）：
+<query_union_count>S1,S2,S3</query_union_count>
 
-**发起挑战**（请求系统给出5对待预测的工序对）：
-<request_challenge></request_challenge>
+- 两组采购方案比较（例如比较组 [S1,S2] 与组 [S3,S4]）：
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**最终预测提交**（对挑战给出的5对工序预测损耗，格式为"工序1 工序2 = 损耗值"，用分号分隔）：
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- 采购可行性边界（例如询问是否存在不超过 3 个套件的完整物料方案）：
+<query_feasible>3</query_feasible>
 
-## 资源限制
+- 局部增量装配价值（例如在 [S1,S2] 基础上增购 S3 新增多少零部件）：
+<query_incremental>S1,S2|S3</query_incremental>
 
-- 损耗查询总次数上限：{max_queries} 次
-- 必须在用尽查询次数前发起挑战
-
-## 成功与失败条件
-
-**成功**：在挑战阶段对5对目标工序切换损耗全部预测正确（5/5）
-
-**失败**（任一条件成立即失败）：
-1. 用尽所有损耗查询次数仍未发起挑战
-2. 挑战后的5条预测未全部命中
-3. 在挑战阶段尝试继续进行损耗查询
-4. 查询格式错误或查询无效工序
-
-## 游戏流程示例
-
-1. 你可以先进行若干次损耗查询，例如：<query_edge>A,B</query_edge>
-2. 系统返回损耗值，例如："边 A-B 的权值为 5"
-3. 你可以随时查询余量：<query_remaining></query_remaining>
-4. 当你认为已经掌握规律时，发起挑战：<request_challenge></request_challenge>
-5. 系统给出5对工序，例如："(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. 你提交预测：<answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. 系统判定是否全部正确
-
-注意：查询设计应覆盖多种工序参数差异模式，以提高对隐藏损耗计算函数的辨识度。尽可能用最少的查询次数找出规律。
+提交最终答案时，必须指明最小套件数量和套件列表（用逗号隔开），格式如下：
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Welcome to the "Smart Manufacturing Process Changeover Loss Calculation System".
+[Manufacturing Scenario]
+Let's play an "Industrial Modular Assembly Minimization" reasoning game. Here are the rules:
 
-The system defines a set of key production processes V = {{A, B, C, D, E, F, G, H}}, where each process has a public three-digit process parameter (representing processing temperature, operating pressure, and standard time respectively):
-- Process A: {code_A}
-- Process B: {code_B}
-- Process C: {code_C}
-- Process D: {code_D}
-- Process E: {code_E}
-- Process F: {code_F}
-- Process G: {code_G}
-- Process H: {code_H}
+On a high-end manufacturing assembly line, there exists a hidden set U of essential components (denoted as E1, E2, ...) required for production, along with several standardized integrated kits S1, S2, ... provided by suppliers. Each integrated kit contains some components in U. Supply chain agreements guarantee that at least one procurement combination of these kits can provide all essential components.
 
-On a flexible production line, changeovers can be made between any two different processes. The material loss / changeover cost incurred by each changeover is evaluated by a hidden deterministic symmetric loss calculation function f: changeover loss w(X,Y) = f(code(X), code(Y)).
+Your goal is: find the minimum kit procurement cover, i.e., purchase the smallest number of standardized kits to completely satisfy all component requirements (to reduce logistics and inventory costs), and submit both the minimum size and the specific kit indices.
 
-The loss calculation function f has the following properties:
-1. Symmetry: f(x,y) = f(y,x)
-2. Outputs non-negative integers
-3. The loss calculation function remains constant throughout the scheduling process and depends only on the three-digit process parameters of the two end processes
+You can obtain supply chain information through five types of queries (one question per turn):
 
-Your goal is to infer the pattern of the hidden loss calculation function f through limited loss queries, and accurately predict the changeover losses of 5 unqueried process pairs in the challenge phase.
+1. Reveal Single Kit Inventory: Ask which components a specific kit contains.
+2. Joint Kit Components Count: Ask how many unique components are provided by the union of several kits.
+3. Compare Two Procurement Plans: Compare two groups of kits to determine which provides more unique components.
+4. Procurement Feasibility Bound: Ask whether there exists a complete bill of materials using at most k kits.
+5. Incremental Assembly Value: Ask how many new components would be provided by adding a specific kit to an existing procurement plan.
 
-## Available Operations
+When you have enough information, submit your final answer. The answer must include the minimum cover size and specific kit indices.
 
-1. **Loss Query**: Query the changeover loss between any two different processes
-2. **Remaining Query**: Check the number of remaining loss queries
-3. **Request Challenge**: Can be initiated at any time; the system will provide 5 pairs of unqueried processes for prediction
-4. **Final Prediction Submission**: Submit your predicted changeover losses for the 5 pairs given in the challenge phase
+Each query must contain only one tag. Use the following XML format:
 
-## Operation Format (must be strictly followed)
+- Reveal Single Kit Inventory (e.g., query kit S1):
+<query_reveal>S1</query_reveal>
 
-**Loss Query** (query loss between processes X and Y, where X and Y must be different and both in {{A,B,C,D,E,F,G,H}}):
-<query_edge>X,Y</query_edge>
+- Joint Kit Components Count (e.g., query union size of S1, S2, S3):
+<query_union_count>S1,S2,S3</query_union_count>
 
-**Remaining Query** (check remaining query count):
-<query_remaining></query_remaining>
+- Compare Two Procurement Plans (e.g., compare group [S1,S2] with group [S3,S4]):
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**Request Challenge** (request system to provide 5 pairs of processes to predict):
-<request_challenge></request_challenge>
+- Procurement Feasibility Bound (e.g., ask if a complete scheme with at most 3 kits exists):
+<query_feasible>3</query_feasible>
 
-**Final Prediction Submission** (predict losses for the 5 pairs given in challenge, format "process1 process2 = loss", separated by semicolons):
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- Incremental Assembly Value (e.g., new components when adding S3 to [S1,S2]):
+<query_incremental>S1,S2|S3</query_incremental>
 
-## Resource Limits
-
-- Maximum loss queries: {max_queries}
-- Must request challenge before exhausting all queries
-
-## Success and Failure Conditions
-
-**Success**: All 5 predictions in the challenge phase are correct (5/5)
-
-**Failure** (game fails if any condition is met):
-1. All loss queries exhausted without requesting challenge
-2. Not all 5 predictions in challenge phase are correct
-3. Attempting to continue loss queries during challenge phase
-4. Query format error or querying invalid processes
-
-## Example Game Flow
-
-1. You can start with several loss queries, e.g.: <query_edge>A,B</query_edge>
-2. System returns loss value, e.g.: "Edge A-B has weight 5"
-3. You can check remaining queries anytime: <query_remaining></query_remaining>
-4. When you think you've found the pattern, request challenge: <request_challenge></request_challenge>
-5. System provides 5 pairs, e.g.: "(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. You submit predictions: <answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. System determines if all predictions are correct
-
-Note: Query design should cover various parameter difference patterns to improve identification of the hidden loss calculation function. Try to find the pattern with as few queries as possible.
+When submitting the final answer, specify the minimum cover size and kit list (comma-separated), using this format:
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用“司法判例适用冲突分析引擎”。
-系统录入了有限的核心司法判例集合 V = {{A, B, C, D, E, F, G, H}}，每个判例都有一个公开的三位案例特征向量（代表涉案金额级别、情节严重度、社会影响指数）：
-- 判例 A: {code_A}
-- 判例 B: {code_B}
-- 判例 C: {code_C}
-- 判例 D: {code_D}
-- 判例 E: {code_E}
-- 判例 F: {code_F}
-- 判例 G: {code_G}
-- 判例 H: {code_H}
+我们来玩一个"完美证据链最小化"推理游戏，规则如下：
 
-在法理推演网络中，任意两个不同判例之间都存在潜在的适用交叉。这两个判例之间的适用冲突指数/逻辑关联度由一个隐藏的确定性对称冲突评估法则 f 计算得出：冲突指数 w(X,Y) = f(code(X), code(Y)).
+在一宗错综复杂的诉讼案件中，存在一个隐藏的争议焦点集合 U，包含若干个法庭必须查明的核心法律事实（记为 E1, E2, ...），以及若干名可传唤的专家证人或调取的卷宗包 S1, S2, ...。每位证人或每份卷宗只能提供能够证实 U 中部分争议焦点的证据。诉讼程序保证，只要合理组织证人和卷宗的并集，至少存在一种举证方案能够构建出覆盖所有争议焦点的完整证据链。
 
-该冲突评估法则 f 具有以下性质：
-1. 对称性：f(x,y) = f(y,x)
-2. 输出为非负整数
-3. 评估法则在整个分析过程中保持不变，仅依赖于两端点判例的三位案例特征向量
+你的目标是：找出最小举证覆盖方案，即传唤最少数量的证人/卷宗来完全查明所有争议焦点（以节约司法资源和庭审时间），并提交该最小数量及具体的证人/卷宗编号。
 
-你的目标是通过有限次的冲突指数查询，推断出隐藏冲突评估法则 f 的规律，并在挑战阶段准确预测5对未查询过判例的适用冲突指数。
+你可以通过以下五种查询方式获取证据摸底信息（每次只能提一个问题）：
 
-## 可用操作
+1. 单一证据效力揭示：询问某位证人/卷宗具体能证实哪些争议焦点。
+2. 联合质证覆盖计数：询问若干名证人/卷宗的组合共能查明多少个争议焦点。
+3. 两组举证方案比较：比较两组举证策略，哪一组能覆盖更多的争议焦点。
+4. 庭审可行性边界：询问是否存在不超过 k 名证人/卷宗的完整证据链构建方案。
+5. 局部增量举证价值：询问在已有若干证据的基础上，追加某位证人/卷宗能额外查明多少个新的争议焦点。
 
-1. **冲突查询**：查询任意两个不同判例之间的适用冲突指数
-2. **余量查询**：查询剩余可用的查询次数
-3. **发起挑战**：随时可以发起，系统会给出5对未被查询过的判例对，你需要预测它们的冲突指数
-4. **最终预测提交**：对挑战阶段给出的5对判例，提交你预测的适用冲突指数值
+当你收集足够信息后，请提交最终答案。答案必须包含最小证据数量和具体证人/卷宗编号。
 
-## 操作格式（必须严格遵守）
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-**冲突查询**（查询判例 X 和 Y 之间的冲突指数，X 和 Y 必须不同且都在 {{A,B,C,D,E,F,G,H}} 中）：
-<query_edge>X,Y</query_edge>
+- 单一证据效力揭示（例如查询证据 S1）：
+<query_reveal>S1</query_reveal>
 
-**余量查询**（查询剩余查询次数）：
-<query_remaining></query_remaining>
+- 联合质证覆盖计数（例如查询 S1, S2, S3 的联合证据效力数量）：
+<query_union_count>S1,S2,S3</query_union_count>
 
-**发起挑战**（请求系统给出5对待预测的判例对）：
-<request_challenge></request_challenge>
+- 两组举证方案比较（例如比较组 [S1,S2] 与组 [S3,S4]）：
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**最终预测提交**（对挑战给出的5对判例预测冲突指数，格式为"判例1 判例2 = 指数值"，用分号分隔）：
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- 庭审可行性边界（例如询问是否存在不超过 3 份证据的完整证据链方案）：
+<query_feasible>3</query_feasible>
 
-## 资源限制
+- 局部增量举证价值（例如在 [S1,S2] 基础上追加 S3 新增查明多少争议焦点）：
+<query_incremental>S1,S2|S3</query_incremental>
 
-- 冲突查询总次数上限：{max_queries} 次
-- 必须在用尽查询次数前发起挑战
-
-## 成功与失败条件
-
-**成功**：在挑战阶段对5对目标判例适用冲突指数全部预测正确（5/5）
-
-**失败**（任一条件成立即失败）：
-1. 用尽所有冲突查询次数仍未发起挑战
-2. 挑战后的5条预测未全部命中
-3. 在挑战阶段尝试继续进行冲突查询
-4. 查询格式错误或查询无效判例
-
-## 游戏流程示例
-
-1. 你可以先进行若干次冲突查询，例如：<query_edge>A,B</query_edge>
-2. 系统返回冲突指数，例如："边 A-B 的权值为 5"
-3. 你可以随时查询余量：<query_remaining></query_remaining>
-4. 当你认为已经掌握规律时，发起挑战：<request_challenge></request_challenge>
-5. 系统给出5对判例，例如："(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. 你提交预测：<answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. 系统判定是否全部正确
-
-注意：查询设计应覆盖多种特征向量差异模式，以提高对隐藏冲突评估法则的辨识度。尽可能用最少的查询次数找出规律。
+提交最终答案时，必须指明最小证据数量和证据列表（用逗号隔开），格式如下：
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the "Judicial Precedent Application Conflict Analysis Engine".
+[Law Scenario]
+Let's play a "Perfect Chain of Evidence Minimization" reasoning game. Here are the rules:
 
-The system has logged a finite set of core judicial precedents V = {{A, B, C, D, E, F, G, H}}, where each precedent has a public three-digit case feature vector (representing the level of involved amount, severity of circumstances, and social impact index):
-- Precedent A: {code_A}
-- Precedent B: {code_B}
-- Precedent C: {code_C}
-- Precedent D: {code_D}
-- Precedent E: {code_E}
-- Precedent F: {code_F}
-- Precedent G: {code_G}
-- Precedent H: {code_H}
+In a complex litigation case, there exists a hidden set U of disputed issues (denoted as E1, E2, ...) that the court must clarify, along with several summonable expert witnesses or obtainable case files S1, S2, .... Each witness or file can only provide evidence corroborating some issues in U. Legal procedures guarantee that at least one evidentiary strategy can build a complete chain of evidence covering all disputed issues.
 
-In the jurisprudential deduction network, there is potential application overlap between any two different precedents. The application conflict index / logical relevance between these two precedents is calculated by a hidden deterministic symmetric conflict assessment rule f: conflict index w(X,Y) = f(code(X), code(Y)).
+Your goal is: find the minimum evidentiary cover, i.e., summon the smallest number of witnesses/files to completely clarify all disputed issues (to save judicial resources and trial time), and submit both the minimum size and the specific witness/file indices.
 
-The conflict assessment rule f has the following properties:
-1. Symmetry: f(x,y) = f(y,x)
-2. Outputs non-negative integers
-3. The assessment rule remains constant throughout the analysis process and depends only on the three-digit case feature vectors of the two end precedents
+You can obtain evidentiary information through five types of queries (one question per turn):
 
-Your goal is to infer the pattern of the hidden conflict assessment rule f through limited conflict queries, and accurately predict the application conflict indices of 5 unqueried precedent pairs in the challenge phase.
+1. Reveal Single Evidence Efficacy: Ask which disputed issues a specific witness/file corroborates.
+2. Joint Cross-Examination Count: Ask how many disputed issues are clarified by the union of several witnesses/files.
+3. Compare Two Evidentiary Strategies: Compare two groups of witnesses/files to determine which covers more disputed issues.
+4. Trial Feasibility Bound: Ask whether there exists a complete evidentiary chain scheme using at most k witnesses/files.
+5. Incremental Evidentiary Value: Ask how many new disputed issues would be clarified by adding a specific witness/file to an existing evidentiary portfolio.
 
-## Available Operations
+When you have enough information, submit your final answer. The answer must include the minimum cover size and specific witness/file indices.
 
-1. **Conflict Query**: Query the application conflict index between any two different precedents
-2. **Remaining Query**: Check the number of remaining conflict queries
-3. **Request Challenge**: Can be initiated at any time; the system will provide 5 pairs of unqueried precedents for prediction
-4. **Final Prediction Submission**: Submit your predicted application conflict indices for the 5 pairs given in the challenge phase
+Each query must contain only one tag. Use the following XML format:
 
-## Operation Format (must be strictly followed)
+- Reveal Single Evidence Efficacy (e.g., query evidence S1):
+<query_reveal>S1</query_reveal>
 
-**Conflict Query** (query conflict index between precedents X and Y, where X and Y must be different and both in {{A,B,C,D,E,F,G,H}}):
-<query_edge>X,Y</query_edge>
+- Joint Cross-Examination Count (e.g., query union size of S1, S2, S3):
+<query_union_count>S1,S2,S3</query_union_count>
 
-**Remaining Query** (check remaining query count):
-<query_remaining></query_remaining>
+- Compare Two Evidentiary Strategies (e.g., compare group [S1,S2] with group [S3,S4]):
+<query_compare_groups>S1,S2|S3,S4</query_compare_groups>
 
-**Request Challenge** (request system to provide 5 pairs of precedents to predict):
-<request_challenge></request_challenge>
+- Trial Feasibility Bound (e.g., ask if a complete scheme with at most 3 evidence sources exists):
+<query_feasible>3</query_feasible>
 
-**Final Prediction Submission** (predict conflict indices for the 5 pairs given in challenge, format "precedent1 precedent2 = index", separated by semicolons):
-<answer>X1 Y1 = v1; X2 Y2 = v2; X3 Y3 = v3; X4 Y4 = v4; X5 Y5 = v5</answer>
+- Incremental Evidentiary Value (e.g., new issues clarified when adding S3 to [S1,S2]):
+<query_incremental>S1,S2|S3</query_incremental>
 
-## Resource Limits
-
-- Maximum conflict queries: {max_queries}
-- Must request challenge before exhausting all queries
-
-## Success and Failure Conditions
-
-**Success**: All 5 predictions in the challenge phase are correct (5/5)
-
-**Failure** (game fails if any condition is met):
-1. All conflict queries exhausted without requesting challenge
-2. Not all 5 predictions in challenge phase are correct
-3. Attempting to continue conflict queries during challenge phase
-4. Query format error or querying invalid precedents
-
-## Example Game Flow
-
-1. You can start with several conflict queries, e.g.: <query_edge>A,B</query_edge>
-2. System returns conflict index, e.g.: "Edge A-B has weight 5"
-3. You can check remaining queries anytime: <query_remaining></query_remaining>
-4. When you think you've found the pattern, request challenge: <request_challenge></request_challenge>
-5. System provides 5 pairs, e.g.: "(B,E), (C,H), (A,G), (D,F), (E,G)"
-6. You submit predictions: <answer>B E = 10; C H = 7; A G = 3; D F = 8; E G = 12</answer>
-7. System determines if all predictions are correct
-
-Note: Query design should cover various feature vector difference patterns to improve identification of the hidden conflict assessment rule. Try to find the pattern with as few queries as possible.
+When submitting the final answer, specify the minimum cover size and evidence list (comma-separated), using this format:
+<answer>size=3, subsets=S1,S3,S5</answer>
 """
 
-    tags = ["answer", "query_edge", "query_remaining", "request_challenge"]
-    
-    reasoning_type = "归纳推理"
-    data_structure = "图"
-    enable_counterfactual = False   # 设为 True 时开启反事实干预模式
+    tags = ["answer", "query_reveal", "query_union_count", "query_compare_groups", 
+            "query_feasible", "query_incremental"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "codes": {"A": "307", "B": "842", "C": "519", "D": "773", 
-                         "E": "066", "F": "190", "G": "421", "H": "258"},
-                "function": "sum_digit_diff",
-                "max_queries": 12,
+                "n_elements": 5,
+                "subsets": {
+                    "S1": [1, 2, 3],
+                    "S2": [3, 4, 5],
+                    "S3": [1, 2],
+                    "S4": [4, 5],
+                },
+                "optimal_size": 2,
+                "optimal_solution": ["S1", "S2"],
             },
             2: {
-                "codes": {"A": "123", "B": "456", "C": "789", "D": "234",
-                         "E": "567", "F": "890", "G": "345", "H": "678"},
-                "function": "number_diff",
-                "max_queries": 10,
+                "n_elements": 8,
+                "subsets": {
+                    "S1": [1, 2, 3],
+                    "S2": [4, 5, 6],
+                    "S3": [7, 8],
+                    "S4": [1, 4, 7],
+                    "S5": [2, 5, 8],
+                },
+                "optimal_size": 3,
+                "optimal_solution": ["S1", "S2", "S3"],
             },
             3: {
-                "codes": {"A": "111", "B": "999", "C": "246", "D": "135",
-                         "E": "579", "F": "802", "G": "963", "H": "420"},
-                "function": "sum_of_digits_diff",
-                "max_queries": 8,
+                "n_elements": 10,
+                "subsets": {
+                    "S1": [1, 2, 3, 4],
+                    "S2": [5, 6, 7],
+                    "S3": [8, 9, 10],
+                    "S4": [1, 5, 8],
+                    "S5": [2, 6, 9],
+                    "S6": [3, 7, 10],
+                    "S7": [4],
+                },
+                "optimal_size": 3,
+                "optimal_solution": ["S1", "S2", "S3"],
             },
             4: {
-                "codes": {"A": "203", "B": "715", "C": "928", "D": "401",
-                         "E": "536", "F": "649", "G": "872", "H": "184"},
-                "function": "sum_square_diff",
-                "max_queries": 7,
+                "n_elements": 12,
+                "subsets": {
+                    "S1": [1, 2, 3],
+                    "S2": [4, 5, 6],
+                    "S3": [7, 8, 9],
+                    "S4": [10, 11, 12],
+                    "S5": [1, 4, 7, 10],
+                    "S6": [2, 5, 8, 11],
+                    "S7": [3, 6, 9, 12],
+                    "S8": [1, 6, 8],
+                },
+                "optimal_size": 4,
+                "optimal_solution": ["S1", "S2", "S3", "S4"],
             },
             5: {
-                "codes": {"A": "321", "B": "654", "C": "987", "D": "432",
-                         "E": "765", "F": "198", "G": "543", "H": "876"},
-                "function": "sum_product",
-                "max_queries": 6,
+                "n_elements": 15,
+                "subsets": {
+                    "S1": [1, 2, 3, 4],
+                    "S2": [5, 6, 7, 8],
+                    "S3": [9, 10, 11],
+                    "S4": [12, 13, 14, 15],
+                    "S5": [1, 5, 9, 12],
+                    "S6": [2, 6, 10, 13],
+                    "S7": [3, 7, 11, 14],
+                    "S8": [4, 8, 15],
+                    "S9": [1, 6, 11],
+                    "S10": [2, 7, 12],
+                },
+                "optimal_size": 4,
+                "optimal_solution": ["S1", "S2", "S3", "S4"],
             },
         },
         "en": {
             1: {
-                "codes": {"A": "307", "B": "842", "C": "519", "D": "773",
-                         "E": "066", "F": "190", "G": "421", "H": "258"},
-                "function": "sum_digit_diff",
-                "max_queries": 12,
+                "n_elements": 5,
+                "subsets": {
+                    "S1": [1, 2, 3],
+                    "S2": [3, 4, 5],
+                    "S3": [1, 2],
+                    "S4": [4, 5],
+                },
+                "optimal_size": 2,
+                "optimal_solution": ["S1", "S2"],
             },
             2: {
-                "codes": {"A": "123", "B": "456", "C": "789", "D": "234",
-                         "E": "567", "F": "890", "G": "345", "H": "678"},
-                "function": "number_diff",
-                "max_queries": 10,
+                "n_elements": 8,
+                "subsets": {
+                    "S1": [1, 2, 3],
+                    "S2": [4, 5, 6],
+                    "S3": [7, 8],
+                    "S4": [1, 4, 7],
+                    "S5": [2, 5, 8],
+                },
+                "optimal_size": 3,
+                "optimal_solution": ["S1", "S2", "S3"],
             },
             3: {
-                "codes": {"A": "111", "B": "999", "C": "246", "D": "135",
-                         "E": "579", "F": "802", "G": "963", "H": "420"},
-                "function": "sum_of_digits_diff",
-                "max_queries": 8,
+                "n_elements": 10,
+                "subsets": {
+                    "S1": [1, 2, 3, 4],
+                    "S2": [5, 6, 7],
+                    "S3": [8, 9, 10],
+                    "S4": [1, 5, 8],
+                    "S5": [2, 6, 9],
+                    "S6": [3, 7, 10],
+                    "S7": [4],
+                },
+                "optimal_size": 3,
+                "optimal_solution": ["S1", "S2", "S3"],
             },
             4: {
-                "codes": {"A": "203", "B": "715", "C": "928", "D": "401",
-                         "E": "536", "F": "649", "G": "872", "H": "184"},
-                "function": "sum_square_diff",
-                "max_queries": 7,
+                "n_elements": 12,
+                "subsets": {
+                    "S1": [1, 2, 3],
+                    "S2": [4, 5, 6],
+                    "S3": [7, 8, 9],
+                    "S4": [10, 11, 12],
+                    "S5": [1, 4, 7, 10],
+                    "S6": [2, 5, 8, 11],
+                    "S7": [3, 6, 9, 12],
+                    "S8": [1, 6, 8],
+                },
+                "optimal_size": 4,
+                "optimal_solution": ["S1", "S2", "S3", "S4"],
             },
             5: {
-                "codes": {"A": "321", "B": "654", "C": "987", "D": "432",
-                         "E": "765", "F": "198", "G": "543", "H": "876"},
-                "function": "sum_product",
-                "max_queries": 6,
+                "n_elements": 15,
+                "subsets": {
+                    "S1": [1, 2, 3, 4],
+                    "S2": [5, 6, 7, 8],
+                    "S3": [9, 10, 11],
+                    "S4": [12, 13, 14, 15],
+                    "S5": [1, 5, 9, 12],
+                    "S6": [2, 6, 10, 13],
+                    "S7": [3, 7, 11, 14],
+                    "S8": [4, 8, 15],
+                    "S9": [1, 6, 11],
+                    "S10": [2, 7, 12],
+                },
+                "optimal_size": 4,
+                "optimal_solution": ["S1", "S2", "S3", "S4"],
             },
         },
     }
@@ -933,7 +620,6 @@ Note: Query design should cover various feature vector difference patterns to im
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：设置节点编码、隐藏函数、查询上限等"""
         lang = self.config.language
         diff = self.config.difficulty
 
@@ -944,246 +630,267 @@ Note: Query design should cover various feature vector difference patterns to im
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 设置节点编码
-        self.codes = cfg["codes"]
-        for node, code in self.codes.items():
-            self._game_info[f"code_{node}"] = code
+        self.n_elements = cfg["n_elements"]
+        self.subsets = cfg["subsets"]
+        self.optimal_size = cfg["optimal_size"]
+        self.optimal_solution = set(cfg["optimal_solution"])
         
-        # 设置隐藏函数类型和查询上限
-        self.function_type = cfg["function"]
-        self.max_queries = cfg["max_queries"]
-        self._game_info["max_queries"] = self.max_queries
-        
-        # 初始化游戏状态
-        self.queries_used = 0
-        self.queried_edges = set()  # 记录已查询的边
-        self.challenge_mode = False  # 是否进入挑战模式
-        self.challenge_pairs = []  # 挑战阶段的5对节点
+        self._game_info = {}
 
-        # 反事实干扰初始化
-        self._cf_round_counter = 0          # produce_response 调用轮次计数
-        self._cf_correct_resp  = None       # 第 2 轮的正确答案（暂存）
-        self._cf_wrong_resp    = None       # 第 2 轮注入的错误答案（暂存）
+    def _parse_subset_list(self, text):
+        return [s.strip() for s in text.split(",") if s.strip()]
 
-    def _compute_edge_weight(self, node1, node2):
-        """根据隐藏函数计算两个节点之间的边权"""
-        code1 = self.codes[node1]
-        code2 = self.codes[node2]
-        
-        if self.function_type == "sum_digit_diff":
-            # |d1_x - d1_y| + |d2_x - d2_y| + |d3_x - d3_y|
-            return sum(abs(int(code1[i]) - int(code2[i])) for i in range(3))
-        
-        elif self.function_type == "number_diff":
-            # |整数值(x) - 整数值(y)|
-            return abs(int(code1) - int(code2))
-        
-        elif self.function_type == "sum_of_digits_diff":
-            # |sum(digits_x) - sum(digits_y)|
-            sum1 = sum(int(d) for d in code1)
-            sum2 = sum(int(d) for d in code2)
-            return abs(sum1 - sum2)
-        
-        elif self.function_type == "sum_square_diff":
-            # (d1_x - d1_y)^2 + (d2_x - d2_y)^2 + (d3_x - d3_y)^2
-            return sum((int(code1[i]) - int(code2[i])) ** 2 for i in range(3))
-        
-        elif self.function_type == "sum_product":
-            # d1_x*d1_y + d2_x*d2_y + d3_x*d3_y
-            return sum(int(code1[i]) * int(code2[i]) for i in range(3))
-        
-        else:
-            raise ValueError(f"Unknown function type: {self.function_type}")
-
-    def _normalize_edge(self, node1, node2):
-        """将边标准化为排序后的元组，确保边的唯一性"""
-        return tuple(sorted([node1, node2]))
-
-    def _generate_challenge_pairs(self):
-        """生成5对未被查询过的节点对作为挑战"""
-        import random
-        rng = random.Random(42 + self.config.difficulty)
-        
-        nodes = list(self.codes.keys())
-        all_pairs = []
-        
-        # 生成所有可能的边
-        for i in range(len(nodes)):
-            for j in range(i + 1, len(nodes)):
-                edge = self._normalize_edge(nodes[i], nodes[j])
-                if edge not in self.queried_edges:
-                    all_pairs.append(edge)
-        
-        # 如果未查询的边少于5条，游戏失败
-        if len(all_pairs) < 5:
-            return None
-        
-        # 随机选择5对
-        selected = rng.sample(all_pairs, 5)
-        return selected
+    def _compute_union(self, subset_names):
+        union = set()
+        for name in subset_names:
+            if name in self.subsets:
+                union.update(self.subsets[name])
+        return union
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        if not self.challenge_mode:
-            return False
+        raw_ans = parsed_info["answer"]
         
-        raw_ans = parsed_info.get("answer", "")
-        
-        # 解析答案格式：X1 Y1 = v1; X2 Y2 = v2; ...
-        predictions = {}
         try:
-            pairs = [p.strip() for p in raw_ans.split(";") if p.strip()]
-            if len(pairs) != 5:
+            parts = [x.strip() for x in raw_ans.split(",")]
+            ans_dict = {}
+            
+            size_part = parts[0]
+            if "=" in size_part:
+                k, v = size_part.split("=", 1)
+                ans_dict[k.strip()] = v.strip()
+            
+            subsets_start = raw_ans.find("subsets=")
+            if subsets_start != -1:
+                subsets_value = raw_ans[subsets_start + 8:].strip()
+                ans_dict["subsets"] = subsets_value
+            
+            if "size" not in ans_dict or "subsets" not in ans_dict:
                 return False
             
-            for pair in pairs:
-                if "=" not in pair:
+            submitted_size = int(ans_dict["size"])
+            
+            submitted_subsets = self._parse_subset_list(ans_dict["subsets"])
+            
+            for s in submitted_subsets:
+                if s not in self.subsets:
                     return False
-                left, right = pair.split("=", 1)
-                nodes_part = left.strip().split()
-                if len(nodes_part) != 2:
-                    return False
-                node1, node2 = nodes_part[0].strip().upper(), nodes_part[1].strip().upper()
-                weight = int(right.strip())
-                
-                edge = self._normalize_edge(node1, node2)
-                predictions[edge] = weight
-        except:
-            return False
-        
-        # 检查是否所有挑战边都被预测
-        challenge_edges = set(self.challenge_pairs)
-        if set(predictions.keys()) != challenge_edges:
-            return False
-        
-        # 检查每个预测是否正确
-        for edge, predicted_weight in predictions.items():
-            actual_weight = self._compute_edge_weight(edge[0], edge[1])
-            if predicted_weight != actual_weight:
+            
+            union = self._compute_union(submitted_subsets)
+            
+            all_elements = set(range(1, self.n_elements + 1))
+            if union != all_elements:
                 return False
-        
-        return True
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """
-        将正确的回复篡改为错误回复，用于反事实干预模式。
-        策略：如果回复中包含数字（边权），将其替换为错误值（+1）。
-        """
-        import re as _re
-        # 尝试找到回复中的权值数字并修改
-        match = _re.search(r'(\d+)', correct)
-        if match:
-            original_val = int(match.group(1))
-            wrong_val = original_val + 1
-            return correct.replace(match.group(1), str(wrong_val), 1)
-        else:
-            # 如果无法找到数字，直接在末尾加标记
-            return correct + " [MODIFIED]"
+            
+            if len(submitted_subsets) != self.optimal_size:
+                return False
+            
+            if submitted_size != len(submitted_subsets):
+                return False
+            
+            return True
+            
+        except Exception as e:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑 - 不再直接修改 game state"""
         lang = self.config.language
         
-        if "query_edge" in parsed_info:
-            if self.challenge_mode:
-                raise ValueError("Edge queries not allowed during challenge phase." if lang == "en" else "挑战阶段不允许继续查询边权。")
+        if "query_reveal" in parsed_info:
+            subset_name = parsed_info["query_reveal"].strip()
+            if subset_name not in self.subsets:
+                return "错误：子集不存在。" if lang == "zh" else "Error: Subset does not exist."
             
-            if self.queries_used >= self.max_queries:
-                raise ValueError("Query limit exhausted without requesting challenge." if lang == "en" else "查询次数已用尽，游戏失败。")
+            elements = self.subsets[subset_name]
+            if not elements:
+                return "空" if lang == "zh" else "Empty"
             
-            raw = parsed_info["query_edge"]
-            parts = [p.strip() for p in raw.split(",")]
-            if len(parts) != 2:
-                raise ValueError("Invalid query format." if lang == "en" else "查询格式无效。")
-            
-            node1, node2 = parts[0].upper(), parts[1].upper()
-            
-            if node1 not in self.codes or node2 not in self.codes:
-                raise ValueError("Invalid node." if lang == "en" else "节点不存在。")
-            
-            if node1 == node2:
-                raise ValueError("Cannot query edge between same nodes." if lang == "en" else "不能查询相同节点之间的边。")
-            
-            edge = self._normalize_edge(node1, node2)
-            self.queried_edges.add(edge)
-            self.queries_used += 1
-            
-            weight = self._compute_edge_weight(node1, node2)
-            
-            if lang == "zh":
-                resp = f"边 {node1}-{node2} 的权值为 {weight}。"
-            else:
-                resp = f"Edge {node1}-{node2} has weight {weight}."
-            
-            # 如果查询次数用尽且未挑战，在返回结果后追加警告
-            if self.queries_used >= self.max_queries and not self.challenge_mode:
-                warning = "（警告：查询次数已全部用尽，请立即发起挑战！）" if lang == "zh" else " (Warning: All queries exhausted. Please request challenge immediately!)"
-                resp += warning
-            
-            return resp
+            elem_str = ", ".join([f"E{e}" for e in sorted(elements)])
+            return elem_str
         
-        elif "query_remaining" in parsed_info:
-            remaining = self.max_queries - self.queries_used
-            if lang == "zh":
-                return f"剩余查询次数：{remaining}"
-            else:
-                return f"Remaining queries: {remaining}"
+        elif "query_union_count" in parsed_info:
+            subset_names = self._parse_subset_list(parsed_info["query_union_count"])
+            
+            for name in subset_names:
+                if name not in self.subsets:
+                    return "错误：包含不存在的子集。" if lang == "zh" else "Error: Contains non-existent subset."
+            
+            union = self._compute_union(subset_names)
+            return str(len(union))
         
-        elif "request_challenge" in parsed_info:
-            if self.challenge_mode:
-                raise ValueError("Already in challenge mode." if lang == "en" else "已经在挑战模式中。")
-            
-            challenge_pairs = self._generate_challenge_pairs()
-            if challenge_pairs is None:
-                raise ValueError("Insufficient unqueried edges for challenge." if lang == "en" else "未查询的边数量不足，无法生成挑战。")
-            
-            self.challenge_mode = True
-            self.challenge_pairs = challenge_pairs
-            
-            pairs_str = ", ".join([f"({p[0]},{p[1]})" for p in challenge_pairs])
-            if lang == "zh":
-                return f"挑战开始！请预测以下5对节点之间的边权：{pairs_str}"
-            else:
-                return f"Challenge initiated! Please predict edge weights for: {pairs_str}"
+        elif "query_compare_groups" in parsed_info:
+            try:
+                groups = parsed_info["query_compare_groups"].split("|")
+                if len(groups) != 2:
+                    raise ValueError
+                
+                group_a = self._parse_subset_list(groups[0])
+                group_b = self._parse_subset_list(groups[1])
+                
+                for name in group_a + group_b:
+                    if name not in self.subsets:
+                        raise ValueError
+                
+                union_a = self._compute_union(group_a)
+                union_b = self._compute_union(group_b)
+                
+                if len(union_a) > len(union_b):
+                    return "组A更多" if lang == "zh" else "Group A covers more"
+                elif len(union_a) < len(union_b):
+                    return "组B更多" if lang == "zh" else "Group B covers more"
+                else:
+                    return "相等" if lang == "zh" else "Equal"
+                    
+            except:
+                return "错误：格式无效或子集不存在。" if lang == "zh" else "Error: Invalid format or subset does not exist."
+        
+        elif "query_feasible" in parsed_info:
+            try:
+                k = int(parsed_info["query_feasible"].strip())
+                if k >= self.optimal_size:
+                    return "是" if lang == "zh" else "Yes"
+                else:
+                    return "否" if lang == "zh" else "No"
+            except:
+                return "错误：无效的数字。" if lang == "zh" else "Error: Invalid number."
+        
+        elif "query_incremental" in parsed_info:
+            try:
+                parts = parsed_info["query_incremental"].split("|")
+                if len(parts) != 2:
+                    raise ValueError
+                
+                base_subsets = self._parse_subset_list(parts[0]) if parts[0].strip() else []
+                new_subset = parts[1].strip()
+                
+                for name in base_subsets:
+                    if name not in self.subsets:
+                        raise ValueError
+                if new_subset not in self.subsets:
+                    raise ValueError
+                
+                base_union = self._compute_union(base_subsets)
+                
+                new_elements = set(self.subsets[new_subset]) - base_union
+                
+                return str(len(new_elements))
+                
+            except:
+                return "错误：格式无效或子集不存在。" if lang == "zh" else "Error: Invalid format or subset does not exist."
         
         else:
             raise ValueError("No valid query tag found.")
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        
-        返回:
-            list[dict]: 包含 'query' (查询内容) 和 'answer' (正确回复) 的字典列表
-        """
+    def _cf_make_wrong(self, correct):
+        if correct.strip().isdigit():
+            val = int(correct.strip())
+            if val == 0:
+                return str(val + 1)
+            return str(val + 1)
+
+        if self.config.language == "zh":
+            if correct == "是":
+                return "否"
+            elif correct == "否":
+                return "是"
+            elif correct == "组A更多":
+                return "组B更多"
+            elif correct == "组B更多":
+                return "组A更多"
+            elif correct == "相等":
+                return "组A更多"
+
+        if self.config.language == "en":
+            low_correct = correct.lower()
+            if low_correct == "yes":
+                return "No" if correct[0].isupper() else "no"
+            elif low_correct == "no":
+                return "Yes" if correct[0].isupper() else "yes"
+            elif low_correct == "group a covers more":
+                return "Group B covers more"
+            elif low_correct == "group b covers more":
+                return "Group A covers more"
+            elif low_correct == "equal":
+                return "Group A covers more"
+
+        if correct.startswith("E") and "," in correct:
+            elements = [e.strip() for e in correct.split(",")]
+            if len(elements) > 1:
+                return ", ".join(elements[:-1])
+            else:
+                return correct + ", E999"
+
+        return correct + "_WRONG"
+
+    def get_all_possible_queries(self):
         queries = []
         lang = self.config.language
-        nodes = list(self.codes.keys())
-        
-        # 按照字母顺序排序节点，保证确定性
-        nodes.sort()
-        
-        # 遍历所有可能的节点对 (C(8,2) = 28 种组合)
-        for i in range(len(nodes)):
-            for j in range(i + 1, len(nodes)):
-                node1 = nodes[i]
-                node2 = nodes[j]
-                
-                # query 必须是合法的 XML 标签字符串
-                query_payload = f"<query_edge>{node1},{node2}</query_edge>"
-                
-                # 直接调用内部计算逻辑，计算正确边权，不依赖/修改游戏状态
-                weight = self._compute_edge_weight(node1, node2)
-                
-                # 构造标准回复字符串，格式需与 produce_response 保持一致
-                if lang == "zh":
-                    answer = f"边 {node1}-{node2} 的权值为 {weight}。"
-                else:
-                    answer = f"Edge {node1}-{node2} has weight {weight}."
-                
+        subset_names = sorted(list(self.subsets.keys()))
+        n_subsets = len(subset_names)
+
+        max_combo_size = min(n_subsets, 3)
+
+        for name in subset_names:
+            elements = self.subsets[name]
+            if not elements:
+                ans = "空" if lang == "zh" else "Empty"
+            else:
+                ans = ", ".join([f"E{e}" for e in sorted(elements)])
+            queries.append({
+                "query": f"<query_reveal>{name}</query_reveal>",
+                "answer": ans
+            })
+
+        for r in range(2, max_combo_size + 1):
+            for combo in itertools.combinations(subset_names, r):
+                union = self._compute_union(combo)
+                query_str = ",".join(combo)
                 queries.append({
-                    "query": query_payload,
-                    "answer": answer
+                    "query": f"<query_union_count>{query_str}</query_union_count>",
+                    "answer": str(len(union))
                 })
-                
+
+        for k in range(1, n_subsets + 1):
+            if k >= self.optimal_size:
+                ans = "是" if lang == "zh" else "Yes"
+            else:
+                ans = "否" if lang == "zh" else "No"
+            queries.append({
+                "query": f"<query_feasible>{k}</query_feasible>",
+                "answer": ans
+            })
+
+        for r in range(0, min(n_subsets, 3)):
+            for base_combo in itertools.combinations(subset_names, r):
+                base_union = self._compute_union(base_combo)
+                base_str = ",".join(base_combo)
+
+                remaining_subsets = [s for s in subset_names if s not in base_combo]
+
+                for new_subset in remaining_subsets:
+                    new_elements = set(self.subsets[new_subset]) - base_union
+                    queries.append({
+                        "query": f"<query_incremental>{base_str}|{new_subset}</query_incremental>",
+                        "answer": str(len(new_elements))
+                    })
+
+        for s1 in subset_names:
+            for s2 in subset_names:
+                if s1 == s2:
+                    continue
+
+                union_a = self._compute_union([s1])
+                union_b = self._compute_union([s2])
+
+                if len(union_a) > len(union_b):
+                    ans = "组A更多" if lang == "zh" else "Group A covers more"
+                elif len(union_a) < len(union_b):
+                    ans = "组B更多" if lang == "zh" else "Group B covers more"
+                else:
+                    ans = "相等" if lang == "zh" else "Equal"
+
+                queries.append({
+                    "query": f"<query_compare_groups>{s1}|{s2}</query_compare_groups>",
+                    "answer": ans
+                })
+
         return queries

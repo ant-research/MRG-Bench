@@ -1,521 +1,803 @@
 from .base import Game
 import re
 
-
-class AbstractReasoningGame(Game):
+class ColoredGraphWeightGame(Game):
+    reasoning_type = "溯因推理"
+    data_structure = "图"
 
     game_rule_zh = """\
-我们来玩一个"抽象推理"游戏，规则如下：
+我们现在来玩一个"有色图权重推断"游戏，规则如下：
 
-游戏设定了一个固定但未知的正整数 N，以及一个固定但未知的响应规律 f。当你提交一个正整数 b 时，系统会根据规律 f 返回一个整数 r = f(b)。
+游戏设定了一个无向图，图中的边有颜色标记，颜色取自集合{{R, G, B}}（红、绿、蓝）。每种颜色对应一个权重值，但这个对应关系是隐藏的。真实的"颜色到权重映射方案"从以下四个候选之一中选定并固定不变：
+- 方案 S1：R=1, G=2, B=3
+- 方案 S2：R=1, G=3, B=2
+- 方案 S3：R=2, G=1, B=3
+- 方案 S4：R=2, G=3, B=1
 
-关键信息：
-- 响应规律在整个游戏过程中保持不变，仅由 b 与 N 决定，与历史查询无关
-- 对于相同的 b，系统始终返回相同的 r
-- 你可以提交的 b 的范围是 1 到 1000 之间的正整数
-- N 是一个在合理范围内的正整数
+图的边及其颜色如下：
+{edges_description}
 
-你的目标是通过尽可能少的查询，归纳出响应规律并确定 N 的值。
+你的目标是：通过探测识别出正确的颜色到权重映射方案，然后计算从节点 {start_node} 到节点 {end_node} 的最短路径长度（路径上所有边的权重之和）。
 
-## 交互方式
+你可以反复发起以下探测（每次只能选择一个探测），系统会返回"L"或"H"的二值反馈：
+{probes_description}
 
-你可以进行以下两种操作：
+每个探测对应一条特定路径，系统根据该路径上所有边的权重总和与预设阈值比较，返回"L"（低）或"H"（高）。
 
-1. **查询操作**：提交一个正整数 b（1 到 1000），系统会返回对应的整数 r。
+当你收集足够信息后，请提交最终答案。答案需包含：判定的方案编号（S1/S2/S3/S4）以及 {start_node} 到 {end_node} 的最短路径长度（整数）。
 
-2. **提交最终结论**：当你认为已经归纳出规律时，提交你对 N 的猜测值以及对规律的描述。
+每次探测只能包含一个标签。请使用以下 XML 格式：
 
-## 格式要求（必须严格遵守）
+- 探测 A：
+<probe_a></probe_a>
 
-- 查询操作（例如查询 b=10）：
-<query>10</query>
+- 探测 B：
+<probe_b></probe_b>
 
-- 提交最终结论：
-<answer>N=15, rule=r 始终等于 b 和 N 中的较小值</answer>
+- 探测 C：
+<probe_c></probe_c>
 
-注意：
-- 规律描述必须准确表达 r 与 b、N 之间的关系
-- N 的猜测值必须是正整数
-- 每次只能进行一种操作（查询或提交结论）
+提交最终答案时，必须说明方案编号（S1/S2/S3/S4）和最短路径长度（整数），格式如下：
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     game_rule_en = """\
-Let's play an "Abstract Reasoning" game. Here are the rules:
+Let's play a "Colored Graph Weight Inference" game. Here are the rules:
 
-The game has set a fixed but unknown positive integer N, and a fixed but unknown response rule f. When you submit a positive integer b, the system will return an integer r = f(b) according to rule f.
+The game features an undirected graph where edges are labeled with colors from the set {{R, G, B}} (Red, Green, Blue). Each color corresponds to a weight value, but this mapping is hidden. The true "color-to-weight mapping scheme" is selected and fixed from one of the following four candidates:
+- Scheme S1: R=1, G=2, B=3
+- Scheme S2: R=1, G=3, B=2
+- Scheme S3: R=2, G=1, B=3
+- Scheme S4: R=2, G=3, B=1
 
-Key information:
-- The response rule remains constant throughout the game, determined only by b and N, independent of query history
-- For the same b, the system always returns the same r
-- The range of b you can submit is between 1 and 1000
-- N is a positive integer within a reasonable range
+The edges and their colors are as follows:
+{edges_description}
 
-Your goal is to infer the response rule and determine the value of N through as few queries as possible.
+Your goal is: to identify the correct color-to-weight mapping scheme through probing, and then calculate the shortest path length (sum of all edge weights on the path) from node {start_node} to node {end_node}.
 
-## Interaction Methods
+You can repeatedly perform the following probes (only one probe per turn), and the system will return a binary feedback "L" or "H":
+{probes_description}
 
-You can perform two types of operations:
+Each probe corresponds to a specific path. The system compares the total weight of all edges on that path against a preset threshold and returns "L" (low) or "H" (high).
 
-1. **Query Operation**: Submit a positive integer b (1 to 1000), and the system will return the corresponding integer r.
+When you have collected enough information, submit your final answer. The answer must include: the identified scheme number (S1/S2/S3/S4) and the shortest path length from {start_node} to {end_node} (integer).
 
-2. **Submit Final Conclusion**: When you believe you have inferred the rule, submit your guess for N and your description of the rule.
+Each probe must contain only one tag. Use the following XML format:
 
-## Format Requirements (must strictly follow)
+- Probe A:
+<probe_a></probe_a>
 
-- Query Operation (e.g., querying b=10):
-<query>10</query>
+- Probe B:
+<probe_b></probe_b>
 
-- Submit Final Conclusion:
-<answer>N=15, rule=r is always equal to the smaller of b and N</answer>
+- Probe C:
+<probe_c></probe_c>
 
-Note:
-- The rule description must accurately express the relationship between r, b, and N
-- The guessed value of N must be a positive integer
-- Only one type of operation can be performed at a time (query or submit conclusion)
+When submitting the final answer, specify the scheme number (S1/S2/S3/S4) and the shortest path length (integer), using this format:
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_zh_1 = """\
-我们正在进行一项“智能交通信号灯调度系统”的黑盒测试。
+欢迎使用【城市交通耗时推断与路径规划系统】。
 
-系统设定了一个固定但未知的路口最大通行车辆容量 N，以及一个调度规律 f。当你输入传感器探测到的排队车辆数 b 时，系统会返回该周期的实际放行车辆数 r = f(b)。
+系统接入了一个城市交通路网（可视为无向图），其中的路段被划分为不同等级，代号来自集合{{R, G, B}}（如 R 代表主干道，G 代表快速路，B 代表次干道）。每种代号对应一个标准通行耗时（权重），但当前城市的真实“路况等级到耗时的映射方案”被隐藏。实际方案必然是从以下四个候选模型中选定且固定不变的：
+- 方案 S1：R=1, G=2, B=3
+- 方案 S2：R=1, G=3, B=2
+- 方案 S3：R=2, G=1, B=3
+- 方案 S4：R=2, G=3, B=1
 
-关键信息：
-- 调度规律在整个测试过程中保持不变，仅由 b 与 N 决定，与历史输入无关
-- 对于相同的排队数量 b，系统始终返回相同的放行数量 r
-- 你可以模拟的车辆数 b 的范围是 1 到 1000 之间的正整数
-- 容量 N 是一个在合理范围内的正整数
+当前交通网络的连通情况及路况等级如下：
+{edges_description}
 
-你的目标是通过尽可能少的测试，归纳出系统的调度规律并确定路口的最大容量 N。
+你的目标是：通过派遣测试车队进行线路探测，识别出当前路网所采用的真实耗时映射方案，随后计算出从起点 {start_node} 驶向终点 {end_node} 的最短通行耗时（该路径上所有路段耗时的总和）。
 
-## 交互方式
+你可以反复发起以下探测（每次只能选择一个探测），系统会对该路线的总体通行状态返回 "L" 或 "H" 的反馈：
+{probes_description}
 
-你可以进行以下两种操作：
+每次探测对应一条特定路线，系统会将该路线上所有路段的总耗时与预设时间阈值进行比对，若不超过阈值则返回 "L"（Low，低耗时畅通），超过则返回 "H"（High，高耗时拥堵）。
 
-1. **查询操作**：提交排队车辆数 b（1 到 1000），系统会返回实际放行车辆数 r。
+当你收集足够信息后，请提交最终评估报告。答案需包含：判定的方案编号（S1/S2/S3/S4）以及从 {start_node} 到 {end_node} 的最短通行耗时（整数）。
 
-2. **提交最终结论**：当你认为已经归纳出规律时，提交你对 N 的猜测值以及对规律的描述。
+每次探测只能包含一个标签。请使用以下 XML 格式：
 
-## 格式要求（必须严格遵守）
+- 探测 A：
+<probe_a></probe_a>
 
-- 查询操作（例如查询排队数 b=10）：
-<query>10</query>
+- 探测 B：
+<probe_b></probe_b>
 
-- 提交最终结论：
-<answer>N=15, rule=r 始终等于 b 和 N 中的较小值</answer>
+- 探测 C：
+<probe_c></probe_c>
 
-注意：
-- 规律描述必须准确表达实际放行量 r 与排队量 b、容量 N 之间的关系
-- N 的猜测值必须是正整数
-- 每次只能进行一种操作（查询或提交结论）
+提交最终答案时，必须说明方案编号（S1/S2/S3/S4）和最短路径长度（整数），格式如下：
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-We are conducting a black-box test on an "Smart Traffic Signal Dispatch System".
+Welcome to the "Urban Traffic Transit Time Inference and Routing System".
 
-The system has a fixed but unknown maximum vehicle capacity N for an intersection, and a dispatch rule f. When you input the queued vehicle count b detected by sensors, the system will return the actual number of dispatched vehicles r = f(b) for that cycle.
+The system interfaces with a city traffic network (an undirected graph), where segments are classified by condition types from the set {{R, G, B}} (e.g., R for arterial roads, G for expressways, B for minor roads). Each condition type corresponds to a standard transit time (weight), but the actual "condition-to-time mapping scheme" is currently hidden. The true mapping scheme is fixed and selected from one of the following four candidate models:
+- Scheme S1: R=1, G=2, B=3
+- Scheme S2: R=1, G=3, B=2
+- Scheme S3: R=2, G=1, B=3
+- Scheme S4: R=2, G=3, B=1
 
-Key information:
-- The dispatch rule remains constant throughout the testing process, determined only by b and N, independent of input history
-- For the same queued count b, the system always returns the same dispatched count r
-- The range of vehicle count b you can simulate is between 1 and 1000
-- The capacity N is a positive integer within a reasonable range
+The network connectivity and segment condition types are as follows:
+{edges_description}
 
-Your goal is to infer the system's dispatch rule and determine the intersection's maximum capacity N through as few tests as possible.
+Your goal is: to identify the true transit time mapping scheme by deploying test fleets on specific routes (probing), and then calculate the shortest transit time (the sum of transit times for all segments on the path) from origin {start_node} to destination {end_node}.
 
-## Interaction Methods
+You can repeatedly perform the following probes (only one probe per turn), and the system will return a binary feedback "L" or "H":
+{probes_description}
 
-You can perform two types of operations:
+Each probe corresponds to a specific route. The system compares the total transit time of all segments on that route against a preset threshold, returning "L" (Low transit time) if it does not exceed the threshold, or "H" (High transit time) if it does.
 
-1. **Query Operation**: Submit a queued vehicle count b (1 to 1000), and the system will return the actual dispatched vehicle count r.
+When you have collected enough information, submit your final assessment. The answer must include: the identified scheme number (S1/S2/S3/S4) and the shortest transit time from {start_node} to {end_node} (integer).
 
-2. **Submit Final Conclusion**: When you believe you have inferred the rule, submit your guess for N and your description of the rule.
+Each probe must contain only one tag. Use the following XML format:
 
-## Format Requirements (must strictly follow)
+- Probe A:
+<probe_a></probe_a>
 
-- Query Operation (e.g., querying queue count b=10):
-<query>10</query>
+- Probe B:
+<probe_b></probe_b>
 
-- Submit Final Conclusion:
-<answer>N=15, rule=r is always equal to the smaller of b and N</answer>
+- Probe C:
+<probe_c></probe_c>
 
-Note:
-- The rule description must accurately express the relationship between the dispatched count r, queued count b, and capacity N
-- The guessed value of N must be a positive integer
-- Only one type of operation can be performed at a time (query or submit conclusion)
+When submitting the final answer, specify the scheme number (S1/S2/S3/S4) and the shortest path length (integer), using this format:
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_zh_2 = """\
-我们正在进行一项“特效药剂代谢吸收测试”。
+【靶向药物代谢路径阻力诊断系统】
+我们现在来进行一项"神经代谢通路药物阻力分析"任务，规则如下：
 
-系统模拟设定了人体单次最大可吸收的药物有效成分剂量 N，以及一个代谢吸收规律 f。当你输入给药剂量 b 时，系统会返回人体实际吸收的剂量 r = f(b)。
+系统映射了一位患者体内的生化代谢网络（无向图），图中的通路被不同类型的靶向受体标记，代号取自集合{{R, G, B}}。每种受体对应一个药物代谢阻力值（权重），但具体的阻力对应关系尚未明确。该患者真实的“受体到阻力映射体质方案”从以下四个已知候选模型中选定且保持不变：
+- 方案 S1：R=1, G=2, B=3
+- 方案 S2：R=1, G=3, B=2
+- 方案 S3：R=2, G=1, B=3
+- 方案 S4：R=2, G=3, B=1
 
-关键信息：
-- 吸收规律在整个测试过程中保持不变，仅由 b 与 N 决定，与历史给药数据无关
-- 对于相同的给药剂量 b，系统始终返回相同的实际吸收剂量 r
-- 你可以测试的给药剂量 b 的范围是 1 到 1000 之间的正整数（毫克）
-- 吸收阈值 N 是一个在合理范围内的正整数
+患者体内的代谢通路及其受体标记如下：
+{edges_description}
 
-你的目标是通过尽可能少的测试，归纳出药物的吸收规律并确定人体的最大吸收阈值 N。
+你的目标是：通过微量显影剂探测，精准识别出该患者真实的受体到阻力映射体质方案，随后计算出药物从注射点 {start_node} 渗透到病灶靶点 {end_node} 的最低代谢阻力总值（路径上所有通路的阻力之和）。
 
-## 交互方式
+你可以反复执行以下微量探测（每次只能选择一个），系统将分析该通路的整体代谢负担并返回 "L" 或 "H" 的结果：
+{probes_description}
 
-你可以进行以下两种操作：
+每个探测对应一条特定的代谢通路序列，系统会将该序列上所有受体的总阻力值与预设的代谢负荷阈值进行比较，若总阻力偏低则返回 "L"（Low），偏高则返回 "H"（High）。
 
-1. **查询操作**：提交给药剂量 b（1 到 1000），系统会返回实际吸收剂量 r。
+当你收集到足够的临床诊断数据后，请提交最终诊断结论。答案需包含：判定的方案编号（S1/S2/S3/S4）以及从 {start_node} 到 {end_node} 的最低代谢阻力总值（整数）。
 
-2. **提交最终结论**：当你认为已经归纳出规律时，提交你对 N 的猜测值以及对规律的描述。
+每次探测只能包含一个标签。请使用以下 XML 格式：
 
-## 格式要求（必须严格遵守）
+- 探测 A：
+<probe_a></probe_a>
 
-- 查询操作（例如查询剂量 b=10）：
-<query>10</query>
+- 探测 B：
+<probe_b></probe_b>
 
-- 提交最终结论：
-<answer>N=15, rule=r 始终等于 b 和 N 中的较小值</answer>
+- 探测 C：
+<probe_c></probe_c>
 
-注意：
-- 规律描述必须准确表达吸收量 r 与给药量 b、最大吸收量 N 之间的关系
-- N 的猜测值必须是正整数
-- 每次只能进行一种操作（查询或提交结论）
+提交最终答案时，必须说明方案编号（S1/S2/S3/S4）和最短路径长度（整数），格式如下：
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-We are conducting a "Special Drug Metabolism and Absorption Test".
+Welcome to the "Targeted Drug Metabolic Pathway Resistance Diagnostic System".
 
-The system simulates a fixed but unknown single maximum absorption threshold N of the human body for a drug's active ingredient, and an absorption rule f. When you input the administered dose b, the system will return the actual absorbed dose r = f(b) by the body.
+The system maps a patient's biochemical metabolic network (an undirected graph), where pathways are marked by different types of targeted receptors from the set {{R, G, B}}. Each receptor corresponds to a drug metabolic resistance value (weight), but the exact mapping is currently unknown. The patient's true "receptor-to-resistance mapping scheme" is fixed and chosen from one of four known candidate profiles:
+- Scheme S1: R=1, G=2, B=3
+- Scheme S2: R=1, G=3, B=2
+- Scheme S3: R=2, G=1, B=3
+- Scheme S4: R=2, G=3, B=1
 
-Key information:
-- The absorption rule remains constant throughout the test, determined only by b and N, independent of historical dosage data
-- For the same administered dose b, the system always returns the same actual absorbed dose r
-- The range of administered dose b you can test is between 1 and 1000 (mg)
-- The absorption threshold N is a positive integer within a reasonable range
+The metabolic pathways and their receptor markers are as follows:
+{edges_description}
 
-Your goal is to infer the drug's absorption rule and determine the human body's maximum absorption threshold N through as few tests as possible.
+Your goal is: to accurately identify the patient's true mapping scheme through trace contrast agent probing, and then calculate the minimum total metabolic resistance (sum of all pathway resistances on the route) for the drug to penetrate from the injection site {start_node} to the lesion target {end_node}.
 
-## Interaction Methods
+You can repeatedly perform the following probes (only one probe per turn), and the system will return a binary feedback "L" or "H" indicating the overall metabolic burden:
+{probes_description}
 
-You can perform two types of operations:
+Each probe corresponds to a specific sequence of pathways. The system compares the total resistance of all receptors on that route against a preset metabolic load threshold, returning "L" (Low) if the total resistance is low, or "H" (High) if it is high.
 
-1. **Query Operation**: Submit an administered dose b (1 to 1000), and the system will return the actual absorbed dose r.
+When you have collected enough clinical diagnostic data, submit your final conclusion. The answer must include: the identified scheme number (S1/S2/S3/S4) and the minimum total metabolic resistance from {start_node} to {end_node} (integer).
 
-2. **Submit Final Conclusion**: When you believe you have inferred the rule, submit your guess for N and your description of the rule.
+Each probe must contain only one tag. Use the following XML format:
 
-## Format Requirements (must strictly follow)
+- Probe A:
+<probe_a></probe_a>
 
-- Query Operation (e.g., querying dose b=10):
-<query>10</query>
+- Probe B:
+<probe_b></probe_b>
 
-- Submit Final Conclusion:
-<answer>N=15, rule=r is always equal to the smaller of b and N</answer>
+- Probe C:
+<probe_c></probe_c>
 
-Note:
-- The rule description must accurately express the relationship between the absorbed dose r, administered dose b, and threshold N
-- The guessed value of N must be a positive integer
-- Only one type of operation can be performed at a time (query or submit conclusion)
+When submitting the final answer, specify the scheme number (S1/S2/S3/S4) and the shortest path length (integer), using this format:
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_zh_3 = """\
-我们正在调试“在线课程学分转化评估系统”。
+【学习图谱认知负荷测评系统】
+请参与当前的"知识模块学习耗时推演"评估任务，规则如下：
 
-系统内部设定了该专业允许转换的最高核心学分数 N，以及一个学分认定规律 f。当你输入学生在其他平台获得的学分数 b 时，系统会返回最终认定的有效转换学分数 r = f(b)。
+系统载入了一个学科的知识图谱（无向图），知识点之间的认知连接被不同类型的学习材料标记，类型取自集合{{R, G, B}}（如 R=视频解析, G=文献阅读, B=实操演练）。每种材料类型对应一定的学习课时数（权重），但该名学生的真实“材料到课时映射方案”是隐性的。该学生的吸收效率必然符合以下四个认知模型之一且固定不变：
+- 方案 S1：R=1, G=2, B=3
+- 方案 S2：R=1, G=3, B=2
+- 方案 S3：R=2, G=1, B=3
+- 方案 S4：R=2, G=3, B=1
 
-关键信息：
-- 认定规律在整个评估过程中保持不变，仅由 b 与 N 决定，与历史申请记录无关
-- 对于相同的获得学分 b，系统始终返回相同的有效转换学分 r
-- 你可以模拟提交的学分数 b 的范围是 1 到 1000 之间的正整数
-- 学分上限 N 是一个在合理范围内的正整数
+知识连接及其材料标记类型如下：
+{edges_description}
 
-你的目标是通过尽可能少的模拟申请，归纳出学分认定规律并确定系统的学分转换上限 N。
+你的目标是：通过前置小测验进行认知探测，识别出该学生真实的学习耗时映射方案，随后为其规划从起点知识 {start_node} 到目标能力 {end_node} 的最短学习路径（路径上所有模块学习课时的总和）。
 
-## 交互方式
+你可以反复发起以下测验探测（每次只能选择一个），系统会根据该学习序列的整体耗时返回 "L" 或 "H"：
+{probes_description}
 
-你可以进行以下两种操作：
+每个探测对应一条特定的学习路径，系统会将该路径上所需花费的总课时与预期的专注力阈值进行比较，课时较少则返回 "L"（Low，低负荷），耗时较长则返回 "H"（High，高负荷）。
 
-1. **查询操作**：提交获得的学分数 b（1 到 1000），系统会返回有效转换学分数 r。
+当获取了足够的能力评估数据后，请提交最终的辅导方案。答案需包含：判定的方案编号（S1/S2/S3/S4）以及从 {start_node} 到 {end_node} 的最少学习课时总数（整数）。
 
-2. **提交最终结论**：当你认为已经归纳出规律时，提交你对 N 的猜测值以及对规律的描述。
+每次探测只能包含一个标签。请使用以下 XML 格式：
 
-## 格式要求（必须严格遵守）
+- 探测 A：
+<probe_a></probe_a>
 
-- 查询操作（例如查询学分数 b=10）：
-<query>10</query>
+- 探测 B：
+<probe_b></probe_b>
 
-- 提交最终结论：
-<answer>N=15, rule=r 始终等于 b 和 N 中的较小值</answer>
+- 探测 C：
+<probe_c></probe_c>
 
-注意：
-- 规律描述必须准确表达认定学分 r 与获得学分 b、上限 N 之间的关系
-- N 的猜测值必须是正整数
-- 每次只能进行一种操作（查询或提交结论）
+提交最终答案时，必须说明方案编号（S1/S2/S3/S4）和最短路径长度（整数），格式如下：
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-We are debugging an "Online Course Credit Transfer Evaluation System".
+Welcome to the "Learning Graph Cognitive Load Assessment System".
 
-The system has a built-in maximum transferable core credit limit N for the major, and a credit recognition rule f. When you input the credits b earned by a student on other platforms, the system will return the final recognized transferred credits r = f(b).
+The system loads a subject's knowledge graph (an undirected graph), where the cognitive connections between knowledge points are labeled with different types of learning materials from the set {{R, G, B}} (e.g., R=video, G=reading, B=practice). Each material type corresponds to a required number of study hours (weight), but the student's true "material-to-hours mapping scheme" is implicit. The student's absorption efficiency strictly aligns with one of four cognitive models and remains constant:
+- Scheme S1: R=1, G=2, B=3
+- Scheme S2: R=1, G=3, B=2
+- Scheme S3: R=2, G=1, B=3
+- Scheme S4: R=2, G=3, B=1
 
-Key information:
-- The recognition rule remains constant throughout the evaluation process, determined only by b and N, independent of application history
-- For the same earned credits b, the system always returns the same recognized transferred credits r
-- The range of earned credits b you can simulate is between 1 and 1000
-- The credit limit N is a positive integer within a reasonable range
+The knowledge connections and their material types are as follows:
+{edges_description}
 
-Your goal is to infer the credit recognition rule and determine the system's credit transfer limit N through as few simulated applications as possible.
+Your goal is: to identify the student's true learning hour mapping scheme through pre-test cognitive probing, and then plan the shortest learning path (sum of study hours for all modules on the path) from the baseline knowledge {start_node} to the target competency {end_node}.
 
-## Interaction Methods
+You can repeatedly initiate the following test probes (only one probe per turn), and the system will return a binary feedback "L" or "H" based on the overall time required for that sequence:
+{probes_description}
 
-You can perform two types of operations:
+Each probe corresponds to a specific learning pathway. The system compares the total study hours required on that path against an expected attention span threshold, returning "L" (Low load) if fewer hours are needed, or "H" (High load) if it takes longer.
 
-1. **Query Operation**: Submit earned credits b (1 to 1000), and the system will return the recognized transferred credits r.
+When you have gathered enough assessment data, submit your final tutoring plan. The answer must include: the identified scheme number (S1/S2/S3/S4) and the minimum total study hours from {start_node} to {end_node} (integer).
 
-2. **Submit Final Conclusion**: When you believe you have inferred the rule, submit your guess for N and your description of the rule.
+Each probe must contain only one tag. Use the following XML format:
 
-## Format Requirements (must strictly follow)
+- Probe A:
+<probe_a></probe_a>
 
-- Query Operation (e.g., querying credits b=10):
-<query>10</query>
+- Probe B:
+<probe_b></probe_b>
 
-- Submit Final Conclusion:
-<answer>N=15, rule=r is always equal to the smaller of b and N</answer>
+- Probe C:
+<probe_c></probe_c>
 
-Note:
-- The rule description must accurately express the relationship between recognized credits r, earned credits b, and the limit N
-- The guessed value of N must be a positive integer
-- Only one type of operation can be performed at a time (query or submit conclusion)
+When submitting the final answer, specify the scheme number (S1/S2/S3/S4) and the shortest path length (integer), using this format:
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_zh_4 = """\
-我们正在对“工厂流水线的质量控制与装箱环节”进行投料测试。
+【智能工厂产线效能调优系统】
+您已进入"车间物料流转耗时建模"调试控制台，作业规则如下：
 
-流水线设定了标准运输周转箱的最大容量 N（件），以及一个装箱规律 f。当你输入传送带上送来的合格零件批次数量 b 时，系统会返回实际装入周转箱的零件数量 r = f(b)。
+系统监控着一组柔性生产线网络（无向图），各加工工位间的传送带被划分为不同的工艺处理段，代号取自集合{{R, G, B}}（如 R=高温固化, G=常温清洗, B=冷却定型）。每种处理段对应特定的物料滞留时间（权重），但当前的“工艺段到滞留时间的映射方案”受生产环境影响未明确显示。系统真实的调优参数必然锁定在以下四个方案之一：
+- 方案 S1：R=1, G=2, B=3
+- 方案 S2：R=1, G=3, B=2
+- 方案 S3：R=2, G=1, B=3
+- 方案 S4：R=2, G=3, B=1
 
-关键信息：
-- 装箱规律在整个测试过程中保持不变，仅由 b 与 N 决定，与历史批次无关
-- 对于相同的送来零件数量 b，系统始终返回相同的实际装箱数量 r
-- 你可以投放的零件数 b 的范围是 1 到 1000 之间的正整数
-- 周转箱容量 N 是一个在合理范围内的正整数
+车间产线的连接拓扑及工艺代号如下：
+{edges_description}
 
-你的目标是通过尽可能少的投料测试，归纳出装箱规律并确定周转箱的标准容量 N。
+你的目标是：通过投放测试批次进行流转探测，识别出当前产线真实的滞留时间映射方案，随后计算出从原料投料口 {start_node} 到成品下线区 {end_node} 的最快流转周期（即传输路径上各段滞留时间的总和）。
 
-## 交互方式
+你可以反复执行以下批次探测（每次只能下发一个指令），系统将反馈该路径的整体耗时评估，显示为 "L" 或 "H"：
+{probes_description}
 
-你可以进行以下两种操作：
+每个探测对应一条指定的传送带流转路径，系统将该路径总滞留时间与标准节拍阈值比对，未超阈值返回 "L"（Low，低滞留），超出则返回 "H"（High，高滞留）。
 
-1. **查询操作**：提交送来的零件数 b（1 到 1000），系统会返回实际装箱的零件数 r。
+当您掌握了足够的数据后，请提交最终的产线调优报告。答案需包含：判定的方案编号（S1/S2/S3/S4）以及从 {start_node} 到 {end_node} 的最快流转周期（整数）。
 
-2. **提交最终结论**：当你认为已经归纳出规律时，提交你对 N 的猜测值以及对规律的描述。
+每次探测只能包含一个标签。请使用以下 XML 格式：
 
-## 格式要求（必须严格遵守）
+- 探测 A：
+<probe_a></probe_a>
 
-- 查询操作（例如查询投料 b=10）：
-<query>10</query>
+- 探测 B：
+<probe_b></probe_b>
 
-- 提交最终结论：
-<answer>N=15, rule=r 始终等于 b 和 N 中的较小值</answer>
+- 探测 C：
+<probe_c></probe_c>
 
-注意：
-- 规律描述必须准确表达装箱数 r 与送来零件数 b、容量 N 之间的关系
-- N 的猜测值必须是正整数
-- 每次只能进行一种操作（查询或提交结论）
+提交最终答案时，必须说明方案编号（S1/S2/S3/S4）和最短路径长度（整数），格式如下：
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-We are conducting feeding tests on the "Factory Assembly Line Quality Control and Packaging Process".
+Welcome to the "Smart Factory Line Efficiency Optimization System".
 
-The assembly line has set a maximum capacity N (pieces) for standard transport totes, and a packaging rule f. When you input the number of qualified parts b delivered on the conveyor belt, the system will return the actual number of parts packed into the tote r = f(b).
+The system monitors a flexible production line network (an undirected graph), where the conveyor belts between processing stations are classified into different process segments, denoted by the set {{R, G, B}} (e.g., R=high-temp curing, G=ambient washing, B=cooling). Each segment type requires a specific material retention time (weight), but the current "process-to-retention time mapping scheme" is implicitly affected by the environment. The actual tuning parameter is locked into one of the following four schemes:
+- Scheme S1: R=1, G=2, B=3
+- Scheme S2: R=1, G=3, B=2
+- Scheme S3: R=2, G=1, B=3
+- Scheme S4: R=2, G=3, B=1
 
-Key information:
-- The packaging rule remains constant throughout the testing process, determined only by b and N, independent of historical batches
-- For the same delivered parts count b, the system always returns the same packed count r
-- The range of parts b you can feed is between 1 and 1000
-- The tote capacity N is a positive integer within a reasonable range
+The workshop line topology and process codes are as follows:
+{edges_description}
 
-Your goal is to infer the packaging rule and determine the standard tote capacity N through as few feeding tests as possible.
+Your goal is: to identify the true retention time mapping scheme by deploying test batches for routing probes, and then calculate the fastest cycle time (the sum of retention times across all segments) from the raw material feeder {start_node} to the finished goods offload area {end_node}.
 
-## Interaction Methods
+You can repeatedly execute the following batch probes (only one command per turn), and the system will evaluate the path's overall duration, returning "L" or "H":
+{probes_description}
 
-You can perform two types of operations:
+Each probe corresponds to a specific conveyor routing path. The system compares the total retention time on that path against a standard takt time threshold, returning "L" (Low retention) if it is within limits, or "H" (High retention) if it exceeds them.
 
-1. **Query Operation**: Submit a delivered parts count b (1 to 1000), and the system will return the actual packed parts count r.
+When sufficient tuning data is acquired, submit your final optimization report. The answer must include: the identified scheme number (S1/S2/S3/S4) and the fastest cycle time from {start_node} to {end_node} (integer).
 
-2. **Submit Final Conclusion**: When you believe you have inferred the rule, submit your guess for N and your description of the rule.
+Each probe must contain only one tag. Use the following XML format:
 
-## Format Requirements (must strictly follow)
+- Probe A:
+<probe_a></probe_a>
 
-- Query Operation (e.g., querying feeding count b=10):
-<query>10</query>
+- Probe B:
+<probe_b></probe_b>
 
-- Submit Final Conclusion:
-<answer>N=15, rule=r is always equal to the smaller of b and N</answer>
+- Probe C:
+<probe_c></probe_c>
 
-Note:
-- The rule description must accurately express the relationship between packed parts r, delivered parts b, and capacity N
-- The guessed value of N must be a positive integer
-- Only one type of operation can be performed at a time (query or submit conclusion)
+When submitting the final answer, specify the scheme number (S1/S2/S3/S4) and the shortest path length (integer), using this format:
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_zh_5 = """\
-我们正在使用“民事诉讼法定赔偿金核定系统”进行模拟裁决。
+【司法程序流转周期演算系统】
+现在启动“案件审理节点办案耗时沙盘”推演，规则说明如下：
 
-系统根据相关法律设定了该类案件的法定最高赔偿限额 N（万元），以及一个核定规律 f。当你输入原告主张并举证的实际损失金额 b 时，系统会返回法院最终判决支持的赔偿金额 r = f(b)。
+系统构建了一个司法程序流转模型（无向图），各法定程序节点之间的推进通道被标记为不同案件复杂度的分类代码，取自集合{{R, G, B}}（如 R=简易快审, G=普通程序, B=疑难复杂程序）。每种代码对应一个法定的标准审理周期（权重），但该辖区当前的“分类到审结周期的映射方案”并未公开。真实的司法效率模型将严格按照以下四个已知方案之一运行且不作更改：
+- 方案 S1：R=1, G=2, B=3
+- 方案 S2：R=1, G=3, B=2
+- 方案 S3：R=2, G=1, B=3
+- 方案 S4：R=2, G=3, B=1
 
-关键信息：
-- 核定规律在整个模拟过程中保持一致，仅由 b 与 N 决定，与历史裁决数据无关
-- 对于相同的实际损失主张 b，系统始终返回相同的核准赔偿额 r
-- 你可以输入的损失金额 b 的范围是 1 到 1000 之间的正整数（万元）
-- 法定限额 N 是一个在合理范围内的正整数
+案件流转节点结构及分类代码如下：
+{edges_description}
 
-你的目标是通过尽可能少的模拟裁决，归纳出法院的判决规律并确定该类案件的法定最高限额 N。
+你的目标是：通过发起模拟卷宗检索探测，查清该辖区真实的审理周期映射方案，进而测算出从立案登记节点 {start_node} 到结案执行节点 {end_node} 的最短合法结案周期（路径上所有程序段周期的总和）。
 
-## 交互方式
+你可以反复发起以下检索探测（每次限选一项），系统会反馈该程序链条的总耗时状态为 "L" 或是 "H"：
+{probes_description}
 
-你可以进行以下两种操作：
+每次探测对应一条具体的法定程序流转链，系统把该链条上所有环节的总周期与法定容忍期限（阈值）做比对，若相对迅速则返回 "L"（Low，短周期），若相对冗长则返回 "H"（High，长周期）。
 
-1. **查询操作**：提交实际损失金额 b（1 到 1000），系统会返回判决支持的赔偿金额 r。
+当你通过交叉比对获得了充分的程序运转信息后，请提交最终推断结果。答案需包含：判定的方案编号（S1/S2/S3/S4）以及从 {start_node} 到 {end_node} 的最短结案周期（整数）。
 
-2. **提交最终结论**：当你认为已经归纳出规律时，提交你对 N 的猜测值以及对规律的描述。
+每次探测只能包含一个标签。请使用以下 XML 格式：
 
-## 格式要求（必须严格遵守）
+- 探测 A：
+<probe_a></probe_a>
 
-- 查询操作（例如查询主张损失 b=10）：
-<query>10</query>
+- 探测 B：
+<probe_b></probe_b>
 
-- 提交最终结论：
-<answer>N=15, rule=r 始终等于 b 和 N 中的较小值</answer>
+- 探测 C：
+<probe_c></probe_c>
 
-注意：
-- 规律描述必须准确表达核准赔偿 r 与实际损失 b、限额 N 之间的关系
-- N 的猜测值必须是正整数
-- 每次只能进行一种操作（查询或提交结论）
+提交最终答案时，必须说明方案编号（S1/S2/S3/S4）和最短路径长度（整数），格式如下：
+
+<answer>scheme=S1, distance=5</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-We are running simulated rulings using the "Civil Litigation Statutory Compensation Assessment System".
+Welcome to the "Judicial Process Routing Cycle Simulation System".
 
-Based on relevant laws, the system has set a statutory maximum compensation limit N (in ten thousands) for this type of case, and an assessment rule f. When you input the actual loss amount b claimed and evidenced by the plaintiff, the system will return the compensation amount r = f(b) supported by the court's verdict.
+The system constructs a judicial process routing model (an undirected graph), where the advancement channels between statutory procedural nodes are marked with case complexity classification codes from the set {{R, G, B}} (e.g., R=summary proceeding, G=ordinary proceeding, B=complex proceeding). Each code corresponds to a statutory standard trial cycle (weight), but the current "classification-to-cycle mapping scheme" for this jurisdiction is undisclosed. The true judicial efficiency model strictly operates under one of the following four fixed schemes:
+- Scheme S1: R=1, G=2, B=3
+- Scheme S2: R=1, G=3, B=2
+- Scheme S3: R=2, G=1, B=3
+- Scheme S4: R=2, G=3, B=1
 
-Key information:
-- The assessment rule remains consistent throughout the simulation, determined only by b and N, independent of historical ruling data
-- For the same claimed actual loss b, the system always returns the same awarded compensation r
-- The range of loss amount b you can input is between 1 and 1000 (in ten thousands)
-- The statutory limit N is a positive integer within a reasonable range
+The case routing node structure and classification codes are as follows:
+{edges_description}
 
-Your goal is to infer the court's ruling rule and determine the statutory maximum limit N for this type of case through as few simulated rulings as possible.
+Your goal is: to uncover the jurisdiction's true trial cycle mapping scheme through simulated dossier retrieval probes, and then calculate the shortest legal closing cycle (the sum of cycles for all procedural segments on the path) from the docketing node {start_node} to the case closure/execution node {end_node}.
 
-## Interaction Methods
+You can repeatedly initiate the following retrieval probes (only one per turn), and the system will feedback the total duration status of the procedural chain as "L" or "H":
+{probes_description}
 
-You can perform two types of operations:
+Each probe corresponds to a specific statutory procedural chain. The system compares the total cycle time across all links in that chain with a statutory tolerance limit (threshold). It returns "L" (Low cycle) if relatively swift, or "H" (High cycle) if lengthy.
 
-1. **Query Operation**: Submit a claimed loss amount b (1 to 1000), and the system will return the awarded compensation amount r.
+When you have obtained sufficient procedural operations information through cross-referencing, submit your final inference. The answer must include: the identified scheme number (S1/S2/S3/S4) and the shortest legal closing cycle from {start_node} to {end_node} (integer).
 
-2. **Submit Final Conclusion**: When you believe you have inferred the rule, submit your guess for N and your description of the rule.
+Each probe must contain only one tag. Use the following XML format:
 
-## Format Requirements (must strictly follow)
+- Probe A:
+<probe_a></probe_a>
 
-- Query Operation (e.g., querying claimed loss b=10):
-<query>10</query>
+- Probe B:
+<probe_b></probe_b>
 
-- Submit Final Conclusion:
-<answer>N=15, rule=r is always equal to the smaller of b and N</answer>
+- Probe C:
+<probe_c></probe_c>
 
-Note:
-- The rule description must accurately express the relationship between the awarded compensation r, claimed loss b, and limit N
-- The guessed value of N must be a positive integer
-- Only one type of operation can be performed at a time (query or submit conclusion)
+When submitting the final answer, specify the scheme number (S1/S2/S3/S4) and the shortest path length (integer), using this format:
+
+<answer>scheme=S1, distance=5</answer>
 """
 
-    tags = ["answer", "query"]
-    
-    # 新增类属性
-    reasoning_type = "归纳推理"
-    data_structure = "集合"
-
-    # 难度配置：
-    # 1 (简单)       - N=10, max_queries=8, max_answers=2
-    # 2 (中等偏下)   - N=25, max_queries=8, max_answers=2
-    # 3 (中等偏上)   - N=50, max_queries=8, max_answers=2
-    # 4 (较难)       - N=77, max_queries=8, max_answers=2
-    # 5 (难)         - N=100, max_queries=8, max_answers=2
+    tags = ["answer", "probe_a", "probe_b", "probe_c"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "N": 10,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r 始终等于 b 和 N 中的较小值"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "G"),
+                    ("A", "C", "B"),
+                ],
+                "start_node": "A",
+                "end_node": "C",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "B", "R")],  
+                        "threshold": 1.5,  
+                        "description": "探测 A：路径 A→B（颜色序列 R）"
+                    },
+                    "probe_b": {
+                        "path": [("B", "C", "G")],  
+                        "threshold": 2.5,  
+                        "description": "探测 B：路径 B→C（颜色序列 G）"
+                    },
+                    "probe_c": {
+                        "path": [("A", "C", "B")],  
+                        "threshold": 2.5,  
+                        "description": "探测 C：路径 A→C（颜色序列 B）"
+                    }
+                },
+                "scheme": "S1"  
             },
             2: {
-                "N": 25,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r 始终等于 b 和 N 中的较小值"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "G"),
+                    ("C", "D", "B"),
+                    ("A", "C", "B"),
+                    ("B", "D", "R"),
+                ],
+                "start_node": "A",
+                "end_node": "D",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "B", "R"), ("B", "D", "R")],  
+                        "threshold": 3,  
+                        "description": "探测 A：路径 A→B→D（颜色序列 R, R）"
+                    },
+                    "probe_b": {
+                        "path": [("A", "C", "B"), ("C", "D", "B")],  
+                        "threshold": 5,  
+                        "description": "探测 B：路径 A→C→D（颜色序列 B, B）"
+                    },
+                    "probe_c": {
+                        "path": [("B", "C", "G"), ("C", "D", "B")],  
+                        "threshold": 4,  
+                        "description": "探测 C：路径 B→C→D（颜色序列 G, B）"
+                    }
+                },
+                "scheme": "S2"  
             },
             3: {
-                "N": 50,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r 始终等于 b 和 N 中的较小值"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "G"),
+                    ("C", "D", "B"),
+                    ("D", "E", "R"),
+                    ("A", "C", "B"),
+                    ("B", "D", "R"),
+                    ("C", "E", "G"),
+                ],
+                "start_node": "A",
+                "end_node": "E",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "B", "R"), ("B", "D", "R"), ("D", "E", "R")],  
+                        "threshold": 4,  
+                        "description": "探测 A：路径 A→B→D→E（颜色序列 R, R, R）"
+                    },
+                    "probe_b": {
+                        "path": [("A", "C", "B"), ("C", "E", "G")],  
+                        "threshold": 4,  
+                        "description": "探测 B：路径 A→C→E（颜色序列 B, G）"
+                    },
+                    "probe_c": {
+                        "path": [("B", "C", "G"), ("C", "D", "B")],  
+                        "threshold": 4,  
+                        "description": "探测 C：路径 B→C→D（颜色序列 G, B）"
+                    }
+                },
+                "scheme": "S3"  
             },
             4: {
-                "N": 77,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r 始终等于 b 和 N 中的较小值"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "B"),
+                    ("C", "D", "G"),
+                    ("D", "E", "R"),
+                    ("E", "F", "B"),
+                    ("A", "C", "G"),
+                    ("B", "D", "R"),
+                    ("C", "E", "B"),
+                    ("D", "F", "G"),
+                ],
+                "start_node": "A",
+                "end_node": "F",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "C", "G"), ("C", "D", "G"), ("D", "F", "G")],  
+                        "threshold": 5,  
+                        "description": "探测 A：路径 A→C→D→F（颜色序列 G, G, G）"
+                    },
+                    "probe_b": {
+                        "path": [("A", "B", "R"), ("B", "C", "B")],  
+                        "threshold": 3,  
+                        "description": "探测 B：路径 A→B→C（颜色序列 R, B）"
+                    },
+                    "probe_c": {
+                        "path": [("D", "E", "R"), ("E", "F", "B")],  
+                        "threshold": 3,  
+                        "description": "探测 C：路径 D→E→F（颜色序列 R, B）"
+                    }
+                },
+                "scheme": "S4"  
             },
             5: {
-                "N": 100,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r 始终等于 b 和 N 中的较小值"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "B"),
+                    ("C", "D", "G"),
+                    ("D", "E", "R"),
+                    ("E", "F", "B"),
+                    ("F", "G", "G"),
+                    ("A", "D", "G"),
+                    ("B", "E", "R"),
+                    ("C", "F", "R"),
+                    ("D", "G", "B"),
+                    ("A", "C", "B"),
+                    ("E", "G", "R"),
+                ],
+                "start_node": "B",
+                "end_node": "F",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "D", "G"), ("D", "G", "B")],  
+                        "threshold": 4.5,  
+                        "description": "探测 A：路径 A→D→G（颜色序列 G, B）"
+                    },
+                    "probe_b": {
+                        "path": [("A", "B", "R"), ("B", "C", "B")],  
+                        "threshold": 3.5,  
+                        "description": "探测 B：路径 A→B→C（颜色序列 R, B）"
+                    },
+                    "probe_c": {
+                        "path": [("B", "E", "R"), ("E", "G", "R")],  
+                        "threshold": 3.5,  
+                        "description": "探测 C：路径 B→E→G（颜色序列 R, R）"
+                    }
+                },
+                "scheme": "S1"  
             },
         },
         "en": {
             1: {
-                "N": 10,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r is always equal to the smaller of b and N"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "G"),
+                    ("A", "C", "B"),
+                ],
+                "start_node": "A",
+                "end_node": "C",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "B", "R")],
+                        "threshold": 1.5,
+                        "description": "Probe A: Path A→B (color sequence R)"
+                    },
+                    "probe_b": {
+                        "path": [("B", "C", "G")],
+                        "threshold": 2.5,
+                        "description": "Probe B: Path B→C (color sequence G)"
+                    },
+                    "probe_c": {
+                        "path": [("A", "C", "B")],
+                        "threshold": 2.5,
+                        "description": "Probe C: Path A→C (color sequence B)"
+                    }
+                },
+                "scheme": "S1"
             },
             2: {
-                "N": 25,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r is always equal to the smaller of b and N"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "G"),
+                    ("C", "D", "B"),
+                    ("A", "C", "B"),
+                    ("B", "D", "R"),
+                ],
+                "start_node": "A",
+                "end_node": "D",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "B", "R"), ("B", "D", "R")],
+                        "threshold": 3,
+                        "description": "Probe A: Path A→B→D (color sequence R, R)"
+                    },
+                    "probe_b": {
+                        "path": [("A", "C", "B"), ("C", "D", "B")],
+                        "threshold": 5,
+                        "description": "Probe B: Path A→C→D (color sequence B, B)"
+                    },
+                    "probe_c": {
+                        "path": [("B", "C", "G"), ("C", "D", "B")],
+                        "threshold": 4,
+                        "description": "Probe C: Path B→C→D (color sequence G, B)"
+                    }
+                },
+                "scheme": "S2"
             },
             3: {
-                "N": 50,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r is always equal to the smaller of b and N"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "G"),
+                    ("C", "D", "B"),
+                    ("D", "E", "R"),
+                    ("A", "C", "B"),
+                    ("B", "D", "R"),
+                    ("C", "E", "G"),
+                ],
+                "start_node": "A",
+                "end_node": "E",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "B", "R"), ("B", "D", "R"), ("D", "E", "R")],
+                        "threshold": 4,
+                        "description": "Probe A: Path A→B→D→E (color sequence R, R, R)"
+                    },
+                    "probe_b": {
+                        "path": [("A", "C", "B"), ("C", "E", "G")],
+                        "threshold": 4,
+                        "description": "Probe B: Path A→C→E (color sequence B, G)"
+                    },
+                    "probe_c": {
+                        "path": [("B", "C", "G"), ("C", "D", "B")],
+                        "threshold": 4,
+                        "description": "Probe C: Path B→C→D (color sequence G, B)"
+                    }
+                },
+                "scheme": "S3"
             },
             4: {
-                "N": 77,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r is always equal to the smaller of b and N"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "B"),
+                    ("C", "D", "G"),
+                    ("D", "E", "R"),
+                    ("E", "F", "B"),
+                    ("A", "C", "G"),
+                    ("B", "D", "R"),
+                    ("C", "E", "B"),
+                    ("D", "F", "G"),
+                ],
+                "start_node": "A",
+                "end_node": "F",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "C", "G"), ("C", "D", "G"), ("D", "F", "G")],
+                        "threshold": 5,
+                        "description": "Probe A: Path A→C→D→F (color sequence G, G, G)"
+                    },
+                    "probe_b": {
+                        "path": [("A", "B", "R"), ("B", "C", "B")],
+                        "threshold": 3,
+                        "description": "Probe B: Path A→B→C (color sequence R, B)"
+                    },
+                    "probe_c": {
+                        "path": [("D", "E", "R"), ("E", "F", "B")],
+                        "threshold": 3,
+                        "description": "Probe C: Path D→E→F (color sequence R, B)"
+                    }
+                },
+                "scheme": "S4"
             },
             5: {
-                "N": 100,
-                "max_queries": 8,
-                "max_answers": 2,
-                "rule_desc": "r is always equal to the smaller of b and N"
+                "edges": [
+                    ("A", "B", "R"),
+                    ("B", "C", "B"),
+                    ("C", "D", "G"),
+                    ("D", "E", "R"),
+                    ("E", "F", "B"),
+                    ("F", "G", "G"),
+                    ("A", "D", "G"),
+                    ("B", "E", "R"),
+                    ("C", "F", "R"),
+                    ("D", "G", "B"),
+                    ("A", "C", "B"),
+                    ("E", "G", "R"),
+                ],
+                "start_node": "B",
+                "end_node": "F",
+                "probes": {
+                    "probe_a": {
+                        "path": [("A", "D", "G"), ("D", "G", "B")],
+                        "threshold": 4.5,
+                        "description": "Probe A: Path A→D→G (color sequence G, B)"
+                    },
+                    "probe_b": {
+                        "path": [("A", "B", "R"), ("B", "C", "B")],
+                        "threshold": 3.5,
+                        "description": "Probe B: Path A→B→C (color sequence R, B)"
+                    },
+                    "probe_c": {
+                        "path": [("B", "E", "R"), ("E", "G", "R")],
+                        "threshold": 3.5,
+                        "description": "Probe C: Path B→E→G (color sequence R, R)"
+                    }
+                },
+                "scheme": "S1"
             },
-        },
+        }
+    }
+
+    SCHEMES = {
+        "S1": {"R": 1, "G": 2, "B": 3},
+        "S2": {"R": 1, "G": 3, "B": 2},
+        "S3": {"R": 2, "G": 1, "B": 3},
+        "S4": {"R": 2, "G": 3, "B": 1},
     }
 
     def __init__(self, config):
         super().__init__(config)
 
+    def parse(self, text):
+        parsed_info = super().parse(text)
+        if "answer" in parsed_info and any(tag in parsed_info for tag in ["probe_a", "probe_b", "probe_c"]):
+            del parsed_info["answer"]
+        return parsed_info
+
     def _initialize_game(self):
-        """初始化游戏参数"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -524,220 +806,174 @@ Note:
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        # 设置游戏参数
-        self.N = cfg["N"]  # 正确的 N 值
-        self.max_queries = cfg["max_queries"]  # 最大查询次数
-        self.max_answers = cfg["max_answers"]  # 最大提交答案次数
-        self.correct_rule_desc = cfg["rule_desc"]  # 正确的规则描述
+        self.graph = {}
+        self.edges = cfg["edges"]
+        for u, v, color in self.edges:
+            if u not in self.graph:
+                self.graph[u] = []
+            if v not in self.graph:
+                self.graph[v] = []
+            self.graph[u].append((v, color))
+            self.graph[v].append((u, color))
         
-        # 初始化计数器
-        self.query_count = 0
-        self.answer_count = 0
+        self.start_node = cfg["start_node"]
+        self.end_node = cfg["end_node"]
         
-        # 用于格式化游戏规则（如果需要）
-        self._game_info = {}
+        self.probes = cfg["probes"]
+        
+        self.correct_scheme = cfg["scheme"]
+        
+        self.probe_count = 0
+        
+        edges_desc_list = []
+        for u, v, color in self.edges:
+            edges_desc_list.append(f"{u}–{v} ({color})")
+        
+        if lang == "zh":
+            edges_description = "、".join(edges_desc_list)
+        else:
+            edges_description = ", ".join(edges_desc_list)
+        
+        probes_desc_list = []
+        for probe_name in ["probe_a", "probe_b", "probe_c"]:
+            if probe_name in self.probes:
+                probes_desc_list.append(self.probes[probe_name]["description"])
+        
+        if lang == "zh":
+            probes_description = "\n".join([f"- {desc}" for desc in probes_desc_list])
+        else:
+            probes_description = "\n".join([f"- {desc}" for desc in probes_desc_list])
+        
+        self._game_info["edges_description"] = edges_description
+        self._game_info["probes_description"] = probes_description
+        self._game_info["start_node"] = self.start_node
+        self._game_info["end_node"] = self.end_node
 
-    def _compute_response(self, b):
-        """计算响应规律 f(b) = min(b, N)"""
-        return min(b, self.N)
+    def _calculate_path_weight(self, path, scheme):
+        weight_map = self.SCHEMES[scheme]
+        total = 0
+        for _, _, color in path:
+            total += weight_map[color]
+        return total
+
+    def _dijkstra_shortest_path(self, scheme):
+        weight_map = self.SCHEMES[scheme]
+        import heapq
+        
+        dist = {node: float('inf') for node in self.graph}
+        dist[self.start_node] = 0
+        pq = [(0, self.start_node)]
+        
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist[u]:
+                continue
+            if u == self.end_node:
+                return dist[u]
+            
+            for v, color in self.graph[u]:
+                w = weight_map[color]
+                if dist[u] + w < dist[v]:
+                    dist[v] = dist[u] + w
+                    heapq.heappush(pq, (dist[v], v))
+        
+        return dist[self.end_node]
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        self.answer_count += 1
-        
-        # 解析答案格式: N=x, rule=描述
         raw_ans = parsed_info["answer"]
+        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+        ans_dict = {}
+        for kv in kv_pairs:
+            k, v = kv.split("=", 1)
+            ans_dict[k.strip().lower()] = v.strip()
         
-        # 提取 N 的值
-        n_pattern = r'N\s*=\s*(\d+)'
-        n_match = re.search(n_pattern, raw_ans, re.IGNORECASE)
-        if not n_match:
+        if "scheme" not in ans_dict or "distance" not in ans_dict:
+            return False
+        
+        submitted_scheme = ans_dict["scheme"].upper()
+        if submitted_scheme != self.correct_scheme:
             return False
         
         try:
-            guessed_n = int(n_match.group(1))
-        except:
+            submitted_distance = int(ans_dict["distance"])
+        except (ValueError, TypeError):
             return False
         
-        # 提取规则描述
-        rule_pattern = r'rule\s*=\s*(.+?)(?:$|,\s*N\s*=)'
-        rule_match = re.search(rule_pattern, raw_ans, re.IGNORECASE | re.DOTALL)
-        if not rule_match:
-            # 尝试另一种顺序
-            rule_pattern = r'rule\s*=\s*(.+)'
-            rule_match = re.search(rule_pattern, raw_ans, re.IGNORECASE | re.DOTALL)
-        
-        if not rule_match:
-            return False
-        
-        guessed_rule = rule_match.group(1).strip()
-        
-        # 检查 N 是否正确
-        if guessed_n != self.N:
-            return False
-        
-        # 检查规则描述是否正确（使用模糊匹配）
-        # 标准化规则描述进行比较
-        def normalize_rule(rule_text):
-            # 移除多余空格，转为小写
-            rule_text = re.sub(r'\s+', ' ', rule_text.lower().strip())
-            # 移除标点符号
-            rule_text = re.sub(r'[.,;!?，。；！？]', '', rule_text)
-            return rule_text
-        
-        normalized_guess = normalize_rule(guessed_rule)
-        normalized_correct = normalize_rule(self.correct_rule_desc)
-        
-        # 检查关键词是否存在
-        if self.config.language == "zh":
-            # 中文关键词：较小值 或 最小值 或 min，以及不超过、小于、上限、如果等相关描述
-            keywords = ["较小值", "最小值", "较小", "最小", "不超过", "小于", "最多", "上限", "如果", "若", "<", "≤", "min"]
-            has_keyword = any(kw in normalized_guess for kw in keywords)
-            has_b_and_n = "b" in normalized_guess and "n" in normalized_guess
-        else:
-            # 英文关键词：smaller, minimum, min, lesser, less, if 等相关描述
-            keywords = ["smaller", "minimum", "min", "lesser", "less", "lower", "cap", "limit", "if", "<", "≤"]
-            has_keyword = any(kw in normalized_guess for kw in keywords)
-            has_b_and_n = "b" in normalized_guess and "n" in normalized_guess
-        
-        return has_keyword and has_b_and_n
+        correct_distance = self._dijkstra_shortest_path(self.correct_scheme)
+        return submitted_distance == correct_distance
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑：处理查询请求，返回响应"""
-        if "query" not in parsed_info:
-            raise ValueError("No valid query tag found.")
+        if self.config.language == "zh":
+            l_res, h_res = "L", "H"
+            error_msg = "错误：无效的探测。"
+        else:
+            l_res, h_res = "L", "H"
+            error_msg = "Error: Invalid probe."
         
-        # 解析查询的 b 值
-        try:
-            b = int(parsed_info["query"].strip())
-        except (ValueError, TypeError):
-            if self.config.language == "zh":
-                return "错误：查询值必须是正整数。"
-            else:
-                return "Error: Query value must be a positive integer."
+        probe_name = None
+        for tag in ["probe_a", "probe_b", "probe_c"]:
+            if tag in parsed_info:
+                probe_name = tag
+                break
         
-        # 检查 b 的范围
-        if b < 1 or b > 1000:
-            if self.config.language == "zh":
-                return "错误：查询值必须在 1 到 1000 之间。"
-            else:
-                return "Error: Query value must be between 1 and 1000."
+        if probe_name is None or probe_name not in self.probes:
+            raise ValueError(error_msg)
         
-        # 检查查询次数是否超限
-        if self.query_count >= self.max_queries:
-            if self.config.language == "zh":
-                return f"查询次数已达上限（{self.max_queries}次），请直接提交答案。"
-            else:
-                return f"Query limit reached ({self.max_queries} queries). Please submit your answer."
+        self.probe_count += 1
         
-        # 增加查询计数
-        self.query_count += 1
+        probe_info = self.probes[probe_name]
+        path = probe_info["path"]
+        threshold = probe_info["threshold"]
         
-        # 计算并返回响应
-        r = self._compute_response(b)
+        actual_weight = self._calculate_path_weight(path, self.correct_scheme)
         
-        return f"r = {r}"
+        if actual_weight <= threshold:
+            return l_res
+        else:
+            return h_res
+
+    def _cf_make_wrong(self, correct):
+        if correct == "L":
+            return "H"
+        if correct == "H":
+            return "L"
+        
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if correct == "是": return "否"
+        if correct == "否": return "是"
+        
+        if correct.lower() == "yes":
+            return "No" if correct[0].isupper() else "no"
+        if correct.lower() == "no":
+            return "Yes" if correct[0].isupper() else "yes"
+
+        return correct + "_WRONG"
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        返回代表性查询集合，用于冗余性评估。
-        选取关键点：1, N//2, N-1, N, N+1, 2*N, 1000 等，
-        以覆盖规则 f(b)=min(b,N) 的所有关键行为。
-        """
         results = []
-        candidate_bs = sorted(set([
-            1,
-            max(1, self.N // 2),
-            max(1, self.N - 1),
-            self.N,
-            min(1000, self.N + 1),
-            min(1000, self.N * 2),
-            500,
-            1000,
-        ]))
+        l_res = "L"
+        h_res = "H"
         
-        for b in candidate_bs:
-            r = self._compute_response(b)
+        for probe_name in ["probe_a", "probe_b", "probe_c"]:
+            if probe_name not in self.probes:
+                continue
             
-            if self.config.language == "zh":
-                ans = f"r = {r}"
+            probe_info = self.probes[probe_name]
+            path = probe_info["path"]
+            threshold = probe_info["threshold"]
+            
+            actual_weight = self._calculate_path_weight(path, self.correct_scheme)
+            
+            if actual_weight <= threshold:
+                ans = l_res
             else:
-                ans = f"r = {r}"
-                
+                ans = h_res
+            
             results.append({
-                "query": f"<query>{b}</query>",
+                "query": f"<{probe_name}></{probe_name}>",
                 "answer": ans
             })
             
         return results
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个确定性的错误答案"""
-        # 尝试匹配 "r = <数字>" 格式
-        m = re.search(r'r\s*=\s*(-?\d+)', correct)
-        if m:
-            val = int(m.group(1))
-            # 确定性地生成错误值：如果 val > 0 则减 1，否则加 1
-            wrong_val = val - 1 if val > 0 else val + 1
-            return correct.replace(m.group(0), f"r = {wrong_val}")
-        
-        # 若 correct 是纯整数字符串
-        if correct.lstrip('-').isdigit():
-            return str(int(correct) + 1)
-        
-        # 否则按规则替换关键词
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否", 1)
-            elif "否" in correct:
-                return correct.replace("否", "是", 1)
-        else:
-            if re.search(r'\byes\b', correct, re.IGNORECASE):
-                return re.sub(r'\byes\b', lambda m_obj: "No" if m_obj.group(0).istitle() else "NO" if m_obj.group(0).isupper() else "no", correct, count=1, flags=re.IGNORECASE)
-            elif re.search(r'\bno\b', correct, re.IGNORECASE):
-                return re.sub(r'\bno\b', lambda m_obj: "Yes" if m_obj.group(0).istitle() else "YES" if m_obj.group(0).isupper() else "yes", correct, count=1, flags=re.IGNORECASE)
-
-        return correct + "_WRONG"
-
-    def step(self, response: str):
-        """处理一轮交互"""
-        try:
-            parsed_info = self.parse(response)
-            
-            if "answer" in parsed_info:
-                # 检查答案提交次数
-                if self.answer_count >= self.max_answers:
-                    if self.config.language == "zh":
-                        self.state.set_state("failed", f"答案提交次数已达上限（{self.max_answers}次）")
-                        self.state.add_message("user", f"答案提交次数已达上限。游戏失败。")
-                    else:
-                        self.state.set_state("failed", f"Answer submission limit reached ({self.max_answers} attempts)")
-                        self.state.add_message("user", f"Answer submission limit reached. Game failed.")
-                else:
-                    is_success = self.evaluate(parsed_info)
-                    if is_success:
-                        res = "答案正确！" if self.config.language == "zh" else "Correct answer!"
-                        self.state.set_state("success", "success")
-                        self.state.add_message("user", res)
-                    else:
-                        if self.answer_count >= self.max_answers:
-                            res = "答案错误，已用尽所有提交机会。" if self.config.language == "zh" else "Incorrect answer. All submission attempts exhausted."
-                            self.state.set_state("failed", "incorrect answer and no attempts left")
-                            self.state.add_message("user", res)
-                        else:
-                            remaining = self.max_answers - self.answer_count
-                            if self.config.language == "zh":
-                                res = f"答案错误，还有 {remaining} 次提交机会。"
-                            else:
-                                res = f"Incorrect answer. {remaining} attempt(s) remaining."
-                            self.state.add_message("user", res)
-            else:
-                # 处理查询
-                game_response = self.produce_response(parsed_info)
-                self.state.add_message("user", game_response)
-                
-        except Exception as e:
-            self.state.set_state("failed", str(e))
-            self.state.add_message("user", str(e))
-        
-        return self.state

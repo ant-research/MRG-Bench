@@ -1,645 +1,440 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   互相可达：两个给定节点是否互相可达
-# ============================================================
-
 from .base import Game
 import re
 
-class GraphReachabilityGame(Game):
+class IntervalBoundaryGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"标记有向图推理"的游戏，规则如下：
+我们现在来玩一个"区间边界定位"的推理游戏，规则如下：
 
-游戏设定了一个带标签的有向图，节点集合为 {{A, B, C, D, E}}，标签集合为 {{红, 蓝, 绿}}。每个节点对每个标签恰有一条确定的出边（可能为自环）。
+游戏设定了一个长度为 {n} 的隐藏序列，每个位置的值为 0 或 1，序列中至少存在一个位置的值为 1。你的目标是找出第一个 1 出现的位置（记为 first）和最后一个 1 出现的位置（记为 last）。
 
-实际的图结构从若干个候选方案之一产生（称为 W1、W2、W3、W4 等），且在整个交互过程中固定不变。候选方案如下：
+你可以反复向我提出"区间存在性查询"（每次仅限一个查询），我会根据真实设定如实回答：
 
-{candidate_schemes}
+**区间存在性查询**：询问区间 [L, R] 中是否存在至少一个 1。
+- 如果区间内存在至少一个 1，我会回答"是"
+- 如果区间内全部为 0，我会回答"否"
+- 如果 L 或 R 越界（小于 1 或大于 {n}），或者 L 大于 R，我会回答"无效查询"
 
-你的任务是通过查询推断出真实的图方案。
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-你可以反复进行以下查询（每次仅限一个查询）：
+**重要约束**：
+- 你只有 {max_queries} 次有效查询的机会
+- 你只能提交一次最终答案
+- 请尽可能用最少的查询次数找到答案
 
-**出边查询**：指定一个节点（A/B/C/D/E）和一个标签（红/蓝/绿），我会告诉你该节点经该标签的出边所指向的节点。
+每次查询时，使用以下 XML 格式：
 
-你的最终目标是：
-1. 确定真实的图方案编号（W1、W2、W3 或 W4）
-2. 判断节点 A 与节点 E 是否互相可达，即是否同时存在从 A 到 E 的有向路径与从 E 到 A 的有向路径
+- 区间查询（例如查询区间 [5, 10]）：
+<query>5,10</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，必须同时给出 first 和 last 的位置，格式如下：
 
-每次查询只能包含一个标签。请使用以下 XML 格式：
-
-- 出边查询（例如查询节点 A 在标签红下的出边）：
-<query_edge>A,红</query_edge>
-
-提交最终答案时，必须说明方案编号和互相可达性，格式如下：
-
-- 若判断互相可达：
-<answer>方案=W1, 互相可达=是, A到E=红-蓝, E到A=绿-红-蓝</answer>
-
-- 若判断不可达：
-<answer>方案=W2, 互相可达=否</answer>
-
-注意：
-- 路径用标签序列表示，标签之间用短横线分隔
-- 请尽可能少地进行查询
+<answer>first=5, last=10</answer>
 """
 
     game_rule_en = """\
-Let's play a "Labeled Directed Graph Deduction" game. Here are the rules:
+Let's play an "Interval Boundary Localization" deduction game. Here are the rules:
 
-The game features a labeled directed graph with node set {{A, B, C, D, E}} and label set {{Red, Blue, Green}}. Each node has exactly one outgoing edge for each label (possibly a self-loop).
+There is a hidden sequence of length {n}, where each position contains either 0 or 1, and at least one position contains a 1. Your goal is to find the position of the first 1 (denoted as first) and the position of the last 1 (denoted as last).
 
-The actual graph structure is generated from one of several candidate schemes (called W1, W2, W3, W4, etc.) and remains fixed throughout the interaction. The candidate schemes are as follows:
+You can repeatedly ask me "interval existence queries" (one per turn), and I will answer truthfully based on the actual setup:
 
-{candidate_schemes}
+**Interval Existence Query**: Ask whether there exists at least one 1 in the interval [L, R].
+- If at least one 1 exists in the interval, I will answer "Yes"
+- If the interval contains only 0s, I will answer "No"
+- If L or R is out of bounds (less than 1 or greater than {n}), or if L is greater than R, I will answer "Invalid Query"
 
-Your task is to infer the true graph scheme through queries.
+When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game is a failure.
 
-You can repeatedly make the following query (one at a time):
+**Important Constraints**:
+- You have at most {max_queries} valid queries
+- You can only submit the final answer once
+- Try to find the answer with as few queries as possible
 
-**Edge Query**: Specify a node (A/B/C/D/E) and a label (Red/Blue/Green), and I will tell you which node this edge points to.
+For each query, use the following XML format:
 
-Your ultimate goals are:
-1. Determine the true graph scheme number (W1, W2, W3, or W4)
-2. Determine whether nodes A and E are mutually reachable, i.e., whether there exists both a directed path from A to E and a directed path from E to A
+- Interval query (e.g., querying interval [5, 10]):
+<query>5,10</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, you must provide both first and last positions, using this format:
 
-Each query must contain only one tag. Use the following XML format:
-
-- Edge Query (e.g., querying node A with label Red):
-<query_edge>A,Red</query_edge>
-
-When submitting the final answer, specify the scheme number and mutual reachability using this format:
-
-- If judged mutually reachable:
-<answer>scheme=W1, mutually_reachable=yes, A_to_E=Red-Blue, E_to_A=Green-Red-Blue</answer>
-
-- If judged not reachable:
-<answer>scheme=W2, mutually_reachable=no</answer>
-
-Notes:
-- Paths are represented by label sequences, with labels separated by hyphens
-- Try to minimize the number of queries
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用“城市交通线网排查”系统。
+我们现在来进行一项"肇事车辆轨迹追踪"的调查，规则如下：
 
-本系统设定了一个包含5个核心交通枢纽的线网，枢纽集合为 {{A, B, C, D, E}}，运营线路标记为 {{红, 蓝, 绿}}。每个枢纽针对每种颜色的线路都有且仅有一个确定的下一站（可能原地环线）。
+系统记录了一条全长 {n} 公里的高速公路上的监控探头数据，每个公里点的值为 0 或 1，其中至少有一个公里点的值为 1（表示拍到了该肇事车辆）。你的目标是找出肇事车辆第一次出现的高速路段里程碑（记为 first）和最后一次出现的里程碑（记为 last），以锁定其活动范围。
 
-实际的线网结构由若干个候选方案之一产生（称为 W1、W2、W3、W4 等），且在整个排查过程中固定不变。候选方案如下：
+你可以反复向我提出"区间监控查询"（每次仅限一个查询），我会根据真实监控记录如实回答：
 
-{candidate_schemes}
+**区间监控查询**：询问路段区间 [L, R] 中是否至少有一个探头拍到了该车辆。
+- 如果区间内至少有一个探头拍到了车辆，我会回答"是"
+- 如果区间内所有探头都未发现车辆，我会回答"否"
+- 如果 L 或 R 越界（小于 1 或大于 {n}），或者 L 大于 R，我会回答"无效查询"
 
-你的任务是通过乘车查询推断出正在运行的真实线网方案。
+当你收集足够信息后，请提交最终排查结果。若结果错误或格式不符，调查失败。
 
-你可以反复进行以下查询（每次仅限一个查询）：
+**重要约束**：
+- 你只有 {max_queries} 次有效查询的机会
+- 你只能提交一次最终答案
+- 请尽可能用最少的查询次数锁定活动范围
 
-**路线勘测**：指定一个枢纽（A/B/C/D/E）和一条线路（红/蓝/绿），我会告诉你乘坐该线路后抵达的下一个枢纽。
+每次查询时，使用以下 XML 格式：
 
-你的最终目标是：
-1. 确定真实的线网方案编号（W1、W2、W3 或 W4）
-2. 判断枢纽 A 与枢纽 E 是否互相可达，即是否同时存在从 A 到 E 的换乘路径与从 E 到 A 的换乘路径
+- 区间查询（例如查询里程碑 [5, 10]）：
+<query>5,10</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，必须同时给出 first 和 last 的位置，格式如下：
 
-每次查询只能包含一条线路。请使用以下 XML 格式：
-
-- 路线勘测（例如查询在枢纽 A 乘坐红线抵达的枢纽）：
-<query_edge>A,红</query_edge>
-
-提交最终答案时，必须说明方案编号和互相可达性，格式如下：
-
-- 若判断互相可达：
-<answer>方案=W1, 互相可达=是, A到E=红-蓝, E到A=绿-红-蓝</answer>
-
-- 若判断不可达：
-<answer>方案=W2, 互相可达=否</answer>
-
-注意：
-- 路径用线路序列表示，线路之间用短横线分隔
-- 请尽可能少地进行查询
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Urban Transit Network Inspection Scenario]
-Welcome to the "Urban Transit Network Inspection" system.
+[Transportation Scenario]
+Let's conduct a "Hit-and-Run Vehicle Trajectory Tracking" investigation. Here are the rules:
 
-The system features a network of 5 core transit hubs, with the hub set {{A, B, C, D, E}} and operating transit lines labeled {{Red, Blue, Green}}. Each hub has exactly one definitive next stop for each colored line (possibly a self-loop).
+The system has recorded surveillance camera data along an expressway with a total length of {n} kilometers. Each kilometer mark contains either 0 or 1, and at least one mark contains a 1 (indicating the vehicle was captured on camera). Your goal is to find the kilometer mark where the vehicle first appeared (denoted as first) and the mark where it last appeared (denoted as last) to pinpoint its activity range.
 
-The actual network structure is generated from one of several candidate schemes (called W1, W2, W3, W4, etc.) and remains fixed throughout the inspection. The candidate schemes are as follows:
+You can repeatedly ask me "interval surveillance queries" (one per turn), and I will answer truthfully based on the actual records:
 
-{candidate_schemes}
+**Interval Surveillance Query**: Ask whether the vehicle was captured by at least one camera in the road segment [L, R].
+- If the vehicle was captured by at least one camera in the interval, I will answer "Yes"
+- If no cameras in the interval detected the vehicle, I will answer "No"
+- If L or R is out of bounds (less than 1 or greater than {n}), or if L is greater than R, I will answer "Invalid Query"
 
-Your task is to infer the true operating network scheme through transit queries.
+When you have gathered enough information, submit your final investigation result. If the result is wrong or the format is invalid, the investigation fails.
 
-You can repeatedly make the following query (one at a time):
+**Important Constraints**:
+- You have at most {max_queries} valid queries
+- You can only submit the final answer once
+- Try to pinpoint the activity range with as few queries as possible
 
-**Route Survey**: Specify a hub (A/B/C/D/E) and a line (Red/Blue/Green), and I will tell you the next hub you will arrive at by taking that line.
+For each query, use the following XML format:
 
-Your ultimate goals are:
-1. Determine the true network scheme number (W1, W2, W3, or W4)
-2. Determine whether hubs A and E are mutually reachable, i.e., whether there exists both a transit path from A to E and a transit path from E to A
+- Interval query (e.g., querying marks [5, 10]):
+<query>5,10</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, you must provide both first and last positions, using this format:
 
-Each query must contain only one line tag. Use the following XML format:
-
-- Route Survey (e.g., querying the hub reached from hub A via the Red line):
-<query_edge>A,Red</query_edge>
-
-When submitting the final answer, specify the scheme number and mutual reachability using this format:
-
-- If judged mutually reachable:
-<answer>scheme=W1, mutually_reachable=yes, A_to_E=Red-Blue, E_to_A=Green-Red-Blue</answer>
-
-- If judged not reachable:
-<answer>scheme=W2, mutually_reachable=no</answer>
-
-Notes:
-- Paths are represented by line sequences, separated by hyphens
-- Try to minimize the number of queries
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“疾病状态转移预测”系统。
+我们现在来进行一项"患者病程区间测定"的医疗诊断，规则如下：
 
-本系统设定了一个特定病理模型的转归图，患者的生理状态集合为 {{A, B, C, D, E}}，可采用的医疗干预手段标记为 {{红, 蓝, 绿}}。每个状态在接受每种干预后恰有一条确定的转归路径（指向下一个状态，或维持原状）。
+系统记录了患者连续 {n} 天的生理指标监测数据，每一天的记录值为 0 或 1，其中至少有一天的数据为 1（表示捕捉到了心律异常信号）。你的目标是找出首次出现异常的心电监测日（记为 first）和最后一次异常日（记为 last），以确定病程区间。
 
-实际的转归图结构从若干个候选诊疗方案之一产生（称为 W1、W2、W3、W4 等），且在整个诊断交互过程中固定不变。候选方案如下：
+你可以反复向我提出"时间窗症状查询"（每次仅限一个查询），我会根据真实医疗记录如实回答：
 
-{candidate_schemes}
+**时间窗症状查询**：询问时间段 [L, R] 天内是否捕捉到至少一次异常信号。
+- 如果该时间段内至少有一天存在异常，我会回答"是"
+- 如果该时间段内指标全部正常，我会回答"否"
+- 如果 L 或 R 越界（小于 1 或大于 {n}），或者 L 大于 R，我会回答"无效查询"
 
-你的任务是通过干预测试推断出真实的转归方案。
+当你收集足够信息后，请提交最终诊断结论。若结论错误或格式不符，诊断失败。
 
-你可以反复进行以下查询（每次仅限一个查询）：
+**重要约束**：
+- 你只有 {max_queries} 次有效查询的机会
+- 你只能提交一次最终答案
+- 请尽可能用最少的查询次数确定病程区间
 
-**干预测试**：指定一个状态（A/B/C/D/E）和一种干预手段（红/蓝/绿），我会告诉你实施该干预后患者转归到的生理状态。
+每次查询时，使用以下 XML 格式：
 
-你的最终目标是：
-1. 确定真实的转归方案编号（W1、W2、W3 或 W4）
-2. 判断状态 A 与状态 E 是否互相可达，即是否同时存在从 A 恶化/好转至 E 的治疗路径，以及从 E 恢复至 A 的治疗路径
+- 区间查询（例如查询第 [5, 10] 天）：
+<query>5,10</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，必须同时给出 first 和 last 的位置，格式如下：
 
-每次查询只能包含一种干预手段。请使用以下 XML 格式：
-
-- 干预测试（例如查询在状态 A 下施加红手段后的状态）：
-<query_edge>A,红</query_edge>
-
-提交最终答案时，必须说明方案编号和互相可达性，格式如下：
-
-- 若判断互相可达：
-<answer>方案=W1, 互相可达=是, A到E=红-蓝, E到A=绿-红-蓝</answer>
-
-- 若判断不可达：
-<answer>方案=W2, 互相可达=否</answer>
-
-注意：
-- 路径用干预手段序列表示，手段之间用短横线分隔
-- 请尽可能少地进行查询
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Disease State Transition Prediction Scenario]
-Welcome to the "Disease State Transition Prediction" system.
+[Medical Scenario]
+Let's conduct a "Patient Disease Course Interval Determination" medical diagnosis. Here are the rules:
 
-The system features a pathological model transition graph, with the patient's physiological state set {{A, B, C, D, E}} and medical interventions labeled {{Red, Blue, Green}}. Each state has exactly one definite transition path upon receiving each intervention (pointing to the next state, or maintaining the status quo).
+The system has logged continuous physiological monitoring data for a patient over {n} days. Each day's record is either 0 or 1, with at least one day containing a 1 (indicating an abnormal heart rhythm signal was captured). Your goal is to find the first day of abnormal ECG monitoring (denoted as first) and the last day of abnormality (denoted as last) to determine the disease course interval.
 
-The actual transition graph structure is generated from one of several candidate diagnostic schemes (called W1, W2, W3, W4, etc.) and remains fixed throughout the interaction. The candidate schemes are as follows:
+You can repeatedly ask me "time window symptom queries" (one per turn), and I will answer truthfully based on the actual medical records:
 
-{candidate_schemes}
+**Time Window Symptom Query**: Ask whether at least one abnormal signal was captured within the time period of days [L, R].
+- If there is at least one day of abnormality in the period, I will answer "Yes"
+- If all indicators are normal during the period, I will answer "No"
+- If L or R is out of bounds (less than 1 or greater than {n}), or if L is greater than R, I will answer "Invalid Query"
 
-Your task is to infer the true transition scheme through intervention tests.
+When you have enough information, submit your final diagnostic conclusion. If the conclusion is wrong or the format is invalid, the diagnosis fails.
 
-You can repeatedly make the following query (one at a time):
+**Important Constraints**:
+- You have at most {max_queries} valid queries
+- You can only submit the final answer once
+- Try to determine the disease course interval with as few queries as possible
 
-**Intervention Test**: Specify a state (A/B/C/D/E) and an intervention (Red/Blue/Green), and I will tell you the physiological state the patient transitions to after this intervention.
+For each query, use the following XML format:
 
-Your ultimate goals are:
-1. Determine the true transition scheme number (W1, W2, W3, or W4)
-2. Determine whether states A and E are mutually reachable, i.e., whether there exists both a treatment path from A to E and a treatment path from E to A
+- Interval query (e.g., querying days [5, 10]):
+<query>5,10</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, you must provide both first and last positions, using this format:
 
-Each query must contain only one intervention tag. Use the following XML format:
-
-- Intervention Test (e.g., querying the state reached from state A via the Red intervention):
-<query_edge>A,Red</query_edge>
-
-When submitting the final answer, specify the scheme number and mutual reachability using this format:
-
-- If judged mutually reachable:
-<answer>scheme=W1, mutually_reachable=yes, A_to_E=Red-Blue, E_to_A=Green-Red-Blue</answer>
-
-- If judged not reachable:
-<answer>scheme=W2, mutually_reachable=no</answer>
-
-Notes:
-- Paths are represented by intervention sequences, separated by hyphens
-- Try to minimize the number of queries
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用“自适应学习路径评估”系统。
+我们现在来进行一项"学生学习轨迹跨度分析"的教育评估，规则如下：
 
-本系统设定了一个学习者能力跃迁图，认知阶段集合为 {{A, B, C, D, E}}，教学模块标记为 {{红, 蓝, 绿}}。每个认知阶段在完成每个教学模块后恰有一条确定的进阶路径（可能未获提升而保持原状）。
+一门在线课程包含了 {n} 个按顺序排列的知识点，系统记录了某位学生的学习轨迹，每个知识点状态为 0 或 1，其中至少有一个状态为 1（表示有实质性交互或观看记录）。你的目标是确定该学生开始学习的起始知识点编号（记为 first）和结束学习的末尾知识点编号（记为 last），以评估其学习进度跨度。
 
-实际的能力跃迁图结构从若干个候选教研方案之一产生（称为 W1、W2、W3、W4 等），且在整个评估过程中固定不变。候选方案如下：
+你可以反复向我提出"模块交互记录查询"（每次仅限一个查询），我会根据真实后台数据如实回答：
 
-{candidate_schemes}
+**模块交互记录查询**：询问知识点区间 [L, R] 内是否存在至少一条学生的交互记录。
+- 如果区间内存在至少一条交互记录，我会回答"是"
+- 如果区间内该学生完全没有观看记录，我会回答"否"
+- 如果 L 或 R 越界（小于 1 或大于 {n}），或者 L 大于 R，我会回答"无效查询"
 
-你的任务是通过教学反馈推断出真实的教研方案。
+当你收集足够信息后，请提交最终评估结果。若结果错误或格式不符，评估失败。
 
-你可以反复进行以下查询（每次仅限一个查询）：
+**重要约束**：
+- 你只有 {max_queries} 次有效查询的机会
+- 你只能提交一次最终答案
+- 请尽可能用最少的查询次数确定学习跨度
 
-**教学反馈**：指定一个认知阶段（A/B/C/D/E）和一个教学模块（红/蓝/绿），我会告诉你完成该模块后学习者达到的新认知阶段。
+每次查询时，使用以下 XML 格式：
 
-你的最终目标是：
-1. 确定真实的教研方案编号（W1、W2、W3 或 W4）
-2. 判断阶段 A 与阶段 E 是否互相可达，即是否同时存在从 A 进阶到 E 的学习路径与从 E 回溯至 A 的学习路径
+- 区间查询（例如查询知识点 [5, 10]）：
+<query>5,10</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，必须同时给出 first 和 last 的位置，格式如下：
 
-每次查询只能包含一个模块。请使用以下 XML 格式：
-
-- 教学反馈（例如查询在阶段 A 完成红模块后的阶段）：
-<query_edge>A,红</query_edge>
-
-提交最终答案时，必须说明方案编号和互相可达性，格式如下：
-
-- 若判断互相可达：
-<answer>方案=W1, 互相可达=是, A到E=红-蓝, E到A=绿-红-蓝</answer>
-
-- 若判断不可达：
-<answer>方案=W2, 互相可达=否</answer>
-
-注意：
-- 路径用模块序列表示，模块之间用短横线分隔
-- 请尽可能少地进行查询
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_en_3 = """\
-[Adaptive Learning Path Assessment Scenario]
-Welcome to the "Adaptive Learning Path Assessment" system.
+[Education Scenario]
+Let's conduct an educational assessment on "Student Learning Trajectory Span Analysis". Here are the rules:
 
-The system features a learner capability transition graph, with the cognitive stage set {{A, B, C, D, E}} and teaching modules labeled {{Red, Blue, Green}}. Each stage has exactly one definite progression path after completing each module (possibly remaining unchanged).
+An online course contains {n} sequential knowledge points. The system records a student's learning trajectory where each point's status is either 0 or 1, and at least one status is 1 (indicating substantial interaction or viewing record). Your goal is to determine the starting knowledge point number where the student began learning (denoted as first) and the ending knowledge point number (denoted as last) to evaluate their learning progress span.
 
-The actual capability transition graph structure is generated from one of several candidate teaching schemes (called W1, W2, W3, W4, etc.) and remains fixed throughout the assessment. The candidate schemes are as follows:
+You can repeatedly ask me "module interaction record queries" (one per turn), and I will answer truthfully based on the actual backend data:
 
-{candidate_schemes}
+**Module Interaction Record Query**: Ask whether there is at least one student interaction record within the knowledge point interval [L, R].
+- If there is at least one interaction record in the interval, I will answer "Yes"
+- If the student has absolutely no viewing record in the interval, I will answer "No"
+- If L or R is out of bounds (less than 1 or greater than {n}), or if L is greater than R, I will answer "Invalid Query"
 
-Your task is to infer the true teaching scheme through pedagogical feedbacks.
+When you have enough information, submit your final assessment result. If the result is wrong or the format is invalid, the assessment fails.
 
-You can repeatedly make the following query (one at a time):
+**Important Constraints**:
+- You have at most {max_queries} valid queries
+- You can only submit the final answer once
+- Try to determine the learning span with as few queries as possible
 
-**Pedagogical Feedback**: Specify a cognitive stage (A/B/C/D/E) and a module (Red/Blue/Green), and I will tell you the new cognitive stage the learner reaches after completing this module.
+For each query, use the following XML format:
 
-Your ultimate goals are:
-1. Determine the true teaching scheme number (W1, W2, W3, or W4)
-2. Determine whether stages A and E are mutually reachable, i.e., whether there exists both a learning path from A to E and a path from E to A
+- Interval query (e.g., querying knowledge points [5, 10]):
+<query>5,10</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, you must provide both first and last positions, using this format:
 
-Each query must contain only one module tag. Use the following XML format:
-
-- Pedagogical Feedback (e.g., querying the stage reached from stage A via the Red module):
-<query_edge>A,Red</query_edge>
-
-When submitting the final answer, specify the scheme number and mutual reachability using this format:
-
-- If judged mutually reachable:
-<answer>scheme=W1, mutually_reachable=yes, A_to_E=Red-Blue, E_to_A=Green-Red-Blue</answer>
-
-- If judged not reachable:
-<answer>scheme=W2, mutually_reachable=no</answer>
-
-Notes:
-- Paths are represented by module sequences, separated by hyphens
-- Try to minimize the number of queries
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎使用“工业控制逻辑调试”系统。
+我们现在来进行一项"次品污染批次追溯"的工业排查，规则如下：
 
-本系统设定了一个自动化设备的有限状态机，设备运行状态集合为 {{A, B, C, D, E}}，控制指令标记为 {{红, 蓝, 绿}}。每个状态在接收每种指令后恰有一条确定的状态跳转规则（可能无响应而维持原状）。
+流水线上连续加工了 {n} 个批次的产品，系统保存了质量抽检记录，每个批次的检测结果为 0 或 1，其中至少有一个批次为 1（表示该批次存在次品）。你的目标是找出发生次品污染的首个批次号（记为 first）和末尾批次号（记为 last），以便召回并隔离这部分批次区间内的所有产品。
 
-实际的控制逻辑从若干个候选配置方案之一产生（称为 W1、W2、W3、W4 等），且在整个调试交互过程中固定不变。候选方案如下：
+你可以反复向我提出"批次区间抽检查询"（每次仅限一个查询），我会根据真实质检档案如实回答：
 
-{candidate_schemes}
+**批次区间抽检查询**：询问批次区间 [L, R] 内是否有任何批次检测出次品。
+- 如果区间内至少有一个批次存在次品，我会回答"是"
+- 如果区间内所有批次全部合格，我会回答"否"
+- 如果 L 或 R 越界（小于 1 或大于 {n}），或者 L 大于 R，我会回答"无效查询"
 
-你的任务是通过指令测试推断出设备的真实控制逻辑方案。
+当你收集足够信息后，请提交最终排查报告。若报告错误或格式不符，追溯失败。
 
-你可以反复进行以下查询（每次仅限一个查询）：
+**重要约束**：
+- 你只有 {max_queries} 次有效查询的机会
+- 你只能提交一次最终答案
+- 请尽可能用最少的查询次数锁定污染区间
 
-**指令测试**：指定一个状态（A/B/C/D/E）和一种指令（红/蓝/绿），我会告诉你设备接收该指令后跳转到的新状态。
+每次查询时，使用以下 XML 格式：
 
-你的最终目标是：
-1. 确定真实的配置方案编号（W1、W2、W3 或 W4）
-2. 判断状态 A 与状态 E 是否互相可达，即是否同时存在从 A 切换至 E 的指令序列与从 E 切换回 A 的指令序列
+- 区间查询（例如查询批次 [5, 10]）：
+<query>5,10</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，必须同时给出 first 和 last 的位置，格式如下：
 
-每次查询只能包含一种指令。请使用以下 XML 格式：
-
-- 指令测试（例如查询在状态 A 接收红指令后的状态）：
-<query_edge>A,红</query_edge>
-
-提交最终答案时，必须说明方案编号和互相可达性，格式如下：
-
-- 若判断互相可达：
-<answer>方案=W1, 互相可达=是, A到E=红-蓝, E到A=绿-红-蓝</answer>
-
-- 若判断不可达：
-<answer>方案=W2, 互相可达=否</answer>
-
-注意：
-- 路径用指令序列表示，指令之间用短横线分隔
-- 请尽可能少地进行查询
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Industrial Control Logic Debugging Scenario]
-Welcome to the "Industrial Control Logic Debugging" system.
+[Manufacturing/Industrial Scenario]
+Let's conduct an industrial inspection on "Defective Product Contamination Batch Traceability". Here are the rules:
 
-The system features a finite state machine for automated equipment, with the operating state set {{A, B, C, D, E}} and control commands labeled {{Red, Blue, Green}}. Each state has exactly one definite state transition rule upon receiving each command (possibly maintaining the status quo).
+An assembly line has continuously processed {n} batches of products. The system keeps quality sampling records where each batch's test result is either 0 or 1, and at least one batch is 1 (indicating the presence of defective products in that batch). Your goal is to find the first batch number where defective contamination occurred (denoted as first) and the ending batch number (denoted as last), in order to recall and isolate all products within this batch interval.
 
-The actual control logic is generated from one of several candidate configuration schemes (called W1, W2, W3, W4, etc.) and remains fixed throughout the debugging. The candidate schemes are as follows:
+You can repeatedly ask me "batch interval sampling queries" (one per turn), and I will answer truthfully based on the actual quality inspection archives:
 
-{candidate_schemes}
+**Batch Interval Sampling Query**: Ask whether any batch within the batch interval [L, R] has tested positive for defective products.
+- If at least one batch in the interval contains defective products, I will answer "Yes"
+- If all batches in the interval are qualified, I will answer "No"
+- If L or R is out of bounds (less than 1 or greater than {n}), or if L is greater than R, I will answer "Invalid Query"
 
-Your task is to infer the true control logic scheme through command tests.
+When you have enough information, submit your final inspection report. If the report is wrong or the format is invalid, the traceability fails.
 
-You can repeatedly make the following query (one at a time):
+**Important Constraints**:
+- You have at most {max_queries} valid queries
+- You can only submit the final answer once
+- Try to pinpoint the contamination interval with as few queries as possible
 
-**Command Test**: Specify a state (A/B/C/D/E) and a command (Red/Blue/Green), and I will tell you the new state the equipment transitions to after receiving this command.
+For each query, use the following XML format:
 
-Your ultimate goals are:
-1. Determine the true configuration scheme number (W1, W2, W3, or W4)
-2. Determine whether states A and E are mutually reachable, i.e., whether there exists both a command sequence from A to E and a command sequence from E to A
+- Interval query (e.g., querying batches [5, 10]):
+<query>5,10</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, you must provide both first and last positions, using this format:
 
-Each query must contain only one command tag. Use the following XML format:
-
-- Command Test (e.g., querying the state reached from state A via the Red command):
-<query_edge>A,Red</query_edge>
-
-When submitting the final answer, specify the scheme number and mutual reachability using this format:
-
-- If judged mutually reachable:
-<answer>scheme=W1, mutually_reachable=yes, A_to_E=Red-Blue, E_to_A=Green-Red-Blue</answer>
-
-- If judged not reachable:
-<answer>scheme=W2, mutually_reachable=no</answer>
-
-Notes:
-- Paths are represented by command sequences, separated by hyphens
-- Try to minimize the number of queries
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用“司法程序流转沙盘”系统。
+我们现在来进行一项"串标利益输送证据链界定"的法律调查，规则如下：
 
-本系统设定了一个案件审理流程图，案件所处的程序节点集合为 {{A, B, C, D, E}}，当事人可采取的法律行动标记为 {{红, 蓝, 绿}}。每个程序节点在介入每种法律行动后恰有一个确定的后续程序节点（可能维持原判或停留在原节点）。
+案件卷宗中整理了 {n} 份按时间顺序编号的往来合同与邮件证据，每份证据的鉴定结果为 0 或 1，其中至少有一份证据为 1（表示存在利益输送的串标违规行为）。你的目标是锁定实施利益输送行为的第一份核心证据编号（记为 first）和最后一份核心证据编号（记为 last），从而界定犯罪活动的时间跨度。
 
-实际的流转结构从若干个候选诉讼方案之一产生（称为 W1、W2、W3、W4 等），且在整个推演过程中固定不变。候选方案如下：
+你可以反复向我提出"证据编号区间审查"（每次仅限一个查询），我会根据真实案卷鉴定如实回答：
 
-{candidate_schemes}
+**证据编号区间审查**：询问证据编号区间 [L, R] 中是否存在至少一份与串标相关的违规记录。
+- 如果区间内存在相关违规证据，我会回答"是"
+- 如果区间内所有证据均与违法无关，我会回答"否"
+- 如果 L 或 R 越界（小于 1 或大于 {n}），或者 L 大于 R，我会回答"无效查询"
 
-你的任务是通过推演查询推断出真实的司法程序流转方案。
+当你收集足够信息后，请提交最终审查结论。若结论错误或格式不符，调查失败。
 
-你可以反复进行以下查询（每次仅限一个查询）：
+**重要约束**：
+- 你只有 {max_queries} 次有效查询的机会
+- 你只能提交一次最终答案
+- 请尽可能用最少的查询次数界定犯罪时间跨度
 
-**程序推演**：指定一个节点（A/B/C/D/E）和一种法律行动（红/蓝/绿），我会告诉你采取该行动后案件所进入的新节点。
+每次查询时，使用以下 XML 格式：
 
-你的最终目标是：
-1. 确定真实的诉讼方案编号（W1、W2、W3 或 W4）
-2. 判断节点 A 与节点 E 是否互相可达，即是否同时存在从 A 流转至 E 的行动路径与从 E 回到 A 的行动路径
+- 区间查询（例如查询证据编号 [5, 10]）：
+<query>5,10</query>
 
-## 查询与提交答案的格式（必须严格遵守）
+提交最终答案时，必须同时给出 first 和 last 的位置，格式如下：
 
-每次查询只能包含一种行动。请使用以下 XML 格式：
-
-- 程序推演（例如查询在节点 A 采取红行动后的节点）：
-<query_edge>A,红</query_edge>
-
-提交最终答案时，必须说明方案编号和互相可达性，格式如下：
-
-- 若判断互相可达：
-<answer>方案=W1, 互相可达=是, A到E=红-蓝, E到A=绿-红-蓝</answer>
-
-- 若判断不可达：
-<answer>方案=W2, 互相可达=否</answer>
-
-注意：
-- 路径用行动序列表示，行动之间用短横线分隔
-- 请尽可能少地进行查询
+<answer>first=5, last=10</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Judicial Procedure Flow Sandbox Scenario]
-Welcome to the "Judicial Procedure Flow Sandbox" system.
+[Legal Scenario]
+Let's conduct a legal investigation on "Defining the Evidence Chain of Bid-Rigging and Benefit Transfer". Here are the rules:
 
-The system features a case trial flow graph, with the procedural node set {{A, B, C, D, E}} and available legal actions labeled {{Red, Blue, Green}}. Each procedural node has exactly one definite subsequent node upon taking each legal action (possibly maintaining the current status).
+The case files contain {n} sequentially numbered correspondence contracts and email evidences. The forensic result of each evidence is either 0 or 1, with at least one evidence being 1 (indicating illegal bid-rigging and benefit transfer). Your goal is to pinpoint the number of the first core evidence of benefit transfer (denoted as first) and the number of the last core evidence (denoted as last), thereby defining the time span of the criminal activities.
 
-The actual flow structure is generated from one of several candidate litigation schemes (called W1, W2, W3, W4, etc.) and remains fixed throughout the sandbox interaction. The candidate schemes are as follows:
+You can repeatedly ask me "evidence number interval reviews" (one per turn), and I will answer truthfully based on the actual forensic case files:
 
-{candidate_schemes}
+**Evidence Number Interval Review**: Ask whether there is at least one violation record related to bid-rigging in the evidence number interval [L, R].
+- If there is relevant violation evidence in the interval, I will answer "Yes"
+- If all evidences in the interval are unrelated to illegality, I will answer "No"
+- If L or R is out of bounds (less than 1 or greater than {n}), or if L is greater than R, I will answer "Invalid Query"
 
-Your task is to infer the true litigation scheme through deduction queries.
+When you have enough information, submit your final review conclusion. If the conclusion is wrong or the format is invalid, the investigation fails.
 
-You can repeatedly make the following query (one at a time):
+**Important Constraints**:
+- You have at most {max_queries} valid queries
+- You can only submit the final answer once
+- Try to define the criminal time span with as few queries as possible
 
-**Procedure Deduction**: Specify a node (A/B/C/D/E) and an action (Red/Blue/Green), and I will tell you the new node the case enters after taking this action.
+For each query, use the following XML format:
 
-Your ultimate goals are:
-1. Determine the true litigation scheme number (W1, W2, W3, or W4)
-2. Determine whether nodes A and E are mutually reachable, i.e., whether there exists both an action path from A to E and an action path from E to A
+- Interval query (e.g., querying evidence numbers [5, 10]):
+<query>5,10</query>
 
-## Query and Answer Format (strictly required)
+When submitting the final answer, you must provide both first and last positions, using this format:
 
-Each query must contain only one action tag. Use the following XML format:
-
-- Procedure Deduction (e.g., querying the node reached from node A via the Red action):
-<query_edge>A,Red</query_edge>
-
-When submitting the final answer, specify the scheme number and mutual reachability using this format:
-
-- If judged mutually reachable:
-<answer>scheme=W1, mutually_reachable=yes, A_to_E=Red-Blue, E_to_A=Green-Red-Blue</answer>
-
-- If judged not reachable:
-<answer>scheme=W2, mutually_reachable=no</answer>
-
-Notes:
-- Paths are represented by action sequences, separated by hyphens
-- Try to minimize the number of queries
+<answer>first=5, last=10</answer>
 """
 
-    tags = ["answer", "query_edge"]
+    tags = ["answer", "query"]
     
-    # 新增类属性
-    reasoning_type = "溯因推理"
-    data_structure = "图"
-
-    # 难度配置：
-    # 1 (简单)         - W1: A和E互相可达，路径较短
-    # 2 (中等偏下)     - W2: A和E不互相可达（单向可达）
-    # 3 (中等偏上)     - W3: A和E互相可达，路径较长
-    # 4 (较难)         - W4: A和E不互相可达（均不可达）
-    # 5 (难)           - W5: A和E互相可达，路径复杂需要更多查询
+    reasoning_type = "演绎推理"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "scheme": "W1",
-                "graph": {
-                    "A": {"红": "B", "蓝": "C", "绿": "A"},
-                    "B": {"红": "D", "蓝": "A", "绿": "B"},
-                    "C": {"红": "B", "蓝": "E", "绿": "C"},
-                    "D": {"红": "E", "蓝": "B", "绿": "D"},
-                    "E": {"红": "D", "蓝": "C", "绿": "E"},
-                },
-                "mutually_reachable": True,
-                "a_to_e": ["红", "红", "红"],  # A->B->D->E
-                "e_to_a": ["红", "蓝", "蓝"],  # E->D(红)->B(蓝)->A(蓝)
+                "n": 32,
+                "max_queries": 12,
+                "first": 10,
+                "last": 22,
             },
             2: {
-                "scheme": "W2",
-                "graph": {
-                    "A": {"红": "B", "蓝": "C", "绿": "A"},
-                    "B": {"红": "D", "蓝": "A", "绿": "B"},
-                    "C": {"红": "B", "蓝": "E", "绿": "C"},
-                    "D": {"红": "E", "蓝": "E", "绿": "D"},
-                    "E": {"红": "D", "蓝": "E", "绿": "E"},
-                },
-                "mutually_reachable": False,
-                "a_to_e": ["红", "红", "红"],
-                "e_to_a": None,
+                "n": 64,
+                "max_queries": 14,
+                "first": 18,
+                "last": 51,
             },
             3: {
-                "scheme": "W3",
-                "graph": {
-                    "A": {"红": "B", "蓝": "C", "绿": "A"},
-                    "B": {"红": "D", "蓝": "A", "绿": "B"},
-                    "C": {"红": "B", "蓝": "C", "绿": "C"},
-                    "D": {"红": "E", "蓝": "B", "绿": "D"},
-                    "E": {"红": "D", "蓝": "C", "绿": "E"},
-                },
-                "mutually_reachable": True,
-                "a_to_e": ["红", "红", "红"],  # A->B->D->E
-                "e_to_a": ["蓝", "红", "蓝"],  # E->C->B->A
+                "n": 128,
+                "max_queries": 16,
+                "first": 37,
+                "last": 95,
             },
             4: {
-                "scheme": "W4",
-                "graph": {
-                    "A": {"红": "B", "蓝": "C", "绿": "A"},
-                    "B": {"红": "A", "蓝": "A", "绿": "B"},
-                    "C": {"红": "B", "蓝": "C", "绿": "C"},
-                    "D": {"红": "E", "蓝": "E", "绿": "D"},
-                    "E": {"红": "D", "蓝": "E", "绿": "E"},
-                },
-                "mutually_reachable": False,
-                "a_to_e": None,
-                "e_to_a": None,
+                "n": 256,
+                "max_queries": 18,
+                "first": 73,
+                "last": 201,
             },
             5: {
-                "scheme": "W5",
-                "graph": {
-                    "A": {"红": "B", "蓝": "D", "绿": "A"},
-                    "B": {"红": "C", "蓝": "E", "绿": "A"},
-                    "C": {"红": "D", "蓝": "B", "绿": "C"},
-                    "D": {"红": "E", "蓝": "C", "绿": "D"},
-                    "E": {"红": "A", "蓝": "D", "绿": "E"},
-                },
-                "mutually_reachable": True,
-                "a_to_e": ["红", "蓝"],  # A->B->E
-                "e_to_a": ["红"],  # E->A
+                "n": 512,
+                "max_queries": 20,
+                "first": 147,
+                "last": 398,
             },
         },
         "en": {
             1: {
-                "scheme": "W1",
-                "graph": {
-                    "A": {"Red": "B", "Blue": "C", "Green": "A"},
-                    "B": {"Red": "D", "Blue": "A", "Green": "B"},
-                    "C": {"Red": "B", "Blue": "E", "Green": "C"},
-                    "D": {"Red": "E", "Blue": "B", "Green": "D"},
-                    "E": {"Red": "D", "Blue": "C", "Green": "E"},
-                },
-                "mutually_reachable": True,
-                "a_to_e": ["Red", "Red", "Red"],
-                "e_to_a": ["Red", "Blue", "Blue"],
+                "n": 32,
+                "max_queries": 12,
+                "first": 10,
+                "last": 22,
             },
             2: {
-                "scheme": "W2",
-                "graph": {
-                    "A": {"Red": "B", "Blue": "C", "Green": "A"},
-                    "B": {"Red": "D", "Blue": "A", "Green": "B"},
-                    "C": {"Red": "B", "Blue": "E", "Green": "C"},
-                    "D": {"Red": "E", "Blue": "E", "Green": "D"},
-                    "E": {"Red": "D", "Blue": "E", "Green": "E"},
-                },
-                "mutually_reachable": False,
-                "a_to_e": ["Red", "Red", "Red"],
-                "e_to_a": None,
+                "n": 64,
+                "max_queries": 14,
+                "first": 18,
+                "last": 51,
             },
             3: {
-                "scheme": "W3",
-                "graph": {
-                    "A": {"Red": "B", "Blue": "C", "Green": "A"},
-                    "B": {"Red": "D", "Blue": "A", "Green": "B"},
-                    "C": {"Red": "B", "Blue": "C", "Green": "C"},
-                    "D": {"Red": "E", "Blue": "B", "Green": "D"},
-                    "E": {"Red": "D", "Blue": "C", "Green": "E"},
-                },
-                "mutually_reachable": True,
-                "a_to_e": ["Red", "Red", "Red"],  # A->B->D->E
-                "e_to_a": ["Blue", "Red", "Blue"],  # E->C->B->A
+                "n": 128,
+                "max_queries": 16,
+                "first": 37,
+                "last": 95,
             },
             4: {
-                "scheme": "W4",
-                "graph": {
-                    "A": {"Red": "B", "Blue": "C", "Green": "A"},
-                    "B": {"Red": "A", "Blue": "A", "Green": "B"},
-                    "C": {"Red": "B", "Blue": "C", "Green": "C"},
-                    "D": {"Red": "E", "Blue": "E", "Green": "D"},
-                    "E": {"Red": "D", "Blue": "E", "Green": "E"},
-                },
-                "mutually_reachable": False,
-                "a_to_e": None,
-                "e_to_a": None,
+                "n": 256,
+                "max_queries": 18,
+                "first": 73,
+                "last": 201,
             },
             5: {
-                "scheme": "W5",
-                "graph": {
-                    "A": {"Red": "B", "Blue": "D", "Green": "A"},
-                    "B": {"Red": "C", "Blue": "E", "Green": "A"},
-                    "C": {"Red": "D", "Blue": "B", "Green": "C"},
-                    "D": {"Red": "E", "Blue": "C", "Green": "D"},
-                    "E": {"Red": "A", "Blue": "D", "Green": "E"},
-                },
-                "mutually_reachable": True,
-                "a_to_e": ["Red", "Blue"],
-                "e_to_a": ["Red"],
+                "n": 512,
+                "max_queries": 20,
+                "first": 147,
+                "last": 398,
             },
         },
     }
 
     def __init__(self, config):
+        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，根据语言和难度选择对应的图配置"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -647,202 +442,144 @@ Notes:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["max_queries"] = cfg["max_queries"]
         
-        # 存储游戏信息
-        self.scheme = cfg["scheme"]
-        self.graph = cfg["graph"]
-        self.mutually_reachable = cfg["mutually_reachable"]
-        self.a_to_e_path = cfg.get("a_to_e")
-        self.e_to_a_path = cfg.get("e_to_a")
+        self.n = cfg["n"]
+        self.max_queries = cfg["max_queries"]
+        self.first = cfg["first"]
+        self.last = cfg["last"]
         
-        # 构建所有候选方案的描述，注入规则中让模型可以区分
-        all_schemes = self.DIFFICULTY_CONFIG[lang]
-        scheme_descriptions = []
-        for d, s_cfg in sorted(all_schemes.items()):
-            desc_lines = [f"{s_cfg['scheme']}:"]
-            for node in ["A", "B", "C", "D", "E"]:
-                edges = s_cfg["graph"][node]
-                for label, target in edges.items():
-                    desc_lines.append(f"  {node} --{label}--> {target}")
-            scheme_descriptions.append("\n".join(desc_lines))
+        if not (1 <= self.first <= self.last <= self.n):
+            raise ValueError(f"Invalid first/last configuration: first={self.first}, last={self.last}, n={self.n}")
         
-        self._game_info = {
-            "candidate_schemes": "\n\n".join(scheme_descriptions)
-        }
+        self.query_count = 0
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案是否正确"""
         raw_ans = parsed_info["answer"]
         
-        # 统一逗号为英文逗号，提高鲁棒性
-        raw_ans = raw_ans.replace("，", ",")
-        
-        ans_dict = {}
-        
-        if self.config.language == "zh":
-            # 中文解析
-            parts = [x.strip() for x in raw_ans.split(",")]
-            for part in parts:
-                if "=" in part:
-                    k, v = part.split("=", 1)
-                    ans_dict[k.strip()] = v.strip()
+        try:
+            kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
+            ans_dict = {}
+            for kv in kv_pairs:
+                k, v = kv.split("=", 1)
+                ans_dict[k.strip()] = v.strip()
             
-            # 检查方案是否正确
-            if ans_dict.get("方案") != self.scheme:
+            if "first" not in ans_dict or "last" not in ans_dict:
                 return False
             
-            # 检查互相可达性
-            reachable_answer = ans_dict.get("互相可达")
-            if reachable_answer == "是":
-                if not self.mutually_reachable:
-                    return False
-                # 需要验证路径
-                a_to_e = ans_dict.get("A到E", "")
-                e_to_a = ans_dict.get("E到A", "")
-                if not a_to_e or not e_to_a:
-                    return False
-                # 验证路径有效性
-                a_to_e_labels = [x.strip() for x in a_to_e.split("-") if x.strip()]
-                e_to_a_labels = [x.strip() for x in e_to_a.split("-") if x.strip()]
-                return self._verify_path("A", "E", a_to_e_labels) and self._verify_path("E", "A", e_to_a_labels)
-            elif reachable_answer == "否":
-                return not self.mutually_reachable
-            else:
-                return False
-        else:
-            # 英文解析
-            parts = [x.strip() for x in raw_ans.split(",")]
-            for part in parts:
-                if "=" in part:
-                    k, v = part.split("=", 1)
-                    ans_dict[k.strip()] = v.strip()
+            ans_first = int(ans_dict["first"])
+            ans_last = int(ans_dict["last"])
             
-            # 检查方案是否正确
-            if ans_dict.get("scheme") != self.scheme:
-                return False
+            return ans_first == self.first and ans_last == self.last
             
-            # 检查互相可达性
-            reachable_answer = ans_dict.get("mutually_reachable")
-            if reachable_answer == "yes":
-                if not self.mutually_reachable:
-                    return False
-                # 需要验证路径
-                a_to_e = ans_dict.get("A_to_E", "")
-                e_to_a = ans_dict.get("E_to_A", "")
-                if not a_to_e or not e_to_a:
-                    return False
-                # 验证路径有效性
-                a_to_e_labels = [x.strip() for x in a_to_e.split("-") if x.strip()]
-                e_to_a_labels = [x.strip() for x in e_to_a.split("-") if x.strip()]
-                return self._verify_path("A", "E", a_to_e_labels) and self._verify_path("E", "A", e_to_a_labels)
-            elif reachable_answer == "no":
-                return not self.mutually_reachable
-            else:
-                return False
-
-    def _verify_path(self, start, end, labels):
-        """验证给定的标签序列是否能从start到达end"""
-        current = start
-        for label in labels:
-            if current not in self.graph or label not in self.graph[current]:
-                return False
-            current = self.graph[current][label]
-        return current == end
+        except:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的处理逻辑"""
-        if "query_edge" in parsed_info:
-            query = parsed_info["query_edge"].strip()
-            try:
-                # 解析查询：节点,标签
-                parts = [x.strip() for x in query.split(",")]
-                if len(parts) != 2:
-                    raise ValueError
-                
-                node, label = parts[0], parts[1]
-                
-                # 验证节点和标签是否有效
-                if node not in self.graph:
-                    if self.config.language == "zh":
-                        return f"错误：节点 {node} 不在集合 {{A, B, C, D, E}} 中。"
-                    else:
-                        return f"Error: Node {node} is not in set {{A, B, C, D, E}}."
-                
-                if label not in self.graph[node]:
-                    if self.config.language == "zh":
-                        return f"错误：标签 {label} 不在集合 {{红, 蓝, 绿}} 中。"
-                    else:
-                        return f"Error: Label {label} is not in set {{Red, Blue, Green}}."
-                
-                # 返回出边目标节点
-                target = self.graph[node][label]
-                return target
-                
-            except:
-                if self.config.language == "zh":
-                    return "错误：查询格式无效。应为：节点,标签（例如：A,红）"
-                else:
-                    return "Error: Invalid query format. Should be: node,label (e.g., A,Red)"
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            invalid_res = "无效查询"
+            error_format = "错误：查询格式无效。请使用格式 <query>L,R</query>，其中 L 和 R 为整数。"
+            exceeded_msg = f"你已用完所有 {self.max_queries} 次查询机会，请直接提交你的最终答案。"
         else:
+            yes_res, no_res = "Yes", "No"
+            invalid_res = "Invalid Query"
+            error_format = "Error: Invalid query format. Please use the format <query>L,R</query> where L and R are integers."
+            exceeded_msg = f"You have used all {self.max_queries} queries. Please submit your final answer now."
+
+        if "query" not in parsed_info:
             raise ValueError("No valid query tag found.")
+        
+        if self.query_count >= self.max_queries:
+            return exceeded_msg
+        
+        try:
+            raw = parsed_info["query"]
+            parts = [x.strip() for x in raw.split(",")]
+            
+            if len(parts) != 2:
+                return error_format
+            
+            L = int(parts[0])
+            R = int(parts[1])
+            
+            if L < 1 or R > self.n or L > R:
+                return invalid_res
+            
+            self.query_count += 1
+            
+            has_one = not (R < self.first or L > self.last)
+            return yes_res if has_one else no_res
+            
+        except (ValueError, Exception):
+            return error_format
 
     def _cf_make_wrong(self, correct):
-        """生成错误答案 - 返回一个不同的合法节点或修改关键信息"""
-        nodes = ["A", "B", "C", "D", "E"]
-        
-        # 如果 correct 是一个合法节点名，返回一个不同的节点
-        if correct in nodes:
-            for n in nodes:
-                if n != correct:
-                    return n
-        
-        # 若 correct 是纯整数字符串
-        if isinstance(correct, str) and correct.isdigit():
-            return str(int(correct) + 1)
-        
-        # 关键词替换
         if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            if "否" in correct:
-                return correct.replace("否", "是")
+            yes_res, no_res = "是", "否"
         else:
-            # 英文关键词不区分大小写
-            lower_correct = correct.lower()
-            if "yes" in lower_correct:
-                return re.sub(r'(?i)yes', 'No', correct)
-            if "no" in lower_correct:
-                return re.sub(r'(?i)no', 'Yes', correct)
+            yes_res, no_res = "Yes", "No"
         
-        # 都不匹配，追加 _WRONG
-        return f"{correct}_WRONG"
+        if correct == yes_res:
+            return no_res
+        elif correct == no_res:
+            return yes_res
+        else:
+            return yes_res
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        nodes = ["A", "B", "C", "D", "E"]
-        if self.config.language == "zh":
-            labels = ["红", "蓝", "绿"]
-        else:
-            labels = ["Red", "Blue", "Green"]
-            
         results = []
-        for n in nodes:
-            for l in labels:
-                query_content = f"{n},{l}"
-                # 直接使用 self.graph 查找答案，复用游戏逻辑
-                if n in self.graph and l in self.graph[n]:
-                    ans = self.graph[n][l]
-                    results.append({
-                        "query": f"<query_edge>{query_content}</query_edge>",
-                        "answer": ans
-                    })
+        n = self.n
+
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+
+        def has_one_in(l, r):
+            return r >= self.first and l <= self.last
+
+        lo, hi = 1, n
+        while lo < hi:
+            mid = (lo + hi) // 2
+            ans = yes_res if has_one_in(1, mid) else no_res
+            results.append({
+                "query": f"<query>1,{mid}</query>",
+                "answer": ans
+            })
+            if has_one_in(1, mid):
+                hi = mid
+            else:
+                lo = mid + 1
+
+        lo, hi = 1, n
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            ans = yes_res if has_one_in(mid, n) else no_res
+            results.append({
+                "query": f"<query>{mid},{n}</query>",
+                "answer": ans
+            })
+            if has_one_in(mid, n):
+                lo = mid
+            else:
+                hi = mid - 1
+
+        redundant_queries = [
+            (1, n),
+            (self.first, self.last),
+        ]
+        if self.first > 2:
+            redundant_queries.append((1, self.first - 1))
+        if self.last < n - 1:
+            redundant_queries.append((self.last + 1, n))
+
+        for l, r in redundant_queries:
+            ans = yes_res if has_one_in(l, r) else no_res
+            results.append({
+                "query": f"<query>{l},{r}</query>",
+                "answer": ans
+            })
+
         return results

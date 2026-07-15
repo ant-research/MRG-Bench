@@ -1,545 +1,558 @@
 from .base import Game
 import random
 
-class TreeStructureIdentificationGame(Game):
+class ShortestPathPerturbationGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"交互式图结构识别"的推理游戏，规则如下：
+我们来玩一个"最短路径扰动判定"游戏，规则如下：
 
-游戏设定了一个节点集合，编号为 1 到 {n}。这些节点组成了一棵未知的无向树 T（即有 {n_minus_1} 条边的连通无环图），你的目标是通过交互查询来推断出这棵树的完整边集。
+游戏设定了一个未知的简单、连通、无向、无权图 G，顶点集合为 {{1, 2, ..., {n}}}。图中有四个特殊的已标注顶点：
+- S = {s}
+- T = {t}
+- U = {u}
+- V = {v}
 
-## 内部状态
+这四个顶点互不相同。图的边集对你不可见，你只能通过查询来获取信息。
 
-游戏内部维护一个子图 S，初始为空集。S 中的边始终是树 T 的子集，且保证 S 构成一个森林（无环）。
+你的目标是判断：如果在原图 G 上添加一条新边 (U, V)，从 S 到 T 的最短距离是否会严格减小。
 
-## 交互查询
+你可以进行距离查询，每次查询两个顶点之间在原图 G 上的最短距离。查询格式如下：
 
-你可以反复进行以下查询（每次一个查询）：
+<query_dist>a,b</query_dist>
 
-**查询格式**：询问两个不同的节点 u 和 v（u 不等于 v）。
+其中 a 和 b 是顶点编号（1 到 {n} 之间）。我会回复一个非负整数，表示原图 G 上 a 到 b 的最短距离。
 
-**查询反馈**（包含三个信息）：
-1. **连通性**：在当前子图 S 中，u 和 v 是否连通（是/否）。
-2. **状态更新**：系统会自动沿着树 T 中 u 到 v 的唯一路径进行"边切换"操作——路径上的每条边，如果已在 S 中则删除，否则加入 S。
-3. **更新后统计**：
-   - 连通块数量：更新后 S 形成的连通分量个数（范围 1 到 {n}）
-   - 开启边数量：更新后 S 中包含的边数（范围 0 到 {n_minus_1}）
+注意：
+1. 所有查询都是针对原图 G 的，不能查询添加边之后的距离。
+2. 请尽可能少地使用查询次数。
+3. 每次只能提交一个查询标签。
 
-## 提交答案
+当你收集到足够信息后，请提交最终判定结果。格式如下：
 
-当你认为已收集足够信息时，可以提交你推断出的树的边集。答案格式为一个包含 {n_minus_1} 条边的列表，每条边用两个节点编号表示（用短横线连接，顺序不限）。
+<answer>是</answer>
 
-**重要提示**：
-- 每次只能进行一个查询或提交一次答案
-- 错误的提交将导致游戏失败
-- 尽量用最少的查询次数完成任务
+或
 
-## 格式要求
+<answer>否</answer>
 
-**查询格式**（询问节点 u 和 v）：
-<query>u,v</query>
+其中"是"表示添加边 (U, V) 会使 S 到 T 的最短距离严格减小，"否"表示不会减小。
 
-**提交答案格式**（例如树有 3 条边：1-2, 2-3, 3-4）：
-<answer>1-2,2-3,3-4</answer>
+若答案错误或格式不符，游戏失败。
 """
 
     game_rule_en = """\
-Let's play a "Tree Structure Identification" deduction game. Here are the rules:
+Let's play a "Shortest Path Perturbation" game. Here are the rules:
 
-There is a set of nodes numbered from 1 to {n}. These nodes form an unknown undirected tree T (i.e., a connected acyclic graph with {n_minus_1} edges). Your goal is to infer the complete edge set of this tree through interactive queries.
+The game involves an unknown simple, connected, undirected, unweighted graph G with vertex set {{1, 2, ..., {n}}}. There are four special labeled vertices in the graph:
+- S = {s}
+- T = {t}
+- U = {u}
+- V = {v}
 
-## Internal State
+These four vertices are all distinct. The edge set is hidden from you, and you can only obtain information through queries.
 
-The game internally maintains a subgraph S, initially empty. Edges in S are always a subset of tree T, and S is guaranteed to form a forest (acyclic).
+Your goal is to determine: if we add a new edge (U, V) to the original graph G, will the shortest distance from S to T strictly decrease?
 
-## Interactive Queries
+You can perform distance queries to ask for the shortest distance between two vertices in the original graph G. The query format is:
 
-You can repeatedly perform the following query (one per turn):
+<query_dist>a,b</query_dist>
 
-**Query format**: Ask about two different nodes u and v (u not equal to v).
+where a and b are vertex IDs (between 1 and {n}). I will respond with a non-negative integer representing the shortest distance from a to b in the original graph G.
 
-**Query feedback** (contains three pieces of information):
-1. **Connectivity**: Whether u and v are connected in the current subgraph S (Yes/No).
-2. **State update**: The system will automatically perform an "edge toggle" operation along the unique path from u to v in tree T—for each edge on the path, if it's already in S, remove it; otherwise, add it to S.
-3. **Post-update statistics**:
-   - Component count: Number of connected components formed by S after the update (range 1 to {n})
-   - Active edges: Number of edges in S after the update (range 0 to {n_minus_1})
+Note:
+1. All queries are about the original graph G; you cannot query distances after adding the edge.
+2. Please use as few queries as possible.
+3. Each turn can only contain one query tag.
 
-## Submit Answer
+When you have collected enough information, submit your final decision in the following format:
 
-When you believe you have gathered enough information, you can submit your inferred edge set of the tree. The answer format is a list of {n_minus_1} edges, each edge represented by two node numbers (connected by a hyphen, order doesn't matter).
+<answer>Yes</answer>
 
-**Important notes**:
-- Only one query or one answer submission per turn
-- An incorrect submission will result in game failure
-- Try to complete the task with the minimum number of queries
+or
 
-## Format Requirements
+<answer>No</answer>
 
-**Query format** (asking about nodes u and v):
-<query>u,v</query>
+where "Yes" means adding edge (U, V) will strictly decrease the shortest distance from S to T, and "No" means it will not decrease.
 
-**Answer submission format** (e.g., tree with 3 edges: 1-2, 2-3, 3-4):
-<answer>1-2,2-3,3-4</answer>
+If the answer is wrong or the format is invalid, the game fails.
 """
 
     contextualized_rule_zh_1 = """\
-【交通场景】
-我们现在来玩一个“核心路网拓扑探测”推理游戏，规则如下：
+这是交通规划领域的"路网最短路径扰动判定"推演。
+我们设定了一个未知的简单、连通的无向路网图 G，代表城市中各个路口，路口集合为 {{1, 2, ..., {n}}}。图中有四个特殊的已标注路口：
+- 核心物流枢纽 S = {s}
+- 目标分拨中心 T = {t}
+- 拟建高架桥起点 U = {u}
+- 拟建高架桥终点 V = {v}
 
-某地区的交通枢纽编号为 1 到 {n}。这些枢纽之间存在一条未知的核心主干道路网 T（这是一棵有 {n_minus_1} 条路段的连通无环网络），你的目标是通过交互调度查询来推断出这棵主干网的完整分布。
+这四个路口互不相同。路网的现有道路分布对你不可见，你只能通过路网探测查询来获取信息。
 
-## 内部状态
+你的目标是判断：如果在现有路网 G 上新增一条直达高架桥通道 (U, V)，从物流枢纽 S 到分拨中心 T 的最短通行距离（经过的路段数）是否会严格减小。
 
-系统内部维护一个当前处于开放状态的路段子网 S，初始时路段全部封闭（空集）。S 中的路段始终是主干道 T 的一部分，且保证不存在环路。
+你可以进行路径探测，每次查询两个路口之间在现有路网 G 上的最短通行距离。查询格式如下：
 
-## 交互查询
+<query_dist>a,b</query_dist>
 
-你可以反复进行以下查询调度（每次一项）：
+其中 a 和 b 是路口编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有路网 G 上 a 到 b 的最短通行距离。
 
-**查询格式**：询问两个不同的枢纽 u 和 v（u 不等于 v）。
+注意：
+1. 所有查询都是针对原路网 G 的，不能查询添加高架桥之后的距离。
+2. 请尽可能少地使用查询次数。
+3. 每次只能提交一个查询标签。
 
-**查询反馈**（包含三个信息）：
-1. **连通性**：在当前开放的子网 S 中，枢纽 u 和 v 之间是否可以直接或间接通行（是/否）。
-2. **状态更新**：系统会自动沿着主干网 T 中 u 到 v 的唯一通勤路径进行“路段状态切换”——路径上的每个路段，如果当前是开放状态则封闭（移出 S），如果当前是封闭状态则开放（加入 S）。
-3. **更新后统计**：
-   - 连通块数量：更新后 S 形成的互相连通的枢纽群个数（范围 1 到 {n}）
-   - 开启边数量：更新后 S 中处于开放状态的路段总数（范围 0 到 {n_minus_1}）
+当你收集到足够信息后，请提交最终规划判定。格式如下：
 
-## 提交答案
+<answer>是</answer>
 
-当你认为已收集足够信息时，可以提交你推断出的主干网路段分布。答案格式为一个包含 {n_minus_1} 条路段的列表，每条路段用两个枢纽编号表示（用短横线连接，顺序不限）。
+或
 
-**重要提示**：
-- 每次只能进行一个查询或提交一次答案
-- 错误的提交将导致调查失败
-- 尽量用最少的查询次数完成任务
+<answer>否</answer>
 
-## 格式要求
+其中"是"表示新增高架通道 (U, V) 会使 S 到 T 的最短距离严格减小，"否"表示不会减小。
 
-**查询格式**（询问枢纽 u 和 v）：
-<query>u,v</query>
-
-**提交答案格式**（例如路网有 3 条路段：1-2, 2-3, 3-4）：
-<answer>1-2,2-3,3-4</answer>
+若答案错误或格式不符，推演失败。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's play a "Core Road Network Topology Detection" deduction game. Here are the rules:
+Let's conduct a "Shortest Path Perturbation Evaluation" in the field of traffic planning.
+The scenario involves an unknown simple, connected, undirected road network graph G, representing various intersections in a city, with the intersection set being {{1, 2, ..., {n}}}. There are four special labeled intersections in the network:
+- Core Logistics Hub S = {s}
+- Target Distribution Center T = {t}
+- Proposed Viaduct Start U = {u}
+- Proposed Viaduct End V = {v}
 
-There are traffic hubs numbered from 1 to {n} in a region. These hubs form an unknown core arterial road network T (a connected acyclic network with {n_minus_1} road segments). Your goal is to infer the complete distribution of this main network through interactive scheduling queries.
+These four intersections are all distinct. The current road connections are hidden from you, and you can only obtain information through network probing queries.
 
-## Internal State
+Your goal is to determine: if we construct a new direct viaduct corridor (U, V) on the existing road network G, will the shortest travel distance (number of road segments) from the Logistics Hub S to the Distribution Center T strictly decrease?
 
-The system internally maintains a sub-network S of road segments that are currently open, initially all closed (empty set). Segments in S are always a subset of the main network T, and it is guaranteed that S forms no cycles.
+You can perform route probing to ask for the shortest travel distance between two intersections in the existing road network G. The query format is:
 
-## Interactive Queries
+<query_dist>a,b</query_dist>
 
-You can repeatedly perform the following scheduling query (one per turn):
+where a and b are intersection IDs (between 1 and {n}). I will respond with a non-negative integer representing the shortest travel distance from a to b in the existing road network G.
 
-**Query format**: Ask about two different hubs u and v (u not equal to v).
+Note:
+1. All queries are about the existing road network G; you cannot query distances after the viaduct is constructed.
+2. Please use as few queries as possible.
+3. Each turn can only contain one query tag.
 
-**Query feedback** (contains three pieces of information):
-1. **Connectivity**: Whether hubs u and v are mutually accessible in the currently open sub-network S (Yes/No).
-2. **State update**: The system will automatically perform a "segment state toggle" along the unique commute route from u to v in the main network T—for each segment on the route, if it's currently open, it will be closed (removed from S); if closed, it will be opened (added to S).
-3. **Post-update statistics**:
-   - Component count: Number of interconnected hub groups formed by S after the update (range 1 to {n})
-   - Active edges: Total number of open road segments in S after the update (range 0 to {n_minus_1})
+When you have collected enough information, submit your final planning decision in the following format:
 
-## Submit Answer
+<answer>Yes</answer>
 
-When you believe you have gathered enough information, you can submit your inferred road segment distribution of the main network. The answer format is a list of {n_minus_1} segments, each represented by two hub numbers (connected by a hyphen, order doesn't matter).
+or
 
-**Important notes**:
-- Only one query or one answer submission per turn
-- An incorrect submission will result in investigation failure
-- Try to complete the task with the minimum number of queries
+<answer>No</answer>
 
-## Format Requirements
+where "Yes" means constructing the viaduct corridor (U, V) will strictly decrease the shortest travel distance from S to T, and "No" means it will not decrease.
 
-**Query format** (asking about hubs u and v):
-<query>u,v</query>
-
-**Answer submission format** (e.g., network with 3 segments: 1-2, 2-3, 3-4):
-<answer>1-2,2-3,3-4</answer>
+If the answer is wrong or the format is invalid, the evaluation fails.
 """
 
     contextualized_rule_zh_2 = """\
-【医疗场景】
-我们现在来玩一个“神经网络传导通路定位”推理游戏，规则如下：
+这是医疗急救领域的"医院转运通道优化"推演。
+我们设定了一个未知的简单、连通的无向通道网络 G，代表医院内各个科室节点，科室集合为 {{1, 2, ..., {n}}}。网络中有四个特殊的已标注科室：
+- 急诊科 S = {s}
+- 重症监护室(ICU) T = {t}
+- 拟建快速通道起点 U = {u}
+- 拟建快速通道终点 V = {v}
 
-生物体内有一组关键神经元，编号为 1 到 {n}。这些神经元之间存在一条未知的核心传导通路 T（这是一棵有 {n_minus_1} 条突触连接的连通无环网络），你的目标是通过电生理交互刺激来推断出该通路的完整拓扑结构。
+这四个科室互不相同。医院现有的转运通道对你不可见，你只能通过通道距离查询来获取信息。
 
-## 内部状态
+你的目标是判断：如果在现有网络 G 上打通一条内部直连通道 (U, V)，从急诊科 S 转运病人到重症监护室 T 的最短转移距离（经过的通道段数）是否会严格减小。
 
-系统内部监测一个当前处于激活状态的突触子网 S，初始时均处于休眠状态（空集）。S 中的连接始终是核心通路 T 的一部分，且保证不存在传导环路。
+你可以进行距离查询，每次查询两个科室之间在现有网络 G 上的最短转移距离。查询格式如下：
 
-## 交互查询
+<query_dist>a,b</query_dist>
 
-你可以反复进行以下刺激测试（每次一项）：
+其中 a 和 b 是科室编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有网络 G 上 a 到 b 的最短转移距离。
 
-**查询格式**：刺激两个不同的神经元 u 和 v（u 不等于 v）。
+注意：
+1. 所有查询都是针对原网络 G 的，不能查询打通通道之后的最短距离。
+2. 请尽可能少地使用查询次数。
+3. 每次只能提交一个查询标签。
 
-**查询反馈**（包含三个信息）：
-1. **连通性**：在当前激活的子网 S 中，神经元 u 和 v 的生物信号是否连通（是/否）。
-2. **状态更新**：机体会沿着核心通路 T 中 u 到 v 的唯一神经传导路径产生“极化逆转”——路径上的每个突触连接，如果当前处于激活态则被抑制（移出 S），如果处于休眠态则被激活（加入 S）。
-3. **更新后统计**：
-   - 连通块数量：更新后 S 形成的独立信号传导区块个数（范围 1 到 {n}）
-   - 开启边数量：更新后 S 中处于激活状态的突触连接总数（范围 0 到 {n_minus_1}）
+当你收集到足够信息后，请提交最终优化判定。格式如下：
 
-## 提交答案
+<answer>是</answer>
 
-当你认为已收集足够信息时，可以提交你推断出的完整通路连接图。答案格式为一个包含 {n_minus_1} 条连接的列表，每条连接用两个神经元编号表示（用短横线连接，顺序不限）。
+或
 
-**重要提示**：
-- 每次只能进行一个查询或提交一次答案
-- 错误的提交将导致定位失败
-- 尽量用最少的刺激次数完成任务
+<answer>否</answer>
 
-## 格式要求
+其中"是"表示打通快速通道 (U, V) 会使急诊科 S 到重症监护室 T 的最短转移距离严格减小，"否"表示不会减小。
 
-**查询格式**（刺激神经元 u 和 v）：
-<query>u,v</query>
-
-**提交答案格式**（例如通路有 3 条连接：1-2, 2-3, 3-4）：
-<answer>1-2,2-3,3-4</answer>
+若答案错误或格式不符，推演失败。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's play a "Neural Pathway Localization" deduction game. Here are the rules:
+Let's conduct a "Hospital Transfer Corridor Optimization" evaluation in the medical emergency field.
+The scenario involves an unknown simple, connected, undirected corridor network G, representing various department nodes in a hospital, with the department set being {{1, 2, ..., {n}}}. There are four special labeled departments in the network:
+- Emergency Department S = {s}
+- Intensive Care Unit (ICU) T = {t}
+- Proposed Rapid Corridor Start U = {u}
+- Proposed Rapid Corridor End V = {v}
 
-There is a set of critical neurons in an organism numbered from 1 to {n}. These neurons form an unknown core conduction pathway T (a connected acyclic network with {n_minus_1} synaptic connections). Your goal is to infer the complete topology of this pathway through interactive electrophysiological stimulation.
+These four departments are all distinct. The current hospital transfer connections are hidden from you, and you can only obtain information through corridor distance queries.
 
-## Internal State
+Your goal is to determine: if we open up a new internal direct corridor (U, V) in the existing network G, will the shortest transfer distance (number of corridor segments) for moving a patient from the Emergency Department S to the ICU T strictly decrease?
 
-The system monitors a sub-network S of currently active synaptic connections, initially all in a dormant state (empty set). Connections in S are always a subset of the core pathway T, and it is guaranteed that there are no conduction loops.
+You can perform distance queries to ask for the shortest transfer distance between two departments in the existing network G. The query format is:
 
-## Interactive Queries
+<query_dist>a,b</query_dist>
 
-You can repeatedly perform the following stimulation test (one per turn):
+where a and b are department IDs (between 1 and {n}). I will respond with a non-negative integer representing the shortest transfer distance from a to b in the existing network G.
 
-**Query format**: Stimulate two different neurons u and v (u not equal to v).
+Note:
+1. All queries are about the existing network G; you cannot query distances after the new corridor is opened.
+2. Please use as few queries as possible.
+3. Each turn can only contain one query tag.
 
-**Query feedback** (contains three pieces of information):
-1. **Connectivity**: Whether biological signals between neurons u and v are connected in the currently active sub-network S (Yes/No).
-2. **State update**: The organism will trigger a "polarization reversal" along the unique neural conduction route from u to v in the core pathway T—for each synaptic connection on the route, if it's currently active, it gets inhibited (removed from S); if dormant, it gets activated (added to S).
-3. **Post-update statistics**:
-   - Component count: Number of independent signal conduction blocks formed by S after the update (range 1 to {n})
-   - Active edges: Total number of active synaptic connections in S after the update (range 0 to {n_minus_1})
+When you have collected enough information, submit your final optimization decision in the following format:
 
-## Submit Answer
+<answer>Yes</answer>
 
-When you believe you have gathered enough information, you can submit your inferred complete pathway connection graph. The answer format is a list of {n_minus_1} connections, each represented by two neuron numbers (connected by a hyphen, order doesn't matter).
+or
 
-**Important notes**:
-- Only one query or one answer submission per turn
-- An incorrect submission will result in localization failure
-- Try to complete the task with the minimum number of stimulations
+<answer>No</answer>
 
-## Format Requirements
+where "Yes" means opening the rapid corridor (U, V) will strictly decrease the shortest transfer distance from S to T, and "No" means it will not decrease.
 
-**Query format** (stimulating neurons u and v):
-<query>u,v</query>
-
-**Answer submission format** (e.g., pathway with 3 connections: 1-2, 2-3, 3-4):
-<answer>1-2,2-3,3-4</answer>
+If the answer is wrong or the format is invalid, the evaluation fails.
 """
 
     contextualized_rule_zh_3 = """\
-【教育场景】
-我们现在来玩一个“知识图谱前置依赖挖掘”推理游戏，规则如下：
+这是校园网络设施领域的"网络路由跳数优化"分析。
+我们设定了一个未知的简单、连通的无向拓扑网络 G，代表校园内的各个网络节点（路由器/交换机），节点集合为 {{1, 2, ..., {n}}}。网络中有四个特殊的已标注节点：
+- 核心服务器 S = {s}
+- 主教学楼基站 T = {t}
+- 拟铺设直连光缆的节点 U = {u}
+- 拟铺设直连光缆的节点 V = {v}
 
-某学科有核心知识点编号为 1 到 {n}。这些知识点之间存在一套未知的底层逻辑依赖关系 T（这是一棵有 {n_minus_1} 条依赖连线的连通无环网络），你的目标是通过互动式摸底测试推断出这套完整的依赖网络。
+这四个节点互不相同。现有的网络物理拓扑对你不可见，你只能通过路由跳数查询来获取信息。
 
-## 内部状态
+你的目标是判断：如果在现有拓扑 G 上铺设一条新的直连光缆 (U, V)，数据包从核心服务器 S 到主教学楼基站 T 传输的最少网络跳数是否会严格减小。
 
-系统追踪一个当前学生已“点亮”的认知关联子网 S，初始为空白状态。S 中的关联始终是逻辑依赖关系 T 的一部分，且保证不存在循环论证（无环）。
+你可以进行跳数查询，每次查询两个节点之间在现有网络 G 上的最少路由跳数。查询格式如下：
 
-## 交互查询
+<query_dist>a,b</query_dist>
 
-你可以反复发起以下摸底测试（每次一项）：
+其中 a 和 b 是节点编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有网络 G 上 a 到 b 的最少跳数。
 
-**查询格式**：考察两个不同的知识点 u 和 v（u 不等于 v）。
+注意：
+1. 所有查询都是针对原网络 G 的，不能查询铺设光缆之后的跳数。
+2. 请尽可能少地使用查询次数。
+3. 每次只能提交一个查询标签。
 
-**查询反馈**（包含三个信息）：
-1. **连通性**：在当前已点亮的认知子网 S 中，知识点 u 和 v 的思维逻辑是否能够串联（是/否）。
-2. **状态更新**：系统会顺着底层依赖关系 T 中 u 到 v 的唯一逻辑推演路径引发“认知翻转”——路径上的每个逻辑关联，如果当前已被学生掌握则暂时屏蔽（移出 S），如果未掌握则被触发理解（加入 S）。
-3. **更新后统计**：
-   - 连通块数量：更新后 S 形成的孤立认知聚类个数（范围 1 到 {n}）
-   - 开启边数量：更新后 S 中处于点亮状态的逻辑连线总数（范围 0 到 {n_minus_1}）
+当你收集到足够信息后，请提交最终优化判定。格式如下：
 
-## 提交答案
+<answer>是</answer>
 
-当你认为已收集足够信息时，可以提交你推断出的学科依赖网络图。答案格式为一个包含 {n_minus_1} 条依赖连线的列表，每条连线用两个知识点编号表示（用短横线连接，顺序不限）。
+或
 
-**重要提示**：
-- 每次只能发起一个查询或提交一次答案
-- 错误的提交将导致评估失败
-- 尽量用最少的测试次数完成评估
+<answer>否</answer>
 
-## 格式要求
+其中"是"表示铺设光缆 (U, V) 会使核心服务器 S 到教学楼基站 T 的网络跳数严格减小，"否"表示不会减小。
 
-**查询格式**（考察知识点 u 和 v）：
-<query>u,v</query>
-
-**提交答案格式**（例如网络有 3 条连线：1-2, 2-3, 3-4）：
-<answer>1-2,2-3,3-4</answer>
+若答案错误或格式不符，分析失败。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's play a "Knowledge Graph Prerequisite Mining" deduction game. Here are the rules:
+Let's conduct a "Network Routing Hop Optimization" analysis in the field of campus network infrastructure.
+The scenario involves an unknown simple, connected, undirected topological network G, representing various network nodes (routers/switches) on campus, with the node set being {{1, 2, ..., {n}}}. There are four special labeled nodes in the network:
+- Core Server S = {s}
+- Main Academic Building Base Station T = {t}
+- Proposed Fiber Optic Direct Connection Node U = {u}
+- Proposed Fiber Optic Direct Connection Node V = {v}
 
-There are core knowledge points in a subject numbered from 1 to {n}. These points form an unknown underlying logical dependency relation T (a connected acyclic network with {n_minus_1} dependency links). Your goal is to infer the complete dependency network through interactive diagnostic testing.
+These four nodes are all distinct. The current physical network topology is hidden from you, and you can only obtain information through routing hop queries.
 
-## Internal State
+Your goal is to determine: if we lay a new direct fiber optic cable (U, V) on the existing topology G, will the minimum network routing hops for data packets from the Core Server S to the Base Station T strictly decrease?
 
-The system tracks a sub-network S of cognitive associations currently "illuminated" by the student, initially blank (empty set). Associations in S are always a subset of the logical relation T, and it is guaranteed that there are no circular arguments (acyclic).
+You can perform hop queries to ask for the minimum routing hops between two nodes in the existing network G. The query format is:
 
-## Interactive Queries
+<query_dist>a,b</query_dist>
 
-You can repeatedly initiate the following diagnostic test (one per turn):
+where a and b are node IDs (between 1 and {n}). I will respond with a non-negative integer representing the minimum routing hops from a to b in the existing network G.
 
-**Query format**: Test two different knowledge points u and v (u not equal to v).
+Note:
+1. All queries are about the existing network G; you cannot query hops after the cable is laid.
+2. Please use as few queries as possible.
+3. Each turn can only contain one query tag.
 
-**Query feedback** (contains three pieces of information):
-1. **Connectivity**: Whether the reasoning logic between points u and v can be linked in the currently illuminated cognitive sub-network S (Yes/No).
-2. **State update**: The system will trigger a "cognitive flip" along the unique logical deduction path from u to v in the underlying dependency T—for each logical link on the path, if currently mastered by the student, it gets temporarily masked (removed from S); if unmastered, it gets comprehended (added to S).
-3. **Post-update statistics**:
-   - Component count: Number of isolated cognitive clusters formed by S after the update (range 1 to {n})
-   - Active edges: Total number of illuminated logical links in S after the update (range 0 to {n_minus_1})
+When you have collected enough information, submit your final optimization decision in the following format:
 
-## Submit Answer
+<answer>Yes</answer>
 
-When you believe you have gathered enough information, you can submit your inferred subject dependency network graph. The answer format is a list of {n_minus_1} dependency links, each represented by two knowledge point numbers (connected by a hyphen, order doesn't matter).
+or
 
-**Important notes**:
-- Only one query or one answer submission per turn
-- An incorrect submission will result in assessment failure
-- Try to complete the evaluation with the minimum number of tests
+<answer>No</answer>
 
-## Format Requirements
+where "Yes" means laying the fiber optic cable (U, V) will strictly decrease the network hops from S to T, and "No" means it will not decrease.
 
-**Query format** (testing knowledge points u and v):
-<query>u,v</query>
-
-**Answer submission format** (e.g., network with 3 links: 1-2, 2-3, 3-4):
-<answer>1-2,2-3,3-4</answer>
+If the answer is wrong or the format is invalid, the analysis fails.
 """
 
     contextualized_rule_zh_4 = """\
-【工业场景】
-我们现在来玩一个“车间隐蔽供电线缆排查”推理游戏，规则如下：
+这是自动化制造领域的"流水线物料传送优化"推演。
+我们设定了一个未知的简单、连通的无向传送带网络 G，代表工厂内部各个工作站，工作站集合为 {{1, 2, ..., {n}}}。网络中有四个特殊的已标注工作站：
+- 原料库 S = {s}
+- 总装车间 T = {t}
+- 拟新增传送带起点 U = {u}
+- 拟新增传送带终点 V = {v}
 
-某自动化工厂内有关键生产设备编号为 1 到 {n}。这些设备依靠一套未知的地下主供电线缆 T 相连（这是一棵有 {n_minus_1} 段线缆的连通无环网络），你的目标是通过试送电指令推断出整套线缆的走线布局。
+这四个工作站互不相同。目前的物料传送链路拓扑对你不可见，你只能通过传送段数查询来获取信息。
 
-## 内部状态
+你的目标是判断：如果在现有传送带网络 G 上加装一条直接相连的传送带 (U, V)，从原料库 S 输送物料到总装车间 T 所需经历的最少传送环节数是否会严格减小。
 
-控制系统监测一个当前处于“通电”状态的线缆子网 S，初始时全部断电。S 中的线缆始终是主供电线缆 T 的一部分，且保证不存在供电短路环。
+你可以进行环节数查询，每次查询两个工作站之间在现有网络 G 上的最少传送环节数。查询格式如下：
 
-## 交互查询
+<query_dist>a,b</query_dist>
 
-你可以反复发送以下试送电指令（每次一项）：
+其中 a 和 b 是工作站编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有网络 G 上 a 到 b 的最少传送环节数。
 
-**查询格式**：检测两个不同的设备 u 和 v（u 不等于 v）。
+注意：
+1. 所有查询都是针对原网络 G 的，不能查询加装传送带之后的环节数。
+2. 请尽可能少地使用查询次数。
+3. 每次只能提交一个查询标签。
 
-**查询反馈**（包含三个信息）：
-1. **连通性**：在当前通电的子网 S 中，设备 u 和 v 是否处于同一供电回路上（是/否）。
-2. **状态更新**：PLC控制柜会沿着供电主线缆 T 中 u 到 v 的唯一电路走线执行“继电器翻转”——路径上的每段线缆，如果当前已通电则强制断开（移出 S），如果当前已断开则闭合通电（加入 S）。
-3. **更新后统计**：
-   - 连通块数量：更新后 S 形成的独立供电岛个数（范围 1 到 {n}）
-   - 开启边数量：更新后 S 中处于通电状态的线缆总段数（范围 0 到 {n_minus_1}）
+当你收集到足够信息后，请提交最终改造判定。格式如下：
 
-## 提交答案
+<answer>是</answer>
 
-当你认为已收集足够信息时，可以提交你推断出的地下线缆拓扑图。答案格式为一个包含 {n_minus_1} 段线缆的列表，每段线缆用两端连接的设备编号表示（用短横线连接，顺序不限）。
+或
 
-**重要提示**：
-- 每次只能发送一个指令或提交一次答案
-- 错误的提交将导致排查任务失败并触发警报
-- 尽量用最少的试送电次数完成排查
+<answer>否</answer>
 
-## 格式要求
+其中"是"表示加装传送带 (U, V) 会使原料库 S 到总装车间 T 的最少传送环节数严格减小，"否"表示不会减小。
 
-**查询格式**（检测设备 u 和 v）：
-<query>u,v</query>
-
-**提交答案格式**（例如线缆有 3 段：1-2, 2-3, 3-4）：
-<answer>1-2,2-3,3-4</answer>
+若答案错误或格式不符，推演失败。
 """
 
     contextualized_rule_en_4 = """\
-[Industrial Scenario]
-Let's play a "Workshop Hidden Power Cable Inspection" deduction game. Here are the rules:
+[Manufacturing/Industrial Scenario]
+Let's conduct an "Assembly Line Material Conveyance Optimization" evaluation in automated manufacturing.
+The scenario involves an unknown simple, connected, undirected conveyor belt network G, representing various workstations inside a factory, with the workstation set being {{1, 2, ..., {n}}}. There are four special labeled workstations in the network:
+- Raw Material Depot S = {s}
+- Final Assembly Workshop T = {t}
+- Proposed New Conveyor Belt Start U = {u}
+- Proposed New Conveyor Belt End V = {v}
 
-There are critical production equipments in an automated factory numbered from 1 to {n}. These equipments are connected by an unknown underground main power cable network T (a connected acyclic network with {n_minus_1} cable segments). Your goal is to infer the entire cable routing layout through trial power-transmission commands.
+These four workstations are all distinct. The current topology of material conveyance links is hidden from you, and you can only obtain information through conveyance segment queries.
 
-## Internal State
+Your goal is to determine: if we install a new directly connected conveyor belt (U, V) on the existing network G, will the minimum number of conveyance segments required to transport materials from the Raw Material Depot S to the Final Assembly Workshop T strictly decrease?
 
-The control system monitors a sub-network S of cable segments currently in an "energized" state, initially all de-energized (empty set). Segments in S are always a subset of the main power cable T, and it is guaranteed that there are no short-circuit loops.
+You can perform segment queries to ask for the minimum conveyance segments between two workstations in the existing network G. The query format is:
 
-## Interactive Queries
+<query_dist>a,b</query_dist>
 
-You can repeatedly send the following trial command (one per turn):
+where a and b are workstation IDs (between 1 and {n}). I will respond with a non-negative integer representing the minimum conveyance segments from a to b in the existing network G.
 
-**Query format**: Inspect two different equipments u and v (u not equal to v).
+Note:
+1. All queries are about the existing network G; you cannot query the segment counts after the new belt is installed.
+2. Please use as few queries as possible.
+3. Each turn can only contain one query tag.
 
-**Query feedback** (contains three pieces of information):
-1. **Connectivity**: Whether equipments u and v are on the same power circuit in the currently energized sub-network S (Yes/No).
-2. **State update**: The PLC control cabinet will execute a "relay toggle" along the unique circuit routing from u to v in the main cable T—for each cable segment on the route, if currently energized, it is forcibly disconnected (removed from S); if disconnected, it is closed and energized (added to S).
-3. **Post-update statistics**:
-   - Component count: Number of independent power supply islands formed by S after the update (range 1 to {n})
-   - Active edges: Total number of energized cable segments in S after the update (range 0 to {n_minus_1})
+When you have collected enough information, submit your final renovation decision in the following format:
 
-## Submit Answer
+<answer>Yes</answer>
 
-When you believe you have gathered enough information, you can submit your inferred underground cable topology graph. The answer format is a list of {n_minus_1} cable segments, each represented by two connected equipment numbers (connected by a hyphen, order doesn't matter).
+or
 
-**Important notes**:
-- Only one command or one answer submission per turn
-- An incorrect submission will fail the inspection and trigger an alarm
-- Try to complete the inspection with the minimum number of trial commands
+<answer>No</answer>
 
-## Format Requirements
+where "Yes" means installing the conveyor belt (U, V) will strictly decrease the minimum conveyance segments from S to T, and "No" means it will not decrease.
 
-**Query format** (inspecting equipments u and v):
-<query>u,v</query>
-
-**Answer submission format** (e.g., cable with 3 segments: 1-2, 2-3, 3-4):
-<answer>1-2,2-3,3-4</answer>
+If the answer is wrong or the format is invalid, the evaluation fails.
 """
 
     contextualized_rule_zh_5 = """\
-【法律场景】
-我们现在来玩一个“非法资金流转隐秘链路追踪”推理游戏，规则如下：
+这是司法侦查领域的"证据链推导步数判定"分析。
+我们设定了一个未知的简单、连通的无向证据关联图 G，代表卷宗中的各类证据节点，节点集合为 {{1, 2, ..., {n}}}。图中有四个特殊的已标注证据节点：
+- 初始线索 S = {s}
+- 核心犯罪事实 T = {t}
+- 待核实的关联证据 U = {u}
+- 待核实的关联证据 V = {v}
 
-经侦部门锁定了涉案嫌疑账户，编号为 1 到 {n}。这些账户之间利用一套未知的地下资金转移网络 T 进行洗钱（这是一棵有 {n_minus_1} 条流水链路的连通无环网络），你的目标是通过穿透审查操作推断出整套洗钱链路的真实结构。
+这四个节点互不相同。目前的证据链直接关联网络对你不可见，你只能通过推导步数查询来获取信息。
 
-## 内部状态
+你的目标是判断：如果在现有卷宗证据网络 G 中确认证据 U 和证据 V 之间存在直接逻辑关联（即新增一条关联边），从初始线索 S 成功推导到核心犯罪事实 T 所需的最短推导步数是否会严格减小。
 
-调查系统维护一个当前已被成功“冻结追踪”的资金链路子网 S，初始时无任何线索（空集）。S 中的链路始终是地下网络 T 的一部分，且保证不存在洗钱资金回流闭环。
+你可以进行证据关联查询，每次查询两个证据节点之间在现有网络 G 上的最短推导步数。查询格式如下：
 
-## 交互查询
+<query_dist>a,b</query_dist>
 
-你可以反复发起以下穿透审查（每次一项）：
+其中 a 和 b 是节点编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有证据网络 G 上 a 到 b 的最短推导步数。
 
-**查询格式**：审查两个不同的账户 u 和 v（u 不等于 v）。
+注意：
+1. 所有查询都是针对现有卷宗网络 G 的，不能查询确立新逻辑关联之后的推导步数。
+2. 请尽可能少地使用查询次数。
+3. 每次只能提交一个查询标签。
 
-**查询反馈**（包含三个信息）：
-1. **连通性**：在当前已被追踪的子网 S 中，账户 u 和 v 之间是否存在明确的资金关联（是/否）。
-2. **状态更新**：审查操作会触发犯罪集团在网络 T 中 u 到 v 的唯一流转路径上进行“反侦察切换”——路径上的流水链路，如果当前已被冻结追踪，则会被黑客手段隐藏（移出 S）；如果尚未被追踪，则会因暴露而落入法网被冻结（加入 S）。
-3. **更新后统计**：
-   - 连通块数量：更新后 S 形成的独立资金追踪团伙个数（范围 1 到 {n}）
-   - 开启边数量：更新后 S 中处于冻结追踪状态的流水链路总数（范围 0 到 {n_minus_1}）
+当你收集到足够信息后，请提交最终逻辑研判。格式如下：
 
-## 提交答案
+<answer>是</answer>
 
-当你认为已收集足够证据时，可以提交你推断出的完整洗钱网络图谱。答案格式为一个包含 {n_minus_1} 条流水链路的列表，每条链路用两个账户编号表示（用短横线连接，顺序不限）。
+或
 
-**重要提示**：
-- 每次只能发起一项审查或提交一次答案
-- 错误的提交将导致打草惊蛇，调查失败
-- 尽量用最少的审查次数完成取证
+<answer>否</answer>
 
-## 格式要求
+其中"是"表示确认证据关联 (U, V) 会使初始线索 S 到核心犯罪事实 T 的最短推导步数严格减小，"否"表示不会减小。
 
-**查询格式**（审查账户 u 和 v）：
-<query>u,v</query>
-
-**提交答案格式**（例如链路有 3 条：1-2, 2-3, 3-4）：
-<answer>1-2,2-3,3-4</answer>
+若答案错误或格式不符，分析失败。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's play an "Illicit Fund Transfer Hidden Link Tracking" deduction game. Here are the rules:
+Let's conduct an "Evidence Chain Derivation Steps Determination" analysis in judicial investigation.
+The scenario involves an unknown simple, connected, undirected evidence association graph G, representing various evidence nodes in the case file, with the node set being {{1, 2, ..., {n}}}. There are four special labeled evidence nodes in the graph:
+- Initial Clue S = {s}
+- Core Criminal Fact T = {t}
+- Pending Associated Evidence U = {u}
+- Pending Associated Evidence V = {v}
 
-The economic crime investigation department has locked onto suspect accounts numbered from 1 to {n}. These accounts use an unknown underground fund transfer network T for money laundering (a connected acyclic network with {n_minus_1} transaction links). Your goal is to infer the true structure of the entire money laundering network through penetration auditing operations.
+These four nodes are all distinct. The current direct association network of the evidence chain is hidden from you, and you can only obtain information through derivation step queries.
 
-## Internal State
+Your goal is to determine: if we confirm a direct logical association between evidence U and evidence V in the existing evidence network G (i.e., adding a new association edge), will the shortest derivation steps required to successfully deduce from the Initial Clue S to the Core Criminal Fact T strictly decrease?
 
-The investigation system maintains a sub-network S of transaction links currently successfully "frozen and tracked", initially with no clues (empty set). Links in S are always a subset of the underground network T, and it is guaranteed that there are no fund recirculation loops.
+You can perform evidence association queries to ask for the shortest derivation steps between two evidence nodes in the existing network G. The query format is:
 
-## Interactive Queries
+<query_dist>a,b</query_dist>
 
-You can repeatedly initiate the following penetration audit (one per turn):
+where a and b are node IDs (between 1 and {n}). I will respond with a non-negative integer representing the shortest derivation steps from a to b in the existing evidence network G.
 
-**Query format**: Audit two different accounts u and v (u not equal to v).
+Note:
+1. All queries are about the existing evidence network G; you cannot query the derivation steps after the new logical association is established.
+2. Please use as few queries as possible.
+3. Each turn can only contain one query tag.
 
-**Query feedback** (contains three pieces of information):
-1. **Connectivity**: Whether there is a clear financial association between accounts u and v in the currently tracked sub-network S (Yes/No).
-2. **State update**: The auditing operation triggers an "anti-reconnaissance toggle" by the criminal syndicate along the unique transfer route from u to v in network T—for each transaction link on the route, if currently frozen and tracked, it is hidden via hacker methods (removed from S); if not yet tracked, it becomes exposed and frozen by law enforcement (added to S).
-3. **Post-update statistics**:
-   - Component count: Number of independent tracked fund syndicates formed by S after the update (range 1 to {n})
-   - Active edges: Total number of transaction links in the frozen tracking state in S after the update (range 0 to {n_minus_1})
+When you have collected enough information, submit your final logical deduction decision in the following format:
 
-## Submit Answer
+<answer>Yes</answer>
 
-When you believe you have gathered enough evidence, you can submit your inferred complete money laundering network graph. The answer format is a list of {n_minus_1} transaction links, each represented by two account numbers (connected by a hyphen, order doesn't matter).
+or
 
-**Important notes**:
-- Only one audit or one answer submission per turn
-- An incorrect submission will alert the suspects and fail the investigation
-- Try to complete the evidence gathering with the minimum number of audits
+<answer>No</answer>
 
-## Format Requirements
+where "Yes" means confirming the evidence association (U, V) will strictly decrease the shortest derivation steps from S to T, and "No" means it will not decrease.
 
-**Query format** (auditing accounts u and v):
-<query>u,v</query>
-
-**Answer submission format** (e.g., network with 3 links: 1-2, 2-3, 3-4):
-<answer>1-2,2-3,3-4</answer>
+If the answer is wrong or the format is invalid, the analysis fails.
 """
 
-    tags = ["answer", "query"]
-    reasoning_type = "归纳推理"
-    data_structure = "树"
+    tags = ["answer", "query_dist"]
+    reasoning_type = "演绎推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 4,
-                "edges": [(1, 2), (2, 3), (3, 4)],  # 路径图 1-2-3-4
+                "n": 8,
+                "s": 1, "t": 5, "u": 2, "v": 4,
+                "edges": [
+                    (1, 2), (2, 3), (3, 4), (4, 5),
+                    (1, 6), (6, 7), (7, 8), (8, 5)
+                ],
+                "answer": True
             },
             2: {
-                "n": 5,
-                "edges": [(1, 2), (1, 3), (1, 4), (1, 5)],  # 星形图，中心为 1
+                "n": 10,
+                "s": 1, "t": 8, "u": 4, "v": 9,
+                "edges": [
+                    (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),
+                    (6, 7), (7, 8), (8, 9), (9, 10)
+                ],
+                "answer": True
             },
             3: {
-                "n": 6,
-                "edges": [(1, 2), (2, 3), (2, 4), (3, 5), (3, 6)],  # 稍复杂的树
+                "n": 12,
+                "s": 1, "t": 6, "u": 8, "v": 10,
+                "edges": [
+                    (1, 2), (2, 3), (3, 6),
+                    (1, 4), (4, 5), (5, 6),
+                    (8, 9), (9, 10), (10, 11), (11, 12),
+                    (6, 7), (7, 8)
+                ],
+                "answer": False
             },
             4: {
-                "n": 7,
-                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],  # 二叉树型
+                "n": 15,
+                "s": 1, "t": 12, "u": 5, "v": 10,
+                "edges": [
+                    (1, 2), (2, 3), (3, 4), (4, 15), (15, 12),
+                    (1, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), (10, 12),
+                    (2, 13), (13, 14), (14, 11), (11, 12)
+                ],
+                "answer": True
             },
             5: {
-                "n": 8,
-                "edges": [(1, 2), (2, 3), (3, 4), (2, 5), (5, 6), (3, 7), (7, 8)],  # 复杂结构
+                "n": 20,
+                "s": 1, "t": 15, "u": 8, "v": 18,
+                "edges": [
+                    (1, 2), (2, 3), (3, 4), (4, 15),
+                    (1, 5), (5, 6), (6, 7), (7, 8),
+                    (8, 9), (9, 10), (10, 11),
+                    (15, 16), (16, 17), (17, 18),
+                    (18, 19), (19, 20),
+                    (11, 12), (12, 13), (13, 14), (14, 15)
+                ],
+                "answer": False
             },
         },
         "en": {
             1: {
-                "n": 4,
-                "edges": [(1, 2), (2, 3), (3, 4)],
+                "n": 8,
+                "s": 1, "t": 5, "u": 2, "v": 4,
+                "edges": [
+                    (1, 2), (2, 3), (3, 4), (4, 5),
+                    (1, 6), (6, 7), (7, 8), (8, 5)
+                ],
+                "answer": True
             },
             2: {
-                "n": 5,
-                "edges": [(1, 2), (1, 3), (1, 4), (1, 5)],
+                "n": 10,
+                "s": 1, "t": 8, "u": 4, "v": 9,
+                "edges": [
+                    (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),
+                    (6, 7), (7, 8), (8, 9), (9, 10)
+                ],
+                "answer": True
             },
             3: {
-                "n": 6,
-                "edges": [(1, 2), (2, 3), (2, 4), (3, 5), (3, 6)],
+                "n": 12,
+                "s": 1, "t": 6, "u": 8, "v": 10,
+                "edges": [
+                    (1, 2), (2, 3), (3, 6),
+                    (1, 4), (4, 5), (5, 6),
+                    (8, 9), (9, 10), (10, 11), (11, 12),
+                    (6, 7), (7, 8)
+                ],
+                "answer": False
             },
             4: {
-                "n": 7,
-                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
+                "n": 15,
+                "s": 1, "t": 12, "u": 5, "v": 10,
+                "edges": [
+                    (1, 2), (2, 3), (3, 4), (4, 15), (15, 12),
+                    (1, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), (10, 12),
+                    (2, 13), (13, 14), (14, 11), (11, 12)
+                ],
+                "answer": True
             },
             5: {
-                "n": 8,
-                "edges": [(1, 2), (2, 3), (3, 4), (2, 5), (5, 6), (3, 7), (7, 8)],
+                "n": 20,
+                "s": 1, "t": 15, "u": 8, "v": 18,
+                "edges": [
+                    (1, 2), (2, 3), (3, 4), (4, 15),
+                    (1, 5), (5, 6), (6, 7), (7, 8),
+                    (8, 9), (9, 10), (10, 11),
+                    (15, 16), (16, 17), (17, 18),
+                    (18, 19), (19, 20),
+                    (11, 12), (12, 13), (13, 14), (14, 15)
+                ],
+                "answer": False
             },
         },
     }
@@ -549,7 +562,7 @@ When you believe you have gathered enough evidence, you can submit your inferred
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -557,270 +570,122 @@ When you believe you have gathered enough evidence, you can submit your inferred
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        
         self._game_info["n"] = cfg["n"]
-        self._game_info["n_minus_1"] = cfg["n"] - 1
+        self._game_info["s"] = cfg["s"]
+        self._game_info["t"] = cfg["t"]
+        self._game_info["u"] = cfg["u"]
+        self._game_info["v"] = cfg["v"]
         
-        # 树的边集（Ground Truth）
-        self.tree_edges = set()
-        for u, v in cfg["edges"]:
-            # 统一存储为 (min, max) 形式，保证无序对的唯一性
-            self.tree_edges.add((min(u, v), max(u, v)))
+        self.n = cfg["n"]
+        self.s = cfg["s"]
+        self.t = cfg["t"]
+        self.u = cfg["u"]
+        self.v = cfg["v"]
         
-        # 构建邻接表用于路径查找
-        self.adj = {i: [] for i in range(1, cfg["n"] + 1)}
-        for u, v in self.tree_edges:
-            self.adj[u].append(v)
-            self.adj[v].append(u)
+        self.graph = {i: [] for i in range(1, self.n + 1)}
+        for a, b in cfg["edges"]:
+            self.graph[a].append(b)
+            self.graph[b].append(a)
         
-        # 当前激活的子图 S（初始为空）
-        self.active_edges = set()
+        self.ground_truth_answer = cfg["answer"]
+        
+        self.query_count = 0
 
-    def _find_path(self, u, v):
-        """使用 BFS 在树中找到从 u 到 v 的唯一路径"""
-        if u == v:
-            return []
+    def _bfs_distance(self, start, end):
+        if start == end:
+            return 0
         
         from collections import deque
-        queue = deque([u])
-        visited = {u}
-        parent = {u: None}
+        queue = deque([start])
+        visited = {start}
+        distance = {start: 0}
         
         while queue:
             node = queue.popleft()
-            if node == v:
-                break
-            for neighbor in self.adj[node]:
+            for neighbor in self.graph[node]:
                 if neighbor not in visited:
                     visited.add(neighbor)
-                    parent[neighbor] = node
+                    distance[neighbor] = distance[node] + 1
                     queue.append(neighbor)
+                    if neighbor == end:
+                        return distance[neighbor]
         
-        # 回溯路径
-        path = []
-        if v not in parent:
-            return []
-        current = v
-        while parent[current] is not None:
-            prev = parent[current]
-            path.append((min(prev, current), max(prev, current)))
-            current = prev
-        
-        return path
-
-    def _is_connected(self, u, v):
-        """判断在当前 active_edges 形成的图中，u 和 v 是否连通"""
-        if u == v:
-            return True
-        
-        # 构建当前子图的邻接表
-        current_adj = {i: [] for i in range(1, self._game_info["n"] + 1)}
-        for edge_u, edge_v in self.active_edges:
-            current_adj[edge_u].append(edge_v)
-            current_adj[edge_v].append(edge_u)
-        
-        # BFS 检查连通性
-        from collections import deque
-        queue = deque([u])
-        visited = {u}
-        
-        while queue:
-            node = queue.popleft()
-            if node == v:
-                return True
-            for neighbor in current_adj[node]:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
-        
-        return False
-
-    def _count_components(self):
-        """计算当前 active_edges 形成的图的连通分量数"""
-        n = self._game_info["n"]
-        visited = set()
-        components = 0
-        
-        # 构建当前子图的邻接表
-        current_adj = {i: [] for i in range(1, n + 1)}
-        for u, v in self.active_edges:
-            current_adj[u].append(v)
-            current_adj[v].append(u)
-        
-        # DFS 统计连通分量
-        def dfs(node):
-            visited.add(node)
-            for neighbor in current_adj[node]:
-                if neighbor not in visited:
-                    dfs(neighbor)
-        
-        for i in range(1, n + 1):
-            if i not in visited:
-                dfs(i)
-                components += 1
-        
-        return components
+        return float('inf')
 
     def evaluate(self, parsed_info):
-        """检查提交的答案是否正确"""
         raw_ans = parsed_info["answer"].strip()
         
-        try:
-            # 解析边集
-            submitted_edges = set()
-            edge_strs = [x.strip() for x in raw_ans.split(",") if x.strip()]
-            
-            for edge_str in edge_strs:
-                if "-" not in edge_str:
-                    return False
-                parts = edge_str.split("-")
-                if len(parts) != 2:
-                    return False
-                u, v = int(parts[0].strip()), int(parts[1].strip())
-                if u == v:
-                    return False
-                submitted_edges.add((min(u, v), max(u, v)))
-            
-            # 检查边数是否正确
-            if len(submitted_edges) != self._game_info["n_minus_1"]:
-                return False
-            
-            # 检查是否与真实树的边集完全相同
-            return submitted_edges == self.tree_edges
-            
-        except:
-            return False
+        if self.config.language == "zh":
+            player_answer = (raw_ans == "是")
+        else:
+            player_answer = (raw_ans.lower() == "yes")
+        
+        return player_answer == self.ground_truth_answer
 
     def _cf_core_produce(self, parsed_info):
-        """处理查询的核心逻辑（原 produce_response 的内容）"""
-        if "query" not in parsed_info:
-            raise ValueError("No valid query tag found.")
+        if "query_dist" in parsed_info:
+            self.query_count += 1
+            
+            try:
+                raw = parsed_info["query_dist"]
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    raise ValueError("Query must contain exactly two vertex IDs")
+                
+                a, b = int(parts[0]), int(parts[1])
+                
+                if a < 1 or a > self.n or b < 1 or b > self.n:
+                    if self.config.language == "zh":
+                        return f"错误：顶点编号必须在 1 到 {self.n} 之间。"
+                    else:
+                        return f"Error: Vertex ID must be between 1 and {self.n}."
+                
+                dist = self._bfs_distance(a, b)
+                return str(dist)
+                
+            except ValueError as e:
+                if self.config.language == "zh":
+                    return f"错误：查询格式无效。请使用格式 <query_dist>a,b</query_dist>"
+                else:
+                    return f"Error: Invalid query format. Please use format <query_dist>a,b</query_dist>"
+        
+        raise ValueError("No valid query tag found.")
+
+    def _cf_make_wrong(self, correct):
+        stripped = correct.strip()
         
         try:
-            raw_query = parsed_info["query"].strip()
-            parts = [x.strip() for x in raw_query.split(",")]
-            if len(parts) != 2:
-                raise ValueError("Query must contain exactly two nodes.")
-            
-            u, v = int(parts[0]), int(parts[1])
-            n = self._game_info["n"]
-            
-            # 验证节点有效性
-            if u < 1 or u > n or v < 1 or v > n or u == v:
-                if self.config.language == "zh":
-                    return "错误：节点编号无效或相同。"
-                else:
-                    return "Error: Invalid or identical node numbers."
-            
-            # 1. 查询连通性（在状态更新前）
-            is_connected = self._is_connected(u, v)
-            
-            # 2. 执行状态更新（路径切换）
-            path = self._find_path(u, v)
-            for edge in path:
-                if edge in self.active_edges:
-                    self.active_edges.remove(edge)
-                else:
-                    self.active_edges.add(edge)
-            
-            # 3. 计算更新后的统计信息
-            components = self._count_components()
-            edge_count = len(self.active_edges)
-            
-            # 构造反馈
-            if self.config.language == "zh":
-                conn_str = "是" if is_connected else "否"
-                return f"连通={conn_str}, 连通块={components}, 开启边={edge_count}"
-            else:
-                conn_str = "Yes" if is_connected else "No"
-                return f"connected={conn_str}, components={components}, edges={edge_count}"
-            
-        except ValueError as e:
-            if self.config.language == "zh":
-                return f"错误：{str(e)}"
-            else:
-                return f"Error: {str(e)}"
-        except Exception:
-            if self.config.language == "zh":
-                return "错误：查询格式无效。"
-            else:
-                return "Error: Invalid query format."
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        results = []
-        n = self._game_info["n"]
+            val = int(stripped)
+            return str(val + 1)
+        except ValueError:
+            pass
         
-        # 保存当前状态，以便在每次模拟查询后恢复
-        # 注意：active_edges 是 set，需要使用 copy 进行浅拷贝
-        original_active_edges = self.active_edges.copy()
-        
-        # 遍历所有可能的节点对 (u, v)，其中 1 <= u < v <= n
-        for u in range(1, n + 1):
-            for v in range(u + 1, n + 1):
-                # --- 复用内部计算逻辑 (模拟 produce_response 的核心步骤) ---
-                
-                # 1. 查询连通性（在状态更新前）
-                # 注意：此时 active_edges 仍为初始状态（或已恢复）
-                is_connected = self._is_connected(u, v)
-                
-                # 2. 执行状态更新（路径切换）
-                path = self._find_path(u, v)
-                for edge in path:
-                    if edge in self.active_edges:
-                        self.active_edges.remove(edge)
-                    else:
-                        self.active_edges.add(edge)
-                
-                # 3. 计算更新后的统计信息
-                components = self._count_components()
-                edge_count = len(self.active_edges)
-                
-                # 构造反馈字符串
-                if self.config.language == "zh":
-                    conn_str = "是" if is_connected else "否"
-                    ans = f"连通={conn_str}, 连通块={components}, 开启边={edge_count}"
-                else:
-                    conn_str = "Yes" if is_connected else "No"
-                    ans = f"connected={conn_str}, components={components}, edges={edge_count}"
-                
-                # 添加结果
-                results.append({
-                    "query": f"<query>{u},{v}</query>",
-                    "answer": ans
-                })
-                
-                # --- 恢复状态 ---
-                # 必须恢复 active_edges，否则后续循环会基于错误的状态进行计算
-                self.active_edges = original_active_edges.copy()
-                
-        return results
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """生成错误答案"""
-        # 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        # 否则按规则替换关键词
-        if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            elif "否" in correct:
-                return correct.replace("否", "是")
-        else:
-            # 区分大小写查找，保持原始大小写风格替换
-            lower_correct = correct.lower()
-            if "yes" in lower_correct:
-                # 简单处理：尝试替换 "Yes" -> "No", "yes" -> "no"
-                if "Yes" in correct:
-                    return correct.replace("Yes", "No")
-                return correct.replace("yes", "no")
-            elif "no" in lower_correct:
-                if "No" in correct:
-                    return correct.replace("No", "Yes")
-                return correct.replace("no", "yes")
-
-        # 若都不匹配：在字符串末尾追加 "_WRONG"
+        if stripped == "是":
+            return "否"
+        if stripped == "否":
+            return "是"
+        if stripped.lower() == "yes":
+            if stripped.isupper(): return "NO"
+            if stripped.istitle(): return "No"
+            return "no"
+        if stripped.lower() == "no":
+            if stripped.isupper(): return "YES"
+            if stripped.istitle(): return "Yes"
+            return "yes"
+            
         return correct + "_WRONG"
+
+    def get_all_possible_queries(self):
+        results = []
+        for i in range(1, self.n + 1):
+            for j in range(i + 1, self.n + 1):
+                query_content = f"{i},{j}"
+                
+                dist = self._bfs_distance(i, j)
+                
+                results.append({
+                    "query": f"<query_dist>{query_content}</query_dist>",
+                    "answer": str(dist)
+                })
+        return results

@@ -1,583 +1,902 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   首尾元素：序列的第一个或最后一个元素是什么
-# ============================================================
-
-import random
 from .base import Game
+import re
 
-class HiddenPermutationEndpointGame(Game):
+class BooleanConceptGame(Game):
+
+    reasoning_type = "归纳推理"
+    data_structure = "集合"
 
     game_rule_zh = """\
-我们现在来玩一个"隐藏排列端点推理"游戏，规则如下：
+我们来玩一个"布尔概念识别"的推理游戏，规则如下：
 
-游戏设定了一个正整数 N（N 大于等于 3），存在一个隐藏序列 a[1..N]，它是集合 {{1,2,...,N}} 的一个排列（所有元素互异且恰好覆盖该集合）。本局游戏中 N = {n}。
+游戏中有12个对象，编号为
 
-你的目标是从以下两个目标中选择其一，并确定对应端点的确切数值：
-- 目标A：确定 a[1] 的数值（序列首端）。
-- 目标B：确定 a[N] 的数值（序列末端）。
+这些对象的属性向量如下：
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-你可以反复向我提出以下两类二元比较询问，我会根据真实设定如实回答"是"或"否"：
+我已秘密选择了一个布尔谓词 f，该谓词依赖这4个属性 A1, A2, A3, A4，对每个对象返回 0 或 1（即该对象是否满足谓词）。该谓词可由原子命题（Ai=0 或 Ai=1）通过逻辑运算符 AND、OR、NOT 组成，且表达式的布尔深度不超过2层，总文字数不超过4个。
 
-1. 首端比较：询问"a[1] 是否大于 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
-2. 末端比较：询问"a[N] 是否大于 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
+你的目标是通过查询推断出这个隐藏的布尔谓词，并预测哪些对象满足该谓词（即 f 返回 1 的对象集合）。
 
-回答含义：
-- "是"表示左侧端点的值严格大于 a[k]。
-- "否"表示左侧端点的值严格小于 a[k]（因为序列中元素互异，不存在相等情况）。
+你可以进行以下两种查询：
 
-当你收集到足够信息后，请提交你的最终答案。若答案错误或格式不符，游戏失败。
+1. **子集计数查询**（限定次数）：
+   指定一个对象子集 S，我会告诉你：
+   - m: 子集 S 的大小
+   - k: 子集 S 中满足谓词 f 的对象数量
+   - 剩余查询次数
+   
+   你可以用两种方式指定子集：
+   - 显式列举对象编号（如
+   - 提供布尔筛选表达式（如 A1=1 AND A2=0），系统会自动筛选满足条件的对象
 
-## 询问与提交答案的格式
+2. **成员查询**（限定次数）：
+   询问特定对象
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+当你收集到足够信息后，请提交最终答案，包括：
+- 布尔表达式：描述谓词 f 的逻辑结构
+- 正例集合：你预测满足 f 的所有对象编号
 
-- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
-<query_head>5</query_head>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
-<query_tail>3</query_tail>
+- 子集计数查询（显式列举）：
+<query_subset>
 
-提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
+- 子集计数查询（布尔表达式）：
+<query_subset>A1=1 AND A2=0</query_subset>
 
-<answer>target=A, value=3</answer>
+- 成员查询（例如询问对象
+<query_member>
 
-或
+- 提交最终答案：
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-<answer>target=B, value=7</answer>
-
-注意：请尽可能高效地推理出答案。
+注意：
+- 布尔表达式中使用 AND、OR、NOT 作为逻辑运算符
+- 对象编号必须带
+- 答案中 expression 和 positive_set 必须同时提供且用逗号分隔
+- 请尽可能少地使用查询次数来推断谓词
 """
 
     game_rule_en = """\
-Let's play a "Hidden Permutation Endpoint Deduction" game. Here are the rules:
+Let's play a "Boolean Concept Identification" deduction game. Here are the rules:
 
-The game is set with a positive integer N (N greater than or equal to 3). There exists a hidden sequence a[1..N], which is a permutation of the set {{1,2,...,N}} (all elements are distinct and exactly cover the set). In this game, N = {n}.
+There are 12 objects in the game, numbered
 
-Your goal is to choose one of the following two targets and determine the exact value of the corresponding endpoint:
-- Target A: Determine the value of a[1] (the head of the sequence).
-- Target B: Determine the value of a[N] (the tail of the sequence).
+The attribute vectors for these objects are:
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-You can repeatedly ask me the following two types of binary comparison queries, and I will answer truthfully with "Yes" or "No":
+I have secretly chosen a Boolean predicate f that depends on these 4 attributes A1, A2, A3, A4 and returns 0 or 1 for each object (whether the object satisfies the predicate). This predicate can be composed of atomic propositions (Ai=0 or Ai=1) using logical operators AND, OR, NOT, with Boolean depth no more than 2 layers and total literals no more than 4.
 
-1. Head Comparison: Ask "Is a[1] greater than a[k]?", where k can be any integer from 2 to N.
-2. Tail Comparison: Ask "Is a[N] greater than a[k]?", where k can be any integer from 1 to N-1.
+Your goal is to infer this hidden Boolean predicate through queries and predict which objects satisfy the predicate (i.e., the set of objects where f returns 1).
 
-Answer meanings:
-- "Yes" means the left endpoint value is strictly greater than a[k].
-- "No" means the left endpoint value is strictly less than a[k] (since elements are distinct, equality does not exist).
+You can perform the following two types of queries:
 
-When you have collected enough information, submit your final answer. If the answer is incorrect or the format is invalid, the game fails.
+1. **Subset Count Query** (limited quota):
+   Specify a subset S of objects, and I will tell you:
+   - m: the size of subset S
+   - k: the number of objects in S that satisfy predicate f
+   - remaining query count
+   
+   You can specify the subset in two ways:
+   - Explicitly list object IDs (e.g.,
+   - Provide a Boolean filter expression (e.g., A1=1 AND A2=0), and the system will automatically filter objects meeting the condition
 
-## Query and Answer Format
+2. **Membership Query** (limited quota):
+   Ask whether a specific object
+
+When you have collected enough information, submit your final answer, including:
+- Boolean expression: describing the logical structure of predicate f
+- Positive set: all object IDs you predict satisfy f
 
 Each query must contain only one tag. Use the following XML format:
 
-- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
-<query_head>5</query_head>
+- Subset count query (explicit list):
+<query_subset>
 
-- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
-<query_tail>3</query_tail>
+- Subset count query (Boolean expression):
+<query_subset>A1=1 AND A2=0</query_subset>
 
-When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
+- Membership query (e.g., asking about object
+<query_member>
 
-<answer>target=A, value=3</answer>
+- Submit final answer:
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-or
-
-<answer>target=B, value=7</answer>
-
-Note: Please deduce the answer as efficiently as possible.
+Notes:
+- Use AND, OR, NOT as logical operators in Boolean expressions
+- Object IDs must have
+- Both expression and positive_set must be provided in the answer, separated by comma
+- Try to use as few queries as possible to infer the predicate
 """
 
-    # =========================================================================
-    # 场景 1：交通 (Traffic)
-    # =========================================================================
     contextualized_rule_zh_1 = """\
-欢迎使用智能交通路网评估系统。我们需要对一条包含 N 个关键拥堵节点的单行主干道进行评估。
-当前路段包含节点序列 a[1..N]，每个节点的"拥堵指数"构成了集合 {{1,2,...,N}} 的一个完整排列（所有节点指数互异）。本局路况评估中，N = {n}。
+我们来玩一个"自动驾驶高危场景识别"的推理游戏，规则如下：
 
-你的目标是从以下两个目标中选择其一，并确定对应节点的确切拥堵指数：
-- 目标A：确定起点节点 a[1]（序列首端）的拥堵指数。
-- 目标B：确定终点节点 a[N]（序列末端）的拥堵指数。
+作为自动驾驶安全测试工程师，你需要排查12个测试对象（即测试场景），编号为
+- A1: 道路处于高峰期车流
+- A2: 存在行人穿越斑马线
+- A3: 处于恶劣天气条件
+- A4: 前方路口信号灯故障
 
-你可以反复向系统提出以下两类二元比较询问，系统会根据路网监测数据如实反馈"是"或"否"：
+这些对象的属性向量如下：
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. 首端比较：询问"起点 a[1] 的拥堵指数是否大于节点 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
-2. 末端比较：询问"终点 a[N] 的拥堵指数是否大于节点 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
+系统已秘密设置了一个布尔谓词 f（即触发"人工接管"的安全判定规则），该谓词依赖这4个属性 A1, A2, A3, A4，对每个对象返回 0 或 1（即该对象是否满足谓词，触发接管）。该谓词可由原子命题（Ai=0 或 Ai=1）通过逻辑运算符 AND、OR、NOT 组成，且表达式的布尔深度不超过2层，总文字数不超过4个。
 
-回答含义：
-- "是"表示左侧指定节点的指数严格大于 a[k]。
-- "否"表示左侧指定节点的指数严格小于 a[k]（因各节点指数互异，不存在相等情况）。
+你的目标是通过查询推断出这个隐藏的布尔谓词，并预测哪些对象满足该谓词（即 f 返回 1 的接管场景集合）。
 
-当你收集到足够信息后，请提交你的最终评估报告。若答案错误或格式不符，评估任务失败。
+你可以进行以下两种查询：
 
-## 询问与提交答案的格式
+1. **子集计数查询**（限定次数）：
+   指定一个对象子集 S，我会告诉你：
+   - m: 子集 S 的大小
+   - k: 子集 S 中满足谓词 f 的对象数量
+   - 剩余查询次数
+   
+   你可以用两种方式指定子集：
+   - 显式列举对象编号（如
+   - 提供布尔筛选表达式（如 A1=1 AND A2=0），系统会自动筛选满足条件的对象
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. **成员查询**（限定次数）：
+   询问特定对象
 
-- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
-<query_head>5</query_head>
+当你收集到足够信息后，请提交最终答案，包括：
+- 布尔表达式：描述谓词 f 的逻辑结构
+- 正例集合：你预测满足 f 的所有对象编号
 
-- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
-<query_tail>3</query_tail>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
+- 子集计数查询（显式列举）：
+<query_subset>
 
-<answer>target=A, value=3</answer>
+- 子集计数查询（布尔表达式）：
+<query_subset>A1=1 AND A2=0</query_subset>
 
-或
+- 成员查询（例如询问对象
+<query_member>
 
-<answer>target=B, value=7</answer>
+- 提交最终答案：
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-注意：请尽可能高效地推理出目标指数。
+注意：
+- 布尔表达式中使用 AND、OR、NOT 作为逻辑运算符
+- 对象编号必须带
+- 答案中 expression 和 positive_set 必须同时提供且用逗号分隔
+- 请尽可能少地使用查询次数来推断谓词
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the Intelligent Traffic Network Evaluation System. We need to evaluate a one-way arterial road containing N key congestion nodes.
-The current road segment consists of a node sequence a[1..N], where the "congestion index" of each node forms a complete permutation of the set {{1,2,...,N}} (all nodes have distinct indices). In this evaluation, N = {n}.
+Let's play an "Autonomous Driving Risk Identification" deduction game. Here are the rules:
 
-Your goal is to choose one of the following two targets and determine the exact congestion index of the corresponding node:
-- Target A: Determine the congestion index of the starting node a[1] (the head of the sequence).
-- Target B: Determine the congestion index of the terminal node a[N] (the tail of the sequence).
+As an autonomous driving safety test engineer, you need to evaluate 12 test objects (i.e., driving scenarios), numbered
+- A1: High traffic volume on the road
+- A2: Pedestrian crossing the zebra crossing
+- A3: Severe weather conditions present
+- A4: Traffic light failure at the intersection ahead
 
-You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the monitoring data:
+The attribute vectors for these objects are:
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. Head Comparison: Ask "Is the congestion index of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
-2. Tail Comparison: Ask "Is the congestion index of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
+I have secretly chosen a Boolean predicate f (the safety rule triggering "manual takeover") that depends on these 4 attributes A1, A2, A3, A4 and returns 0 or 1 for each object (whether the object satisfies the predicate and requires takeover). This predicate can be composed of atomic propositions (Ai=0 or Ai=1) using logical operators AND, OR, NOT, with Boolean depth no more than 2 layers and total literals no more than 4.
 
-Answer meanings:
-- "Yes" means the specified node's index on the left is strictly greater than a[k].
-- "No" means the specified node's index on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
+Your goal is to infer this hidden Boolean predicate through queries and predict which objects satisfy the predicate (i.e., the set of objects where f returns 1).
 
-When you have collected enough information, submit your final evaluation report. If the answer is incorrect or the format is invalid, the evaluation fails.
+You can perform the following two types of queries:
 
-## Query and Answer Format
+1. **Subset Count Query** (limited quota):
+   Specify a subset S of objects, and I will tell you:
+   - m: the size of subset S
+   - k: the number of objects in S that satisfy predicate f
+   - remaining query count
+   
+   You can specify the subset in two ways:
+   - Explicitly list object IDs (e.g.,
+   - Provide a Boolean filter expression (e.g., A1=1 AND A2=0), and the system will automatically filter objects meeting the condition
+
+2. **Membership Query** (limited quota):
+   Ask whether a specific object
+
+When you have collected enough information, submit your final answer, including:
+- Boolean expression: describing the logical structure of predicate f
+- Positive set: all object IDs you predict satisfy f
 
 Each query must contain only one tag. Use the following XML format:
 
-- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
-<query_head>5</query_head>
+- Subset count query (explicit list):
+<query_subset>
 
-- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
-<query_tail>3</query_tail>
+- Subset count query (Boolean expression):
+<query_subset>A1=1 AND A2=0</query_subset>
 
-When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
+- Membership query (e.g., asking about object
+<query_member>
 
-<answer>target=A, value=3</answer>
+- Submit final answer:
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-or
-
-<answer>target=B, value=7</answer>
-
-Note: Please deduce the target index as efficiently as possible.
+Notes:
+- Use AND, OR, NOT as logical operators in Boolean expressions
+- Object IDs must have
+- Both expression and positive_set must be provided in the answer, separated by comma
+- Try to use as few queries as possible to infer the predicate
 """
 
-    # =========================================================================
-    # 场景 2：医疗 (Medical)
-    # =========================================================================
     contextualized_rule_zh_2 = """\
-欢迎使用病毒基因序列分析系统。我们需要对一种新型病毒的基因序列进行解析，该序列包含 N 个独特的靶点片段。
-当前基因序列为 a[1..N]，每个片段的"突变威胁度"评级构成了集合 {{1,2,...,N}} 的一个完整排列（所有靶点评级互异）。本次分析中，N = {n}。
+我们来玩一个"心血管高危患者筛查"的推理游戏，规则如下：
 
-你的目标是从以下两个目标中选择其一，并确定对应靶点的确切突变威胁度评级：
-- 目标A：确定首端靶点 a[1] 的突变威胁度评级。
-- 目标B：确定末端靶点 a[N] 的突变威胁度评级。
+作为临床心血管学专家，你需要评估12个临床对象（即患者病例），编号为
+- A1: 患有重度高血压
+- A2: 空腹血糖指标异常
+- A3: 有心脏病家族史
+- A4: 低密度脂蛋白胆固醇偏高
 
-你可以反复向系统提出以下两类二元比较询问，系统会根据化验测序数据如实反馈"是"或"否"：
+这些对象的属性向量如下：
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. 首端比较：询问"首端靶点 a[1] 的突变威胁度是否大于靶点 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
-2. 末端比较：询问"末端靶点 a[N] 的突变威胁度是否大于靶点 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
+我已秘密选择了一个布尔谓词 f（即判定为"心血管疾病高危"的诊断规则），该谓词依赖这4个属性 A1, A2, A3, A4，对每个对象返回 0 或 1（即该对象是否满足谓词，被确诊为高危）。该谓词可由原子命题（Ai=0 或 Ai=1）通过逻辑运算符 AND、OR、NOT 组成，且表达式的布尔深度不超过2层，总文字数不超过4个。
 
-回答含义：
-- "是"表示左侧指定靶点的威胁度严格大于 a[k]。
-- "否"表示左侧指定靶点的威胁度严格小于 a[k]（因各靶点评级互异，不存在相等情况）。
+你的目标是通过查询推断出这个隐藏的布尔谓词，并预测哪些对象满足该谓词（即 f 返回 1 的高危患者集合）。
 
-当你收集到足够信息后，请提交你的最终测序报告。若答案错误或格式不符，分析任务失败。
+你可以进行以下两种查询：
 
-## 询问与提交答案的格式
+1. **子集计数查询**（限定次数）：
+   指定一个对象子集 S，我会告诉你：
+   - m: 子集 S 的大小
+   - k: 子集 S 中满足谓词 f 的对象数量
+   - 剩余查询次数
+   
+   你可以用两种方式指定子集：
+   - 显式列举对象编号（如
+   - 提供布尔筛选表达式（如 A1=1 AND A2=0），系统会自动筛选满足条件的对象
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. **成员查询**（限定次数）：
+   询问特定对象
 
-- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
-<query_head>5</query_head>
+当你收集到足够信息后，请提交最终答案，包括：
+- 布尔表达式：描述谓词 f 的逻辑结构
+- 正例集合：你预测满足 f 的所有对象编号
 
-- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
-<query_tail>3</query_tail>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
+- 子集计数查询（显式列举）：
+<query_subset>
 
-<answer>target=A, value=3</answer>
+- 子集计数查询（布尔表达式）：
+<query_subset>A1=1 AND A2=0</query_subset>
 
-或
+- 成员查询（例如询问对象
+<query_member>
 
-<answer>target=B, value=7</answer>
+- 提交最终答案：
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-注意：请尽可能高效地推理出目标评级。
+注意：
+- 布尔表达式中使用 AND、OR、NOT 作为逻辑运算符
+- 对象编号必须带
+- 答案中 expression 和 positive_set 必须同时提供且用逗号分隔
+- 请尽可能少地使用查询次数来推断谓词
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the Viral Genomic Sequence Analysis System. We need to analyze the genome sequence of a novel virus, which contains N unique target segments.
-The current genome sequence is a[1..N], where the "mutation threat level" rating of each segment forms a complete permutation of the set {{1,2,...,N}} (all targets have distinct ratings). In this analysis, N = {n}.
+Let's play a "Cardiovascular Risk Screening" deduction game. Here are the rules:
 
-Your goal is to choose one of the following two targets and determine the exact mutation threat level rating of the corresponding target:
-- Target A: Determine the mutation threat level rating of the initial target segment a[1] (the head of the sequence).
-- Target B: Determine the mutation threat level rating of the terminal target segment a[N] (the tail of the sequence).
+As a clinical cardiologist, you need to evaluate 12 clinical objects (i.e., patient cases), numbered
+- A1: Severe hypertension present
+- A2: Abnormal fasting blood glucose
+- A3: Family history of heart disease
+- A4: Elevated LDL cholesterol levels
 
-You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the sequencing data:
+The attribute vectors for these objects are:
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. Head Comparison: Ask "Is the mutation threat level of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
-2. Tail Comparison: Ask "Is the mutation threat level of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
+I have secretly chosen a Boolean predicate f (the diagnostic rule for "high cardiovascular risk") that depends on these 4 attributes A1, A2, A3, A4 and returns 0 or 1 for each object (whether the object satisfies the predicate and is diagnosed as high risk). This predicate can be composed of atomic propositions (Ai=0 or Ai=1) using logical operators AND, OR, NOT, with Boolean depth no more than 2 layers and total literals no more than 4.
 
-Answer meanings:
-- "Yes" means the specified target's threat level on the left is strictly greater than a[k].
-- "No" means the specified target's threat level on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
+Your goal is to infer this hidden Boolean predicate through queries and predict which objects satisfy the predicate (i.e., the set of objects where f returns 1).
 
-When you have collected enough information, submit your final sequencing report. If the answer is incorrect or the format is invalid, the analysis fails.
+You can perform the following two types of queries:
 
-## Query and Answer Format
+1. **Subset Count Query** (limited quota):
+   Specify a subset S of objects, and I will tell you:
+   - m: the size of subset S
+   - k: the number of objects in S that satisfy predicate f
+   - remaining query count
+   
+   You can specify the subset in two ways:
+   - Explicitly list object IDs (e.g.,
+   - Provide a Boolean filter expression (e.g., A1=1 AND A2=0), and the system will automatically filter objects meeting the condition
+
+2. **Membership Query** (limited quota):
+   Ask whether a specific object
+
+When you have collected enough information, submit your final answer, including:
+- Boolean expression: describing the logical structure of predicate f
+- Positive set: all object IDs you predict satisfy f
 
 Each query must contain only one tag. Use the following XML format:
 
-- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
-<query_head>5</query_head>
+- Subset count query (explicit list):
+<query_subset>
 
-- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
-<query_tail>3</query_tail>
+- Subset count query (Boolean expression):
+<query_subset>A1=1 AND A2=0</query_subset>
 
-When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
+- Membership query (e.g., asking about object
+<query_member>
 
-<answer>target=A, value=3</answer>
+- Submit final answer:
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-or
-
-<answer>target=B, value=7</answer>
-
-Note: Please deduce the target rating as efficiently as possible.
+Notes:
+- Use AND, OR, NOT as logical operators in Boolean expressions
+- Object IDs must have
+- Both expression and positive_set must be provided in the answer, separated by comma
+- Try to use as few queries as possible to infer the predicate
 """
 
-    # =========================================================================
-    # 场景 3：教育 (Education)
-    # =========================================================================
     contextualized_rule_zh_3 = """\
-欢迎来到自适应智能题库系统。系统为你准备了一场知识竞赛，包含一组 N 道连贯的闯关题目。
-当前题目序列为 a[1..N]，每道题目的"难度系数"构成了集合 {{1,2,...,N}} 的一个完整排列（所有题目难度系数互异）。本场竞赛中，N = {n}。
+我们来玩一个"学业风险预警系统"的推理游戏，规则如下：
 
-你的目标是从以下两个目标中选择其一，并确定对应关卡的确切难度系数：
-- 目标A：确定首道关卡 a[1]（序列首端）的难度系数。
-- 目标B：确定末道关卡 a[N]（序列末端）的难度系数。
+作为高校辅导员或教务人员，你需要分析12个评估对象（即学生档案），编号为
+- A1: 本学期出勤率低于80%
+- A2: 期中考试存在不及格科目
+- A3: 连续两次未提交课程作业
+- A4: 课堂互动参与度极低
 
-你可以反复向系统提出以下两类二元比较询问，系统会根据题库参数如实反馈"是"或"否"：
+这些对象的属性向量如下：
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. 首端比较：询问"首道关卡 a[1] 的难度系数是否大于题目 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
-2. 末端比较：询问"末道关卡 a[N] 的难度系数是否大于题目 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
+我已秘密选择了一个布尔谓词 f（即触发"学业预警"的判定规则），该谓词依赖这4个属性 A1, A2, A3, A4，对每个对象返回 0 或 1（即该对象是否满足谓词，需要介入辅导）。该谓词可由原子命题（Ai=0 或 Ai=1）通过逻辑运算符 AND、OR、NOT 组成，且表达式的布尔深度不超过2层，总文字数不超过4个。
 
-回答含义：
-- "是"表示左侧指定题目的难度系数严格大于 a[k]。
-- "否"表示左侧指定题目的难度系数严格小于 a[k]（因各题难度系数互异，不存在相等情况）。
+你的目标是通过查询推断出这个隐藏的布尔谓词，并预测哪些对象满足该谓词（即 f 返回 1 的预警学生集合）。
 
-当你收集到足够信息后，请提交你的最终答卷。若答案错误或格式不符，闯关挑战失败。
+你可以进行以下两种查询：
 
-## 询问与提交答案的格式
+1. **子集计数查询**（限定次数）：
+   指定一个对象子集 S，我会告诉你：
+   - m: 子集 S 的大小
+   - k: 子集 S 中满足谓词 f 的对象数量
+   - 剩余查询次数
+   
+   你可以用两种方式指定子集：
+   - 显式列举对象编号（如
+   - 提供布尔筛选表达式（如 A1=1 AND A2=0），系统会自动筛选满足条件的对象
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. **成员查询**（限定次数）：
+   询问特定对象
 
-- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
-<query_head>5</query_head>
+当你收集到足够信息后，请提交最终答案，包括：
+- 布尔表达式：描述谓词 f 的逻辑结构
+- 正例集合：你预测满足 f 的所有对象编号
 
-- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
-<query_tail>3</query_tail>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
+- 子集计数查询（显式列举）：
+<query_subset>
 
-<answer>target=A, value=3</answer>
+- 子集计数查询（布尔表达式）：
+<query_subset>A1=1 AND A2=0</query_subset>
 
-或
+- 成员查询（例如询问对象
+<query_member>
 
-<answer>target=B, value=7</answer>
+- 提交最终答案：
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-注意：请尽可能高效地推理出目标难度系数。
+注意：
+- 布尔表达式中使用 AND、OR、NOT 作为逻辑运算符
+- 对象编号必须带
+- 答案中 expression 和 positive_set 必须同时提供且用逗号分隔
+- 请尽可能少地使用查询次数来推断谓词
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Adaptive Intelligent Question Bank System. The system has prepared a knowledge competition for you, featuring a continuous set of N challenge questions.
-The current question sequence is a[1..N], where the "difficulty coefficient" of each question forms a complete permutation of the set {{1,2,...,N}} (all questions have distinct difficulty coefficients). In this competition, N = {n}.
+Let's play an "Academic Risk Warning System" deduction game. Here are the rules:
 
-Your goal is to choose one of the following two targets and determine the exact difficulty coefficient of the corresponding challenge:
-- Target A: Determine the difficulty coefficient of the first challenge a[1] (the head of the sequence).
-- Target B: Determine the difficulty coefficient of the final challenge a[N] (the tail of the sequence).
+As a university counselor or academic advisor, you need to analyze 12 evaluation objects (i.e., student profiles), numbered
+- A1: Attendance rate below 80% this semester
+- A2: Failed subjects in midterm exams
+- A3: Missed course assignments twice consecutively
+- A4: Extremely low participation in class activities
 
-You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the question bank parameters:
+The attribute vectors for these objects are:
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. Head Comparison: Ask "Is the difficulty coefficient of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
-2. Tail Comparison: Ask "Is the difficulty coefficient of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
+I have secretly chosen a Boolean predicate f (the determination rule triggering "academic warning") that depends on these 4 attributes A1, A2, A3, A4 and returns 0 or 1 for each object (whether the object satisfies the predicate and requires intervention). This predicate can be composed of atomic propositions (Ai=0 or Ai=1) using logical operators AND, OR, NOT, with Boolean depth no more than 2 layers and total literals no more than 4.
 
-Answer meanings:
-- "Yes" means the specified question's difficulty coefficient on the left is strictly greater than a[k].
-- "No" means the specified question's difficulty coefficient on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
+Your goal is to infer this hidden Boolean predicate through queries and predict which objects satisfy the predicate (i.e., the set of objects where f returns 1).
 
-When you have collected enough information, submit your final answer sheet. If the answer is incorrect or the format is invalid, the challenge fails.
+You can perform the following two types of queries:
 
-## Query and Answer Format
+1. **Subset Count Query** (limited quota):
+   Specify a subset S of objects, and I will tell you:
+   - m: the size of subset S
+   - k: the number of objects in S that satisfy predicate f
+   - remaining query count
+   
+   You can specify the subset in two ways:
+   - Explicitly list object IDs (e.g.,
+   - Provide a Boolean filter expression (e.g., A1=1 AND A2=0), and the system will automatically filter objects meeting the condition
+
+2. **Membership Query** (limited quota):
+   Ask whether a specific object
+
+When you have collected enough information, submit your final answer, including:
+- Boolean expression: describing the logical structure of predicate f
+- Positive set: all object IDs you predict satisfy f
 
 Each query must contain only one tag. Use the following XML format:
 
-- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
-<query_head>5</query_head>
+- Subset count query (explicit list):
+<query_subset>
 
-- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
-<query_tail>3</query_tail>
+- Subset count query (Boolean expression):
+<query_subset>A1=1 AND A2=0</query_subset>
 
-When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
+- Membership query (e.g., asking about object
+<query_member>
 
-<answer>target=A, value=3</answer>
+- Submit final answer:
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-or
-
-<answer>target=B, value=7</answer>
-
-Note: Please deduce the target difficulty coefficient as efficiently as possible.
+Notes:
+- Use AND, OR, NOT as logical operators in Boolean expressions
+- Object IDs must have
+- Both expression and positive_set must be provided in the answer, separated by comma
+- Try to use as few queries as possible to infer the predicate
 """
 
-    # =========================================================================
-    # 场景 4：制造业/工业 (Manufacturing/Industry)
-    # =========================================================================
     contextualized_rule_zh_4 = """\
-欢迎使用智能流水线能耗监测系统。我们需要评估一条精密制造流水线上 N 道连续生产工序的能耗情况。
-当前流水线由工序序列 a[1..N] 构成，每道工序的"核心能耗等级"构成了集合 {{1,2,...,N}} 的一个完整排列（所有工序能耗等级互异）。本次监测中，N = {n}。
+我们来玩一个"工业生产次品排查"的推理游戏，规则如下：
 
-你的目标是从以下两个目标中选择其一，并确定对应工序的确切核心能耗等级：
-- 目标A：确定初始工序 a[1]（序列首端）的核心能耗等级。
-- 目标B：确定末端工序 a[N]（序列末端）的核心能耗等级。
+作为产线质量控制（QC）工程师，你需要检测12个生产对象（即产品批次），编号为
+- A1: 生产过程中核心炉温超标
+- A2: 机床加工时震动幅度过大
+- A3: 投入的原材料含有微量杂质
+- A4: 单件加工周期超出标准时长
 
-你可以反复向系统提出以下两类二元比较询问，系统会根据仪表采集数据如实反馈"是"或"否"：
+这些对象的属性向量如下：
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. 首端比较：询问"初始工序 a[1] 的核心能耗等级是否大于工序 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
-2. 末端比较：询问"末端工序 a[N] 的核心能耗等级是否大于工序 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
+我已秘密选择了一个布尔谓词 f（即判定为"残次品需报废"的质检规则），该谓词依赖这4个属性 A1, A2, A3, A4，对每个对象返回 0 或 1（即该对象是否满足谓词，被判定为次品）。该谓词可由原子命题（Ai=0 或 Ai=1）通过逻辑运算符 AND、OR、NOT 组成，且表达式的布尔深度不超过2层，总文字数不超过4个。
 
-回答含义：
-- "是"表示左侧指定工序的能耗等级严格大于 a[k]。
-- "否"表示左侧指定工序的能耗等级严格小于 a[k]（因各工序能耗等级互异，不存在相等情况）。
+你的目标是通过查询推断出这个隐藏的布尔谓词，并预测哪些对象满足该谓词（即 f 返回 1 的次品批次集合）。
 
-当你收集到足够信息后，请提交你的最终排查报告。若答案错误或格式不符，能耗诊断失败。
+你可以进行以下两种查询：
 
-## 询问与提交答案的格式
+1. **子集计数查询**（限定次数）：
+   指定一个对象子集 S，我会告诉你：
+   - m: 子集 S 的大小
+   - k: 子集 S 中满足谓词 f 的对象数量
+   - 剩余查询次数
+   
+   你可以用两种方式指定子集：
+   - 显式列举对象编号（如
+   - 提供布尔筛选表达式（如 A1=1 AND A2=0），系统会自动筛选满足条件的对象
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. **成员查询**（限定次数）：
+   询问特定对象
 
-- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
-<query_head>5</query_head>
+当你收集到足够信息后，请提交最终答案，包括：
+- 布尔表达式：描述谓词 f 的逻辑结构
+- 正例集合：你预测满足 f 的所有对象编号
 
-- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
-<query_tail>3</query_tail>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
+- 子集计数查询（显式列举）：
+<query_subset>
 
-<answer>target=A, value=3</answer>
+- 子集计数查询（布尔表达式）：
+<query_subset>A1=1 AND A2=0</query_subset>
 
-或
+- 成员查询（例如询问对象
+<query_member>
 
-<answer>target=B, value=7</answer>
+- 提交最终答案：
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-注意：请尽可能高效地推理出目标能耗等级。
+注意：
+- 布尔表达式中使用 AND、OR、NOT 作为逻辑运算符
+- 对象编号必须带
+- 答案中 expression 和 positive_set 必须同时提供且用逗号分隔
+- 请尽可能少地使用查询次数来推断谓词
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Welcome to the Intelligent Assembly Line Energy Monitoring System. We need to evaluate the energy consumption of N continuous production processes on a precision manufacturing assembly line.
-The current line consists of a process sequence a[1..N], where the "core energy consumption level" of each process forms a complete permutation of the set {{1,2,...,N}} (all processes have distinct energy levels). In this monitoring session, N = {n}.
+[Manufacturing Scenario]
+Let's play an "Industrial Defect Troubleshooting" deduction game. Here are the rules:
 
-Your goal is to choose one of the following two targets and determine the exact core energy consumption level of the corresponding process:
-- Target A: Determine the core energy consumption level of the initial process a[1] (the head of the sequence).
-- Target B: Determine the core energy consumption level of the final process a[N] (the tail of the sequence).
+As a production Quality Control (QC) engineer, you need to inspect 12 production objects (i.e., product batches), numbered
+- A1: Core furnace temperature exceeded limits during production
+- A2: Excessive vibration during machining
+- A3: Trace impurities detected in raw materials
+- A4: Cycle time for single part exceeded standard duration
 
-You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the instrument data:
+The attribute vectors for these objects are:
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. Head Comparison: Ask "Is the core energy consumption level of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
-2. Tail Comparison: Ask "Is the core energy consumption level of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
+I have secretly chosen a Boolean predicate f (the quality inspection rule determining "defective to be scrapped") that depends on these 4 attributes A1, A2, A3, A4 and returns 0 or 1 for each object (whether the object satisfies the predicate and is deemed defective). This predicate can be composed of atomic propositions (Ai=0 or Ai=1) using logical operators AND, OR, NOT, with Boolean depth no more than 2 layers and total literals no more than 4.
 
-Answer meanings:
-- "Yes" means the specified process's energy level on the left is strictly greater than a[k].
-- "No" means the specified process's energy level on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
+Your goal is to infer this hidden Boolean predicate through queries and predict which objects satisfy the predicate (i.e., the set of objects where f returns 1).
 
-When you have collected enough information, submit your final diagnostic report. If the answer is incorrect or the format is invalid, the energy diagnosis fails.
+You can perform the following two types of queries:
 
-## Query and Answer Format
+1. **Subset Count Query** (limited quota):
+   Specify a subset S of objects, and I will tell you:
+   - m: the size of subset S
+   - k: the number of objects in S that satisfy predicate f
+   - remaining query count
+   
+   You can specify the subset in two ways:
+   - Explicitly list object IDs (e.g.,
+   - Provide a Boolean filter expression (e.g., A1=1 AND A2=0), and the system will automatically filter objects meeting the condition
+
+2. **Membership Query** (limited quota):
+   Ask whether a specific object
+
+When you have collected enough information, submit your final answer, including:
+- Boolean expression: describing the logical structure of predicate f
+- Positive set: all object IDs you predict satisfy f
 
 Each query must contain only one tag. Use the following XML format:
 
-- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
-<query_head>5</query_head>
+- Subset count query (explicit list):
+<query_subset>
 
-- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
-<query_tail>3</query_tail>
+- Subset count query (Boolean expression):
+<query_subset>A1=1 AND A2=0</query_subset>
 
-When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
+- Membership query (e.g., asking about object
+<query_member>
 
-<answer>target=A, value=3</answer>
+- Submit final answer:
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-or
-
-<answer>target=B, value=7</answer>
-
-Note: Please deduce the target energy level as efficiently as possible.
+Notes:
+- Use AND, OR, NOT as logical operators in Boolean expressions
+- Object IDs must have
+- Both expression and positive_set must be provided in the answer, separated by comma
+- Try to use as few queries as possible to infer the predicate
 """
 
-    # =========================================================================
-    # 场景 5：法律 (Legal)
-    # =========================================================================
     contextualized_rule_zh_5 = """\
-欢迎使用司法证据链分析系统。在一个复杂案件的证据链条中，存在 N 份按时间先后顺序排列的关键证据。
-当前的证据序列为 a[1..N]，每份证据的"法庭证明力等级"构成了集合 {{1,2,...,N}} 的一个完整排列（所有证据的证明力等级互异）。本案侦查中，N = {n}。
+我们来玩一个"刑事加重处罚情节认定"的推理游戏，规则如下：
 
-你的目标是从以下两个目标中选择其一，并确定对应证据的确切证明力等级：
-- 目标A：查明初始证据 a[1]（序列首端）的法庭证明力等级。
-- 目标B：查明最终证据 a[N]（序列末端）的法庭证明力等级。
+作为资深法官或检察官，你需要审查12个司法对象（即刑事案卷），编号为
+- A1: 犯罪嫌疑人存在明显主观故意
+- A2: 违法行为造成了严重社会危害后果
+- A3: 犯罪嫌疑人曾有刑事受罚前科
+- A4: 案发现场缺乏直接目击证人
 
-你可以反复向系统提出以下两类二元比较询问，系统会根据卷宗核查数据如实反馈"是"或"否"：
+这些对象的属性向量如下：
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. 首端比较：询问"初始证据 a[1] 的证明力等级是否大于证据 a[k]"，其中 k 可以是 2 到 N 之间的任意整数。
-2. 末端比较：询问"最终证据 a[N] 的证明力等级是否大于证据 a[k]"，其中 k 可以是 1 到 N-1 之间的任意整数。
+我已秘密选择了一个布尔谓词 f（即适用"加重处罚"的法律量刑规则），该谓词依赖这4个属性 A1, A2, A3, A4，对每个对象返回 0 或 1（即该对象是否满足谓词，应当加重量刑）。该谓词可由原子命题（Ai=0 或 Ai=1）通过逻辑运算符 AND、OR、NOT 组成，且表达式的布尔深度不超过2层，总文字数不超过4个。
 
-回答含义：
-- "是"表示左侧指定证据的证明力严格大于 a[k]。
-- "否"表示左侧指定证据的证明力严格小于 a[k]（因各证据证明力互异，不存在相等情况）。
+你的目标是通过查询推断出这个隐藏的布尔谓词，并预测哪些对象满足该谓词（即 f 返回 1 的加重处罚案卷集合）。
 
-当你收集到足够信息后，请提交你的最终结案判定。若答案错误或格式不符，逻辑推演失败。
+你可以进行以下两种查询：
 
-## 询问与提交答案的格式
+1. **子集计数查询**（限定次数）：
+   指定一个对象子集 S，我会告诉你：
+   - m: 子集 S 的大小
+   - k: 子集 S 中满足谓词 f 的对象数量
+   - 剩余查询次数
+   
+   你可以用两种方式指定子集：
+   - 显式列举对象编号（如
+   - 提供布尔筛选表达式（如 A1=1 AND A2=0），系统会自动筛选满足条件的对象
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
+2. **成员查询**（限定次数）：
+   询问特定对象
 
-- 首端比较（例如询问 a[1] 与 a[5] 的大小关系）：
-<query_head>5</query_head>
+当你收集到足够信息后，请提交最终答案，包括：
+- 布尔表达式：描述谓词 f 的逻辑结构
+- 正例集合：你预测满足 f 的所有对象编号
 
-- 末端比较（例如询问 a[N] 与 a[3] 的大小关系）：
-<query_tail>3</query_tail>
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-提交最终答案时，请指明你选择的目标（A 或 B）以及你推断出的数值，格式如下：
+- 子集计数查询（显式列举）：
+<query_subset>
 
-<answer>target=A, value=3</answer>
+- 子集计数查询（布尔表达式）：
+<query_subset>A1=1 AND A2=0</query_subset>
 
-或
+- 成员查询（例如询问对象
+<query_member>
 
-<answer>target=B, value=7</answer>
+- 提交最终答案：
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-注意：请尽可能高效地推理出目标证明力等级。
+注意：
+- 布尔表达式中使用 AND、OR、NOT 作为逻辑运算符
+- 对象编号必须带
+- 答案中 expression 和 positive_set 必须同时提供且用逗号分隔
+- 请尽可能少地使用查询次数来推断谓词
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the Judicial Evidence Chain Analysis System. In the evidence chain of a complex case, there are N key pieces of evidence arranged in chronological order.
-The current evidence sequence is a[1..N], where the "court probative value level" of each piece of evidence forms a complete permutation of the set {{1,2,...,N}} (all evidence pieces have distinct probative value levels). In this investigation, N = {n}.
+[Law Scenario]
+Let's play an "Aggravated Sentencing Circumstances" deduction game. Here are the rules:
 
-Your goal is to choose one of the following two targets and determine the exact probative value level of the corresponding evidence:
-- Target A: Determine the court probative value level of the initial evidence a[1] (the head of the sequence).
-- Target B: Determine the court probative value level of the final evidence a[N] (the tail of the sequence).
+As a senior judge or prosecutor, you need to review 12 judicial objects (i.e., criminal case files), numbered
+- A1: Suspect exhibited obvious subjective intent
+- A2: Illegal behavior caused severe social harm
+- A3: Suspect has a prior criminal record
+- A4: Lack of direct eyewitnesses at the crime scene
 
-You can repeatedly ask the system the following two types of binary comparison queries, and the system will answer truthfully with "Yes" or "No" based on the case files:
+The attribute vectors for these objects are:
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 
-1. Head Comparison: Ask "Is the probative value level of a[1] greater than that of a[k]?", where k can be any integer from 2 to N.
-2. Tail Comparison: Ask "Is the probative value level of a[N] greater than that of a[k]?", where k can be any integer from 1 to N-1.
+I have secretly chosen a Boolean predicate f (the sentencing rule applying "aggravated punishment") that depends on these 4 attributes A1, A2, A3, A4 and returns 0 or 1 for each object (whether the object satisfies the predicate and should receive an aggravated sentence). This predicate can be composed of atomic propositions (Ai=0 or Ai=1) using logical operators AND, OR, NOT, with Boolean depth no more than 2 layers and total literals no more than 4.
 
-Answer meanings:
-- "Yes" means the specified evidence's probative value on the left is strictly greater than a[k].
-- "No" means the specified evidence's probative value on the left is strictly less than a[k] (since elements are distinct, equality does not exist).
+Your goal is to infer this hidden Boolean predicate through queries and predict which objects satisfy the predicate (i.e., the set of objects where f returns 1).
 
-When you have collected enough information, submit your final judgment. If the answer is incorrect or the format is invalid, the logical deduction fails.
+You can perform the following two types of queries:
 
-## Query and Answer Format
+1. **Subset Count Query** (limited quota):
+   Specify a subset S of objects, and I will tell you:
+   - m: the size of subset S
+   - k: the number of objects in S that satisfy predicate f
+   - remaining query count
+   
+   You can specify the subset in two ways:
+   - Explicitly list object IDs (e.g.,
+   - Provide a Boolean filter expression (e.g., A1=1 AND A2=0), and the system will automatically filter objects meeting the condition
+
+2. **Membership Query** (limited quota):
+   Ask whether a specific object
+
+When you have collected enough information, submit your final answer, including:
+- Boolean expression: describing the logical structure of predicate f
+- Positive set: all object IDs you predict satisfy f
 
 Each query must contain only one tag. Use the following XML format:
 
-- Head Comparison (e.g., asking about the relationship between a[1] and a[5]):
-<query_head>5</query_head>
+- Subset count query (explicit list):
+<query_subset>
 
-- Tail Comparison (e.g., asking about the relationship between a[N] and a[3]):
-<query_tail>3</query_tail>
+- Subset count query (Boolean expression):
+<query_subset>A1=1 AND A2=0</query_subset>
 
-When submitting the final answer, specify your chosen target (A or B) and the value you inferred, using this format:
+- Membership query (e.g., asking about object
+<query_member>
 
-<answer>target=A, value=3</answer>
+- Submit final answer:
+<answer>expression=A1=1 AND A2=1, positive_set=
 
-or
-
-<answer>target=B, value=7</answer>
-
-Note: Please deduce the target probative value level as efficiently as possible.
+Notes:
+- Use AND, OR, NOT as logical operators in Boolean expressions
+- Object IDs must have
+- Both expression and positive_set must be provided in the answer, separated by comma
+- Try to use as few queries as possible to infer the predicate
 """
 
-    tags = ["answer", "query_head", "query_tail"]
-    
-    reasoning_type = "演绎推理"
-    data_structure = "序列"
-
-    # 难度配置说明：
-    # 1 (简单)        - N=5
-    # 2 (中等偏下)    - N=7
-    # 3 (中等偏上)    - N=10
-    # 4 (较难)        - N=15
-    # 5 (难)          - N=20
+    tags = ["answer", "query_subset", "query_member"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 5,
-                "permutation": [3, 1, 5, 2, 4],  # a[1]=3, a[5]=4
+                "expression": "A1=1",
+                "positive_set": ["#01", "#02", "#03", "#04", "#06", "#11"],
+                "max_subset_queries": 9,
+                "max_member_queries": 3,
             },
             2: {
-                "n": 7,
-                "permutation": [2, 7, 1, 5, 4, 3, 6],  # a[1]=2, a[7]=6
+                "expression": "A1=1 AND A2=1",
+                "positive_set": ["#01", "#02", "#03", "#11"],
+                "max_subset_queries": 8,
+                "max_member_queries": 3,
             },
             3: {
-                "n": 10,
-                "permutation": [8, 3, 10, 1, 6, 4, 9, 2, 7, 5],  # a[1]=8, a[10]=5
+                "expression": "A1=1 OR A3=1",
+                "positive_set": ["#01", "#02", "#03", "#04", "#05", "#06", "#07", "#10", "#11", "#12"],
+                "max_subset_queries": 7,
+                "max_member_queries": 2,
             },
             4: {
-                "n": 15,
-                "permutation": [12, 5, 14, 2, 9, 11, 3, 15, 6, 1, 13, 7, 10, 4, 8],  # a[1]=12, a[15]=8
+                "expression": "A1=1 AND (NOT A2=1)",
+                "positive_set": ["#04", "#06"],
+                "max_subset_queries": 6,
+                "max_member_queries": 2,
             },
             5: {
-                "n": 20,
-                "permutation": [15, 8, 19, 3, 12, 7, 16, 1, 10, 14, 5, 18, 9, 2, 11, 20, 6, 13, 4, 17],  # a[1]=15, a[20]=17
+                "expression": "(A1=1 OR A2=1) AND (A3=1 OR A4=1)",
+                "positive_set": ["#01", "#02", "#03", "#04", "#05", "#07", "#08", "#10"],
+                "max_subset_queries": 5,
+                "max_member_queries": 1,
             },
         },
         "en": {
             1: {
-                "n": 5,
-                "permutation": [3, 1, 5, 2, 4],
+                "expression": "A1=1",
+                "positive_set": ["#01", "#02", "#03", "#04", "#06", "#11"],
+                "max_subset_queries": 9,
+                "max_member_queries": 3,
             },
             2: {
-                "n": 7,
-                "permutation": [2, 7, 1, 5, 4, 3, 6],
+                "expression": "A1=1 AND A2=1",
+                "positive_set": ["#01", "#02", "#03", "#11"],
+                "max_subset_queries": 8,
+                "max_member_queries": 3,
             },
             3: {
-                "n": 10,
-                "permutation": [8, 3, 10, 1, 6, 4, 9, 2, 7, 5],
+                "expression": "A1=1 OR A3=1",
+                "positive_set": ["#01", "#02", "#03", "#04", "#05", "#06", "#07", "#10", "#11", "#12"],
+                "max_subset_queries": 7,
+                "max_member_queries": 2,
             },
             4: {
-                "n": 15,
-                "permutation": [12, 5, 14, 2, 9, 11, 3, 15, 6, 1, 13, 7, 10, 4, 8],
+                "expression": "A1=1 AND (NOT A2=1)",
+                "positive_set": ["#04", "#06"],
+                "max_subset_queries": 6,
+                "max_member_queries": 2,
             },
             5: {
-                "n": 20,
-                "permutation": [15, 8, 19, 3, 12, 7, 16, 1, 10, 14, 5, 18, 9, 2, 11, 20, 6, 13, 4, 17],
+                "expression": "(A1=1 OR A2=1) AND (A3=1 OR A4=1)",
+                "positive_set": ["#01", "#02", "#03", "#04", "#05", "#07", "#08", "#10"],
+                "max_subset_queries": 5,
+                "max_member_queries": 1,
             },
         },
+    }
+
+    OBJECTS = {
+        "#01": (1, 1, 1, 1),
+        "#02": (1, 1, 1, 0),
+        "#03": (1, 1, 0, 1),
+        "#04": (1, 0, 1, 1),
+        "#05": (0, 1, 1, 1),
+        "#06": (1, 0, 0, 0),
+        "#07": (0, 0, 1, 1),
+        "#08": (0, 1, 0, 1),
+        "#09": (0, 0, 0, 1),
+        "#10": (0, 1, 1, 0),
+        "#11": (1, 1, 0, 0),
+        "#12": (0, 0, 1, 0),
     }
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏：根据难度和语言配置生成隐藏排列"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 防御性转换，确保为整数
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -585,180 +904,263 @@ Note: Please deduce the target probative value level as efficiently as possible.
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
         
-        # 设置隐藏排列 (从1-索引的视角，为方便使用0-索引的列表)
-        # a[1] 对应 permutation[0], a[N] 对应 permutation[N-1]
-        self.permutation = cfg["permutation"]
-        self.n = cfg["n"]
+        self.true_expression = cfg["expression"]
+        self.true_positive_set = set(cfg["positive_set"])
         
-        # 验证排列合法性
-        if len(self.permutation) != self.n:
-            raise ValueError(f"Permutation length {len(self.permutation)} does not match N={self.n}")
-        if set(self.permutation) != set(range(1, self.n + 1)):
-            raise ValueError(f"Permutation is not a valid permutation of {{1..{self.n}}}")
+        self.max_subset_queries = cfg["max_subset_queries"]
+        self.max_member_queries = cfg["max_member_queries"]
+        self.subset_query_count = 0
+        self.member_query_count = 0
         
-        # 记录已查询的问题（用于调试或统计，非强制要求）
-        self.query_history = []
+        self._game_info = {}
 
-    def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        # 解析答案: target=A/B, value=数值
-        raw_ans = parsed_info["answer"]
-        kv_pairs = [x.strip() for x in raw_ans.split(",") if "=" in x]
-        ans_dict = {}
-        for kv in kv_pairs:
-            parts = kv.split("=", 1)
-            if len(parts) == 2:
-                k, v = parts
-                ans_dict[k.strip()] = v.strip()
+    def _evaluate_expression(self, expr: str, obj_id: str) -> bool:
+        if obj_id not in self.OBJECTS:
+            raise ValueError(f"Invalid object ID: {obj_id}")
         
-        if "target" not in ans_dict or "value" not in ans_dict:
-            return False
+        attrs = self.OBJECTS[obj_id]
         
-        target = ans_dict["target"].upper()
+        eval_expr = expr
+        for i in range(4, 0, -1):
+            eval_expr = eval_expr.replace(f"A{i}", str(attrs[i - 1]))
+        
+        eval_expr = eval_expr.replace("AND", "and")
+        eval_expr = eval_expr.replace("OR", "or")
+        eval_expr = eval_expr.replace("NOT", "not")
+        
+        eval_expr = re.sub(r'(?<!=)=(?!=)', '==', eval_expr)
         
         try:
-            value = int(ans_dict["value"])
+            result = eval(eval_expr)
+            return bool(result)
+        except Exception:
+            raise ValueError(f"Invalid expression: {expr}")
+
+    def _parse_subset(self, subset_str: str) -> set:
+        subset_str = subset_str.strip()
+        
+        if "#" in subset_str:
+            ids = [s.strip() for s in subset_str.split(",")]
+            result = set()
+            for obj_id in ids:
+                if obj_id not in self.OBJECTS:
+                    raise ValueError(f"Invalid object ID: {obj_id}")
+                result.add(obj_id)
+            return result
+        else:
+            result = set()
+            for obj_id in self.OBJECTS:
+                try:
+                    if self._evaluate_expression(subset_str, obj_id):
+                        result.add(obj_id)
+                except:
+                    raise ValueError(f"Invalid boolean expression: {subset_str}")
+            return result
+
+    def _check_expression_equivalence(self, expr: str) -> bool:
+        try:
+            for obj_id in self.OBJECTS:
+                if self._evaluate_expression(expr, obj_id) != (obj_id in self.true_positive_set):
+                    return False
+            return True
         except:
             return False
+
+    def evaluate(self, parsed_info):
+        raw_ans = parsed_info["answer"].strip()
         
-        # 验证目标和数值
-        if target == "A":
-            # 目标A: 确定 a[1]
-            return value == self.permutation[0]
-        elif target == "B":
-            # 目标B: 确定 a[N]
-            return value == self.permutation[-1]
-        else:
+        parts = raw_ans.split(",")
+        ans_dict = {}
+        
+        current_key = None
+        current_value = []
+        
+        for part in parts:
+            if "=" in part and current_key is None:
+                k, v = part.split("=", 1)
+                current_key = k.strip()
+                current_value = [v.strip()]
+            elif "=" in part and current_key is not None:
+                ans_dict[current_key] = ",".join(current_value)
+                k, v = part.split("=", 1)
+                current_key = k.strip()
+                current_value = [v.strip()]
+            else:
+                if current_key:
+                    current_value.append(part.strip())
+        
+        if current_key:
+            ans_dict[current_key] = ",".join(current_value)
+        
+        if "expression" not in ans_dict or "positive_set" not in ans_dict:
             return False
+        
+        submitted_expr = ans_dict["expression"].strip()
+        submitted_set_str = ans_dict["positive_set"].strip()
+        
+        submitted_set = set()
+        for obj_id in submitted_set_str.split(","):
+            obj_id = obj_id.strip()
+            if obj_id:
+                submitted_set.add(obj_id)
+        
+        expr_correct = self._check_expression_equivalence(submitted_expr)
+        
+        set_correct = (submitted_set == self.true_positive_set)
+        
+        return expr_correct and set_correct
 
     def _cf_core_produce(self, parsed_info):
-        """核心业务逻辑"""
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_format = "错误：格式无效或索引超出范围。"
-            error_invalid = "错误：无效的查询标签。"
-            error_multiple = "错误：每次只能提出一个查询。"
         else:
             yes_res, no_res = "Yes", "No"
-            error_format = "Error: Invalid format or index out of range."
-            error_invalid = "Error: Invalid query tag."
-            error_multiple = "Error: Only one query is allowed per turn."
 
-        has_head = "query_head" in parsed_info
-        has_tail = "query_tail" in parsed_info
-
-        # 如果同时包含两种查询标签，返回错误
-        if has_head and has_tail:
-            return error_multiple
-
-        if has_head:
+        if "query_subset" in parsed_info:
+            if self.subset_query_count >= self.max_subset_queries:
+                if self.config.language == "zh":
+                    return f"错误：子集计数查询次数已用尽（{self.max_subset_queries}/{self.max_subset_queries}）"
+                else:
+                    return f"Error: Subset count queries exhausted ({self.max_subset_queries}/{self.max_subset_queries})"
+            
             try:
-                k_str = parsed_info["query_head"].strip()
-                k = int(k_str)
-                # k 必须在 [2, N] 范围内
-                if k < 2 or k > self.n:
-                    return error_format
+                subset_str = parsed_info["query_subset"].strip()
+                subset = self._parse_subset(subset_str)
                 
-                # 比较 a[1] > a[k]
-                # a[1] 对应 permutation[0], a[k] 对应 permutation[k-1]
-                a_1 = self.permutation[0]
-                a_k = self.permutation[k - 1]
+                if not subset:
+                    if self.config.language == "zh":
+                        return "错误：子集为空"
+                    else:
+                        return "Error: Subset is empty"
                 
-                self.query_history.append(("head", k, a_1 > a_k))
-                return yes_res if a_1 > a_k else no_res
-            except:
-                return error_format
+                m = len(subset)
+                k = sum(1 for obj_id in subset if obj_id in self.true_positive_set)
+                
+                self.subset_query_count += 1
+                remaining = self.max_subset_queries - self.subset_query_count
+                
+                if self.config.language == "zh":
+                    return f"子集大小 m={m}，满足谓词的对象数 k={k}。剩余子集查询次数：{remaining}"
+                else:
+                    return f"Subset size m={m}, objects satisfying predicate k={k}. Remaining subset queries: {remaining}"
+                    
+            except Exception as e:
+                if self.config.language == "zh":
+                    return f"错误：{str(e)}"
+                else:
+                    return f"Error: {str(e)}"
 
-        elif has_tail:
-            try:
-                k_str = parsed_info["query_tail"].strip()
-                k = int(k_str)
-                # k 必须在 [1, N-1] 范围内
-                if k < 1 or k > self.n - 1:
-                    return error_format
-                
-                # 比较 a[N] > a[k]
-                # a[N] 对应 permutation[N-1], a[k] 对应 permutation[k-1]
-                a_n = self.permutation[-1]
-                a_k = self.permutation[k - 1]
-                
-                self.query_history.append(("tail", k, a_n > a_k))
-                return yes_res if a_n > a_k else no_res
-            except:
-                return error_format
+        elif "query_member" in parsed_info:
+            if self.member_query_count >= self.max_member_queries:
+                if self.config.language == "zh":
+                    return f"错误：成员查询次数已用尽（{self.max_member_queries}/{self.max_member_queries}）"
+                else:
+                    return f"Error: Membership queries exhausted ({self.max_member_queries}/{self.max_member_queries})"
+            
+            obj_id = parsed_info["query_member"].strip()
+            
+            if obj_id not in self.OBJECTS:
+                if self.config.language == "zh":
+                    return "错误：对象编号无效"
+                else:
+                    return "Error: Invalid object ID"
+            
+            result = yes_res if obj_id in self.true_positive_set else no_res
+            self.member_query_count += 1
+            remaining = self.max_member_queries - self.member_query_count
+            
+            if self.config.language == "zh":
+                return f"{result}。剩余成员查询次数：{remaining}"
+            else:
+                return f"{result}. Remaining membership queries: {remaining}"
 
         else:
-            return error_invalid
-
-    def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        # 关键词替换
-        if correct == "是":
-            return "否"
-        elif correct == "否":
-            return "是"
-        elif correct.lower() == "yes":
-            return "No"
-        elif correct.lower() == "no":
-            return "Yes"
-        
-        # 尝试判断是否为纯整数字符串
-        try:
-            val = int(correct)
-            # 如果成功，则是整数，返回 val + 1 对应的字符串
-            return str(val + 1)
-        except ValueError:
-            pass
-
-        return correct + "_WRONG"
-
+            raise ValueError("No valid query tag found.")
+    
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
         results = []
+        is_zh = self.config.language == "zh"
+        yes_str = "是" if is_zh else "Yes"
+        no_str = "否" if is_zh else "No"
         
-        # 确定当前语言的回答文本
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-        else:
-            yes_res, no_res = "Yes", "No"
+        member_idx = 0
+        subset_idx = 0
+        
+        for obj_id in sorted(self.OBJECTS.keys()):
+            query = f"<query_member>{obj_id}</query_member>"
             
-        # 1. 首端比较 (query_head)
-        # 询问 "a[1] 是否大于 a[k]"，k 取值 [2, N]
-        # a[1] 对应 self.permutation[0]
-        # a[k] 对应 self.permutation[k-1]
-        a_1 = self.permutation[0]
-        for k in range(2, self.n + 1):
-            a_k = self.permutation[k - 1]
-            ans = yes_res if a_1 > a_k else no_res
+            is_positive = obj_id in self.true_positive_set
+            res_txt = yes_str if is_positive else no_str
             
-            results.append({
-                "query": f"<query_head>{k}</query_head>",
-                "answer": ans
-            })
+            rem_mem = max(0, self.max_member_queries - member_idx - 1)
+            member_idx += 1
             
-        # 2. 末端比较 (query_tail)
-        # 询问 "a[N] 是否大于 a[k]"，k 取值 [1, N-1]
-        # a[N] 对应 self.permutation[N-1] (即 self.permutation[-1])
-        # a[k] 对应 self.permutation[k-1]
-        a_n = self.permutation[-1]
-        for k in range(1, self.n):
-            a_k = self.permutation[k - 1]
-            ans = yes_res if a_n > a_k else no_res
+            if is_zh:
+                ans = f"{res_txt}。剩余成员查询次数：{rem_mem}"
+            else:
+                ans = f"{res_txt}. Remaining membership queries: {rem_mem}"
+                
+            results.append({"query": query, "answer": ans})
+
+        for obj_id in sorted(self.OBJECTS.keys()):
+            query = f"<query_subset>{obj_id}</query_subset>"
+            m = 1
+            k = 1 if obj_id in self.true_positive_set else 0
             
-            results.append({
-                "query": f"<query_tail>{k}</query_tail>",
-                "answer": ans
-            })
+            rem_sub = max(0, self.max_subset_queries - subset_idx - 1)
+            subset_idx += 1
             
+            if is_zh:
+                ans = f"子集大小 m={m}，满足谓词的对象数 k={k}。剩余子集查询次数：{rem_sub}"
+            else:
+                ans = f"Subset size m={m}, objects satisfying predicate k={k}. Remaining subset queries: {rem_sub}"
+                
+            results.append({"query": query, "answer": ans})
+            
+        for i in range(1, 5):
+            for val in [0, 1]:
+                expr = f"A{i}={val}"
+                query = f"<query_subset>{expr}</query_subset>"
+                
+                try:
+                    subset = self._parse_subset(expr)
+                    m = len(subset)
+                    k = sum(1 for oid in subset if oid in self.true_positive_set)
+                    
+                    rem_sub = max(0, self.max_subset_queries - subset_idx - 1)
+                    subset_idx += 1
+                    
+                    if is_zh:
+                        ans = f"子集大小 m={m}，满足谓词的对象数 k={k}。剩余子集查询次数：{rem_sub}"
+                    else:
+                        ans = f"Subset size m={m}, objects satisfying predicate k={k}. Remaining subset queries: {rem_sub}"
+                        
+                    results.append({"query": query, "answer": ans})
+                except:
+                    continue
+
         return results
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct.isdigit():
+            return str(int(correct) + 1)
+        
+        if self.config.language == "zh":
+            if "是" in correct and "否" not in correct:
+                return correct.replace("是", "否", 1)
+            elif "否" in correct and "是" not in correct:
+                return correct.replace("否", "是", 1)
+        else:
+            if re.search(r'\bYes\b', correct) and not re.search(r'\bNo\b', correct):
+                return re.sub(r'\bYes\b', 'No', correct, count=1)
+            elif re.search(r'\bNo\b', correct) and not re.search(r'\bYes\b', correct):
+                return re.sub(r'\bNo\b', 'Yes', correct, count=1)
+        
+        k_match = re.search(r'k=(\d+)', correct)
+        if k_match:
+            old_k = int(k_match.group(1))
+            new_k = old_k + 1 if old_k == 0 else old_k - 1
+            return correct.replace(f"k={old_k}", f"k={new_k}", 1)
+        
+        return correct + "_WRONG"

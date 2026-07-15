@@ -1,743 +1,527 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。例如猜拳游戏，模型需要总结对手出拳的模式。
-# 数据结构: 树：存在一个N节点的树。
-# 知识点:   遍历相对顺序：两个节点在某种遍历下谁先被访问
-# ============================================================
-
-import math
-import re
-from collections import deque
-from typing import Dict, List, Set, Tuple
-
+import random
 from .base import Game
 
+class GraphConnectivityGame(Game):
 
-class TreeTraversalDeductionGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "树"
+    reasoning_type = "演绎推理"
+    data_structure = "图"
 
     game_rule_zh = """\
-我们来玩一个"树遍历推理"游戏，规则如下：
+我们现在来玩一个"图连通性推理"游戏，规则如下：
 
-游戏设定了一棵包含 {n} 个节点的有根树，每个节点用唯一的大写字母字符串命名（如 A, ROOT, EA, NODE3 等）。
+游戏设定了一个隐藏的简单无向图 G，包含 {n} 个顶点，编号从 1 到 {n}。图中没有自环和重边，边集对你完全未知。你的任务是判断两个指定的顶点 S={s} 和 T={t} 是否处于同一连通分量，并提供可核验的证据。
 
-树的结构信息：
-- 根节点：{root}
-- 树结构：{tree_structure}
+你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
 
-字符串字典序规则：按 A 小于 B 小于 ... 小于 Z 的标准字典序逐字符比较；若一字符串为另一字符串的前缀，则较短者更小（例如 AB 小于 ABA）。
+1. 边查询：询问顶点 u 和 v 之间是否存在边。回答"是"或"否"。
+2. 度数查询：询问顶点 u 的度数（连接的边数）。回答一个非负整数。
+3. 邻居查询：询问顶点 u 的下一个未知邻居。返回一个顶点编号或"无"。
+   - 每个顶点的邻居按照编号升序排列
+   - 每次返回你尚未获知的最小编号邻居
+   - "已获知"是指：之前通过边查询得到"是"，或通过邻居查询返回过该邻居
+   - 如果所有邻居都已获知，则返回"无"
 
-隐藏机制：
-我已经秘密选择了一种遍历策略和兄弟访问规则，生成了这棵树上所有节点的一个全序（每个节点恰好出现一次）。遍历策略包括：
-1. 深度优先先序遍历
-2. 深度优先后序遍历  
-3. 广度优先层序遍历
+请尽可能少地使用查询次数，收集足够信息后提交最终答案。
 
-同时，对于每个节点的子节点，我选择了以下访问顺序之一：
-- 按节点名字典序升序访问
-- 按节点名字典序降序访问
+每次只能包含一个查询标签。请使用以下 XML 格式：
 
-这些选择在整个游戏过程中保持固定且全局一致。
+- 边查询（例如询问顶点 3 和 5 之间是否有边）：
+<query_edge>3,5</query_edge>
 
-你的任务：
-推断出完整的节点遍历顺序。你可以通过比较查询来获取信息，但查询次数有限。
+- 度数查询（例如询问顶点 7 的度数）：
+<query_degree>7</query_degree>
 
-查询格式：
-使用以下 XML 格式进行比较查询（询问两个节点在遍历顺序中哪个更早）：
+- 邻居查询（例如询问顶点 2 的下一个未知邻居）：
+<query_neighbor>2</query_neighbor>
 
-<query_compare>X,Y</query_compare>
+提交最终答案时，必须说明连通性并提供证据：
 
-其中 X 和 Y 是不同的节点名。我会回答在遍历顺序中更早出现的节点。
+- 如果判断"连通"，提供从 S 到 T 的路径（顶点序列，用逗号分隔）：
+<answer>connected, path={s},3,7,{t}</answer>
 
-提交答案格式：
-当你准备好提交最终答案时，请按遍历顺序列出所有节点（用逗号分隔）：
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-注意：
-- 请尽可能少地使用查询次数
-- 节点必须全部出现且每个节点恰好出现一次
-- 答案必须与隐藏的遍历顺序完全一致才算成功
+- 如果判断"不连通"，提供包含 S 但不包含 T 的完整连通分量（顶点集合，用逗号分隔）：
+<answer>disconnected, component={s},2,3</answer>
 """
 
     game_rule_en = """\
-Let's play a "Tree Traversal Deduction" game. Here are the rules:
+Let's play a "Graph Connectivity Reasoning" game. Here are the rules:
 
-The game has a rooted tree with {n} nodes, each named with a unique uppercase letter string (such as A, ROOT, EA, NODE3, etc.).
+The game has a hidden simple undirected graph G with {n} vertices numbered from 1 to {n}. The graph has no self-loops or multiple edges, and the edge set is completely unknown to you. Your task is to determine whether two specified vertices S={s} and T={t} are in the same connected component and provide verifiable evidence.
 
-Tree structure information:
-- Root node: {root}
-- Tree structure: {tree_structure}
+You can obtain information through three types of queries (only one query per turn):
 
-Lexicographic order rule: Standard dictionary order by A less than B less than ... less than Z, comparing character by character; if one string is a prefix of another, the shorter one is smaller (e.g., AB less than ABA).
+1. Edge Query: Ask if there is an edge between vertices u and v. Answer "Yes" or "No".
+2. Degree Query: Ask for the degree of vertex u (number of connected edges). Answer a non-negative integer.
+3. Neighbor Query: Ask for the next unknown neighbor of vertex u. Returns a vertex number or "None".
+   - Neighbors of each vertex are ordered by ascending vertex number
+   - Each call returns the smallest-numbered neighbor you haven't learned about yet
+   - "Learned" means: previously got "Yes" from an edge query, or got that neighbor from a neighbor query
+   - If all neighbors are already learned, returns "None"
 
-Hidden mechanism:
-I have secretly chosen a traversal strategy and sibling visiting rule, generating a total order of all nodes in the tree (each node appears exactly once). The traversal strategies include:
-1. Depth-first preorder traversal
-2. Depth-first postorder traversal
-3. Breadth-first level-order traversal
+Use as few queries as possible. After collecting sufficient information, submit your final answer.
 
-Meanwhile, for each node's children, I chose one of the following visiting orders:
-- Visit children in ascending lexicographic order by name
-- Visit children in descending lexicographic order by name
+Each turn must contain only one query tag. Use the following XML format:
 
-These choices remain fixed and globally consistent throughout the game.
+- Edge Query (e.g., asking if there's an edge between vertices 3 and 5):
+<query_edge>3,5</query_edge>
 
-Your task:
-Deduce the complete node traversal order. You can obtain information through comparison queries, but the number of queries is limited.
+- Degree Query (e.g., asking for the degree of vertex 7):
+<query_degree>7</query_degree>
 
-Query format:
-Use the following XML format for comparison queries (asking which of two nodes appears earlier in the traversal order):
+- Neighbor Query (e.g., asking for the next unknown neighbor of vertex 2):
+<query_neighbor>2</query_neighbor>
 
-<query_compare>X,Y</query_compare>
+When submitting the final answer, specify connectivity and provide evidence:
 
-Where X and Y are different node names. I will answer which node appears earlier in the traversal order.
+- If judging "connected", provide a path from S to T (vertex sequence, comma-separated):
+<answer>connected, path={s},3,7,{t}</answer>
 
-Answer submission format:
-When you are ready to submit your final answer, list all nodes in traversal order (comma-separated):
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-Note:
-- Please use as few queries as possible
-- All nodes must appear exactly once
-- The answer must match the hidden traversal order exactly to succeed
+- If judging "disconnected", provide the complete connected component containing S but not T (vertex set, comma-separated):
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用智能交通网络调度评估系统。我们来模拟一个"物流分发网络调度"任务，规则如下：
+我们现在来进行"物流路网连通性"排查。系统内有一个隐藏的区域公路网，包含 {n} 个物流枢纽（编号从 1 到 {n}）。枢纽间仅存在双向直达公路，无自环和重边，具体路线对你保密。你的任务是判断始发枢纽 S={s} 和目标枢纽 T={t} 是否连通，并提供可核验的路线规划或孤岛证明。
 
-系统设定了一棵包含 {n} 个站点的树形调度网络，每个站点用唯一的大写字母字符串代码命名（如 A, ROOT, EA, NODE3 等）。
+你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
 
-网络结构信息：
-- 核心枢纽节点：{root}
-- 线路结构：{tree_structure}
+1. 路线查询：询问枢纽 u 和 v 之间是否有直达公路。回答"是"或"否"。
+2. 线路数查询：询问枢纽 u 连接的直达公路总数。回答一个非负整数。
+3. 邻近枢纽查询：询问枢纽 u 的下一个未知相邻枢纽。返回一个枢纽编号或"无"。
+   - 每个枢纽的相邻枢纽按照编号升序排列
+   - 每次返回你尚未获知的最小编号相邻枢纽
+   - "已获知"是指：之前通过路线查询得到"是"，或通过邻近枢纽查询返回过该枢纽
+   - 如果所有相邻枢纽都已获知，则返回"无"
 
-代码字典序规则：按 A 小于 B 小于 ... 小于 Z 的标准字典序逐字符比较；若一字符串为另一字符串的前缀，则较短者更小（例如 AB 小于 ABA）。
+请尽可能少地使用查询次数，收集足够信息后提交最终答案。
 
-隐藏机制：
-调度中心秘密选择了一种巡检策略和分支站点访问规则，生成了这棵树上所有站点的一个完整巡检顺序（每个站点恰好出现一次）。巡检策略包括：
-1. 深度优先先序巡检
-2. 深度优先后序巡检  
-3. 广度优先层序巡检
+每次只能包含一个查询标签。请使用以下 XML 格式：
 
-同时，对于每个站点的下级接驳站点，调度中心选择了以下访问顺序之一：
-- 按站点代码字典序升序访问
-- 按站点代码字典序降序访问
+- 路线查询（例如询问枢纽 3 和 5 之间是否有直达公路）：
+<query_edge>3,5</query_edge>
 
-这些选择在整个调度评估过程中保持固定且全局一致。
+- 线路数查询（例如询问枢纽 7 的线路数）：
+<query_degree>7</query_degree>
 
-你的任务：
-推断出完整的站点巡检顺序。你可以通过接口比较查询来获取调度信息，但查询配额有限。
+- 邻近枢纽查询（例如询问枢纽 2 的下一个未知相邻枢纽）：
+<query_neighbor>2</query_neighbor>
 
-查询格式：
-使用以下 XML 格式进行比较查询（询问两个站点在巡检顺序中哪个更早被访问）：
+提交最终答案时，必须说明连通性并提供证据：
 
-<query_compare>X,Y</query_compare>
+- 如果判断"连通"，提供从 S 到 T 的路径（枢纽编号序列，用逗号分隔）：
+<answer>connected, path={s},3,7,{t}</answer>
 
-其中 X 和 Y 是不同的站点代码。调度系统会返回在巡检顺序中更早被访问的站点。
-
-提交答案格式：
-当你准备好提交最终调度预案时，请按巡检顺序列出所有站点（用逗号分隔）：
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-注意：
-- 请尽可能少地消耗查询配额
-- 站点必须全部出现且每个站点恰好出现一次
-- 提交的预案必须与调度中心隐藏的巡检顺序完全一致才算验证通过
+- 如果判断"不连通"，提供包含 S 但不包含 T 的完整连通路网（枢纽编号集合，用逗号分隔）：
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Transportation Scenario]
-Welcome to the Intelligent Transit Network Dispatch Evaluation System. Let's simulate a "Logistics Distribution Network Dispatch" task. Here are the rules:
+Let's perform a "Logistics Network Connectivity" analysis. The system contains a hidden regional highway network with {n} logistics hubs numbered 1 to {n}. Hubs are connected by two-way direct highways with no self-loops or multiple routes. The exact routing is confidential. Your task is to determine whether origin hub S={s} and destination hub T={t} are connected, providing verifiable routing or proof of isolation.
 
-The system has set up a tree-structured dispatch network with {n} stations, each identified by a unique uppercase letter string code (e.g., A, ROOT, EA, NODE3).
+You can obtain information through three types of queries (only one query per turn):
 
-Network structure information:
-- Core hub node: {root}
-- Route structure: {tree_structure}
+1. Route Query: Ask if there is a direct highway between hubs u and v. Answer "Yes" or "No".
+2. Route Count Query: Ask for the total number of direct highways connected to hub u. Answer a non-negative integer.
+3. Adjacent Hub Query: Ask for the next unknown adjacent hub of hub u. Returns a hub number or "None".
+   - Adjacent hubs of each hub are ordered by ascending hub number
+   - Each call returns the smallest-numbered adjacent hub you haven't learned about yet
+   - "Learned" means: previously got "Yes" from a route query, or got that hub from an adjacent hub query
+   - If all adjacent hubs are already learned, returns "None"
 
-Lexicographic order rule: Standard dictionary order by A less than B less than ... less than Z, comparing character by character; if one string is a prefix of another, the shorter one is smaller (e.g., AB is less than ABA).
+Use as few queries as possible. After collecting sufficient information, submit your final answer.
 
-Hidden mechanism:
-The dispatch center has secretly selected an inspection strategy and a branch station visiting rule, generating a complete inspection sequence for all stations in this network (each station appears exactly once). The inspection strategies include:
-1. Depth-first preorder inspection
-2. Depth-first postorder inspection
-3. Breadth-first level-order inspection
+Each turn must contain only one query tag. Use the following XML format:
 
-Meanwhile, for each station's subordinate connecting stations, the center chose one of the following visiting orders:
-- Visit in ascending lexicographic order by station code
-- Visit in descending lexicographic order by station code
+- Route Query (e.g., asking if there's a direct highway between hubs 3 and 5):
+<query_edge>3,5</query_edge>
 
-These choices remain fixed and globally consistent throughout the evaluation process.
+- Route Count Query (e.g., asking for the route count of hub 7):
+<query_degree>7</query_degree>
 
-Your task:
-Deduce the complete station inspection sequence. You can obtain scheduling information through comparison queries, but the query quota is limited.
+- Adjacent Hub Query (e.g., asking for the next unknown adjacent hub of hub 2):
+<query_neighbor>2</query_neighbor>
 
-Query format:
-Use the following XML format for comparison queries (asking which of two stations is visited earlier in the inspection sequence):
+When submitting the final answer, specify connectivity and provide evidence:
 
-<query_compare>X,Y</query_compare>
+- If judging "connected", provide a path from S to T (hub number sequence, comma-separated):
+<answer>connected, path={s},3,7,{t}</answer>
 
-Where X and Y are different station codes. The dispatch system will return the station that is visited earlier in the inspection sequence.
-
-Answer submission format:
-When you are ready to submit your final dispatch plan, list all stations in the deduced inspection sequence (comma-separated):
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-Note:
-- Please consume as few query quotas as possible
-- All stations must appear exactly once
-- The submitted plan must match the hidden inspection sequence exactly to pass the verification
+- If judging "disconnected", provide the complete connected network containing S but not T (hub number set, comma-separated):
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_zh_2 = """\
-欢迎进入临床辅助诊断决策系统。我们来进行一项"医疗诊断决策树解析"任务，规则如下：
+我们现在来进行"传染病接触史"溯源。系统中有一个隐藏的流行病学接触图谱，包含 {n} 名确诊或疑似感染者（编号 1 到 {n}）。人员之间存在双向的密切接触史（无自环，无重复接触记录），具体接触名单对你保密。你需要判断首发病例 S={s} 与新发病例 T={t} 是否属于同一条传播链，并提供接触路径或独立传播圈的证据。
 
-系统设定了一棵包含 {n} 个诊断节点的有根决策树，每个节点代表一项特定检测项目或体征，用唯一的大写字母字符串代号命名（如 A, ROOT, EA, NODE3 等）。
+你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
 
-诊断结构信息：
-- 初始症状节点：{root}
-- 诊断推理结构：{tree_structure}
+1. 接触查询：询问病例 u 和 v 之间是否有过密切接触。回答"是"或"否"。
+2. 接触人数查询：询问病例 u 的密切接触者总数。回答一个非负整数。
+3. 下一名接触者查询：询问病例 u 的下一个未知密切接触者。返回一个病例编号或"无"。
+   - 每个病例的接触者按照编号升序排列
+   - 每次返回你尚未获知的最小编号接触者
+   - "已获知"是指：之前通过接触查询得到"是"，或通过下一名接触者查询返回过该病例
+   - 如果所有接触者都已获知，则返回"无"
 
-代号字典序规则：按 A 小于 B 小于 ... 小于 Z 的标准字典序逐字符比较；若一字符串为另一字符串的前缀，则较短者更小。
+请尽可能少地使用查询次数，收集足够信息后提交最终答案。
 
-隐藏机制：
-主治医师已秘密确立了一种评估策略和并发检测项的访问规则，生成了针对该病例所有诊断节点的一个完整评估顺序（每个节点恰好评估一次）。评估策略包括：
-1. 深度优先先序评估
-2. 深度优先后序评估  
-3. 广度优先层序评估
+每次只能包含一个查询标签。请使用以下 XML 格式：
 
-同时，针对同一上级指征下的并发子节点，医师选择了以下执行顺序之一：
-- 按检测项代号字典序升序执行
-- 按检测项代号字典序降序执行
+- 接触查询（例如询问病例 3 和 5 之间是否有密切接触）：
+<query_edge>3,5</query_edge>
 
-这些决策在本次病案解析过程中保持绝对一致。
+- 接触人数查询（例如询问病例 7 的接触人数）：
+<query_degree>7</query_degree>
 
-你的任务：
-推断出完整的医疗诊断评估顺序。你可以通过系统接口进行对比查询获取信息，但系统存在调用次数限制。
+- 下一名接触者查询（例如询问病例 2 的下一个未知接触者）：
+<query_neighbor>2</query_neighbor>
 
-查询格式：
-使用以下 XML 格式进行比较查询（询问两项检测在评估顺序中哪一项更早进行）：
+提交最终答案时，必须说明连通性并提供证据：
 
-<query_compare>X,Y</query_compare>
+- 如果判断"连通"，提供从 S 到 T 的传播链路径（病例编号序列，用逗号分隔）：
+<answer>connected, path={s},3,7,{t}</answer>
 
-其中 X 和 Y 是不同的节点代号。系统会提示在评估顺序中较早执行的节点。
-
-提交答案格式：
-当你准备好出具最终诊断评估路径时，请按顺序列出所有节点代号（用逗号分隔）：
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-注意：
-- 提倡以最少查询次数完成路径解析
-- 诊断节点必须全部包含，且每个节点仅出现一次
-- 最终路径必须与主治医师隐藏的评估顺序完全吻合方为成功
+- 如果判断"不连通"，提供包含 S 但不包含 T 的完整接触圈套（病例编号集合，用逗号分隔）：
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Healthcare Scenario]
-Welcome to the Clinical Decision Support System. Let's conduct a "Medical Diagnostic Decision Tree Analysis" task. Here are the rules:
+Let's conduct an "Epidemiological Contact Tracing" analysis. The system has a hidden contact network of {n} patients (numbered 1 to {n}). There are two-way close contact histories between individuals (no self-loops or duplicate records). The exact contact list is confidential. Your task is to determine if the primary case S={s} and the newly confirmed case T={t} belong to the same transmission cluster, providing the contact path or proof of isolated clusters.
 
-The system provides a rooted decision tree with {n} diagnostic nodes, each representing a specific test item or vital sign, named with a unique uppercase letter string code (e.g., A, ROOT, EA, NODE3).
+You can obtain information through three types of queries (only one query per turn):
 
-Diagnostic structure information:
-- Initial symptom node: {root}
-- Diagnostic reasoning structure: {tree_structure}
+1. Contact Query: Ask if there is a close contact history between patients u and v. Answer "Yes" or "No".
+2. Contact Count Query: Ask for the total number of close contacts of patient u. Answer a non-negative integer.
+3. Next Contact Query: Ask for the next unknown close contact of patient u. Returns a patient number or "None".
+   - Contacts of each patient are ordered by ascending patient number
+   - Each call returns the smallest-numbered contact you haven't learned about yet
+   - "Learned" means: previously got "Yes" from a contact query, or got that patient from a next contact query
+   - If all contacts are already learned, returns "None"
 
-Lexicographic order rule: Standard dictionary order by A less than B less than ... less than Z, comparing character by character; if one string is a prefix of another, the shorter one is smaller.
+Use as few queries as possible. After collecting sufficient information, submit your final answer.
 
-Hidden mechanism:
-The attending physician has secretly established an evaluation strategy and a concurrent test visiting rule, generating a complete evaluation sequence for all diagnostic nodes in this case (each node evaluated exactly once). The evaluation strategies include:
-1. Depth-first preorder evaluation
-2. Depth-first postorder evaluation
-3. Breadth-first level-order evaluation
+Each turn must contain only one query tag. Use the following XML format:
 
-Meanwhile, for concurrent child nodes under the same parent indicator, the physician chose one of the following execution orders:
-- Execute in ascending lexicographic order by test code
-- Execute in descending lexicographic order by test code
+- Contact Query (e.g., asking if there's a close contact between patients 3 and 5):
+<query_edge>3,5</query_edge>
 
-These decisions remain absolutely consistent throughout this case analysis.
+- Contact Count Query (e.g., asking for the contact count of patient 7):
+<query_degree>7</query_degree>
 
-Your task:
-Deduce the complete medical diagnostic evaluation sequence. You can obtain information through comparison queries via the system interface, but there is a limit on the number of calls.
+- Next Contact Query (e.g., asking for the next unknown contact of patient 2):
+<query_neighbor>2</query_neighbor>
 
-Query format:
-Use the following XML format for comparison queries (asking which of two tests is conducted earlier in the evaluation sequence):
+When submitting the final answer, specify connectivity and provide evidence:
 
-<query_compare>X,Y</query_compare>
+- If judging "connected", provide a transmission path from S to T (patient number sequence, comma-separated):
+<answer>connected, path={s},3,7,{t}</answer>
 
-Where X and Y are different node codes. The system will prompt which node is executed earlier in the evaluation sequence.
-
-Answer submission format:
-When you are ready to issue the final diagnostic evaluation path, list all node codes in the deduced sequence (comma-separated):
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-Note:
-- It is encouraged to complete the path analysis with the fewest queries
-- All diagnostic nodes must be included exactly once
-- The final path must perfectly match the physician's hidden evaluation sequence to be successful
+- If judging "disconnected", provide the complete transmission cluster containing S but not T (patient number set, comma-separated):
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用智能教学辅助平台。我们来规划一个"知识图谱学习路径"任务，规则如下：
+我们现在来进行"学术合作网络"分析。数据库中隐藏了一个包含 {n} 名学者（编号 1 到 {n}）的科研合作关系图。学者之间通过共同署名论文建立无向的合作关系，无自环和重复关联，具体合作清单未公开。你的任务是判断学者 S={s} 和学者 T={t} 是否属于同一个学术连通圈，并提供可核实的合作路径或孤立圈层名单。
 
-课程体系设定了一棵包含 {n} 个知识模块的树形逻辑结构，每个模块用唯一的大写字母字符串编号命名（如 A, ROOT, EA, NODE3 等）。
+你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
 
-课程结构信息：
-- 基础前置模块：{root}
-- 知识依赖图谱：{tree_structure}
+1. 合作查询：询问学者 u 和 v 之间是否合作过论文。回答"是"或"否"。
+2. 合作者数量查询：询问学者 u 的合作者总数。回答一个非负整数。
+3. 下一位合作者查询：询问学者 u 的下一个未知合作者。返回一个学者编号或"无"。
+   - 每个学者的合作者按照编号升序排列
+   - 每次返回你尚未获知的最小编号合作者
+   - "已获知"是指：之前通过合作查询得到"是"，或通过下一位合作者查询返回过该学者
+   - 如果所有合作者都已获知，则返回"无"
 
-编号字典序规则：按 A 小于 B 小于 ... 小于 Z 的标准字典序逐字符比较；若一字符串为另一字符串的前缀，则较短者更小。
+请尽可能少地使用查询次数，收集足够信息后提交最终答案。
 
-隐藏机制：
-教研组秘密选定了一种教学策略和同级模块的讲授规则，生成了这棵树上所有知识模块的标准学习顺序（每个模块恰好学习一次）。教学策略包括：
-1. 深度优先先序教学
-2. 深度优先后序教学  
-3. 广度优先层序教学
+每次只能包含一个查询标签。请使用以下 XML 格式：
 
-同时，对于依赖同一前置知识的多个衍生模块，教研组选择了以下讲授顺序之一：
-- 按模块编号字典序升序讲授
-- 按模块编号字典序降序讲授
+- 合作查询（例如询问学者 3 和 5 是否有合作）：
+<query_edge>3,5</query_edge>
 
-这些教研设定在整个规划过程中保持稳定且全局一致。
+- 合作者数量查询（例如询问学者 7 的合作者数量）：
+<query_degree>7</query_degree>
 
-你的任务：
-推演得出完整的标准学习顺序。你可以向系统发起对比查询来摸索规律，但查询额度受到严格限制。
+- 下一位合作者查询（例如询问学者 2 的下一个未知合作者）：
+<query_neighbor>2</query_neighbor>
 
-查询格式：
-使用以下 XML 格式进行比较查询（询问两个模块在学习顺序中哪个需要更早掌握）：
+提交最终答案时，必须说明连通性并提供证据：
 
-<query_compare>X,Y</query_compare>
+- 如果判断"连通"，提供从 S 到 T 的合作路径（学者编号序列，用逗号分隔）：
+<answer>connected, path={s},3,7,{t}</answer>
 
-其中 X 和 Y 是不同的模块编号。系统会提示在学习顺序中更早授课的模块。
-
-提交答案格式：
-当你准备好提交最终课程大纲时，请按学习顺序列出所有知识模块（用逗号分隔）：
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-注意：
-- 请节约系统的查询额度
-- 知识模块必须全部涵盖且无重复
-- 提交的大纲必须与教研组隐藏的学习顺序严丝合缝才能通过审核
+- 如果判断"不连通"，提供包含 S 但不包含 T 的完整学术圈层（学者编号集合，用逗号分隔）：
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Intelligent Tutoring System. Let's plan a "Knowledge Graph Learning Path" task. Here are the rules:
+Let's perform an "Academic Collaboration Network" analysis. The database hides a research collaboration graph containing {n} scholars (numbered 1 to {n}). Scholars are linked by undirected co-authorship relations (no self-loops or duplicate links). The exact collaboration list is undisclosed. Your task is to determine if Scholar S={s} and Scholar T={t} belong to the same academic circle, providing verifiable collaboration paths or a list of isolated clusters.
 
-The curriculum sets up a tree-structured logical diagram containing {n} knowledge modules, each named with a unique uppercase letter string ID (e.g., A, ROOT, EA, NODE3).
+You can obtain information through three types of queries (only one query per turn):
 
-Course structure information:
-- Foundational prerequisite module: {root}
-- Knowledge dependency graph: {tree_structure}
+1. Collaboration Query: Ask if there is a co-authorship between scholars u and v. Answer "Yes" or "No".
+2. Collaborator Count Query: Ask for the total number of collaborators for scholar u. Answer a non-negative integer.
+3. Next Collaborator Query: Ask for the next unknown collaborator of scholar u. Returns a scholar number or "None".
+   - Collaborators of each scholar are ordered by ascending scholar number
+   - Each call returns the smallest-numbered collaborator you haven't learned about yet
+   - "Learned" means: previously got "Yes" from a collaboration query, or got that scholar from a next collaborator query
+   - If all collaborators are already learned, returns "None"
 
-Lexicographic order rule: Standard dictionary order by A less than B less than ... less than Z, comparing character by character; if one string is a prefix of another, the shorter one is smaller.
+Use as few queries as possible. After collecting sufficient information, submit your final answer.
 
-Hidden mechanism:
-The academic research group has secretly selected a teaching strategy and a rule for presenting peer modules, generating a standard learning sequence for all knowledge modules in this tree (each module learned exactly once). The teaching strategies include:
-1. Depth-first preorder teaching
-2. Depth-first postorder teaching
-3. Breadth-first level-order teaching
+Each turn must contain only one query tag. Use the following XML format:
 
-Meanwhile, for multiple derivative modules depending on the same prerequisite knowledge, the group chose one of the following presentation orders:
-- Teach in ascending lexicographic order by module ID
-- Teach in descending lexicographic order by module ID
+- Collaboration Query (e.g., asking if scholars 3 and 5 collaborated):
+<query_edge>3,5</query_edge>
 
-These pedagogical settings remain stable and globally consistent throughout the planning process.
+- Collaborator Count Query (e.g., asking for the collaborator count of scholar 7):
+<query_degree>7</query_degree>
 
-Your task:
-Deduce the complete standard learning sequence. You can initiate comparison queries to the system to explore the pattern, but the query quota is strictly limited.
+- Next Collaborator Query (e.g., asking for the next unknown collaborator of scholar 2):
+<query_neighbor>2</query_neighbor>
 
-Query format:
-Use the following XML format for comparison queries (asking which of two modules must be mastered earlier in the learning sequence):
+When submitting the final answer, specify connectivity and provide evidence:
 
-<query_compare>X,Y</query_compare>
+- If judging "connected", provide a collaboration path from S to T (scholar number sequence, comma-separated):
+<answer>connected, path={s},3,7,{t}</answer>
 
-Where X and Y are different module IDs. The system will prompt the module taught earlier in the sequence.
-
-Answer submission format:
-When you are ready to submit the final course syllabus, list all knowledge modules in the deduced learning sequence (comma-separated):
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-Note:
-- Please conserve the system's query quota
-- All knowledge modules must be covered without duplication
-- The submitted syllabus must perfectly match the hidden learning sequence of the research group to pass the review
+- If judging "disconnected", provide the complete academic circle containing S but not T (scholar number set, comma-separated):
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_zh_4 = """\
-欢迎进入智能制造车间控制系统。我们来执行一个"产品物料清单(BOM)装配"推演任务，规则如下：
+我们现在进行"工厂管网连通性"排查。车间内埋设了一个包含 {n} 个关键设备节点（编号 1 到 {n}）的隐藏工业管网。节点间由双向管道直接相连，无自环和复线，具体管线拓扑未知。你的任务是判断控制阀 S={s} 与终端设备 T={t} 是否处于同一连通的管网系统中，并提供物理路径或系统隔离的证明。
 
-工厂设定了一棵包含 {n} 个组件节点的BOM树，每个组件用唯一的大写字母字符串物料号命名（如 A, ROOT, EA, NODE3 等）。
+你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
 
-物料结构信息：
-- 最终成品节点：{root}
-- BOM层级结构：{tree_structure}
+1. 管线查询：询问节点 u 和 v 之间是否有直连管道。回答"是"或"否"。
+2. 接口数查询：询问节点 u 上的已接管道总数。回答一个非负整数。
+3. 邻接节点查询：询问节点 u 的下一个未知直连节点。返回一个节点编号或"无"。
+   - 每个节点的相邻节点按照编号升序排列
+   - 每次返回你尚未获知的最小编号直连节点
+   - "已获知"是指：之前通过管线查询得到"是"，或通过邻接节点查询返回过该节点
+   - 如果所有相邻节点都已获知，则返回"无"
 
-物料号字典序规则：按 A 小于 B 小于 ... 小于 Z 的标准字典序逐字符比较；若一字符串为另一字符串的前缀，则较短者更小。
+请尽可能少地使用查询次数，收集足够信息后提交最终答案。
 
-隐藏机制：
-工艺工程师秘密制定了一种装配策略和同级零件的处理规则，生成了这棵BOM树上所有组件的完整流水线装配顺序（每个组件恰好经历一次装配动作）。装配策略包括：
-1. 深度优先先序装配
-2. 深度优先后序装配  
-3. 广度优先层序装配
+每次只能包含一个查询标签。请使用以下 XML 格式：
 
-同时，针对属于同一父级总成的多个子零件，工程师选择了以下上线顺序之一：
-- 按物料号字典序升序上线
-- 按物料号字典序降序上线
+- 管线查询（例如询问节点 3 和 5 之间是否有直连管道）：
+<query_edge>3,5</query_edge>
 
-这些工艺规范在整个排产推演过程中保持固定且全局一致。
+- 接口数查询（例如询问节点 7 的已接管道数）：
+<query_degree>7</query_degree>
 
-你的任务：
-反推出完整的工艺装配顺序。你可以通过比对指令来获取工序信息，但指令下发次数有限。
+- 邻接节点查询（例如询问节点 2 的下一个未知直连节点）：
+<query_neighbor>2</query_neighbor>
 
-查询格式：
-使用以下 XML 格式进行指令比对（询问两个组件在流水线装配中哪个更早执行）：
+提交最终答案时，必须说明连通性并提供证据：
 
-<query_compare>X,Y</query_compare>
+- 如果判断"连通"，提供从 S 到 T 的流体路径（节点编号序列，用逗号分隔）：
+<answer>connected, path={s},3,7,{t}</answer>
 
-其中 X 和 Y 是不同的物料号。控制系统会返回在装配顺序中优先处理的物料。
-
-提交答案格式：
-当你准备好输出最终排产SOP时，请按装配顺序列出所有物料号（用逗号分隔）：
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-注意：
-- 请尽量减少无谓的指令下发
-- 所有组件必须全部包含且不发生重漏
-- 排产SOP必须与工艺工程师定下的装配顺序分毫不差方能下线生产
+- 如果判断"不连通"，提供包含 S 但不包含 T 的完整隔离管网（节点编号集合，用逗号分隔）：
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the Smart Factory Shop Floor Control System. Let's execute a "Bill of Materials (BOM) Assembly" deduction task. Here are the rules:
+[Manufacturing/Industry Scenario]
+Let's conduct an "Industrial Pipeline Connectivity" inspection. The factory floor contains a hidden pipeline network with {n} key equipment nodes (numbered 1 to {n}). Nodes are connected by two-way pipes with no self-loops or duplicate lines. The exact pipeline topology is unknown. Your task is to determine if Control Valve S={s} and Terminal Equipment T={t} are in the same connected piping system, providing physical routing or proof of system isolation.
 
-The factory specifies a BOM tree containing {n} component nodes, each named with a unique uppercase letter string part number (e.g., A, ROOT, EA, NODE3).
+You can obtain information through three types of queries (only one query per turn):
 
-Material structure information:
-- Final product node: {root}
-- BOM hierarchical structure: {tree_structure}
+1. Pipe Query: Ask if there is a direct pipe between nodes u and v. Answer "Yes" or "No".
+2. Interface Count Query: Ask for the total number of connected pipes on node u. Answer a non-negative integer.
+3. Adjacent Node Query: Ask for the next unknown directly connected node of node u. Returns a node number or "None".
+   - Adjacent nodes of each node are ordered by ascending node number
+   - Each call returns the smallest-numbered adjacent node you haven't learned about yet
+   - "Learned" means: previously got "Yes" from a pipe query, or got that node from an adjacent node query
+   - If all adjacent nodes are already learned, returns "None"
 
-Lexicographic order rule: Standard dictionary order by A less than B less than ... less than Z, comparing character by character; if one string is a prefix of another, the shorter one is smaller.
+Use as few queries as possible. After collecting sufficient information, submit your final answer.
 
-Hidden mechanism:
-The process engineer has secretly formulated an assembly strategy and a processing rule for peer parts, generating a complete assembly line sequence for all components in this BOM tree (each component undergoes exactly one assembly action). The assembly strategies include:
-1. Depth-first preorder assembly
-2. Depth-first postorder assembly
-3. Breadth-first level-order assembly
+Each turn must contain only one query tag. Use the following XML format:
 
-Meanwhile, for multiple sub-parts belonging to the same parent assembly, the engineer chose one of the following feeding orders:
-- Feed in ascending lexicographic order by part number
-- Feed in descending lexicographic order by part number
+- Pipe Query (e.g., asking if there's a direct pipe between nodes 3 and 5):
+<query_edge>3,5</query_edge>
 
-These process specifications remain fixed and globally consistent throughout the production scheduling deduction.
+- Interface Count Query (e.g., asking for the connected pipe count of node 7):
+<query_degree>7</query_degree>
 
-Your task:
-Reverse-engineer the complete process assembly sequence. You can obtain routing information through comparison commands, but the number of command issues is limited.
+- Adjacent Node Query (e.g., asking for the next unknown connected node of node 2):
+<query_neighbor>2</query_neighbor>
 
-Query format:
-Use the following XML format for comparison commands (asking which of two components is executed earlier in the pipeline assembly):
+When submitting the final answer, specify connectivity and provide evidence:
 
-<query_compare>X,Y</query_compare>
+- If judging "connected", provide a fluid path from S to T (node number sequence, comma-separated):
+<answer>connected, path={s},3,7,{t}</answer>
 
-Where X and Y are different part numbers. The control system will return the material processed earlier in the assembly sequence.
-
-Answer submission format:
-When you are ready to output the final scheduling SOP, list all part numbers in the assembly sequence (comma-separated):
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-Note:
-- Please minimize unnecessary command issues
-- All components must be included without duplication or omission
-- The scheduling SOP must match the engineer's exact assembly sequence to be cleared for production
+- If judging "disconnected", provide the completely isolated piping sub-system containing S but not T (node number set, comma-separated):
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用法律逻辑推演与证据链梳理平台。我们来梳理一个"法庭证据链推演"任务，规则如下：
+我们现在进行"涉案资金流转网络"审查。金融系统中有一个隐藏的账户往来图谱，包含 {n} 个嫌疑账户（编号 1 到 {n}）。账户之间存在双向的资金流转记录，无自环和重复关联，具体流水对你保密。你的任务是判断源头账户 S={s} 与目标账户 T={t} 是否属于同一个资金清洗网络（连通分量），并提供资金链路或闭环网络证据。
 
-案件的诉讼逻辑构成了一棵包含 {n} 个证据节点的树形图，每个节点用唯一的大写字母字符串卷宗号命名（如 A, ROOT, EA, NODE3 等）。
+你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
 
-证据链结构信息：
-- 核心控诉节点：{root}
-- 证据衍生结构：{tree_structure}
+1. 交易查询：询问账户 u 和 v 之间是否有资金流转。回答"是"或"否"。
+2. 交易对手数查询：询问账户 u 的交易对手总数。回答一个非负整数。
+3. 下一个交易对手查询：询问账户 u 的下一个未知交易对手。返回一个账户编号或"无"。
+   - 每个账户的交易对手按照编号升序排列
+   - 每次返回你尚未获知的最小编号交易对手
+   - "已获知"是指：之前通过交易查询得到"是"，或通过下一个交易对手查询返回过该账户
+   - 如果所有交易对手都已获知，则返回"无"
 
-卷宗号字典序规则：按 A 小于 B 小于 ... 小于 Z 的标准字典序逐字符比较；若一字符串为另一字符串的前缀，则较短者更小。
+请尽可能少地使用查询次数，收集足够信息后提交最终答案。
 
-隐藏机制：
-首席出庭律师已在内部秘密敲定了一种质证策略和并列证据的出示规则，生成了所有证据在庭审阶段的一个完整出示顺序（每份证据恰好出示一次）。质证策略包括：
-1. 深度优先先序质证
-2. 深度优先后序质证  
-3. 广度优先层序质证
+每次只能包含一个查询标签。请使用以下 XML 格式：
 
-同时，对于支撑同一论点的多份并列子证据，律师选择了以下庭审出示顺序之一：
-- 按卷宗号字典序升序出示
-- 按卷宗号字典序降序出示
+- 交易查询（例如询问账户 3 和 5 之间是否有资金流转）：
+<query_edge>3,5</query_edge>
 
-这些庭审战术在整个推演流程中保持高度一致，不会更改。
+- 交易对手数查询（例如询问账户 7 的交易对手数）：
+<query_degree>7</query_degree>
 
-你的任务：
-推演并还原出完整的庭审证据出示顺序。你可以向律所系统提交质询以验证线索，但允许的质询次数有限。
+- 下一个交易对手查询（例如询问账户 2 的下一个未知交易对手）：
+<query_neighbor>2</query_neighbor>
 
-查询格式：
-使用以下 XML 格式进行对比质询（询问两份证据在庭审顺序中哪份更早呈堂）：
+提交最终答案时，必须说明连通性并提供证据：
 
-<query_compare>X,Y</query_compare>
+- 如果判断"连通"，提供从 S 到 T 的资金链路（账户编号序列，用逗号分隔）：
+<answer>connected, path={s},3,7,{t}</answer>
 
-其中 X 和 Y 是不同的卷宗号。系统会反馈在出示顺序中更先呈递的卷宗。
-
-提交答案格式：
-当你准备好定稿最终出庭预案时，请按庭审出示顺序列出所有卷宗号（用逗号分隔）：
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-注意：
-- 请以极简的质询次数完成案情推演
-- 必须穷尽所有证据节点且不得重复
-- 最终定稿的出庭预案必须与首席律师隐藏的战术顺序严丝合缝才能确立
+- 如果判断"不连通"，提供包含 S 但不包含 T 的完整资金闭环（账户编号集合，用逗号分隔）：
+<answer>disconnected, component={s},2,3</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Law Scenario]
-Welcome to the Legal Logic Deduction and Evidence Chain Profiling Platform. Let's outline a "Court Evidence Chain Deduction" task. Here are the rules:
+Let's perform an "Illicit Fund Transfer Network" review. The financial system contains a hidden transaction graph of {n} suspect accounts (numbered 1 to {n}). There are two-way fund transfer records between accounts (no self-loops or duplicate associations). The exact transaction flow is confidential. Your task is to determine if Source Account S={s} and Target Account T={t} belong to the same money-laundering network (connected component), providing the transaction path or closed-loop network evidence.
 
-The litigation logic of the case constitutes a tree diagram containing {n} evidence nodes, each named with a unique uppercase letter string dossier number (e.g., A, ROOT, EA, NODE3).
+You can obtain information through three types of queries (only one query per turn):
 
-Evidence chain structure information:
-- Core allegation node: {root}
-- Evidence derivative structure: {tree_structure}
+1. Transaction Query: Ask if there is a fund transfer between accounts u and v. Answer "Yes" or "No".
+2. Counterparty Count Query: Ask for the total number of counterparties for account u. Answer a non-negative integer.
+3. Next Counterparty Query: Ask for the next unknown counterparty of account u. Returns an account number or "None".
+   - Counterparties of each account are ordered by ascending account number
+   - Each call returns the smallest-numbered counterparty you haven't learned about yet
+   - "Learned" means: previously got "Yes" from a transaction query, or got that account from a next counterparty query
+   - If all counterparties are already learned, returns "None"
 
-Lexicographic order rule: Standard dictionary order by A less than B less than ... less than Z, comparing character by character; if one string is a prefix of another, the shorter one is smaller.
+Use as few queries as possible. After collecting sufficient information, submit your final answer.
 
-Hidden mechanism:
-The lead trial attorney has secretly finalized a cross-examination strategy and a presentation rule for parallel evidence, generating a complete presentation sequence for all evidence during the trial phase (each piece of evidence presented exactly once). The cross-examination strategies include:
-1. Depth-first preorder cross-examination
-2. Depth-first postorder cross-examination
-3. Breadth-first level-order cross-examination
+Each turn must contain only one query tag. Use the following XML format:
 
-Meanwhile, for multiple parallel sub-evidences supporting the same argument, the attorney chose one of the following trial presentation orders:
-- Present in ascending lexicographic order by dossier number
-- Present in descending lexicographic order by dossier number
+- Transaction Query (e.g., asking if there's a fund transfer between accounts 3 and 5):
+<query_edge>3,5</query_edge>
 
-These trial tactics remain highly consistent and unchanged throughout the deduction process.
+- Counterparty Count Query (e.g., asking for the counterparty count of account 7):
+<query_degree>7</query_degree>
 
-Your task:
-Deduce and reconstruct the complete trial evidence presentation sequence. You can submit inquiries to the firm's system to verify clues, but the allowed number of inquiries is limited.
+- Next Counterparty Query (e.g., asking for the next unknown counterparty of account 2):
+<query_neighbor>2</query_neighbor>
 
-Query format:
-Use the following XML format for comparison inquiries (asking which of two pieces of evidence is presented earlier in the trial sequence):
+When submitting the final answer, specify connectivity and provide evidence:
 
-<query_compare>X,Y</query_compare>
+- If judging "connected", provide a transaction path from S to T (account number sequence, comma-separated):
+<answer>connected, path={s},3,7,{t}</answer>
 
-Where X and Y are different dossier numbers. The system will feedback the dossier submitted earlier in the presentation sequence.
-
-Answer submission format:
-When you are ready to finalize the trial preparation plan, list all dossier numbers in the trial presentation sequence (comma-separated):
-
-<answer>V1,V2,V3,...,V{n}</answer>
-
-Note:
-- Please complete the case deduction with the minimum number of inquiries
-- All evidence nodes must be exhausted without duplication
-- The finalized trial preparation plan must seamlessly match the lead attorney's hidden tactical sequence to be established
+- If judging "disconnected", provide the complete closed-loop financial network containing S but not T (account number set, comma-separated):
+<answer>disconnected, component={s},2,3</answer>
 """
 
-    user_prompt_zh = "请开始你的推理。你可以进行比较查询或直接提交答案。"
-    user_prompt_en = "Please start your deduction. You can make comparison queries or submit your answer directly."
+    tags = ["answer", "query_edge", "query_degree", "query_neighbor"]
 
-    tags = ["answer", "query_compare"]
-
-    # 五种难度配置
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {  # 简单：4个节点，浅树
-                "n": 4,
-                "root": "A",
-                "tree": {
-                    "A": ["B", "C"],
-                    "B": ["D"],
-                    "C": [],
-                    "D": []
-                },
-                "traversal_type": "preorder",  # 先序
-                "sibling_order": "asc"  # 升序
-            },
-            2: {  # 中等偏下：6个节点
-                "n": 6,
-                "root": "ROOT",
-                "tree": {
-                    "ROOT": ["A", "B"],
-                    "A": ["C", "D"],
-                    "B": ["E"],
-                    "C": [],
-                    "D": [],
-                    "E": []
-                },
-                "traversal_type": "bfs",  # 层序
-                "sibling_order": "asc"  # 升序
-            },
-            3: {  # 中等偏上：8个节点
-                "n": 8,
-                "root": "R",
-                "tree": {
-                    "R": ["A", "B", "C"],
-                    "A": ["D", "E"],
-                    "B": [],
-                    "C": ["F"],
-                    "D": [],
-                    "E": ["G"],
-                    "F": [],
-                    "G": []
-                },
-                "traversal_type": "postorder",  # 后序
-                "sibling_order": "asc"  # 升序
-            },
-            4: {  # 较难：10个节点
-                "n": 10,
-                "root": "ROOT",
-                "tree": {
-                    "ROOT": ["A", "B"],
-                    "A": ["C", "D", "E"],
-                    "B": ["F", "G"],
-                    "C": ["H"],
-                    "D": [],
-                    "E": ["I"],
-                    "F": [],
-                    "G": [],
-                    "H": [],
-                    "I": []
-                },
-                "traversal_type": "preorder",  # 先序
-                "sibling_order": "desc"  # 降序
-            },
-            5: {  # 难：12个节点，复杂结构
-                "n": 12,
-                "root": "R",
-                "tree": {
-                    "R": ["A", "B", "C"],
-                    "A": ["D", "E"],
-                    "B": ["F", "G", "H"],
-                    "C": ["I"],
-                    "D": ["J"],
-                    "E": [],
-                    "F": [],
-                    "G": ["K"],
-                    "H": [],
-                    "I": [],
-                    "J": [],
-                    "K": []
-                },
-                "traversal_type": "postorder",  # 后序
-                "sibling_order": "desc"  # 降序
-            }
-        },
-        "en": {
             1: {
-                "n": 4,
-                "root": "A",
-                "tree": {
-                    "A": ["B", "C"],
-                    "B": ["D"],
-                    "C": [],
-                    "D": []
-                },
-                "traversal_type": "preorder",
-                "sibling_order": "asc"
+                "n": 12,
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 12), (1, 2), (2, 3), (3, 4), (11, 12), (10, 11)],
+                "connected": True,
             },
             2: {
-                "n": 6,
-                "root": "ROOT",
-                "tree": {
-                    "ROOT": ["A", "B"],
-                    "A": ["C", "D"],
-                    "B": ["E"],
-                    "C": [],
-                    "D": [],
-                    "E": []
-                },
-                "traversal_type": "bfs",
-                "sibling_order": "asc"
+                "n": 12,
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 2), (2, 5), (5, 8), (8, 12), (3, 4), (6, 7), (9, 10)],
+                "connected": True,
             },
             3: {
-                "n": 8,
-                "root": "R",
-                "tree": {
-                    "R": ["A", "B", "C"],
-                    "A": ["D", "E"],
-                    "B": [],
-                    "C": ["F"],
-                    "D": [],
-                    "E": ["G"],
-                    "F": [],
-                    "G": []
-                },
-                "traversal_type": "postorder",
-                "sibling_order": "asc"
+                "n": 12,
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 12), (8, 9), (10, 11)],
+                "connected": True,
             },
             4: {
-                "n": 10,
-                "root": "ROOT",
-                "tree": {
-                    "ROOT": ["A", "B"],
-                    "A": ["C", "D", "E"],
-                    "B": ["F", "G"],
-                    "C": ["H"],
-                    "D": [],
-                    "E": ["I"],
-                    "F": [],
-                    "G": [],
-                    "H": [],
-                    "I": []
-                },
-                "traversal_type": "preorder",
-                "sibling_order": "desc"
+                "n": 12,
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (6, 7), (7, 8), (8, 12), (9, 10), (10, 11)],
+                "connected": False,
             },
             5: {
                 "n": 12,
-                "root": "R",
-                "tree": {
-                    "R": ["A", "B", "C"],
-                    "A": ["D", "E"],
-                    "B": ["F", "G", "H"],
-                    "C": ["I"],
-                    "D": ["J"],
-                    "E": [],
-                    "F": [],
-                    "G": ["K"],
-                    "H": [],
-                    "I": [],
-                    "J": [],
-                    "K": []
-                },
-                "traversal_type": "postorder",
-                "sibling_order": "desc"
-            }
-        }
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 2), (1, 3), (2, 3), (2, 4), (3, 4), (3, 5), (4, 5), (5, 6), 
+                          (7, 8), (7, 9), (8, 9), (8, 12), (9, 12), (10, 11), (11, 12), (10, 12)],
+                "connected": False,
+            },
+        },
+        "en": {
+            1: {
+                "n": 12,
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 12), (1, 2), (2, 3), (3, 4), (11, 12), (10, 11)],
+                "connected": True,
+            },
+            2: {
+                "n": 12,
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 2), (2, 5), (5, 8), (8, 12), (3, 4), (6, 7), (9, 10)],
+                "connected": True,
+            },
+            3: {
+                "n": 12,
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 12), (8, 9), (10, 11)],
+                "connected": True,
+            },
+            4: {
+                "n": 12,
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (6, 7), (7, 8), (8, 12), (9, 10), (10, 11)],
+                "connected": False,
+            },
+            5: {
+                "n": 12,
+                "s": 1,
+                "t": 12,
+                "edges": [(1, 2), (1, 3), (2, 3), (2, 4), (3, 4), (3, 5), (4, 5), (5, 6), 
+                          (7, 8), (7, 9), (8, 9), (8, 12), (9, 12), (10, 11), (11, 12), (10, 12)],
+                "connected": False,
+            },
+        },
     }
 
     def __init__(self, config):
-        self.query_count = 0
-        self.max_queries = 0
-        self._last_query_nodes = None
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏状态"""
         lang = self.config.language
-        diff = self.config.difficulty
-        
-        # 确保 difficulty 为 int 类型
-        if isinstance(diff, str):
-            diff = int(diff)
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -745,210 +529,213 @@ Note:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 设置游戏信息
         self._game_info["n"] = cfg["n"]
-        self._game_info["root"] = cfg["root"]
+        self._game_info["s"] = cfg["s"]
+        self._game_info["t"] = cfg["t"]
         
-        # 格式化树结构描述
-        tree_desc = self._format_tree_structure(cfg["tree"])
-        self._game_info["tree_structure"] = tree_desc
+        self.n = cfg["n"]
+        self.s = cfg["s"]
+        self.t = cfg["t"]
+        self.ground_truth_connected = cfg["connected"]
         
-        # 保存树结构
-        self.tree = cfg["tree"]
-        self.root = cfg["root"]
-        self.traversal_type = cfg["traversal_type"]
-        self.sibling_order = cfg["sibling_order"]
+        self.adjacency = {i: set() for i in range(1, self.n + 1)}
+        for u, v in cfg["edges"]:
+            self.adjacency[u].add(v)
+            self.adjacency[v].add(u)
         
-        # 计算查询上限：Q = 2*ceil(log2(N)) + 6
-        n = cfg["n"]
-        self.max_queries = 2 * math.ceil(math.log2(n)) + 6
+        self.sorted_neighbors = {}
+        for v in range(1, self.n + 1):
+            self.sorted_neighbors[v] = sorted(list(self.adjacency[v]))
         
-        # 生成正确答案
-        self.correct_order = self._generate_traversal()
+        self.known_edges = set()
         
-        # 重置查询计数
         self.query_count = 0
-
-    def _format_tree_structure(self, tree: Dict[str, List[str]]) -> str:
-        """格式化树结构为可读字符串"""
-        lines = []
-        for node, children in sorted(tree.items()):
-            if children:
-                children_str = ", ".join(sorted(children))
-                lines.append(f"{node} 的子节点: [{children_str}]" if self.config.language == "zh" 
-                           else f"Children of {node}: [{children_str}]")
-            else:
-                lines.append(f"{node} 的子节点: []" if self.config.language == "zh"
-                           else f"Children of {node}: []")
-        return "; ".join(lines)
-
-    def _generate_traversal(self) -> List[str]:
-        """根据遍历类型和兄弟顺序生成正确的遍历序列"""
-        if self.traversal_type == "preorder":
-            return self._dfs_preorder()
-        elif self.traversal_type == "postorder":
-            return self._dfs_postorder()
-        elif self.traversal_type == "bfs":
-            return self._bfs()
-        else:
-            raise ValueError(f"Unknown traversal type: {self.traversal_type}")
-
-    def _get_sorted_children(self, node: str) -> List[str]:
-        """获取排序后的子节点列表"""
-        children = self.tree.get(node, [])
-        if self.sibling_order == "asc":
-            return sorted(children)
-        else:  # desc
-            return sorted(children, reverse=True)
-
-    def _dfs_preorder(self) -> List[str]:
-        """深度优先先序遍历"""
-        result = []
-        
-        def dfs(node):
-            result.append(node)
-            for child in self._get_sorted_children(node):
-                dfs(child)
-        
-        dfs(self.root)
-        return result
-
-    def _dfs_postorder(self) -> List[str]:
-        """深度优先后序遍历"""
-        result = []
-        
-        def dfs(node):
-            for child in self._get_sorted_children(node):
-                dfs(child)
-            result.append(node)
-        
-        dfs(self.root)
-        return result
-
-    def _bfs(self) -> List[str]:
-        """广度优先层序遍历"""
-        result = []
-        queue = deque([self.root])
-        
-        while queue:
-            node = queue.popleft()
-            result.append(node)
-            for child in self._get_sorted_children(node):
-                queue.append(child)
-        
-        return result
+        self.max_queries = 35
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"].strip().lower()
         
-        # 解析提交的节点序列
-        try:
-            submitted_order = [x.strip() for x in raw_ans.split(",") if x.strip()]
-        except:
+        if "disconnected" in raw_ans:
+            if "component=" not in raw_ans:
+                return False
+            
+            try:
+                comp_part = raw_ans.split("component=")[1].strip()
+                component = set(int(x.strip()) for x in comp_part.split(","))
+            except:
+                return False
+            
+            if self.s not in component:
+                return False
+            if self.t in component:
+                return False
+            
+            actual_component = set()
+            queue = [self.s]
+            actual_component.add(self.s)
+            while queue:
+                u = queue.pop(0)
+                for v in self.adjacency[u]:
+                    if v not in actual_component:
+                        actual_component.add(v)
+                        queue.append(v)
+            
+            if component != actual_component:
+                return False
+            
+            return not self.ground_truth_connected
+            
+        elif "connected" in raw_ans:
+            if "path=" not in raw_ans:
+                return False
+            
+            try:
+                path_part = raw_ans.split("path=")[1].strip()
+                path = [int(x.strip()) for x in path_part.split(",")]
+            except:
+                return False
+            
+            if len(path) < 2:
+                return False
+            if path[0] != self.s or path[-1] != self.t:
+                return False
+            
+            for i in range(len(path) - 1):
+                u, v = path[i], path[i + 1]
+                if u < 1 or u > self.n or v < 1 or v > self.n:
+                    return False
+                if v not in self.adjacency[u]:
+                    return False
+            
+            return self.ground_truth_connected
+            
+        else:
             return False
-        
-        # 检查长度
-        if len(submitted_order) != len(self.correct_order):
-            return False
-        
-        # 检查是否完全一致
-        return submitted_order == self.correct_order
 
     def _cf_core_produce(self, parsed_info):
-        if "query_compare" not in parsed_info:
-            return "Error: Invalid query." if self.config.language == "en" else "错误：无效的查询。"
+        if self.config.language == "zh":
+            yes_res, no_res, none_res = "是", "否", "无"
+            error_format = "错误：查询格式无效。"
+            error_range = "错误：顶点编号超出范围。"
+        else:
+            yes_res, no_res, none_res = "Yes", "No", "None"
+            error_format = "Error: Invalid query format."
+            error_range = "Error: Vertex number out of range."
         
-        # 检查查询次数上限 - 返回提示而非抛异常
-        if self.query_count >= self.max_queries:
-            if self.config.language == "en":
-                return f"Error: Query limit exceeded (max {self.max_queries} queries). Please submit your answer now."
-            else:
-                return f"错误：超过查询次数上限（最多 {self.max_queries} 次查询）。请直接提交你的答案。"
+        self.query_count += 1
         
-        try:
-            raw = parsed_info["query_compare"].strip()
-            parts = [x.strip() for x in raw.split(",")]
-            
-            if len(parts) != 2:
-                raise ValueError("Invalid format")
-            
-            node1, node2 = parts
-            
-            # 检查节点是否存在
-            if node1 not in self.tree or node2 not in self.tree:
-                return "Error: Node not found." if self.config.language == "en" else "错误：节点不存在。"
-            
-            # 检查节点是否相同
-            if node1 == node2:
-                return "Error: Nodes must be different." if self.config.language == "en" else "错误：节点必须不同。"
-            
-            # 增加查询计数
-            self.query_count += 1
-            
-            # 查找两个节点在正确序列中的位置
-            idx1 = self.correct_order.index(node1)
-            idx2 = self.correct_order.index(node2)
-            
-            # 返回更早出现的节点
-            earlier = node1 if idx1 < idx2 else node2
-            
-            # 保存最后一次查询的两个节点，供 _cf_make_wrong 使用
-            self._last_query_nodes = (node1, node2)
-            
-            return f"Earlier: {earlier}"
-            
-        except ValueError as e:
-            return "Error: Invalid query format." if self.config.language == "en" else "错误：查询格式无效。"
-        except Exception as e:
-            return "Error: Invalid query." if self.config.language == "en" else "错误：无效的查询。"
-
-    def _cf_make_wrong(self, correct: str) -> str:
-        """将正确的比较结果替换为错误结果：返回查询中的另一个节点"""
-        match = re.match(r'^Earlier:\s*(\S+)$', correct)
-        if match and getattr(self, '_last_query_nodes', None) is not None:
-            earlier_node = match.group(1)
-            node1, node2 = self._last_query_nodes
-            # 返回查询中另一个节点作为错误答案
-            wrong_node = node2 if earlier_node == node1 else node1
-            return f"Earlier: {wrong_node}"
-        
-        return correct + "_WRONG"
-
-    def get_all_possible_queries(self) -> List[Dict[str, str]]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
-        nodes = sorted(self.tree.keys())
-        
-        for i in range(len(nodes)):
-            for j in range(i + 1, len(nodes)):
-                node1, node2 = nodes[i], nodes[j]
+        if "query_edge" in parsed_info:
+            try:
+                raw = parsed_info["query_edge"].strip()
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    return error_format
+                u, v = int(parts[0]), int(parts[1])
                 
-                query_str = f"<query_compare>{node1},{node2}</query_compare>"
+                if u < 1 or u > self.n or v < 1 or v > self.n:
+                    return error_range
                 
-                try:
-                    idx1 = self.correct_order.index(node1)
-                    idx2 = self.correct_order.index(node2)
-                    
-                    earlier = node1 if idx1 < idx2 else node2
-                    
-                    answer = f"Earlier: {earlier}"
-                    
-                    queries.append({
-                        "query": query_str,
-                        "answer": answer
-                    })
-                except ValueError:
-                    continue
-                    
-        return queries
+                if v in self.adjacency[u]:
+                    self.known_edges.add((min(u, v), max(u, v)))
+                    return yes_res
+                else:
+                    return no_res
+            except:
+                return error_format
+        
+        elif "query_degree" in parsed_info:
+            try:
+                u = int(parsed_info["query_degree"].strip())
+                if u < 1 or u > self.n:
+                    return error_range
+                return str(len(self.adjacency[u]))
+            except:
+                return error_format
+        
+        elif "query_neighbor" in parsed_info:
+            try:
+                u = int(parsed_info["query_neighbor"].strip())
+                if u < 1 or u > self.n:
+                    return error_range
+                
+                for neighbor in self.sorted_neighbors[u]:
+                    edge_tuple = (min(u, neighbor), max(u, neighbor))
+                    if edge_tuple not in self.known_edges:
+                        self.known_edges.add(edge_tuple)
+                        return str(neighbor)
+                
+                return none_res
+            except:
+                return error_format
+        
+        else:
+            raise ValueError("No valid query tag found.")
+
+    def _cf_make_wrong(self, correct):
+        if self.config.language == "zh":
+            yes_res, no_res, none_res = "是", "否", "无"
+        else:
+            yes_res, no_res, none_res = "Yes", "No", "None"
+        
+        if correct == yes_res:
+            return no_res
+        elif correct == no_res:
+            return yes_res
+        elif correct == none_res:
+            return "1"
+        else:
+            try:
+                val = int(correct)
+                return str(val + 1)
+            except ValueError:
+                return correct + "_wrong"
+    
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        
+        if self.config.language == "zh":
+            yes_res, no_res, none_res = "是", "否", "无"
+        else:
+            yes_res, no_res, none_res = "Yes", "No", "None"
+
+        for u in range(1, self.n + 1):
+            for v in range(u + 1, self.n + 1):
+                query_str = f"<query_edge>{u},{v}</query_edge>"
+                
+                if v in self.adjacency[u]:
+                    ans = yes_res
+                else:
+                    ans = no_res
+                
+                results.append({
+                    "query": query_str,
+                    "answer": ans
+                })
+
+        for u in range(1, self.n + 1):
+            query_str = f"<query_degree>{u}</query_degree>"
+            ans = str(len(self.adjacency[u]))
+            results.append({
+                "query": query_str,
+                "answer": ans
+            })
+
+        temp_known = set()
+        for u in range(1, self.n + 1):
+            while True:
+                query_str = f"<query_neighbor>{u}</query_neighbor>"
+                ans = none_res
+                for neighbor in self.sorted_neighbors[u]:
+                    edge_tuple = (min(u, neighbor), max(u, neighbor))
+                    if edge_tuple not in temp_known:
+                        temp_known.add(edge_tuple)
+                        ans = str(neighbor)
+                        break
+                results.append({
+                    "query": query_str,
+                    "answer": ans
+                })
+                if ans == none_res:
+                    break
+            
+        return results

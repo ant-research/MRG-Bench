@@ -1,500 +1,344 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   子集包含：某子集是否完全被另一子集包含
-# ============================================================
-
 from .base import Game
-import random
+import math
 
-
-class SubsetInclusionGame(Game):
+class BoundaryDeductionGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"子集包含推理"游戏，规则如下：
+我们现在来玩一个"边界推理"游戏，规则如下：
 
-游戏设定了一个不可见的全集 U 和 {m} 个带标签的子集 S1, S2, ..., S{m}，它们都是 U 的子集。此外，还有一个不可见的目标子集 K（K 也是 U 的子集）。
+游戏设定了一个有序索引集合 1 到 {n}。存在一个未知的边界位置 B，该边界将集合分为两部分：
+- 所有小于 B 的位置，值为 False
+- 所有大于等于 B 的位置，值为 True
 
-你的任务是：通过提问推断出每个子集 Si 是否被 K 包含（即 Si 是否是 K 的子集），并在使用尽可能少的目标查询次数的情况下提交完整的判定结果。
+你的目标是通过提问找出边界位置 B 的准确值。你可以进行以下两种操作：
 
-你可以进行以下两种查询：
+1. 观察型提问：询问从位置 1 到位置 k 的范围内是否存在 True 值
+   - 如果 k 大于等于边界 B，回答"是"
+   - 如果 k 小于边界 B，回答"否"
 
-1. 子集包含查询（不限次数）：询问 Si 是否是 Sj 的子集。我会回答"是"或"否"。
-2. 目标包含查询（请尽量节约使用）：询问 Si 是否是目标集合 K 的子集。我会回答"是"或"否"，并告知你剩余的查询额度。
+2. 最终宣告：当你确定边界位置后，提交你的答案
 
-注意：
-- 你当前的目标查询额度为 {budget} 次。
-- 所有回答都基于固定的集合结构，且遵循集合论的逻辑规则。
-- 你可以利用传递性等逻辑推理来减少目标查询次数。
+注意：观察型提问的次数是有限的，请尽可能高效地找出边界位置。若提交的答案错误或格式不符，游戏失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-每次只能提出一个查询。请使用以下 XML 格式：
+- 观察型提问（例如询问位置 5）：
+<query_observe>5</query_observe>
 
-- 子集包含查询（例如询问 S1 是否是 S2 的子集）：
-<query_subset>1,2</query_subset>
-
-- 目标包含查询（例如询问 S3 是否是 K 的子集）：
-<query_target>3</query_target>
-
-提交最终答案时，必须列出所有子集的判定结果（用逗号隔开，顺序为 S1 到 S{m}，每个位置填 1 表示"是 K 的子集"，填 0 表示"不是 K 的子集"），格式如下：
-
-<answer>1,0,1,0</answer>
+- 提交最终答案（例如边界位置为 7）：
+<answer>7</answer>
 """
 
     game_rule_en = """\
-Let's play a "Subset Inclusion Reasoning" game. Here are the rules:
+Let's play a "Boundary Deduction" game. Here are the rules:
 
-The game involves an invisible universal set U and {m} labeled subsets S1, S2, ..., S{m}, all of which are subsets of U. Additionally, there is an invisible target subset K (K is also a subset of U).
+The game has an ordered index set from 1 to {n}. There exists an unknown boundary position B that divides the set into two parts:
+- All positions less than B have the value False
+- All positions greater than or equal to B have the value True
 
-Your task is: through queries, determine whether each subset Si is contained in K (i.e., whether Si is a subset of K), and submit the complete judgment results using as few target queries as possible.
+Your goal is to find the exact boundary position B through queries. You can perform the following two types of operations:
 
-You can make the following two types of queries:
+1. Observation Query: Ask whether there exists a True value in the range from position 1 to position k
+   - If k is greater than or equal to boundary B, answer "Yes"
+   - If k is less than boundary B, answer "No"
 
-1. Subset Inclusion Query (unlimited): Ask whether Si is a subset of Sj. I will answer "Yes" or "No".
-2. Target Inclusion Query (please use sparingly): Ask whether Si is a subset of the target set K. I will answer "Yes" or "No" and inform you of the remaining query quota.
+2. Final Declaration: When you have determined the boundary position, submit your answer
 
-Note:
-- Your current target query quota is {budget} times.
-- All answers are based on a fixed set structure and follow the logical rules of set theory.
-- You can use transitivity and other logical reasoning to reduce the number of target queries.
+Note: The number of observation queries is limited, so please find the boundary position as efficiently as possible. If the submitted answer is incorrect or the format is invalid, the game fails.
 
-## Query and Answer Format (must be strictly followed)
+Each turn must contain only one operation tag. Use the following XML format:
 
-You can only make one query at a time. Use the following XML format:
+- Observation Query (e.g., asking about position 5):
+<query_observe>5</query_observe>
 
-- Subset Inclusion Query (e.g., asking if S1 is a subset of S2):
-<query_subset>1,2</query_subset>
-
-- Target Inclusion Query (e.g., asking if S3 is a subset of K):
-<query_target>3</query_target>
-
-When submitting the final answer, you must list the judgment results for all subsets (comma-separated, in order from S1 to S{m}, with 1 indicating "is a subset of K" and 0 indicating "is not a subset of K"), in the following format:
-
-<answer>1,0,1,0</answer>
+- Submit Final Answer (e.g., boundary position is 7):
+<answer>7</answer>
 """
 
     contextualized_rule_zh_1 = """\
-我们现在来玩一个“交通路网包含关系推理”系统。
+欢迎进入智能交通调度系统。
 
-系统设定了一个不可见的城市整体交通路网 U，以及 {m} 个带标签的局部交通区域 S1, S2, ..., S{m}，它们都是 U 的子区域（子集）。此外，还有一个不可见的“重度拥堵核心区” K（K 也是 U 的子区域）。
+我们监控的一条主干道被划分为连续的监测路段，编号从 1 到 {n}。系统检测到由于某处发生交通事故，导致形成了一个拥堵分界点 B。
+- 在路段 B 之前的路段（即编号小于 B），交通状况畅通（视为 False）。
+- 从路段 B 开始及之后的所有路段（即编号大于等于 B），均发生严重连环拥堵（视为 True）。
 
-你的任务是：通过提问推断出每个交通区域 Si 是否完全落在拥堵核心区 K 内（即 Si 是否是 K 的子集），并在使用尽可能少的核心区查询次数的情况下提交完整的判定结果。
+你的任务是通过最少次数的无人机巡查，精准定位拥堵起始路段 B 的编号，以便派遣交警处理。你可以进行以下两种系统指令：
 
-你可以进行以下两种查询：
+1. 无人机巡查（观察型提问）：派遣无人机沿路巡查从路段 1 到路段 k 的范围，询问该范围内是否拍到了拥堵画面。
+   - 如果巡查范围覆盖或超过了分界点 B（即 k 大于等于 B），系统反馈"是"（发现拥堵）。
+   - 如果巡查范围完全在畅通路段（即 k 小于 B），系统反馈"否"（未发现拥堵）。
 
-1. 区域包含查询（不限次数）：询问区域 Si 是否完全被区域 Sj 包含（即 Si 是否是 Sj 的子集）。我会回答“是”或“否”。
-2. 核心区包含查询（请尽量节约使用）：询问区域 Si 是否完全落在拥堵核心区 K 内。我会回答“是”或“否”，并告知你剩余的查询额度。
+2. 事故定位（最终宣告）：当你确定了拥堵起始路段的位置后，提交该路段编号。
 
-注意：
-- 你当前的核心区查询额度为 {budget} 次。
-- 所有回答都基于固定的路网结构，且遵循集合论的空间逻辑规则。
-- 你可以利用传递性等空间逻辑推理来减少核心区查询次数。
+注意：受电池电量限制，无人机巡查次数有限，请高效排查。若提交的事故路段错误或指令格式不符，调度任务将失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-每次只能提出一个查询。请使用以下 XML 格式：
+- 无人机巡查（例如巡查至第 5 路段）：
+<query_observe>5</query_observe>
 
-- 区域包含查询（例如询问 S1 是否在 S2 内）：
-<query_subset>1,2</query_subset>
-
-- 核心区包含查询（例如询问 S3 是否在 K 内）：
-<query_target>3</query_target>
-
-提交最终答案时，必须列出所有区域的判定结果（用逗号隔开，顺序为 S1 到 S{m}，每个位置填 1 表示“完全在 K 内”，填 0 表示“不完全在 K 内”），格式如下：
-
-<answer>1,0,1,0</answer>
+- 提交事故路段（例如拥堵始于第 7 路段）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Let's use the "Traffic Network Inclusion Reasoning" system.
+[Traffic Scenario]
+Welcome to the Intelligent Traffic Dispatch System.
 
-The system involves an invisible comprehensive city traffic network U and {m} labeled local traffic zones S1, S2, ..., S{m}, all of which are sub-zones (subsets) of U. Additionally, there is an invisible "Severe Congestion Core" K (K is also a sub-zone of U).
+A main arterial road we are monitoring is divided into sequential segments indexed from 1 to {n}. The system detects that due to a traffic incident, a congestion boundary B has formed.
+- All road segments before boundary B (index less than B) are clear and flowing normally (False).
+- Starting from segment B and all subsequent segments (index greater than or equal to B), severe chain-reaction congestion has occurred (True).
 
-Your task is: through queries, determine whether each traffic zone Si is completely contained within the Congestion Core K (i.e., whether Si is a subset of K), and submit the complete judgment results using as few core queries as possible.
+Your task is to accurately pinpoint the index of the starting congestion segment B using the minimum number of drone patrols, so that traffic police can be dispatched. You can perform the following two system commands:
 
-You can make the following two types of queries:
+1. Drone Patrol (Observation Query): Deploy a drone to patrol the range from segment 1 to segment k, and ask whether congested conditions were captured in this range.
+   - If the patrol range reaches or passes the boundary B (k >= B), the system answers "Yes" (congestion found).
+   - If the patrol range is entirely within the clear segments (k < B), the system answers "No" (no congestion).
 
-1. Zone Inclusion Query (unlimited): Ask whether zone Si is completely contained within zone Sj. I will answer "Yes" or "No".
-2. Core Inclusion Query (please use sparingly): Ask whether zone Si is completely within the Congestion Core K. I will answer "Yes" or "No" and inform you of the remaining query quota.
+2. Incident Localization (Final Declaration): Once you have determined the exact starting segment of the congestion, submit its index.
 
-Note:
-- Your current core query quota is {budget} times.
-- All answers are based on a fixed spatial structure and follow the logical rules of set theory.
-- You can use transitivity and other spatial logical reasoning to reduce the number of core queries.
+Note: Due to battery constraints, drone patrol queries are limited. Please identify the incident segment efficiently. If the submitted segment is incorrect or the format is invalid, the dispatch mission fails.
 
-## Query and Answer Format (must be strictly followed)
+Each turn must contain only one operation tag. Use the following XML format:
 
-You can only make one query at a time. Use the following XML format:
+- Drone Patrol (e.g., patrolling up to segment 5):
+<query_observe>5</query_observe>
 
-- Zone Inclusion Query (e.g., asking if S1 is within S2):
-<query_subset>1,2</query_subset>
-
-- Core Inclusion Query (e.g., asking if S3 is within K):
-<query_target>3</query_target>
-
-When submitting the final answer, you must list the judgment results for all zones (comma-separated, in order from S1 to S{m}, with 1 indicating "completely within K" and 0 indicating "not completely within K"), in the following format:
-
-<answer>1,0,1,0</answer>
+- Submit Incident Segment (e.g., congestion starts at segment 7):
+<answer>7</answer>
 """
 
     contextualized_rule_zh_2 = """\
-我们现在来使用“临床症状群组包含推理”系统。
+欢迎使用临床靶向筛查系统。
 
-系统设定了一个不可见的人类全量症状库 U，以及 {m} 个带标签的特定综合征症状群 S1, S2, ..., S{m}，它们都是 U 的子集。此外，还有一个不可见的“新型突发病毒症状谱” K（K 也是 U 的子集）。
+患者的一条主要血管被划分为连续的监测节点，编号从 1 到 {n}。病理分析表明，存在一个病变起始节点 B。
+- 在节点 B 之前的部位（编号小于 B），组织细胞反应正常（视为 False）。
+- 从节点 B 开始及之后的所有节点（编号大于等于 B），均表现出病理性阻塞或异常反应（视为 True）。
 
-你的任务是：通过提问推断出每个综合征的症状群 Si 是否完全被该新型病毒症状谱 K 包含（即 Si 是否是 K 的子集），并在使用尽可能少的病毒谱查询次数的情况下提交完整的判定结果。
+你的目标是通过微创造影排查，精准定位病变起始节点 B 的位置，以制定手术方案。你可以执行以下两种操作：
 
-你可以进行以下两种查询：
+1. 造影扫描（观察型提问）：对从节点 1 到节点 k 的血管段注入造影剂并扫描，询问该范围内是否检测到异常反应。
+   - 如果扫描范围触及或越过了病变起点 B（即 k 大于等于 B），系统反馈"是"（检测到异常）。
+   - 如果扫描范围完全处于健康组织（即 k 小于 B），系统反馈"否"（一切正常）。
 
-1. 症状群包含查询（不限次数）：询问综合征 Si 的所有症状是否都包含在综合征 Sj 中。我会回答“是”或“否”。
-2. 病毒谱包含查询（请尽量节约使用）：询问综合征 Si 的所有症状是否均出现在新型病毒症状谱 K 中。我会回答“是”或“否”，并告知你剩余的查询额度。
+2. 确诊病灶（最终宣告）：当你确定病变起始节点后，提交该节点编号。
 
-注意：
-- 你当前的病毒谱查询额度为 {budget} 次。
-- 所有回答都基于固定的病理学结构，且遵循集合论的逻辑规则。
-- 你可以利用传递性等医学逻辑推理来减少病毒谱查询次数。
+注意：为防止造影剂过量，扫描次数有严格的上限，请以最高效率找出病灶。若提交的诊断错误或格式不规范，系统将判定医疗失误。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-每次只能提出一个查询。请使用以下 XML 格式：
+- 造影扫描（例如扫描至节点 5）：
+<query_observe>5</query_observe>
 
-- 症状群包含查询（例如询问 S1 的症状是否都被 S2 包含）：
-<query_subset>1,2</query_subset>
-
-- 病毒谱包含查询（例如询问 S3 的症状是否都在 K 中）：
-<query_target>3</query_target>
-
-提交最终答案时，必须列出所有综合征的判定结果（用逗号隔开，顺序为 S1 到 S{m}，每个位置填 1 表示“完全在 K 中”，填 0 表示“不完全在 K 中”），格式如下：
-
-<answer>1,0,1,0</answer>
+- 提交确诊节点（例如病灶始于节点 7）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's use the "Clinical Symptom Cluster Inclusion Reasoning" system.
+Welcome to the Clinical Targeted Screening System.
 
-The system involves an invisible comprehensive human symptom database U and {m} labeled specific syndrome symptom clusters S1, S2, ..., S{m}, all of which are subsets of U. Additionally, there is an invisible "Novel Viral Strain Symptom Profile" K (K is also a subset of U).
+A major blood vessel of the patient is divided into sequential monitoring nodes, indexed from 1 to {n}. Pathological analysis indicates there is a lesion starting node B.
+- Tissues before node B (index less than B) show normal cellular responses (False).
+- Starting from node B and all subsequent nodes (index greater than or equal to B), pathological obstruction or abnormal reactions are present (True).
 
-Your task is: through queries, determine whether each syndrome's symptom cluster Si is completely contained within the novel viral profile K (i.e., whether Si is a subset of K), and submit the complete judgment results using as few viral profile queries as possible.
+Your goal is to accurately pinpoint the lesion starting node B through minimally invasive contrast imaging to formulate a surgical plan. You can perform two types of operations:
 
-You can make the following two types of queries:
+1. Contrast Imaging (Observation Query): Inject contrast agent and scan the vessel segment from node 1 to node k, asking if abnormal reactions are detected in this range.
+   - If the scan range reaches or exceeds the lesion starting point B (k >= B), the system answers "Yes" (abnormality detected).
+   - If the scan range is entirely within healthy tissue (k < B), the system answers "No" (all normal).
 
-1. Symptom Cluster Inclusion Query (unlimited): Ask whether all symptoms of syndrome Si are included in syndrome Sj. I will answer "Yes" or "No".
-2. Viral Profile Inclusion Query (please use sparingly): Ask whether all symptoms of syndrome Si are present in the novel viral profile K. I will answer "Yes" or "No" and inform you of the remaining query quota.
+2. Diagnosis Confirmation (Final Declaration): Once you have determined the lesion starting node, submit its index.
 
-Note:
-- Your current viral profile query quota is {budget} times.
-- All answers are based on a fixed pathological structure and follow the logical rules of set theory.
-- You can use transitivity and other medical logical reasoning to reduce the number of viral profile queries.
+Note: To prevent contrast agent overdose, the number of scans is strictly limited. Please locate the lesion with maximum efficiency. If the submitted diagnosis is incorrect or the format is invalid, it will be considered a medical error.
 
-## Query and Answer Format (must be strictly followed)
+Each turn must contain only one operation tag. Use the following XML format:
 
-You can only make one query at a time. Use the following XML format:
+- Contrast Imaging (e.g., scanning up to node 5):
+<query_observe>5</query_observe>
 
-- Symptom Cluster Inclusion Query (e.g., asking if S1's symptoms are all in S2):
-<query_subset>1,2</query_subset>
-
-- Viral Profile Inclusion Query (e.g., asking if S3's symptoms are all in K):
-<query_target>3</query_target>
-
-When submitting the final answer, you must list the judgment results for all syndromes (comma-separated, in order from S1 to S{m}, with 1 indicating "completely within K" and 0 indicating "not completely within K"), in the following format:
-
-<answer>1,0,1,0</answer>
+- Submit Diagnosed Node (e.g., lesion starts at node 7):
+<answer>7</answer>
 """
 
     contextualized_rule_zh_3 = """\
-我们现在来进行“课程知识点包含逻辑推理”。
+欢迎使用自适应认知图谱系统。
 
-系统设定了一个不可见的全学科知识图谱 U，以及 {m} 个带标签的特定课程知识模块 S1, S2, ..., S{m}，它们都是 U 的子模块（子集）。此外，还有一个不可见的“毕业核心考核要求” K（K 也是 U 的子模块）。
+本次测试包含一系列难度严格递增的题目，编号从 1 到 {n}。根据教育学模型，学生的知识掌握度存在一个确切的认知边界题号 B。
+- 对于编号小于 B 的题目，学生都能完全理解并正确作答（视为 False）。
+- 从编号 B 开始及其之后的所有更难题目，超出了学生的掌握范围，均会出现作答错误（视为 True）。
 
-你的任务是：通过提问推断出每个知识模块 Si 是否完全被毕业考核要求 K 涵盖（即 Si 是否是 K 的子集），并在使用尽可能少的考核要求查询次数的情况下提交完整的判定结果。
+你的目标是通过抽查答题卡，精准找出该学生的认知边界题号 B。你可以进行以下两种操作：
 
-你可以进行以下两种查询：
+1. 答题卡抽查（观察型提问）：批改从第 1 题到第 k 题的答卷，询问这一区间内是否出现了作答错误。
+   - 如果批改范围包含了认知边界 B 及以上的题目（即 k 大于等于 B），系统反馈"是"（发现错误）。
+   - 如果批改范围仅包含学生已掌握的简单题（即 k 小于 B），系统反馈"否"（全对，无错误）。
 
-1. 模块包含查询（不限次数）：询问知识模块 Si 是否完全是模块 Sj 的前置基础（即 Si 的所有考点都被 Sj 包含）。我会回答“是”或“否”。
-2. 考核要求包含查询（请尽量节约使用）：询问知识模块 Si 是否完全落在毕业考核要求 K 的范围内。我会回答“是”或“否”，并告知你剩余的查询额度。
+2. 边界判定（最终宣告）：当你准确定位到学生的认知边界后，提交该题号。
 
-注意：
-- 你当前的考核要求查询额度为 {budget} 次。
-- 所有回答都基于固定的课程体系结构，且遵循集合论的逻辑规则。
-- 你可以利用传递性等教育逻辑推理来减少考核要求查询次数。
+注意：为了提高评估效率，允许抽查的次数是有限的。若提交的认知边界错误或系统指令格式不符，评估任务将失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-每次只能提出一个查询。请使用以下 XML 格式：
+- 答题卡抽查（例如批阅至第 5 题）：
+<query_observe>5</query_observe>
 
-- 模块包含查询（例如询问 S1 的考点是否都在 S2 中）：
-<query_subset>1,2</query_subset>
-
-- 考核要求包含查询（例如询问 S3 的考点是否都在 K 中）：
-<query_target>3</query_target>
-
-提交最终答案时，必须列出所有知识模块的判定结果（用逗号隔开，顺序为 S1 到 S{m}，每个位置填 1 表示“完全在 K 中”，填 0 表示“不完全在 K 中”），格式如下：
-
-<answer>1,0,1,0</answer>
+- 提交认知边界（例如边界题号为 7）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's conduct the "Curriculum Knowledge Inclusion Logical Reasoning".
+Welcome to the Adaptive Cognitive Mapping System.
 
-The system involves an invisible comprehensive interdisciplinary knowledge graph U and {m} labeled specific curriculum knowledge modules S1, S2, ..., S{m}, all of which are sub-modules (subsets) of U. Additionally, there is an invisible "Core Graduation Requirement" K (K is also a sub-module of U).
+This assessment contains a series of questions with strictly increasing difficulty, indexed from 1 to {n}. According to the educational model, the student's knowledge mastery has a specific cognitive boundary question B.
+- For questions before B (index less than B), the student fully understands and answers them correctly (error status is False).
+- Starting from question B and all subsequent harder questions, they exceed the student's mastery level, resulting in incorrect answers (error status is True).
 
-Your task is: through queries, determine whether each knowledge module Si is completely covered by the graduation requirement K (i.e., whether Si is a subset of K), and submit the complete judgment results using as few requirement queries as possible.
+Your goal is to accurately find the student's cognitive boundary B by spot-checking the answer sheets. You can perform the following two operations:
 
-You can make the following two types of queries:
+1. Answer Sheet Spot-check (Observation Query): Grade the responses from question 1 to question k, and ask whether any errors occurred within this range.
+   - If the graded range includes the boundary B or beyond (k >= B), the system answers "Yes" (errors found).
+   - If the graded range only contains simple questions the student has mastered (k < B), the system answers "No" (all correct, no errors).
 
-1. Module Inclusion Query (unlimited): Ask whether knowledge module Si is completely included in module Sj. I will answer "Yes" or "No".
-2. Requirement Inclusion Query (please use sparingly): Ask whether knowledge module Si falls completely within the Core Graduation Requirement K. I will answer "Yes" or "No" and inform you of the remaining query quota.
+2. Boundary Determination (Final Declaration): Once you have pinpointed the student's cognitive boundary, submit the question number.
 
-Note:
-- Your current requirement query quota is {budget} times.
-- All answers are based on a fixed curriculum structure and follow the logical rules of set theory.
-- You can use transitivity and other educational logical reasoning to reduce the number of requirement queries.
+Note: To improve assessment efficiency, the number of spot-checks is limited. If the submitted boundary is incorrect or the command format is invalid, the assessment task fails.
 
-## Query and Answer Format (must be strictly followed)
+Each turn must contain only one operation tag. Use the following XML format:
 
-You can only make one query at a time. Use the following XML format:
+- Answer Sheet Spot-check (e.g., grading up to question 5):
+<query_observe>5</query_observe>
 
-- Module Inclusion Query (e.g., asking if S1's points are all in S2):
-<query_subset>1,2</query_subset>
-
-- Requirement Inclusion Query (e.g., asking if S3's points are all in K):
-<query_target>3</query_target>
-
-When submitting the final answer, you must list the judgment results for all knowledge modules (comma-separated, in order from S1 to S{m}, with 1 indicating "completely within K" and 0 indicating "not completely within K"), in the following format:
-
-<answer>1,0,1,0</answer>
+- Submit Cognitive Boundary (e.g., boundary question is 7):
+<answer>7</answer>
 """
 
     contextualized_rule_zh_4 = """\
-我们现在来执行“工业流水线工序包含推理”系统。
+欢迎访问工业流水线故障追踪系统。
 
-系统设定了一个不可见的完整生产工艺总集 U，以及 {m} 个带标签的局部装配工序 S1, S2, ..., S{m}，它们都是 U 的子集。此外，还有一个不可见的“高频次品风险特征库” K（K 也是 U 的子集）。
+本厂的自动化流水线包含按顺序执行的加工工序，编号从 1 到 {n}。质检部门报告，某道工序的设备发生偏移（故障点 B），导致连锁反应。
+- 在故障工序 B 之前的环节（编号小于 B），加工出的半成品均符合标准（瑕疵状态为 False）。
+- 从工序 B 开始，受故障设备影响，后续所有工序产出的产品均带有特定的超差瑕疵（瑕疵状态为 True）。
 
-你的任务是：通过提问推断出每个装配工序 Si 的所有操作步骤是否都属于次品风险特征库 K（即 Si 是否是 K 的子集），并在使用尽可能少的特征库查询次数的情况下提交完整的排查结果。
+你的目标是通过在流水线上设置临时抽检点，快速定位出故障的起始工序 B。你可以进行以下两种操作：
 
-你可以进行以下两种查询：
+1. 抽样检测（观察型提问）：在第 k 道工序后进行抽样（检验从工序 1 到 k 的累积加工结果），询问其中是否检测到了超差瑕疵。
+   - 如果抽检点位于故障点 B 之后或正好在 B 处（即 k 大于等于 B），系统反馈"是"（发现瑕疵）。
+   - 如果抽检点完全在正常工序阶段（即 k 小于 B），系统反馈"否"（产品合格）。
 
-1. 工序包含查询（不限次数）：询问工序 Si 的所有步骤是否都包含在工序 Sj 内。我会回答“是”或“否”。
-2. 风险库包含查询（请尽量节约使用）：询问工序 Si 的所有步骤是否均命中了高频次品风险特征库 K。我会回答“是”或“否”，并告知你剩余的查询额度。
+2. 锁定故障源（最终宣告）：当你确定了导致问题的原始工序后，提交该工序编号以便维修。
 
-注意：
-- 你当前的风险库查询额度为 {budget} 次。
-- 所有回答都基于固定的流水线工艺结构，且遵循集合论的逻辑规则。
-- 你可以利用传递性等工艺流逻辑推理来减少风险库查询次数。
+注意：每次抽检都需要暂停局部流水线，因此抽检次数有严格限制。若提交的故障点错误或指令不规范，排故任务失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-每次只能提出一个查询。请使用以下 XML 格式：
+- 抽样检测（例如在第 5 道工序后抽检）：
+<query_observe>5</query_observe>
 
-- 工序包含查询（例如询问 S1 是否被 S2 包含）：
-<query_subset>1,2</query_subset>
-
-- 风险库包含查询（例如询问 S3 是否完全命中 K）：
-<query_target>3</query_target>
-
-提交最终答案时，必须列出所有工序的判定结果（用逗号隔开，顺序为 S1 到 S{m}，每个位置填 1 表示“完全在 K 中”，填 0 表示“不完全在 K 中”），格式如下：
-
-<answer>1,0,1,0</answer>
+- 提交故障工序（例如故障源于第 7 道工序）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Let's execute the "Industrial Assembly Line Procedure Inclusion Reasoning" system.
+[Manufacturing Scenario]
+Welcome to the Industrial Assembly Line Fault Tracking System.
 
-The system involves an invisible complete manufacturing process catalog U and {m} labeled local assembly procedures S1, S2, ..., S{m}, all of which are subsets of U. Additionally, there is an invisible "High-Frequency Defect Risk Profile" K (K is also a subset of U).
+Our automated assembly line consists of sequential manufacturing processes, indexed from 1 to {n}. The quality control department reports that equipment at a specific process B has malfunctioned (fault point B), causing a chain reaction.
+- For processes before B (index less than B), the semi-finished products meet the quality standards (defect status is False).
+- Starting from process B, affected by the faulty equipment, all subsequent processes produce products with specific out-of-tolerance defects (defect status is True).
 
-Your task is: through queries, determine whether all operational steps of each assembly procedure Si belong to the Defect Risk Profile K (i.e., whether Si is a subset of K), and submit the complete inspection results using as few risk profile queries as possible.
+Your goal is to quickly locate the originating faulty process B by setting up temporary sampling points on the assembly line. You can perform two operations:
 
-You can make the following two types of queries:
+1. Sampling Inspection (Observation Query): Sample after the k-th process (inspecting the cumulative result from process 1 to k) and ask if out-of-tolerance defects are detected.
+   - If the sampling point is at or after the fault point B (k >= B), the system answers "Yes" (defect found).
+   - If the sampling point is entirely within the normal process stages (k < B), the system answers "No" (products qualified).
 
-1. Procedure Inclusion Query (unlimited): Ask whether all steps of procedure Si are included within procedure Sj. I will answer "Yes" or "No".
-2. Risk Profile Inclusion Query (please use sparingly): Ask whether all steps of procedure Si fully match the High-Frequency Defect Risk Profile K. I will answer "Yes" or "No" and inform you of the remaining query quota.
+2. Fault Source Lock-in (Final Declaration): Once you have determined the original process causing the issue, submit its index for maintenance.
 
-Note:
-- Your current risk profile query quota is {budget} times.
-- All answers are based on a fixed assembly line structure and follow the logical rules of set theory.
-- You can use transitivity and other process logic reasoning to reduce the number of risk profile queries.
+Note: Since each inspection requires pausing a section of the line, sampling queries are strictly limited. If the submitted fault point is incorrect or the command is invalid, the troubleshooting mission fails.
 
-## Query and Answer Format (must be strictly followed)
+Each turn must contain only one operation tag. Use the following XML format:
 
-You can only make one query at a time. Use the following XML format:
+- Sampling Inspection (e.g., sampling after process 5):
+<query_observe>5</query_observe>
 
-- Procedure Inclusion Query (e.g., asking if S1 is included in S2):
-<query_subset>1,2</query_subset>
-
-- Risk Profile Inclusion Query (e.g., asking if S3 fully matches K):
-<query_target>3</query_target>
-
-When submitting the final answer, you must list the judgment results for all procedures (comma-separated, in order from S1 to S{m}, with 1 indicating "completely within K" and 0 indicating "not completely within K"), in the following format:
-
-<answer>1,0,1,0</answer>
+- Submit Faulty Process (e.g., fault originates at process 7):
+<answer>7</answer>
 """
 
     contextualized_rule_zh_5 = """\
-我们现在来进行“法条与司法管辖权包含推理”。
+欢迎使用智能法务卷宗审计系统。
 
-系统设定了一个不可见的完整国家法律法典 U，以及 {m} 个带标签的具体司法条款集 S1, S2, ..., S{m}，它们都是 U 的子集。此外，还有一个不可见的“地标性案件适用管辖权框架” K（K 也是 U 的子集）。
+本案涉及一份长达 {n} 页的商业合同，页面按条款时间顺序编号从 1 到 {n}。经举报，该合同被人在某一页（篡改起始页 B）开始恶意植入了隐藏的非法霸王条款。
+- 在页面 B 之前的内容（页码小于 B），所有条款均合规合法（非法状态为 False）。
+- 从页面 B 开始及之后的补充页（页码大于等于 B），均包含了衍生出的非法条款内容（非法状态为 True）。
 
-你的任务是：通过提问推断出每个条款集 Si 是否完全落入该案件适用管辖权框架 K 内（即 Si 是否是 K 的子集），并在使用尽可能少的管辖权查询次数的情况下提交完整的判定结果。
+作为法务审计员，你需要通过关键词检索，找出篡改发生的起始页码 B。你可以进行以下两种操作：
 
-你可以进行以下两种查询：
+1. 卷宗检索（观察型提问）：使用系统检索从第 1 页到第 k 页的内容，询问该区间是否命中了非法条款的特征词。
+   - 如果检索范围覆盖了被篡改的页面（即 k 大于等于 B），系统反馈"是"（命中非法内容）。
+   - 如果检索范围完全是合规的早期页面（即 k 小于 B），系统反馈"否"（内容合规）。
 
-1. 条款包含查询（不限次数）：询问条款集 Si 的所有规定是否都被条款集 Sj 所涵盖（即 Si 是否是 Sj 的子集）。我会回答“是”或“否”。
-2. 管辖权包含查询（请尽量节约使用）：询问条款集 Si 是否完全落入地标性案件管辖权框架 K 内。我会回答“是”或“否”，并告知你剩余的查询额度。
+2. 举证指控（最终宣告）：当你锁定第一处被篡改的页码后，提交该页码作为法庭证据。
 
-注意：
-- 你当前的管辖权查询额度为 {budget} 次。
-- 所有回答都基于固定的法理从属结构，且遵循集合论的逻辑规则。
-- 你可以利用传递性等法理逻辑推理来减少管辖权查询次数。
+注意：由于系统算力限制，高强度检索的次数是有限的。若提交的证据页码错误或格式不符合法务标准，审计将宣告失败。
 
-## 查询与提交答案的格式（必须严格遵守）
+每次只能包含一个操作标签。请使用以下 XML 格式：
 
-每次只能提出一个查询。请使用以下 XML 格式：
+- 卷宗检索（例如检索前 5 页）：
+<query_observe>5</query_observe>
 
-- 条款包含查询（例如询问 S1 的规定是否被 S2 涵盖）：
-<query_subset>1,2</query_subset>
-
-- 管辖权包含查询（例如询问 S3 是否完全落入 K 内）：
-<query_target>3</query_target>
-
-提交最终答案时，必须列出所有条款集的判定结果（用逗号隔开，顺序为 S1 到 S{m}，每个位置填 1 表示“完全在 K 内”，填 0 表示“不完全在 K 内”），格式如下：
-
-<answer>1,0,1,0</answer>
+- 提交非法起始页（例如篡改始于第 7 页）：
+<answer>7</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Let's conduct the "Statute and Jurisdiction Inclusion Reasoning".
+Welcome to the Intelligent Legal Case Audit System.
 
-The system involves an invisible complete national legal corpus U and {m} labeled specific statute sets S1, S2, ..., S{m}, all of which are subsets of U. Additionally, there is an invisible "Applicable Jurisdiction Framework for Landmark Case" K (K is also a subset of U).
+This case involves a {n}-page commercial contract, with pages indexed chronologically from 1 to {n}. A whistleblower claims that hidden, illegal unfair terms were maliciously inserted starting from a specific page B.
+- All content before page B (index less than B) is fully compliant and legal (illegal status is False).
+- Starting from page B and all subsequent supplementary pages (index greater than or equal to B), the content contains derivative illegal terms (illegal status is True).
 
-Your task is: through queries, determine whether each statute set Si falls completely within the applicable jurisdiction framework K (i.e., whether Si is a subset of K), and submit the complete judgment results using as few jurisdiction queries as possible.
+As a legal auditor, you must find the starting page B where the tampering occurred through keyword retrieval. You can perform the following two operations:
 
-You can make the following two types of queries:
+1. Case File Retrieval (Observation Query): Use the system to scan the content from page 1 to page k, asking if this range matches the characteristics of the illegal terms.
+   - If the retrieval range covers the tampered pages (k >= B), the system answers "Yes" (illegal content matched).
+   - If the retrieval range consists entirely of early compliant pages (k < B), the system answers "No" (content compliant).
 
-1. Statute Inclusion Query (unlimited): Ask whether all provisions of statute set Si are subsumed under statute set Sj (i.e., whether Si is a subset of Sj). I will answer "Yes" or "No".
-2. Jurisdiction Inclusion Query (please use sparingly): Ask whether statute set Si falls completely within the landmark case jurisdiction framework K. I will answer "Yes" or "No" and inform you of the remaining query quota.
+2. Evidence Submission (Final Declaration): Once you have locked in the first tampered page, submit its index as court evidence.
 
-Note:
-- Your current jurisdiction query quota is {budget} times.
-- All answers are based on a fixed jurisprudential subordination structure and follow the logical rules of set theory.
-- You can use transitivity and other legal logical reasoning to reduce the number of jurisdiction queries.
+Note: Due to system computing limits, high-intensity retrieval queries are limited. If the submitted evidence page is incorrect or the format does not meet legal standards, the audit will be declared a failure.
 
-## Query and Answer Format (must be strictly followed)
+Each turn must contain only one operation tag. Use the following XML format:
 
-You can only make one query at a time. Use the following XML format:
+- Case File Retrieval (e.g., scanning the first 5 pages):
+<query_observe>5</query_observe>
 
-- Statute Inclusion Query (e.g., asking if S1 is subsumed under S2):
-<query_subset>1,2</query_subset>
-
-- Jurisdiction Inclusion Query (e.g., asking if S3 falls completely within K):
-<query_target>3</query_target>
-
-When submitting the final answer, you must list the judgment results for all statute sets (comma-separated, in order from S1 to S{m}, with 1 indicating "completely within K" and 0 indicating "not completely within K"), in the following format:
-
-<answer>1,0,1,0</answer>
+- Submit Illegal Starting Page (e.g., tampering starts at page 7):
+<answer>7</answer>
 """
 
-    tags = ["answer", "query_subset", "query_target"]
+    tags = ["answer", "query_observe"]
+    
     reasoning_type = "演绎推理"
-    data_structure = "集合"
-
-    # 难度配置：
-    # 1 (简单)        - M=4, 链式结构, L充足
-    # 2 (中等偏下)    - M=5, 部分独立, L中等
-    # 3 (中等偏上)    - M=6, 多分支, L较紧
-    # 4 (较难)        - M=7, 复杂关系, L紧张
-    # 5 (难)          - M=8, 高度复杂, L很紧
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "m": 4,
-                "budget": 3,
-                "subset_relations": [
-                    (1, 2), (2, 3)
-                ],
-                "target_containment": [1, 1, 0, 0]
-            },
-            2: {
-                "m": 5,
-                "budget": 4,
-                "subset_relations": [
-                    (1, 2), (3, 4)
-                ],
-                "target_containment": [1, 1, 1, 0, 0]
-            },
-            3: {
-                "m": 6,
-                "budget": 4,
-                "subset_relations": [
-                    (1, 2), (2, 4), (3, 4), (5, 6)
-                ],
-                "target_containment": [1, 1, 1, 0, 0, 0]
-            },
-            4: {
-                "m": 7,
-                "budget": 5,
-                "subset_relations": [
-                    (1, 2), (2, 5), (3, 5), (4, 6)
-                ],
-                "target_containment": [1, 0, 1, 1, 0, 0, 0]
-            },
-            5: {
-                "m": 8,
-                "budget": 5,
-                "subset_relations": [
-                    (1, 3), (2, 3), (3, 6), (4, 7), (5, 7)
-                ],
-                "target_containment": [1, 1, 0, 0, 1, 0, 0, 0]
-            },
+            1: {"n": 8, "boundary": 5},
+            2: {"n": 16, "boundary": 11},
+            3: {"n": 32, "boundary": 20},
+            4: {"n": 64, "boundary": 47},
+            5: {"n": 128, "boundary": 89},
         },
         "en": {
-            1: {
-                "m": 4,
-                "budget": 3,
-                "subset_relations": [
-                    (1, 2), (2, 3)
-                ],
-                "target_containment": [1, 1, 0, 0]
-            },
-            2: {
-                "m": 5,
-                "budget": 4,
-                "subset_relations": [
-                    (1, 2), (3, 4)
-                ],
-                "target_containment": [1, 1, 1, 0, 0]
-            },
-            3: {
-                "m": 6,
-                "budget": 4,
-                "subset_relations": [
-                    (1, 2), (2, 4), (3, 4), (5, 6)
-                ],
-                "target_containment": [1, 1, 1, 0, 0, 0]
-            },
-            4: {
-                "m": 7,
-                "budget": 5,
-                "subset_relations": [
-                    (1, 2), (2, 5), (3, 5), (4, 6)
-                ],
-                "target_containment": [1, 0, 1, 1, 0, 0, 0]
-            },
-            5: {
-                "m": 8,
-                "budget": 5,
-                "subset_relations": [
-                    (1, 3), (2, 3), (3, 6), (4, 7), (5, 7)
-                ],
-                "target_containment": [1, 1, 0, 0, 1, 0, 0, 0]
-            },
+            1: {"n": 8, "boundary": 5},
+            2: {"n": 16, "boundary": 11},
+            3: {"n": 32, "boundary": 20},
+            4: {"n": 64, "boundary": 47},
+            5: {"n": 128, "boundary": 89},
         },
     }
 
@@ -502,9 +346,11 @@ When submitting the final answer, you must list the judgment results for all sta
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏状态和真实数据结构"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 防御性转换为整数
+        diff = self.config.difficulty
+
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -512,198 +358,95 @@ When submitting the final answer, you must list the judgment results for all sta
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
         
-        # 基本参数
-        self.m = cfg["m"]
-        self.budget = cfg["budget"]
-        self.remaining_budget = self.budget
+        self.boundary = cfg["boundary"]
         
-        # 存储游戏规则中需要的信息
-        self._game_info["m"] = self.m
-        self._game_info["budget"] = self.budget
+        self.max_queries = math.ceil(math.log2(cfg["n"])) + 2
         
-        # 子集包含关系：subset_relations存储 (i,j) 表示 Si ⊆ Sj
-        self.subset_relations = set(cfg["subset_relations"])
-        
-        # 计算传递闭包（用于快速查询）
-        self._compute_transitive_closure()
-        
-        # 目标包含关系的真实答案
-        self.target_containment = cfg["target_containment"]
-
-    def _compute_transitive_closure(self):
-        """计算子集包含关系的传递闭包"""
-        # 初始化：每个集合包含自己
-        self.closure = {i: {i} for i in range(1, self.m + 1)}
-        
-        # 添加直接关系
-        for i, j in self.subset_relations:
-            self.closure[i].add(j)
-        
-        # Floyd-Warshall算法计算传递闭包
-        for k in range(1, self.m + 1):
-            for i in range(1, self.m + 1):
-                for j in range(1, self.m + 1):
-                    if k in self.closure[i] and j in self.closure[k]:
-                        self.closure[i].add(j)
-
-    def _is_subset_of(self, i, j):
-        """判断 Si 是否是 Sj 的子集"""
-        return j in self.closure[i]
+        self.query_count = 0
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
-        
         try:
-            # 解析答案：应该是逗号分隔的0/1序列
-            answer_list = [int(x.strip()) for x in raw_ans.split(",")]
+            answer = parsed_info["answer"].strip()
+            declared_boundary = int(answer)
             
-            # 检查长度是否正确
-            if len(answer_list) != self.m:
+            if declared_boundary < 1 or declared_boundary > self._game_info["n"]:
                 return False
             
-            # 检查每个值是否为0或1
-            if not all(x in [0, 1] for x in answer_list):
-                return False
+            return declared_boundary == self.boundary
             
-            # 与真实答案比较
-            return answer_list == self.target_containment
-            
-        except Exception:
+        except (ValueError, KeyError):
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的响应生成逻辑"""
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_format = "错误：格式无效或索引超出范围。"
-            error_budget = "错误：目标查询次数已用尽。"
-            budget_info = "剩余目标查询额度：{}"
+            error_limit = f"观察次数已达上限（{self.max_queries}次），无法继续观察。请直接提交你的最终答案。"
+            error_range = f"错误：位置超出有效范围 [1, {self._game_info['n']}]。"
         else:
             yes_res, no_res = "Yes", "No"
-            error_format = "Error: Invalid format or index out of range."
-            error_budget = "Error: Target query quota exhausted."
-            budget_info = "Remaining target query quota: {}"
+            error_limit = f"Observation query limit ({self.max_queries}) reached. No more observations allowed. Please submit your final answer."
+            error_range = f"Error: Position out of valid range [1, {self._game_info['n']}]."
 
-        # 优先处理 query_subset
-        if "query_subset" in parsed_info:
-            try:
-                raw = parsed_info["query_subset"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_format
-                i, j = int(parts[0]), int(parts[1])
-                
-                if i < 1 or i > self.m or j < 1 or j > self.m:
-                    return error_format
-                
-                # 判断 Si 是否是 Sj 的子集
-                result = yes_res if self._is_subset_of(i, j) else no_res
-                return result
-                
-            except Exception:
-                return error_format
-
-        # 处理 query_target
-        elif "query_target" in parsed_info:
-            # 检查额度
-            if self.remaining_budget <= 0:
-                return error_budget
+        if "query_observe" in parsed_info:
+            if self.query_count >= self.max_queries:
+                return error_limit
             
             try:
-                raw = parsed_info["query_target"].strip()
-                i = int(raw)
+                k = int(parsed_info["query_observe"].strip())
                 
-                if i < 1 or i > self.m:
-                    return error_format
+                if k < 1 or k > self._game_info["n"]:
+                    return error_range
                 
-                # 消耗一次查询额度
-                self.remaining_budget -= 1
+                self.query_count += 1
                 
-                # 判断 Si 是否是 K 的子集（索引从0开始）
-                result = yes_res if self.target_containment[i - 1] == 1 else no_res
-                budget_msg = budget_info.format(self.remaining_budget)
-                
-                return f"{result}\n{budget_msg}"
-                
-            except Exception:
-                return error_format
-
+                if k >= self.boundary:
+                    return yes_res
+                else:
+                    return no_res
+                    
+            except ValueError:
+                if self.config.language == "zh":
+                    return "错误：无效的位置格式，请提供一个整数。"
+                else:
+                    return "Error: Invalid position format, please provide an integer."
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """根据正确答案生成一个明显不同的错误答案"""
-        if correct.isdigit():
-            return str(int(correct) + 1)
+    def _cf_make_wrong(self, correct):
+        if correct == "是":
+            return "否"
+        if correct == "否":
+            return "是"
+        
+        lower_correct = correct.lower()
+        if lower_correct == "yes":
+            return "No" if correct[0].isupper() else "no"
+        if lower_correct == "no":
+            return "Yes" if correct[0].isupper() else "yes"
             
-        lines = correct.split("\n")
-        if lines[0] == "是":
-            lines[0] = "否"
-        elif lines[0] == "否":
-            lines[0] = "是"
-        elif lines[0] == "Yes":
-            lines[0] = "No"
-        elif lines[0] == "No":
-            lines[0] = "Yes"
-        else:
-            lines[0] = lines[0] + "_WRONG"
-            
-        return "\n".join(lines)
+        return correct + "_WRONG"
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        queries = []
+    def get_all_possible_queries(self):
+        possible_queries = []
+        n = self._game_info["n"]
         
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            budget_info_tpl = "剩余目标查询额度：{}"
         else:
             yes_res, no_res = "Yes", "No"
-            budget_info_tpl = "Remaining target query quota: {}"
             
-        # 1. 枚举子集包含查询 (Si ⊆ Sj)
-        for i in range(1, self.m + 1):
-            for j in range(1, self.m + 1):
-                query_xml = f"<query_subset>{i},{j}</query_subset>"
-                
-                # 逻辑判断：Si 是否是 Sj 的子集
-                is_subset = self._is_subset_of(i, j)
-                ans = yes_res if is_subset else no_res
-                
-                queries.append({
-                    "query": query_xml,
-                    "answer": ans
-                })
-        
-        # 2. 枚举目标包含查询 (Si ⊆ K)
-        # 模拟递减的 budget 以保持一致性
-        simulated_budget = self.budget
-        for i in range(1, self.m + 1):
-            query_xml = f"<query_target>{i}</query_target>"
+        for k in range(1, n + 1):
+            if k >= self.boundary:
+                ans = yes_res
+            else:
+                ans = no_res
             
-            # 逻辑判断：Si 是否是 K 的子集
-            in_target = (self.target_containment[i - 1] == 1)
-            result = yes_res if in_target else no_res
-            
-            simulated_budget -= 1
-            budget_msg = budget_info_tpl.format(simulated_budget)
-            
-            ans = f"{result}\n{budget_msg}"
-            
-            queries.append({
-                "query": query_xml,
+            entry = {
+                "query": f"<query_observe>{k}</query_observe>",
                 "answer": ans
-            })
+            }
+            possible_queries.append(entry)
             
-        return queries
+        return possible_queries

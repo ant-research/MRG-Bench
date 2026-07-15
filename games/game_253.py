@@ -1,678 +1,689 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   元素距离：两个给定元素之间相隔多少个位置
-# ============================================================
-
 from .base import Game
+import random
 import re
 
-
-class MetricFunctionGame(Game):
+class GraphConnectivityGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"度量函数推理"游戏。规则如下：
+我们来玩一个"图连通性推理"游戏。规则如下：
 
-游戏设定了一个固定的有序序列，长度为 {n}，位置从左到右为 1 到 {n}。
-序列与标签对应关系：{label_mapping}
+给定一个包含 {n} 个节点的无向图。每个节点有两个公开属性：
+- 唯一编号 id（从 1 到 {n}）
+- 颜色 c（红色、蓝色或绿色）
 
-对于任意两个不同的元素 x, y，记 pos(x) 为其在序列中的位置，位置差的绝对值记为 |pos(x)-pos(y)|。
+所有节点信息如下：
+{node_info}
 
-我已秘密选择了一个度量函数 f，它必定属于以下四个候选函数之一，且在整个游戏过程中保持不变：
-- 函数 a：f(x,y) = |pos(x)-pos(y)| - 1
-- 函数 b：f(x,y) = |pos(x)-pos(y)|
-- 函数 c：f(x,y) = |pos(x)-pos(y)| + 1
-- 函数 d：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
+图中两节点间是否存在边由一个隐藏的确定性规则 R 决定。该规则仅依赖节点的编号和颜色属性，且对所有查询保持一致。
 
-你的目标是：
-1. 通过查询推断出实际采用的度量函数是哪一个（a、b、c 或 d）
-2. 计算目标元素对 {target_pair} 在该度量函数下的函数值
+你的任务目标：
+1. 通过查询推断出隐藏规则 R 的描述（例如：编号差值、编号和/积的条件、颜色组合条件等）
+2. 判断特定两个节点 S={s} 和 T={t} 是否连通（即是否存在任意长度的路径）
 
-你可以进行以下操作：
+你可以进行以下两类查询（请尽可能少地使用查询次数）：
 
-1. 测量查询：询问任意两个不同且存在于序列中的元素 A, B 的度量值。我会返回 f(A,B) 的值（一个非负整数）。
-2. 查看序列：查看当前序列的长度和标签顺序（仅用于核对，不提供关于 f 的额外信息）。
-3. 宣告答案：当你确定度量函数后，提交你的最终答案，包括度量函数类型、目标对的函数值以及支持证据。
+1. **直接边查询**（最多 {max_edge_queries} 次）：询问节点 u 和 v 之间是否存在边。回答"是"或"否"。
 
-注意：
-- 只能查询序列中存在的元素，且两个元素必须不同
-- 宣告答案时需要至少进行过两次测量查询
-- 证据需引用至少两次实际查询的结果
-- 系统会验证：1) 所有证据是否与宣称的度量一致；2) 目标对的数值是否正确
+2. **有界可达查询**（最多 {max_path_queries} 次）：询问从节点 u 到 v 是否存在长度不超过 k（k 可以是 2 或 3）的路径。
+   - 若存在，回答"是"并提供一条具体路径
+   - 若不存在，回答"否"
 
-## 操作格式（严格要求）
+注意：不允许查询长度大于 3 的可达性，也不允许直接询问全局连通性。
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+每次只能提出一个查询。使用以下 XML 格式：
 
-- 测量查询（例如查询元素 F 和 K）：
-<query_measure>F,K</query_measure>
+- 直接边查询（例如询问节点 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 查看序列（内容为空）：
-<query_sequence></query_sequence>
+- 有界可达查询（例如询问节点 1 到 6 是否存在长度不超过 3 的路径）：
+<query_path>1,6,3</query_path>
 
-- 宣告答案（需包含度量类型、目标答案和证据）：
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+当你收集到足够信息后，请提交最终答案，包含两部分：
+1. 规则描述：用自然语言简要描述隐藏规则 R
+2. 连通性判断：S 和 T 是否连通（是/否）
 
-格式说明：
-- metric: 必须是 a、b、c 或 d 之一
-- target: 目标对 {target_pair} 的函数值（整数）
-- evidence: 至少两个查询结果，格式为 [(元素1,元素2)->值, ...]
+格式如下：
+<answer>
+规则：[你的规则描述]
+连通性：[是/否]
+</answer>
+
+验证环节：提交答案后，系统会随机选取 5 对你未直接查询过边的节点对，要求你根据所述规则判断是否有边。只有全部判断正确且连通性判断正确，游戏才算成功。
 """
 
     game_rule_en = """\
-Let's play a "Metric Function Deduction" game. Here are the rules:
+Let's play a "Graph Connectivity Inference" game. Here are the rules:
 
-The game has a fixed ordered sequence of length {n}, with positions numbered 1 to {n} from left to right.
-Sequence to label mapping: {label_mapping}
+Given an undirected graph with {n} nodes. Each node has two public attributes:
+- Unique ID (from 1 to {n})
+- Color c (Red, Blue, or Green)
 
-For any two different elements x, y, let pos(x) be its position in the sequence, and the absolute difference in positions is denoted as |pos(x)-pos(y)|.
+All node information:
+{node_info}
 
-I have secretly chosen a metric function f, which must be one of the following four candidate functions and remains fixed throughout the game:
-- Function a: f(x,y) = |pos(x)-pos(y)| - 1
-- Function b: f(x,y) = |pos(x)-pos(y)|
-- Function c: f(x,y) = |pos(x)-pos(y)| + 1
-- Function d: f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
+Whether an edge exists between two nodes is determined by a hidden deterministic rule R. This rule depends only on node IDs and colors, and remains consistent for all queries.
 
-Your goal is to:
-1. Infer which metric function (a, b, c, or d) is actually being used through queries
-2. Calculate the function value for the target element pair {target_pair} under that metric function
+Your goals:
+1. Infer a description of the hidden rule R through queries (e.g., ID difference, sum/product conditions, color combinations, etc.)
+2. Determine whether two specific nodes S={s} and T={t} are connected (i.e., whether a path of any length exists)
 
-You can perform the following operations:
+You can make the following two types of queries (try to use as few queries as possible):
 
-1. Measure Query: Ask for the metric value between any two different elements A, B that exist in the sequence. I will return the value of f(A,B) (a non-negative integer).
-2. View Sequence: View the current sequence length and label order (for reference only, does not provide additional information about f).
-3. Declare Answer: When you have determined the metric function, submit your final answer including the metric type, target pair value, and supporting evidence.
+1. **Direct Edge Query** (at most {max_edge_queries} times): Ask if there is an edge between nodes u and v. Answer is "Yes" or "No".
 
-Note:
-- You can only query elements that exist in the sequence, and the two elements must be different
-- Declaring an answer requires at least two measure queries
-- Evidence must reference at least two actual query results
-- The system will verify: 1) whether all evidence is consistent with the claimed metric; 2) whether the target pair value is correct
+2. **Bounded Reachability Query** (at most {max_path_queries} times): Ask if there exists a path from node u to v with length at most k (k can be 2 or 3).
+   - If exists, answer "Yes" and provide a specific path
+   - If not, answer "No"
 
-## Operation Format (strictly required)
+Note: Queries for paths longer than 3 or direct global connectivity questions are not allowed.
 
-Each turn must contain only one operation tag. Use the following XML format:
+Only one query per turn. Use the following XML format:
 
-- Measure Query (e.g., querying elements F and K):
-<query_measure>F,K</query_measure>
+- Direct Edge Query (e.g., asking about nodes 2 and 5):
+<query_edge>2,5</query_edge>
 
-- View Sequence (empty content):
-<query_sequence></query_sequence>
+- Bounded Reachability Query (e.g., asking if path of length at most 3 exists from node 1 to 6):
+<query_path>1,6,3</query_path>
 
-- Declare Answer (must include metric type, target answer, and evidence):
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+When you have enough information, submit your final answer with two parts:
+1. Rule description: Briefly describe the hidden rule R in natural language
+2. Connectivity judgment: Whether S and T are connected (Yes/No)
 
-Format explanation:
-- metric: must be one of a, b, c, or d
-- target: the function value for target pair {target_pair} (integer)
-- evidence: at least two query results, format [(element1,element2)->value, ...]
+Format:
+<answer>
+Rule: [your rule description]
+Connectivity: [Yes/No]
+</answer>
+
+Verification: After submission, the system will randomly select 5 node pairs whose edges you haven't directly queried, and ask you to judge if they have edges based on your stated rule. You succeed only if all 5 judgments and the connectivity judgment are correct.
 """
 
     contextualized_rule_zh_1 = """\
-欢迎来到“轨道交通计价模型推理”系统。规则如下：
+欢迎使用“城市交通网络规划推演系统”。规则如下：
 
-我们的城市有一条固定的单线轨道交通线路，包含 {n} 个站点，从首发站到终点站依次编号为 1 到 {n}。
-站点代号与真实站点的对应关系：{label_mapping}
+给定一个包含 {n} 个交通枢纽站的交通网络。每个站点有两个公开属性：
+- 唯一编号 id（从 1 到 {n}）
+- 所在区域标识 c（红色、蓝色或绿色区域）
 
-对于任意两个不同的站点 x 和 y，记 pos(x) 为其在线路中的站点编号，两者之间的绝对站距记为 |pos(x)-pos(y)|。
+所有站点信息如下：
+{node_info}
 
-系统目前秘密启用了一个新的计价度量函数 f，它必定属于以下四种候选模型之一，且在本次推断过程中保持不变：
-- 模型 a（中间站计价）：f(x,y) = |pos(x)-pos(y)| - 1 （即两站之间途经的中间站数量）
-- 模型 b（区间计价）：f(x,y) = |pos(x)-pos(y)| （即两站之间的区间数）
-- 模型 c（总站数计价）：f(x,y) = |pos(x)-pos(y)| + 1 （即包含起终点在内的总站数）
-- 模型 d（外围补贴计价）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （即两站分别到线路两端首末站的区间数之和）
+两站点间是否存在直达公共交通线路（边）由一个隐藏的确定性建线规则 R 决定。该规则仅依赖站点的编号和区域颜色属性，且对所有查询保持一致。
 
-你的目标是：
-1. 通过查询推断出实际采用的计价度量函数是哪一个（a、b、c 或 d）
-2. 计算目标出行站点对 {target_pair} 在该度量函数下的计价函数值
+你的任务目标：
+1. 通过查询推断出隐藏规则 R 的描述（例如：编号差值、编号和/积的条件、颜色组合条件等）
+2. 判断起点站 S={s} 和终点站 T={t} 是否连通（即是否存在任意长度的换乘路线）
 
-你可以进行以下操作：
-1. 测量查询：询问任意两个不同且存在于线路中的站点 A, B 的计价值。系统会返回 f(A,B) 的值（一个非负整数）。
-2. 查看序列：查看当前线路的长度和站点顺序（仅用于核对，不提供关于 f 的额外信息）。
-3. 宣告答案：当你确定计价模型后，提交你的最终答案，包括模型类型、目标对的函数值以及支持证据。
+你可以进行以下两类查询（请尽可能少地使用查询次数）：
 
-注意：
-- 只能查询线路中存在的站点，且两个站点必须不同
-- 宣告答案时需要至少进行过两次测量查询
-- 证据需引用至少两次实际查询的结果
-- 系统会验证：1) 所有证据是否与宣称的模型一致；2) 目标对的数值是否正确
+1. **直接边查询**（最多 {max_edge_queries} 次）：询问站点 u 和 v 之间是否存在直达线路。回答"是"或"否"。
 
-## 操作格式（严格要求）
+2. **有界可达查询**（最多 {max_path_queries} 次）：询问从站点 u 到 v 是否存在长度不超过 k（k 可以是 2 或 3）段的换乘路径。
+   - 若存在，回答"是"并提供一条具体路径
+   - 若不存在，回答"否"
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+注意：不允许查询长度大于 3 的可达性，也不允许直接询问全局连通性。
 
-- 测量查询（例如查询站点 F 和 K）：
-<query_measure>F,K</query_measure>
+每次只能提出一个查询。使用以下 XML 格式：
 
-- 查看序列（内容为空）：
-<query_sequence></query_sequence>
+- 直接边查询（例如询问站点 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 宣告答案（需包含模型类型、目标答案和证据）：
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- 有界可达查询（例如询问从站点 1 到 6 是否存在长度不超过 3 的路径）：
+<query_path>1,6,3</query_path>
 
-格式说明：
-- metric: 必须是 a、b、c 或 d 之一
-- target: 目标站点对 {target_pair} 的函数值（整数）
-- evidence: 至少两个查询结果，格式为 [(站点1,站点2)->值, ...]
+当你收集到足够信息后，请提交最终答案，包含两部分：
+1. 规则描述：用自然语言简要描述隐藏建线规则 R
+2. 连通性判断：S 和 T 是否连通（是/否）
+
+格式如下：
+<answer>
+规则：[你的规则描述]
+连通性：[是/否]
+</answer>
+
+验证环节：提交答案后，系统会随机选取 5 对你未直接查询过直达线路的站点对，要求你根据所述规则判断是否有线路。只有全部判断正确且连通性判断正确，任务才算成功。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Rail Transit Pricing Model Deduction" system. Here are the rules:
+Welcome to the "Urban Traffic Network Planning System". Here are the rules:
 
-Our city has a fixed single-line rail transit route with {n} stations, numbered sequentially from 1 to {n} from the departure station to the terminal.
-Station code to real station mapping: {label_mapping}
+Given an undirected traffic network with {n} transit hubs. Each hub has two public attributes:
+- Unique ID (from 1 to {n})
+- Zone Color c (Red, Blue, or Green)
 
-For any two different stations x and y, let pos(x) be its station number on the route, and the absolute station distance between them is denoted as |pos(x)-pos(y)|.
+All hub information:
+{node_info}
 
-The system has secretly activated a new pricing metric function f, which must be one of the following four candidate models and remains unchanged during this deduction:
-- Model a (Intermediate stations): f(x,y) = |pos(x)-pos(y)| - 1
-- Model b (Section distance): f(x,y) = |pos(x)-pos(y)|
-- Model c (Total stations): f(x,y) = |pos(x)-pos(y)| + 1
-- Model d (Peripheral subsidy): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
+Whether a direct route (edge) exists between two hubs is determined by a hidden deterministic planning rule R. This rule depends only on hub IDs and zone colors, and remains consistent for all queries.
 
-Your goal is to:
-1. Infer which pricing metric function (a, b, c, or d) is actually being used through queries
-2. Calculate the pricing function value for the target travel station pair {target_pair} under that metric function
+Your goals:
+1. Infer a description of the hidden rule R through queries (e.g., ID difference, sum/product conditions, color combinations, etc.)
+2. Determine whether start hub S={s} and destination hub T={t} are connected (i.e., whether a transfer path of any length exists)
 
-You can perform the following operations:
-1. Measure Query: Ask for the pricing metric value between any two different stations A, B that exist on the route. The system will return the value of f(A,B) (a non-negative integer).
-2. View Sequence: View the current route length and station order (for reference only, does not provide additional information about f).
-3. Declare Answer: When you have determined the pricing model, submit your final answer including the model type, target pair value, and supporting evidence.
+You can make the following two types of queries (try to use as few queries as possible):
 
-Note:
-- You can only query stations that exist on the route, and the two stations must be different
-- Declaring an answer requires at least two measure queries
-- Evidence must reference at least two actual query results
-- The system will verify: 1) whether all evidence is consistent with the claimed model; 2) whether the target pair value is correct
+1. **Direct Edge Query** (at most {max_edge_queries} times): Ask if there is a direct route between hubs u and v. Answer is "Yes" or "No".
 
-## Operation Format (strictly required)
+2. **Bounded Reachability Query** (at most {max_path_queries} times): Ask if there exists a transfer path from hub u to v with length at most k (k can be 2 or 3).
+   - If exists, answer "Yes" and provide a specific path
+   - If not, answer "No"
 
-Each turn must contain only one operation tag. Use the following XML format:
+Note: Queries for paths longer than 3 or direct global connectivity questions are not allowed.
 
-- Measure Query (e.g., querying stations F and K):
-<query_measure>F,K</query_measure>
+Only one query per turn. Use the following XML format:
 
-- View Sequence (empty content):
-<query_sequence></query_sequence>
+- Direct Edge Query (e.g., asking about hubs 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Declare Answer (must include model type, target answer, and evidence):
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- Bounded Reachability Query (e.g., asking if a path of length at most 3 exists from hub 1 to 6):
+<query_path>1,6,3</query_path>
 
-Format explanation:
-- metric: must be one of a, b, c, or d
-- target: the function value for the target station pair {target_pair} (integer)
-- evidence: at least two query results, format [(station1,station2)->value, ...]
+When you have enough information, submit your final answer with two parts:
+1. Rule description: Briefly describe the hidden planning rule R in natural language
+2. Connectivity judgment: Whether S and T are connected (Yes/No)
+
+Format:
+<answer>
+Rule: [your rule description]
+Connectivity: [Yes/No]
+</answer>
+
+Verification: After submission, the system will randomly select 5 hub pairs whose direct routes you haven't queried, and ask you to judge if they have routes based on your stated rule. You succeed only if all 5 judgments and the connectivity judgment are correct.
 """
 
     contextualized_rule_zh_2 = """\
-欢迎进入“康复疗程指标推理”系统。规则如下：
+欢迎进入“传染病传播追踪分析系统”。规则如下：
 
-系统设定了一个标准康复疗程，包含 {n} 个连续的治疗节点，时间顺序从 1 到 {n}。
-节点代码与对应阶段映射：{label_mapping}
+给定一个包含 {n} 个确诊病例的接触关系网。每个病例有两个公开属性：
+- 唯一编号 id（从 1 到 {n}）
+- 感染毒株标记 c（红色、蓝色或绿色）
 
-对于任意两个不同的治疗节点 x 和 y，记 pos(x) 为其在疗程中的顺序位次，位次差的绝对值记为 |pos(x)-pos(y)|。
+所有病例信息如下：
+{node_info}
 
-医疗AI已秘密选用了一个风险评估度量函数 f，它必定属于以下四个候选函数之一，且在评估期间保持不变：
-- 评估标准 a（纯间隔）：f(x,y) = |pos(x)-pos(y)| - 1 （两节点之间的纯间隔阶段数）
-- 评估标准 b（跨度）：f(x,y) = |pos(x)-pos(y)| （两节点跨越的阶段跨度）
-- 评估标准 c（总覆盖）：f(x,y) = |pos(x)-pos(y)| + 1 （涵盖首尾节点在内的总干预阶段数）
-- 评估标准 d（边缘风险）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （两节点向疗程首尾两端延伸的未干预阶段总和）
+两病例间是否存在直接接触史（边）由一个隐藏的确定性传染规则 R 决定。该规则仅依赖病例的编号和毒株属性，且对所有查询保持一致。
 
-你的目标是：
-1. 通过查询推断出实际采用的风险评估度量函数是哪一个（a、b、c 或 d）
-2. 计算目标节点对 {target_pair} 在该度量函数下的指标值
+你的任务目标：
+1. 通过查询推断出隐藏传染规则 R 的描述（例如：编号差值、编号和/积的条件、毒株组合条件等）
+2. 判断零号病人 S={s} 和目标患者 T={t} 是否连通（即是否存在任意长度的传播链）
 
-你可以进行以下操作：
-1. 测量查询：询问任意两个不同且存在于疗程中的节点 A, B 的指标值。系统会返回 f(A,B) 的值（一个非负整数）。
-2. 查看序列：查看当前疗程的节点总数和顺序（仅用于核对，不提供关于 f 的额外信息）。
-3. 宣告答案：当你确定评估标准后，提交你的最终答案，包括度量函数类型、目标对的指标值以及临床证据。
+你可以进行以下两类查询（请尽可能少地使用查询次数）：
 
-注意：
-- 只能查询疗程中存在的节点，且两个节点必须不同
-- 宣告答案时需要至少进行过两次测量查询
-- 证据需引用至少两次实际查询的结果
-- 系统会验证：1) 所有证据是否与宣称的评估标准一致；2) 目标对的数值是否正确
+1. **直接边查询**（最多 {max_edge_queries} 次）：询问病例 u 和 v 之间是否存在直接接触史。回答"是"或"否"。
 
-## 操作格式（严格要求）
+2. **有界可达查询**（最多 {max_path_queries} 次）：询问从病例 u 到 v 是否存在长度不超过 k（k 可以是 2 或 3）人的传播路径。
+   - 若存在，回答"是"并提供一条具体路径
+   - 若不存在，回答"否"
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+注意：不允许查询长度大于 3 的可达性，也不允许直接询问全局连通性。
 
-- 测量查询（例如查询节点 F 和 K）：
-<query_measure>F,K</query_measure>
+每次只能提出一个查询。使用以下 XML 格式：
 
-- 查看序列（内容为空）：
-<query_sequence></query_sequence>
+- 直接边查询（例如询问病例 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 宣告答案（需包含评估标准类型、目标答案和证据）：
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- 有界可达查询（例如询问从病例 1 到 6 是否存在长度不超过 3 的路径）：
+<query_path>1,6,3</query_path>
 
-格式说明：
-- metric: 必须是 a、b、c 或 d 之一
-- target: 目标节点对 {target_pair} 的指标值（整数）
-- evidence: 至少两个查询结果，格式为 [(节点1,节点2)->值, ...]
+当你收集到足够信息后，请提交最终答案，包含两部分：
+1. 规则描述：用自然语言简要描述隐藏传染规则 R
+2. 连通性判断：S 和 T 是否连通（是/否）
+
+格式如下：
+<answer>
+规则：[你的规则描述]
+连通性：[是/否]
+</answer>
+
+验证环节：提交答案后，系统会随机选取 5 对你未直接查询过接触史的病例对，要求你根据所述规则判断是否有接触。只有全部判断正确且连通性判断正确，任务才算成功。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Rehabilitation Course Metric Deduction" system. Here are the rules:
+Welcome to the "Infectious Disease Transmission Tracking System". Here are the rules:
 
-The system has established a standard rehabilitation course consisting of {n} consecutive treatment nodes, sequenced from 1 to {n} in chronological order.
-Node code to phase mapping: {label_mapping}
+Given an undirected contact network of {n} confirmed cases. Each case has two public attributes:
+- Unique ID (from 1 to {n})
+- Infected Strain Marker c (Red, Blue, or Green)
 
-For any two different treatment nodes x and y, let pos(x) be its sequential position in the course, and the absolute position difference is denoted as |pos(x)-pos(y)|.
+All case information:
+{node_info}
 
-The Medical AI has secretly selected a risk assessment metric function f, which must be one of the following four candidate functions and remains fixed during the evaluation:
-- Standard a (Pure interval): f(x,y) = |pos(x)-pos(y)| - 1
-- Standard b (Span): f(x,y) = |pos(x)-pos(y)|
-- Standard c (Total coverage): f(x,y) = |pos(x)-pos(y)| + 1
-- Standard d (Peripheral risk): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
+Whether a direct contact history (edge) exists between two cases is determined by a hidden deterministic transmission rule R. This rule depends only on case IDs and strain attributes, and remains consistent for all queries.
 
-Your goal is to:
-1. Infer which assessment metric function (a, b, c, or d) is actually being used through queries
-2. Calculate the indicator value for the target node pair {target_pair} under that metric function
+Your goals:
+1. Infer a description of the hidden transmission rule R through queries (e.g., ID difference, sum/product conditions, strain combinations, etc.)
+2. Determine whether Patient Zero S={s} and Target Patient T={t} are connected (i.e., whether a transmission chain of any length exists)
 
-You can perform the following operations:
-1. Measure Query: Ask for the indicator value between any two different nodes A, B that exist in the course. The system will return the value of f(A,B) (a non-negative integer).
-2. View Sequence: View the current course length and node order (for reference only, does not provide additional information about f).
-3. Declare Answer: When you have determined the assessment standard, submit your final answer including the metric type, target pair value, and clinical evidence.
+You can make the following two types of queries (try to use as few queries as possible):
 
-Note:
-- You can only query nodes that exist in the course, and the two nodes must be different
-- Declaring an answer requires at least two measure queries
-- Evidence must reference at least two actual query results
-- The system will verify: 1) whether all evidence is consistent with the claimed standard; 2) whether the target pair value is correct
+1. **Direct Edge Query** (at most {max_edge_queries} times): Ask if there is a direct contact history between cases u and v. Answer is "Yes" or "No".
 
-## Operation Format (strictly required)
+2. **Bounded Reachability Query** (at most {max_path_queries} times): Ask if there exists a transmission path from case u to v with length at most k (k can be 2 or 3).
+   - If exists, answer "Yes" and provide a specific path
+   - If not, answer "No"
 
-Each turn must contain only one operation tag. Use the following XML format:
+Note: Queries for paths longer than 3 or direct global connectivity questions are not allowed.
 
-- Measure Query (e.g., querying nodes F and K):
-<query_measure>F,K</query_measure>
+Only one query per turn. Use the following XML format:
 
-- View Sequence (empty content):
-<query_sequence></query_sequence>
+- Direct Edge Query (e.g., asking about cases 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Declare Answer (must include metric type, target answer, and evidence):
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- Bounded Reachability Query (e.g., asking if a path of length at most 3 exists from case 1 to 6):
+<query_path>1,6,3</query_path>
 
-Format explanation:
-- metric: must be one of a, b, c, or d
-- target: the indicator value for target node pair {target_pair} (integer)
-- evidence: at least two query results, format [(node1,node2)->value, ...]
+When you have enough information, submit your final answer with two parts:
+1. Rule description: Briefly describe the hidden transmission rule R in natural language
+2. Connectivity judgment: Whether S and T are connected (Yes/No)
+
+Format:
+<answer>
+Rule: [your rule description]
+Connectivity: [Yes/No]
+</answer>
+
+Verification: After submission, the system will randomly select 5 case pairs whose direct contact history you haven't queried, and ask you to judge if they have contacts based on your stated rule. You succeed only if all 5 judgments and the connectivity judgment are correct.
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用“课程认知负荷推演”工具。规则如下：
+欢迎进入“知识图谱前置依赖分析系统”。规则如下：
 
-教学大纲设定了一个固定的知识模块序列，共计 {n} 个模块，教学顺序从 1 到 {n}。
-模块代号与知识点对应关系：{label_mapping}
+给定一个包含 {n} 个知识点的学科网络。每个知识点有两个公开属性：
+- 唯一编号 id（从 1 到 {n}）
+- 学科模块颜色 c（红色、蓝色或绿色）
 
-对于任意两个不同的知识模块 x 和 y，记 pos(x) 为其在大纲中的教学次序，次序差的绝对值记为 |pos(x)-pos(y)|。
+所有知识点信息如下：
+{node_info}
 
-教研系统已秘密应用了一个认知负荷度量函数 f，它必定属于以下四个候选模型之一，且在推演过程中保持不变：
-- 模型 a（间隔负荷）：f(x,y) = |pos(x)-pos(y)| - 1 （两模块间跳过的中间模块数）
-- 模型 b（进度跨度）：f(x,y) = |pos(x)-pos(y)| （两模块之间的进度跨步）
-- 模型 c（总学习量）：f(x,y) = |pos(x)-pos(y)| + 1 （包含首尾模块在内的总学习模块数）
-- 模型 d（基础与拓展距离）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （两模块偏离最基础起点和最高阶终点的模块数总和）
+两知识点间是否存在直接关联关系（边）由一个隐藏的确定性课程大纲依赖规则 R 决定。该规则仅依赖知识点的编号和模块属性，且对所有查询保持一致。
 
-你的目标是：
-1. 通过查询推断出实际采用的认知负荷模型是哪一个（a、b、c 或 d）
-2. 计算目标知识模块对 {target_pair} 在该模型下的认知负荷值
+你的任务目标：
+1. 通过查询推断出隐藏依赖规则 R 的描述（例如：编号差值、编号和/积的条件、模块组合条件等）
+2. 判断基础知识点 S={s} 和高级知识点 T={t} 是否连通（即是否存在任意长度的学习路径）
 
-你可以进行以下操作：
-1. 测量查询：询问任意两个不同且存在于大纲中的模块 A, B 的负荷值。系统会返回 f(A,B) 的值（一个非负整数）。
-2. 查看序列：查看当前大纲的模块总数和教学顺序（仅用于核对，不提供关于 f 的额外信息）。
-3. 宣告答案：当你确定认知负荷模型后，提交你的最终答案，包括模型类型、目标对的负荷值以及推断证据。
+你可以进行以下两类查询（请尽可能少地使用查询次数）：
 
-注意：
-- 只能查询大纲中存在的模块，且两个模块必须不同
-- 宣告答案时需要至少进行过两次测量查询
-- 证据需引用至少两次实际查询的结果
-- 系统会验证：1) 所有证据是否与宣称的模型一致；2) 目标对的数值是否正确
+1. **直接边查询**（最多 {max_edge_queries} 次）：询问知识点 u 和 v 之间是否存在直接关联关系。回答"是"或"否"。
 
-## 操作格式（严格要求）
+2. **有界可达查询**（最多 {max_path_queries} 次）：询问从知识点 u 到 v 是否存在长度不超过 k（k 可以是 2 或 3）步的递进学习路径。
+   - 若存在，回答"是"并提供一条具体路径
+   - 若不存在，回答"否"
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+注意：不允许查询长度大于 3 的可达性，也不允许直接询问全局连通性。
 
-- 测量查询（例如查询模块 F 和 K）：
-<query_measure>F,K</query_measure>
+每次只能提出一个查询。使用以下 XML 格式：
 
-- 查看序列（内容为空）：
-<query_sequence></query_sequence>
+-直接边查询（例如询问知识点 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 宣告答案（需包含模型类型、目标答案和证据）：
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- 有界可达查询（例如询问从知识点 1 到 6 是否存在长度不超过 3 的路径）：
+<query_path>1,6,3</query_path>
 
-格式说明：
-- metric: 必须是 a、b、c 或 d 之一
-- target: 目标模块对 {target_pair} 的负荷值（整数）
-- evidence: 至少两个查询结果，格式为 [(模块1,模块2)->value, ...]
+当你收集到足够信息后，请提交最终答案，包含两部分：
+1. 规则描述：用自然语言简要描述隐藏依赖规则 R
+2. 连通性判断：S 和 T 是否连通（是/否）
+
+格式如下：
+<answer>
+规则：[你的规则描述]
+连通性：[是/否]
+</answer>
+
+验证环节：提交答案后，系统会随机选取 5 对你未直接查询过关联关系的知识点对，要求你根据所述规则判断是否有关联。只有全部判断正确且连通性判断正确，任务才算成功。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Curriculum Cognitive Load Deduction" tool. Here are the rules:
+Welcome to the "Knowledge Graph Prerequisite Analysis System". Here are the rules:
 
-The syllabus sets a fixed sequence of knowledge modules, totaling {n} modules, with the teaching order from 1 to {n}.
-Module code to knowledge point mapping: {label_mapping}
+Given a subject network of {n} knowledge concepts. Each concept has two public attributes:
+- Unique ID (from 1 to {n})
+- Subject Module Color c (Red, Blue, or Green)
 
-For any two different knowledge modules x and y, let pos(x) be its teaching sequence in the syllabus, and the absolute sequence difference is denoted as |pos(x)-pos(y)|.
+All concept information:
+{node_info}
 
-The teaching research system has secretly applied a cognitive load metric function f, which must be one of the following four candidate models and remains unchanged during the deduction:
-- Model a (Interval load): f(x,y) = |pos(x)-pos(y)| - 1
-- Model b (Progress span): f(x,y) = |pos(x)-pos(y)|
-- Model c (Total learning volume): f(x,y) = |pos(x)-pos(y)| + 1
-- Model d (Distance to basics and extensions): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
+Whether a direct dependency relationship (edge) exists between two concepts is determined by a hidden deterministic curriculum syllabus rule R. This rule depends only on concept IDs and module attributes, and remains consistent for all queries.
 
-Your goal is to:
-1. Infer which cognitive load model (a, b, c, or d) is actually being used through queries
-2. Calculate the cognitive load value for the target module pair {target_pair} under that model
+Your goals:
+1. Infer a description of the hidden dependency rule R through queries (e.g., ID difference, sum/product conditions, module combinations, etc.)
+2. Determine whether basic concept S={s} and advanced concept T={t} are connected (i.e., whether a learning path of any length exists)
 
-You can perform the following operations:
-1. Measure Query: Ask for the load value between any two different modules A, B that exist in the syllabus. The system will return the value of f(A,B) (a non-negative integer).
-2. View Sequence: View the current module count and teaching order (for reference only, does not provide additional information about f).
-3. Declare Answer: When you have determined the cognitive load model, submit your final answer including the model type, target pair value, and deduction evidence.
+You can make the following two types of queries (try to use as few queries as possible):
 
-Note:
-- You can only query modules that exist in the syllabus, and the two modules must be different
-- Declaring an answer requires at least two measure queries
-- Evidence must reference at least two actual query results
-- The system will verify: 1) whether all evidence is consistent with the claimed model; 2) whether the target pair value is correct
+1. **Direct Edge Query** (at most {max_edge_queries} times): Ask if there is a direct dependency relationship between concepts u and v. Answer is "Yes" or "No".
 
-## Operation Format (strictly required)
+2. **Bounded Reachability Query** (at most {max_path_queries} times): Ask if there exists a progressive learning path from concept u to v with length at most k (k can be 2 or 3).
+   - If exists, answer "Yes" and provide a specific path
+   - If not, answer "No"
 
-Each turn must contain only one operation tag. Use the following XML format:
+Note: Queries for paths longer than 3 or direct global connectivity questions are not allowed.
 
-- Measure Query (e.g., querying modules F and K):
-<query_measure>F,K</query_measure>
+Only one query per turn. Use the following XML format:
 
-- View Sequence (empty content):
-<query_sequence></query_sequence>
+- Direct Edge Query (e.g., asking about concepts 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Declare Answer (must include model type, target answer, and evidence):
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- Bounded Reachability Query (e.g., asking if a path of length at most 3 exists from concept 1 to 6):
+<query_path>1,6,3</query_path>
 
-Format explanation:
-- metric: must be one of a, b, c, or d
-- target: the load value for target module pair {target_pair} (integer)
-- evidence: at least two query results, format [(module1,module2)->value, ...]
+When you have enough information, submit your final answer with two parts:
+1. Rule description: Briefly describe the hidden dependency rule R in natural language
+2. Connectivity judgment: Whether S and T are connected (Yes/No)
+
+Format:
+<answer>
+Rule: [your rule description]
+Connectivity: [Yes/No]
+</answer>
+
+Verification: After submission, the system will randomly select 5 concept pairs whose direct dependencies you haven't queried, and ask you to judge if they have dependencies based on your stated rule. You succeed only if all 5 judgments and the connectivity judgment are correct.
 """
 
     contextualized_rule_zh_4 = """\
-欢迎进入“工业流水线传输成本分析”系统。规则如下：
+欢迎使用“供应链物流网络调度系统”。规则如下：
 
-车间内有一条固定的生产流水线，包含 {n} 个工位，物料流转顺序编号为 1 到 {n}。
-工位代码与工艺节点的对应关系：{label_mapping}
+给定一个包含 {n} 个生产设施的无向物流网。每个设施有两个公开属性：
+- 唯一编号 id（从 1 到 {n}）
+- 设施职能标识 c（红色、蓝色或绿色）
 
-对于任意两个不同的工位 x 和 y，记 pos(x) 为其在流水线上的物理位次，位次差的绝对值记为 |pos(x)-pos(y)|。
+所有设施信息如下：
+{node_info}
 
-中央调度系统已秘密加载了一个传输成本度量函数 f，它必定属于以下四个候选函数之一，且在分析期间保持不变：
-- 函数 a（缓冲成本）：f(x,y) = |pos(x)-pos(y)| - 1 （两工位之间的缓冲工位数量）
-- 函数 b（直接传输成本）：f(x,y) = |pos(x)-pos(y)| （两工位间的标准传输段数）
-- 函数 c（全链路占用）：f(x,y) = |pos(x)-pos(y)| + 1 （包含收发两端在内的总工位占用数）
-- 函数 d（端点折返成本）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （两工位分别到进料口和出料口的传输段数之和）
+两设施间是否存在直接物流运输线（边）由一个隐藏的确定性物流调配规则 R 决定。该规则仅依赖设施的编号和职能属性，且对所有查询保持一致。
 
-你的目标是：
-1. 通过查询推断出实际采用的传输成本函数是哪一个（a、b、c 或 d）
-2. 计算目标工位对 {target_pair} 在该成本函数下的传值
+你的任务目标：
+1. 通过查询推断出隐藏调配规则 R 的描述（例如：编号差值、编号和/积的条件、职能组合条件等）
+2. 判断原料仓 S={s} 和总装车间 T={t} 是否连通（即是否存在任意长度的物料流转路线）
 
-你可以进行以下操作：
-1. 测量查询：询问任意两个不同且存在于流水线中的工位 A, B 的传输成本值。系统会返回 f(A,B) 的值（一个非负整数）。
-2. 查看序列：查看当前流水线的工位总数和工艺顺序（仅用于核对，不提供关于 f 的额外信息）。
-3. 宣告答案：当你确定成本函数后，提交你的最终答案，包括函数类型、目标对的成本值以及测试证据。
+你可以进行以下两类查询（请尽可能少地使用查询次数）：
 
-注意：
-- 只能查询流水线中存在的工位，且两个工位必须不同
-- 宣告答案时需要至少进行过两次测量查询
-- 证据需引用至少两次实际查询的结果
-- 系统会验证：1) 所有证据是否与宣称的函数一致；2) 目标对的数值是否正确
+1. **直接边查询**（最多 {max_edge_queries} 次）：询问设施 u 和 v 之间是否存在直接物流运输线。回答"是"或"否"。
 
-## 操作格式（严格要求）
+2. **有界可达查询**（最多 {max_path_queries} 次）：询问从设施 u 到 v 是否存在长度不超过 k（k 可以是 2 或 3）段的周转路径。
+   - 若存在，回答"是"并提供一条具体路径
+   - 若不存在，回答"否"
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+注意：不允许查询长度大于 3 的可达性，也不允许直接询问全局连通性。
 
-- 测量查询（例如查询工位 F 和 K）：
-<query_measure>F,K</query_measure>
+每次只能提出一个查询。使用以下 XML 格式：
 
-- 查看序列（内容为空）：
-<query_sequence></query_sequence>
+- 直接边查询（例如询问设施 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 宣告答案（需包含函数类型、目标答案和证据）：
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- 有界可达查询（例如询问从设施 1 到 6 是否存在长度不超过 3 的路径）：
+<query_path>1,6,3</query_path>
 
-格式说明：
-- metric: 必须是 a、b、c 或 d 之一
-- target: 目标工位对 {target_pair} 的成本值（整数）
-- evidence: 至少两个查询结果，格式为 [(工位1,工位2)->值, ...]
+当你收集到足够信息后，请提交最终答案，包含两部分：
+1. 规则描述：用自然语言简要描述隐藏调配规则 R
+2. 连通性判断：S 和 T 是否连通（是/否）
+
+格式如下：
+<answer>
+规则：[你的规则描述]
+连通性：[是/否]
+</answer>
+
+验证环节：提交答案后，系统会随机选取 5 对你未直接查询过物流专线的设施对，要求你根据所述规则判断是否有专线。只有全部判断正确且连通性判断正确，任务才算成功。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Industrial Assembly Line Transfer Cost Analysis" system. Here are the rules:
+[Industry Scenario]
+Welcome to the "Supply Chain Logistics Network Scheduling System". Here are the rules:
 
-The workshop has a fixed production assembly line containing {n} workstations, sequenced for material flow from 1 to {n}.
-Workstation code to process node mapping: {label_mapping}
+Given an undirected logistics network of {n} production facilities. Each facility has two public attributes:
+- Unique ID (from 1 to {n})
+- Facility Function c (Red, Blue, or Green)
 
-For any two different workstations x and y, let pos(x) be its physical sequence on the line, and the absolute sequence difference is denoted as |pos(x)-pos(y)|.
+All facility information:
+{node_info}
 
-The central scheduling system has secretly loaded a transfer cost metric function f, which must be one of the following four candidate functions and remains fixed during the analysis:
-- Function a (Buffer cost): f(x,y) = |pos(x)-pos(y)| - 1
-- Function b (Direct transfer cost): f(x,y) = |pos(x)-pos(y)|
-- Function c (Full-link occupation): f(x,y) = |pos(x)-pos(y)| + 1
-- Function d (Endpoint turnaround cost): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
+Whether a direct logistics transport line (edge) exists between two facilities is determined by a hidden deterministic scheduling rule R. This rule depends only on facility IDs and function attributes, and remains consistent for all queries.
 
-Your goal is to:
-1. Infer which transfer cost function (a, b, c, or d) is actually being used through queries
-2. Calculate the cost value for the target workstation pair {target_pair} under that cost function
+Your goals:
+1. Infer a description of the hidden scheduling rule R through queries (e.g., ID difference, sum/product conditions, function combinations, etc.)
+2. Determine whether Raw Material Warehouse S={s} and Final Assembly Workshop T={t} are connected (i.e., whether a material circulation route of any length exists)
 
-You can perform the following operations:
-1. Measure Query: Ask for the transfer cost value between any two different workstations A, B that exist on the line. The system will return the value of f(A,B) (a non-negative integer).
-2. View Sequence: View the current total number of workstations and process order (for reference only, does not provide additional information about f).
-3. Declare Answer: When you have determined the cost function, submit your final answer including the function type, target pair value, and testing evidence.
+You can make the following two types of queries (try to use as few queries as possible):
 
-Note:
-- You can only query workstations that exist on the line, and the two workstations must be different
-- Declaring an answer requires at least two measure queries
-- Evidence must reference at least two actual query results
-- The system will verify: 1) whether all evidence is consistent with the claimed function; 2) whether the target pair value is correct
+1. **Direct Edge Query** (at most {max_edge_queries} times): Ask if there is a direct logistics line between facilities u and v. Answer is "Yes" or "No".
 
-## Operation Format (strictly required)
+2. **Bounded Reachability Query** (at most {max_path_queries} times): Ask if there exists a circulation path from facility u to v with length at most k (k can be 2 or 3).
+   - If exists, answer "Yes" and provide a specific path
+   - If not, answer "No"
 
-Each turn must contain only one operation tag. Use the following XML format:
+Note: Queries for paths longer than 3 or direct global connectivity questions are not allowed.
 
-- Measure Query (e.g., querying workstations F and K):
-<query_measure>F,K</query_measure>
+Only one query per turn. Use the following XML format:
 
-- View Sequence (empty content):
-<query_sequence></query_sequence>
+- Direct Edge Query (e.g., asking about facilities 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Declare Answer (must include function type, target answer, and evidence):
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- Bounded Reachability Query (e.g., asking if a path of length at most 3 exists from facility 1 to 6):
+<query_path>1,6,3</query_path>
 
-Format explanation:
-- metric: must be one of a, b, c, or d
-- target: the cost value for target workstation pair {target_pair} (integer)
-- evidence: at least two query results, format [(station1,station2)->value, ...]
+When you have enough information, submit your final answer with two parts:
+1. Rule description: Briefly describe the hidden scheduling rule R in natural language
+2. Connectivity judgment: Whether S and T are connected (Yes/No)
+
+Format:
+<answer>
+Rule: [your rule description]
+Connectivity: [Yes/No]
+</answer>
+
+Verification: After submission, the system will randomly select 5 facility pairs whose direct logistics lines you haven't queried, and ask you to judge if they have direct lines based on your stated rule. You succeed only if all 5 judgments and the connectivity judgment are correct.
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用“司法程序阻力推演”系统。规则如下：
+欢迎进入“案件证据链逻辑推演系统”。规则如下：
 
-某法定审批程序设定了固定的环节序列，共包含 {n} 个步骤，流程顺序从 1 到 {n}。
-步骤代号与法律程序映射关系：{label_mapping}
+给定一个包含 {n} 个案件线索证据的关联网络。每个证据有两个公开属性：
+- 唯一编号 id（从 1 到 {n}）
+- 证据类别 c（红色、蓝色或绿色）
 
-对于任意两个不同的程序步骤 x 和 y，记 pos(x) 为其在法典流程中的顺序位次，位次差的绝对值记为 |pos(x)-pos(y)|。
+所有证据信息如下：
+{node_info}
 
-法务系统已秘密配置了一个程序阻力度量函数 f，它必定属于以下四个候选模型之一，且在推演过程中保持不变：
-- 模型 a（间隔阻力）：f(x,y) = |pos(x)-pos(y)| - 1 （两步骤间跳过的中间审查环节数）
-- 模型 b（跃迁阻力）：f(x,y) = |pos(x)-pos(y)| （两步骤之间的环节跃迁数）
-- 模型 c（总审查量）：f(x,y) = |pos(x)-pos(y)| + 1 （涵盖起止步骤在内的审查环节总数）
-- 模型 d（外部协调阻力）：f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y))) （两步骤向程序立案和结案两端发散的外部环节数总和）
+两证据间是否存在直接印证关系（边）由一个隐藏的确定性证据关联规则 R 决定。该规则仅依赖证据的编号和类别属性，且对所有查询保持一致。
 
-你的目标是：
-1. 通过查询推断出实际采用的程序阻力模型是哪一个（a、b、c 或 d）
-2. 计算目标步骤对 {target_pair} 在该模型下的阻力值
+你的任务目标：
+1. 通过查询推断出隐藏关联规则 R 的描述（例如：编号差值、编号和/积的条件、类别组合条件等）
+2. 判断初始线索 S={s} 和核心犯罪事实 T={t} 是否连通（即是否存在任意长度的证据链闭环）
 
-你可以进行以下操作：
-1. 测量查询：询问任意两个不同且存在于程序中的步骤 A, B 的程序阻力值。系统会返回 f(A,B) 的值（一个非负整数）。
-2. 查看序列：查看当前程序的总环节数和法定顺序（仅用于核对，不提供关于 f 的额外信息）。
-3. 宣告答案：当你确定阻力模型后，提交你的最终答案，包括模型类型、目标对的阻力值以及法务证据。
+你可以进行以下两类查询（请尽可能少地使用查询次数）：
 
-注意：
-- 只能查询程序中存在的步骤，且两个步骤必须不同
-- 宣告答案时需要至少进行过两次测量查询
-- 证据需引用至少两次实际查询的结果
-- 系统会验证：1) 所有证据是否与宣称的模型一致；2) 目标对的数值是否正确
+1. **直接边查询**（最多 {max_edge_queries} 次）：询问证据 u 和 v 之间是否存在直接印证关系。回答"是"或"否"。
 
-## 操作格式（严格要求）
+2. **有界可达查询**（最多 {max_path_queries} 次）：询问从证据 u 到 v 是否存在长度不超过 k（k 可以是 2 或 3）步的证据链。
+   - 若存在，回答"是"并提供一条具体推导路径
+   - 若不存在，回答"否"
 
-每次只能包含一个操作标签。请使用以下 XML 格式：
+注意：不允许查询长度大于 3 的可达性，也不允许直接询问全局连通性。
 
-- 测量查询（例如查询步骤 F 和 K）：
-<query_measure>F,K</query_measure>
+每次只能提出一个查询。使用以下 XML 格式：
 
-- 查看序列（内容为空）：
-<query_sequence></query_sequence>
+- 直接边查询（例如询问证据 2 和 5）：
+<query_edge>2,5</query_edge>
 
-- 宣告答案（需包含模型类型、目标答案和证据）：
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- 有界可达查询（例如询问从证据 1 到 6 是否存在长度不超过 3 的路径）：
+<query_path>1,6,3</query_path>
 
-格式说明：
-- metric: 必须是 a、b、c 或 d 之一
-- target: 目标步骤对 {target_pair} 的阻力值（整数）
-- evidence: 至少两个查询结果，格式为 [(步骤1,步骤2)->值, ...]
+当你收集到足够信息后，请提交最终答案，包含两部分：
+1. 规则描述：用自然语言简要描述隐藏关联规则 R
+2. 连通性判断：S 和 T 是否连通（是/否）
+
+格式如下：
+<answer>
+规则：[你的规则描述]
+连通性：[是/否]
+</answer>
+
+验证环节：提交答案后，系统会随机选取 5 对你未直接查询过印证关系的证据对，要求你根据所述规则判断是否印证。只有全部判断正确且连通性判断正确，任务才算成功。
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the "Judicial Procedure Resistance Deduction" system. Here are the rules:
+Welcome to the "Case Evidence Chain Logic Inference System". Here are the rules:
 
-A statutory approval procedure has a fixed sequence of {n} steps, proceeding in order from 1 to {n}.
-Step code to legal procedure mapping: {label_mapping}
+Given an undirected corroboration network of {n} case evidences. Each evidence has two public attributes:
+- Unique ID (from 1 to {n})
+- Evidence Type c (Red, Blue, or Green)
 
-For any two different procedural steps x and y, let pos(x) be its sequential position in the legal process, and the absolute position difference is denoted as |pos(x)-pos(y)|.
+All evidence information:
+{node_info}
 
-The legal system has secretly configured a procedural resistance metric function f, which must be one of the following four candidate models and remains fixed during the deduction:
-- Model a (Interval resistance): f(x,y) = |pos(x)-pos(y)| - 1
-- Model b (Transition resistance): f(x,y) = |pos(x)-pos(y)|
-- Model c (Total review volume): f(x,y) = |pos(x)-pos(y)| + 1
-- Model d (External coordination resistance): f(x,y) = (min(pos(x),pos(y)) - 1) + ({n} - max(pos(x),pos(y)))
+Whether a direct corroboration relationship (edge) exists between two evidences is determined by a hidden deterministic evidence association rule R. This rule depends only on evidence IDs and type attributes, and remains consistent for all queries.
 
-Your goal is to:
-1. Infer which procedural resistance model (a, b, c, or d) is actually being used through queries
-2. Calculate the resistance value for the target step pair {target_pair} under that model
+Your goals:
+1. Infer a description of the hidden association rule R through queries (e.g., ID difference, sum/product conditions, type combinations, etc.)
+2. Determine whether Initial Clue S={s} and Core Criminal Fact T={t} are connected (i.e., whether an evidence chain loop of any length exists)
 
-You can perform the following operations:
-1. Measure Query: Ask for the procedural resistance value between any two different steps A, B that exist in the procedure. The system will return the value of f(A,B) (a non-negative integer).
-2. View Sequence: View the current total number of steps and statutory order (for reference only, does not provide additional information about f).
-3. Declare Answer: When you have determined the resistance model, submit your final answer including the model type, target pair value, and legal evidence.
+You can make the following two types of queries (try to use as few queries as possible):
 
-Note:
-- You can only query steps that exist in the procedure, and the two steps must be different
-- Declaring an answer requires at least two measure queries
-- Evidence must reference at least two actual query results
-- The system will verify: 1) whether all evidence is consistent with the claimed model; 2) whether the target pair value is correct
+1. **Direct Edge Query** (at most {max_edge_queries} times): Ask if there is a direct corroboration relationship between evidences u and v. Answer is "Yes" or "No".
 
-## Operation Format (strictly required)
+2. **Bounded Reachability Query** (at most {max_path_queries} times): Ask if there exists an evidence chain from evidence u to v with length at most k (k can be 2 or 3).
+   - If exists, answer "Yes" and provide a specific deductive path
+   - If not, answer "No"
 
-Each turn must contain only one operation tag. Use the following XML format:
+Note: Queries for paths longer than 3 or direct global connectivity questions are not allowed.
 
-- Measure Query (e.g., querying steps F and K):
-<query_measure>F,K</query_measure>
+Only one query per turn. Use the following XML format:
 
-- View Sequence (empty content):
-<query_sequence></query_sequence>
+- Direct Edge Query (e.g., asking about evidences 2 and 5):
+<query_edge>2,5</query_edge>
 
-- Declare Answer (must include model type, target answer, and evidence):
-<answer>metric=a, target=6, evidence=[(F,K)->5, (A,B)->6]</answer>
+- Bounded Reachability Query (e.g., asking if a chain of length at most 3 exists from evidence 1 to 6):
+<query_path>1,6,3</query_path>
 
-Format explanation:
-- metric: must be one of a, b, c, or d
-- target: the resistance value for target step pair {target_pair} (integer)
-- evidence: at least two query results, format [(step1,step2)->value, ...]
+When you have enough information, submit your final answer with two parts:
+1. Rule description: Briefly describe the hidden association rule R in natural language
+2. Connectivity judgment: Whether S and T are connected (Yes/No)
+
+Format:
+<answer>
+Rule: [your rule description]
+Connectivity: [Yes/No]
+</answer>
+
+Verification: After submission, the system will randomly select 5 evidence pairs whose direct corroboration you haven't queried, and ask you to judge if they corroborate based on your stated rule. You succeed only if all 5 judgments and the connectivity judgment are correct.
 """
 
-    tags = ["answer", "query_measure", "query_sequence"]
+    user_prompt_zh = "你可以开始第一次查询了。"
+    user_prompt_en = "Start your first query now."
 
-    reasoning_type = "溯因推理"
-    data_structure = "序列"
+    tags = ["answer", "query_edge", "query_path"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "b",
-                "target_pair": ("K", "E"),
+                "n": 8,
+                "nodes": "1=红,2=蓝,3=红,4=蓝,5=红,6=蓝,7=红,8=蓝",
+                "rule_type": "diff",
+                "rule_param": 1,
+                "s": 1,
+                "t": 8,
+                "description": "编号差的绝对值等于1"
             },
             2: {
                 "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "a",
-                "target_pair": ("K", "E"),
+                "nodes": "1=红,2=红,3=蓝,4=蓝,5=蓝,6=绿,7=绿,8=绿,9=红",
+                "rule_type": "same_color",
+                "rule_param": None,
+                "s": 1,
+                "t": 6,
+                "description": "两节点颜色相同"
             },
             3: {
-                "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "c",
-                "target_pair": ("K", "E"),
+                "n": 10,
+                "nodes": "1=红,2=蓝,3=红,4=绿,5=红,6=蓝,7=红,8=绿,9=蓝,10=红",
+                "rule_type": "mod",
+                "rule_param": 3,
+                "s": 1,
+                "t": 10,
+                "description": "两节点编号之和除以3余0"
             },
             4: {
-                "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "d",
-                "target_pair": ("K", "E"),
+                "n": 11,
+                "nodes": "1=红,2=蓝,3=红,4=绿,5=蓝,6=红,7=绿,8=蓝,9=红,10=绿,11=蓝",
+                "rule_type": "color_and_diff",
+                "rule_param": {"diff": 2, "color_match": False},
+                "s": 1,
+                "t": 11,
+                "description": "编号差的绝对值不超过2且颜色不同"
             },
             5: {
-                "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "d",
-                "target_pair": ("F", "B"),
-            },
+                "n": 12,
+                "nodes": "1=红,2=红,3=蓝,4=蓝,5=绿,6=绿,7=红,8=蓝,9=绿,10=红,11=蓝,12=绿",
+                "rule_type": "sum_and_color",
+                "rule_param": {"divisor": 5, "remainder": 0},
+                "s": 2,
+                "t": 11,
+                "description": "两节点编号之和除以5余0或颜色相同"
+            }
         },
         "en": {
             1: {
-                "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "b",
-                "target_pair": ("K", "E"),
+                "n": 8,
+                "nodes": "1=Red,2=Blue,3=Red,4=Blue,5=Red,6=Blue,7=Red,8=Blue",
+                "rule_type": "diff",
+                "rule_param": 1,
+                "s": 1,
+                "t": 8,
+                "description": "absolute difference of IDs equals 1"
             },
             2: {
                 "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "a",
-                "target_pair": ("K", "E"),
+                "nodes": "1=Red,2=Red,3=Blue,4=Blue,5=Blue,6=Green,7=Green,8=Green,9=Red",
+                "rule_type": "same_color",
+                "rule_param": None,
+                "s": 1,
+                "t": 6,
+                "description": "nodes have the same color"
             },
             3: {
-                "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "c",
-                "target_pair": ("K", "E"),
+                "n": 10,
+                "nodes": "1=Red,2=Blue,3=Red,4=Green,5=Red,6=Blue,7=Red,8=Green,9=Blue,10=Red",
+                "rule_type": "mod",
+                "rule_param": 3,
+                "s": 1,
+                "t": 10,
+                "description": "sum of node IDs is divisible by 3"
             },
             4: {
-                "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "d",
-                "target_pair": ("K", "E"),
+                "n": 11,
+                "nodes": "1=Red,2=Blue,3=Red,4=Green,5=Blue,6=Red,7=Green,8=Blue,9=Red,10=Green,11=Blue",
+                "rule_type": "color_and_diff",
+                "rule_param": {"diff": 2, "color_match": False},
+                "s": 1,
+                "t": 11,
+                "description": "absolute difference of IDs at most 2 and different colors"
             },
             5: {
-                "n": 9,
-                "sequence": ["F", "A", "K", "D", "M", "C", "T", "E", "B"],
-                "metric_type": "d",
-                "target_pair": ("F", "B"),
-            },
-        },
+                "n": 12,
+                "nodes": "1=Red,2=Red,3=Blue,4=Blue,5=Green,6=Green,7=Red,8=Blue,9=Green,10=Red,11=Blue,12=Green",
+                "rule_type": "sum_and_color",
+                "rule_param": {"divisor": 5, "remainder": 0},
+                "s": 2,
+                "t": 11,
+                "description": "sum of node IDs divisible by 5 or same color"
+            }
+        }
     }
+
+    reasoning_type = "归纳推理"
+    data_structure = "图"
 
     def __init__(self, config):
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏配置"""
         lang = self.config.language
-        diff = self.config.difficulty
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -680,219 +691,286 @@ Format explanation:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 基本配置
         self._game_info["n"] = cfg["n"]
-        self.sequence = cfg["sequence"]
-        self.metric_type = cfg["metric_type"]
-        self.target_pair = cfg["target_pair"]
-        
-        # 构建位置映射（标签 -> 位置，位置从1开始）
-        self.label_to_pos = {label: idx + 1 for idx, label in enumerate(self.sequence)}
-        
-        # 生成标签映射字符串用于规则显示
-        mapping_str = ", ".join([f"{i+1}:{label}" for i, label in enumerate(self.sequence)])
-        self._game_info["label_mapping"] = mapping_str
-        self._game_info["target_pair"] = f"({self.target_pair[0]},{self.target_pair[1]})"
-        
-        # 记录查询历史
-        self.query_history = []
-        
-        # 计算目标对的正确答案
-        self.correct_answer = self._calculate_metric(
-            self.target_pair[0], 
-            self.target_pair[1], 
-            self.metric_type
-        )
+        self._game_info["s"] = cfg["s"]
+        self._game_info["t"] = cfg["t"]
+        self._game_info["max_edge_queries"] = 10
+        self._game_info["max_path_queries"] = 5
 
-    def _calculate_metric(self, label1, label2, metric_type):
-        """计算给定度量函数下两个标签的函数值"""
-        if label1 not in self.label_to_pos or label2 not in self.label_to_pos:
-            return None
+        self.nodes = {}
+        for pair in cfg["nodes"].split(","):
+            idx, color = pair.split("=")
+            self.nodes[int(idx.strip())] = color.strip()
+
+        node_list = []
+        for node_id in sorted(self.nodes.keys()):
+            node_list.append(f"节点 {node_id}: {self.nodes[node_id]}" if lang == "zh" 
+                           else f"Node {node_id}: {self.nodes[node_id]}")
+        self._game_info["node_info"] = "\n".join(node_list)
+
+        self.rule_type = cfg["rule_type"]
+        self.rule_param = cfg["rule_param"]
+        self.ground_truth_description = cfg["description"]
+        self.s = cfg["s"]
+        self.t = cfg["t"]
+
+        self.edge_query_count = 0
+        self.path_query_count = 0
+        self.queried_edges = set()
+
+        self._build_graph()
+
+    def _has_edge(self, u, v):
+        if u == v:
+            return False
         
-        pos1 = self.label_to_pos[label1]
-        pos2 = self.label_to_pos[label2]
+        u_color = self.nodes[u]
+        v_color = self.nodes[v]
+
+        if self.rule_type == "diff":
+            return abs(u - v) == self.rule_param
         
-        abs_diff = abs(pos1 - pos2)
+        elif self.rule_type == "same_color":
+            return u_color == v_color
         
-        if metric_type == "a":
-            return abs_diff - 1
-        elif metric_type == "b":
-            return abs_diff
-        elif metric_type == "c":
-            return abs_diff + 1
-        elif metric_type == "d":
-            return (min(pos1, pos2) - 1) + (self._game_info["n"] - max(pos1, pos2))
-        else:
-            return None
+        elif self.rule_type == "mod":
+            return (u + v) % self.rule_param == 0
+        
+        elif self.rule_type == "color_and_diff":
+            diff_ok = abs(u - v) <= self.rule_param["diff"]
+            color_ok = (u_color == v_color) == self.rule_param["color_match"]
+            return diff_ok and color_ok
+        
+        elif self.rule_type == "sum_and_color":
+            sum_ok = (u + v) % self.rule_param["divisor"] == self.rule_param["remainder"]
+            color_ok = u_color == v_color
+            return sum_ok or color_ok
+        
+        return False
+
+    def _build_graph(self):
+        self.adj = {i: [] for i in self.nodes.keys()}
+        
+        for u in self.nodes.keys():
+            for v in self.nodes.keys():
+                if u < v and self._has_edge(u, v):
+                    self.adj[u].append(v)
+                    self.adj[v].append(u)
+        
+        self.s_t_connected = self._is_connected(self.s, self.t)
+
+    def _is_connected(self, start, end):
+        if start == end:
+            return True
+        
+        visited = set([start])
+        queue = [start]
+        
+        while queue:
+            u = queue.pop(0)
+            for v in self.adj[u]:
+                if v == end:
+                    return True
+                if v not in visited:
+                    visited.add(v)
+                    queue.append(v)
+        
+        return False
+
+    def _find_path(self, start, end, max_length):
+        if start == end:
+            return [start]
+        
+        queue = [(start, [start])]
+        visited = {start}
+        
+        while queue:
+            node, path = queue.pop(0)
+            
+            if len(path) - 1 >= max_length:
+                continue
+            
+            for neighbor in self.adj[node]:
+                if neighbor == end:
+                    return path + [neighbor]
+                
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, path + [neighbor]))
+        
+        return None
+
+    def parse(self, response: str):
+        parsed = super().parse(response)
+        return parsed
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"]
+        raw_ans = parsed_info["answer"].strip()
         
-        try:
-            # 提取 metric
-            metric_match = re.search(r'metric\s*=\s*([a-d])', raw_ans, re.IGNORECASE)
-            if not metric_match:
-                return False
-            claimed_metric = metric_match.group(1).lower()
-            
-            # 提取 target
-            target_match = re.search(r'target\s*=\s*(-?\d+)', raw_ans, re.IGNORECASE)
-            if not target_match:
-                return False
-            claimed_target = int(target_match.group(1))
-            
-            # 提取 evidence
-            evidence_match = re.search(r'evidence\s*=\s*\[(.*?)\]', raw_ans, re.IGNORECASE)
-            if not evidence_match:
-                return False
-            evidence_str = evidence_match.group(1)
-            
-            # 解析证据列表
-            evidence_list = []
-            evidence_pattern = r'\(([^,]+),([^)]+)\)\s*->\s*(-?\d+)'
-            for match in re.finditer(evidence_pattern, evidence_str):
-                elem1 = match.group(1).strip()
-                elem2 = match.group(2).strip()
-                value = int(match.group(3))
-                evidence_list.append((elem1, elem2, value))
-            
-            # 至少需要两个证据
-            if len(evidence_list) < 2:
-                return False
-            
-            # 仅在有查询历史时验证证据是否在查询历史中
-            # （冗余性评估等场景下 query_history 为空，跳过此检查）
-            if self.query_history:
-                if len(self.query_history) < 2:
-                    return False
-                for elem1, elem2, claimed_value in evidence_list:
-                    found = False
-                    for query_elem1, query_elem2, actual_value in self.query_history:
-                        # 元素对不分顺序
-                        if ((query_elem1 == elem1 and query_elem2 == elem2) or 
-                            (query_elem1 == elem2 and query_elem2 == elem1)):
-                            if claimed_value != actual_value:
-                                return False
-                            found = True
-                            break
-                    if not found:
-                        return False
-            
-            # 验证证据是否与宣称的度量函数一致
-            for elem1, elem2, claimed_value in evidence_list:
-                expected_value = self._calculate_metric(elem1, elem2, claimed_metric)
-                if expected_value is None or expected_value != claimed_value:
-                    return False
-            
-            # 验证度量函数是否正确
-            if claimed_metric != self.metric_type:
-                return False
-            
-            # 验证目标答案是否正确
-            if claimed_target != self.correct_answer:
-                return False
-            
-            return True
-            
-        except Exception:
+        lines = [line.strip() for line in raw_ans.split("\n") if line.strip()]
+        
+        rule_desc = None
+        connectivity = None
+        
+        for line in lines:
+            if self.config.language == "zh":
+                if line.startswith("规则：") or line.startswith("规则:"):
+                    rule_desc = line.split("：", 1)[-1].split(":", 1)[-1].strip()
+                elif line.startswith("连通性：") or line.startswith("连通性:"):
+                    connectivity = line.split("：", 1)[-1].split(":", 1)[-1].strip()
+            else:
+                if line.startswith("Rule:"):
+                    rule_desc = line.split(":", 1)[1].strip()
+                elif line.startswith("Connectivity:"):
+                    connectivity = line.split(":", 1)[1].strip()
+        
+        if not rule_desc or not connectivity:
             return False
+        
+        if self.config.language == "zh":
+            model_connected = connectivity in ["是", "连通", "Yes"]
+        else:
+            model_connected = connectivity.lower() in ["yes", "connected", "true"]
+        
+        if model_connected != self.s_t_connected:
+            return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        """根据查询产生响应（核心逻辑）"""
         if self.config.language == "zh":
             yes_res, no_res = "是", "否"
-            error_format = "错误：{}"
-            sequence_info = "序列长度：{}，标签顺序：{}"
         else:
             yes_res, no_res = "Yes", "No"
-            error_format = "Error: {}"
-            sequence_info = "Sequence length: {}, Label order: {}"
         
-        # 处理测量查询
-        if "query_measure" in parsed_info:
+        if "query_edge" in parsed_info:
+            if self.edge_query_count >= self._game_info["max_edge_queries"]:
+                if self.config.language == "zh":
+                    return f"直接边查询次数已用完（最多 {self._game_info['max_edge_queries']} 次）。请使用其他类型的查询或提交答案。"
+                else:
+                    return f"Edge query limit reached (max {self._game_info['max_edge_queries']}). Please use another query type or submit your answer."
+            
+            raw = parsed_info["query_edge"]
+            parts = [x.strip() for x in raw.split(",")]
+            if len(parts) != 2:
+                raise ValueError("查询格式错误。" if self.config.language == "zh" else "Query format error.")
             try:
-                raw = parsed_info["query_measure"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    raise ValueError("Invalid format")
+                u, v = [int(x) for x in parts]
+            except ValueError:
+                raise ValueError("节点编号必须是整数。" if self.config.language == "zh" else "Node IDs must be integers.")
+            
+            if u not in self.nodes or v not in self.nodes:
+                raise ValueError("节点编号超出范围。" if self.config.language == "zh" else "Node ID out of range.")
+            
+            self.edge_query_count += 1
+            self.queried_edges.add(tuple(sorted([u, v])))
+            
+            has_edge = self._has_edge(u, v)
+            return yes_res if has_edge else no_res
+            
+        elif "query_path" in parsed_info:
+            if self.path_query_count >= self._game_info["max_path_queries"]:
+                if self.config.language == "zh":
+                    return f"有界可达查询次数已用完（最多 {self._game_info['max_path_queries']} 次）。请使用其他类型的查询或提交答案。"
+                else:
+                    return f"Path query limit reached (max {self._game_info['max_path_queries']}). Please use another query type or submit your answer."
+            
+            raw = parsed_info["query_path"]
+            parts = [x.strip() for x in raw.split(",")]
+            if len(parts) != 3:
+                raise ValueError("查询格式错误。" if self.config.language == "zh" else "Query format error.")
+            
+            try:
+                u, v, k = [int(x) for x in parts]
+            except ValueError:
+                raise ValueError("参数必须是整数。" if self.config.language == "zh" else "Parameters must be integers.")
                 
-                elem1, elem2 = parts
-                
-                # 检查元素是否存在
-                if elem1 not in self.label_to_pos or elem2 not in self.label_to_pos:
-                    msg = "元素不存在于序列中" if self.config.language == "zh" else "Element does not exist in sequence"
-                    return error_format.format(msg)
-                
-                # 检查两个元素是否相同
-                if elem1 == elem2:
-                    msg = "两个元素必须不同" if self.config.language == "zh" else "Two elements must be different"
-                    return error_format.format(msg)
-                
-                # 计算度量值
-                value = self._calculate_metric(elem1, elem2, self.metric_type)
-                
-                # 记录查询历史
-                self.query_history.append((elem1, elem2, value))
-                
-                return str(value)
-                
-            except Exception:
-                msg = "查询格式无效" if self.config.language == "zh" else "Invalid query format"
-                return error_format.format(msg)
-        
-        # 处理序列查询
-        elif "query_sequence" in parsed_info:
-            sequence_str = ",".join(self.sequence)
-            return sequence_info.format(self._game_info["n"], sequence_str)
+            if u not in self.nodes or v not in self.nodes:
+                raise ValueError("节点编号超出范围。" if self.config.language == "zh" else "Node ID out of range.")
+            
+            if k not in [2, 3]:
+                raise ValueError("路径长度限制 k 必须是 2 或 3。" if self.config.language == "zh" else "Path length limit k must be 2 or 3.")
+            
+            self.path_query_count += 1
+            
+            path = self._find_path(u, v, k)
+            
+            if path:
+                path_str = "→".join(map(str, path)) if self.config.language == "zh" else "->".join(map(str, path))
+                return f"{yes_res}，路径：{path_str}" if self.config.language == "zh" else f"{yes_res}, path: {path_str}"
+            else:
+                return no_res
         
         else:
-            raise ValueError("No valid query tag found.")
+            raise ValueError("未识别的查询类型。" if self.config.language == "zh" else "Unrecognized query type.")
 
-    def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        # 若 correct 是纯整数字符串
-        if correct.isdigit() or (correct.startswith('-') and correct[1:].isdigit()):
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        n = self._game_info["n"]
+        lang = self.config.language
+        
+        if lang == "zh":
+            yes_res, no_res = "是", "否"
+        else:
+            yes_res, no_res = "Yes", "No"
+
+        for u in range(1, n + 1):
+            for v in range(u + 1, n + 1):
+                query_xml = f"<query_edge>{u},{v}</query_edge>"
+                
+                has_edge = self._has_edge(u, v)
+                ans = yes_res if has_edge else no_res
+                
+                results.append({
+                    "query": query_xml,
+                    "answer": ans
+                })
+
+        for u in range(1, n + 1):
+            for v in range(u + 1, n + 1):
+                for k in [2, 3]:
+                    query_xml = f"<query_path>{u},{v},{k}</query_path>"
+                    
+                    path = self._find_path(u, v, k)
+                    
+                    if path:
+                        if lang == "zh":
+                            path_str = "→".join(map(str, path))
+                            ans = f"{yes_res}，路径：{path_str}"
+                        else:
+                            path_str = "->".join(map(str, path))
+                            ans = f"{yes_res}, path: {path_str}"
+                    else:
+                        ans = no_res
+                        
+                    results.append({
+                        "query": query_xml,
+                        "answer": ans
+                    })
+                    
+        return results
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct.isdigit():
             return str(int(correct) + 1)
         
-        # 中文替换
-        if correct == "是":
-            return "否"
-        if correct == "否":
-            return "是"
-        
-        # 英文替换
-        if correct.lower() == "yes":
-            return "No" if correct[0].isupper() else "no"
-        if correct.lower() == "no":
-            return "Yes" if correct[0].isupper() else "yes"
-            
-        # 默认追加 _WRONG
-        return correct + "_WRONG"
-
-    def get_all_possible_queries(self) -> list:
-        results = []
-        # 1. 测量查询：所有不同元素对（对称，只枚举 i<j 即可，减少冗余）
-        for i in range(len(self.sequence)):
-            for j in range(i + 1, len(self.sequence)):
-                elem1 = self.sequence[i]
-                elem2 = self.sequence[j]
-                val   = self._calculate_metric(elem1, elem2, self.metric_type)
-                # 同时将查询记入历史，以便 evaluate 中的历史检查能通过
-                self.query_history.append((elem1, elem2, val))
-                results.append({
-                    "query":  f"<query_measure>{elem1},{elem2}</query_measure>",
-                    "answer": str(val),
-                })
-        # 2. 序列查询
-        seq_str  = ",".join(self.sequence)
         if self.config.language == "zh":
-            seq_info = f"序列长度：{self._game_info['n']}，标签顺序：{seq_str}"
+            if "是" in correct and "路径" in correct:
+                return "否"
+            elif correct == "否":
+                return "是，路径：未知"
+            elif "是" in correct:
+                return "否"
+            elif "否" in correct:
+                return "是"
         else:
-            seq_info = f"Sequence length: {self._game_info['n']}, Label order: {seq_str}"
-        results.append({
-            "query":  "<query_sequence></query_sequence>",
-            "answer": seq_info,
-        })
-        return results
+            if "yes" in correct.lower() and "path" in correct.lower():
+                return "No"
+            elif correct.strip().lower() == "no":
+                return "Yes, path: unknown"
+            elif "yes" in correct.lower():
+                return re.sub(r'(?i)yes', 'No', correct)
+            elif "no" in correct.lower():
+                return re.sub(r'(?i)no', 'Yes', correct)
+        
+        return correct + "_WRONG"

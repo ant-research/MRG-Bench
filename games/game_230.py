@@ -1,754 +1,719 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 集合：存在一个由N个物体组成的集合，注意他们不存在位置、前后和大小关系。
-# 知识点:   集合规模：集合中元素的总数量
-# ============================================================
-
 from .base import Game
+import random
 import re
 
-class GAME230(Game):
+class TreeDistanceGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"函数与参数推断"游戏，规则如下：
+我们现在来玩一个"树结构距离推理"游戏，规则如下：
 
-游戏设定了一个未知的非负整数 N 以及一个未知的计算函数 f。该函数从以下四个候选中选取：
-- f_A(N, K) = 向下取整((N + K) / 2)
-- f_B(N, K) = 向上取整((N + K) / 2)
-- f_C(N, K) = 向下取整((N + K) / 3)
-- f_D(N, K) = 向上取整((N + K) / 3)
+游戏设定了一个包含 {N} 个不同字符串的集合 S。这些字符串编码了一个隐含的树结构关系，任意两个字符串之间存在确定的距离值。
 
-在整个游戏过程中，N 和 f 保持不变。你的目标是通过多次测试，推断出所使用的函数类型以及 N 的确切值。
+你的目标是推断出两个特定目标字符串 "{target_a}" 和 "{target_b}" 之间的距离。
 
-## 可进行的查询
+你可以进行以下两种操作：
 
-每轮测试中，你可以选择一个非负整数 K 作为参数，并发起以下三类查询之一：
+1. 距离查询：选择集合中任意两个字符串 x 和 y（但不能是目标对本身），询问它们之间的距离。我会返回一个非负整数。
+2. 提交答案：当你准备好后，提交你推断出的目标对之间的距离值。
 
-1. **读数查询**：请求返回 R = f(N, K) 的具体值（一个非负整数）。
-2. **阈值比较查询**：给定一个非负整数 t，询问 R 是否大于等于 t。回答"是"或"否"。
-3. **等值比较查询**：给定一个非负整数 t，询问 R 是否等于 t。回答"是"或"否"。
+- 你最多可以进行 {Q} 次查询（包括无效查询）。
+- 你必须至少完成 {R} 次有效查询后才能提交答案。
+- 以下情况会被视为无效查询（计入总次数）：
+  * 查询的字符串不在集合 S 中
+  * 直接查询目标对 "{target_a}" 和 "{target_b}" 之间的距离
+  * 已超过最大查询次数
+- 累计出现 3 次无效查询将导致游戏失败。
 
-其中 R 始终按所选函数 f 和当前参数 K 计算得到。K 和 t 可根据先前查询的反馈自适应选择。
+{string_list}
 
-## 查询格式（必须严格遵守）
+每次只能包含一个操作标签。使用以下 XML 格式：
 
-每次只能提交一个查询。请使用以下 XML 格式：
+- 距离查询（例如查询字符串 "a" 和 "ab" 的距离）：
+<query>a,ab</query>
 
-- 读数查询（例如 K=10）：
-<query_read>10</query_read>
+- 提交最终答案（例如答案为 5）：
+<answer>5</answer>
 
-- 阈值比较查询（例如 K=10, t=15）：
-<query_threshold>K=10, t=15</query_threshold>
-
-- 等值比较查询（例如 K=10, t=15）：
-<query_equal>K=10, t=15</query_equal>
-
-## 提交答案
-
-当你收集了足够的信息后，请提交最终答案。答案必须包含函数类型（f_A、f_B、f_C 或 f_D）和 N 的值。格式如下：
-
-<answer>function=f_A, N=5</answer>
-
-注意：必须至少进行 3 次测试后才能提交答案，否则游戏失败。若答案错误或格式不符，游戏同样失败。
+请仔细观察查询结果中的规律，推断出目标对的距离。
 """
 
     game_rule_en = """\
-Let's play a "Function and Parameter Inference" game. Here are the rules:
+Let's play a "Tree Distance Inference" game. Here are the rules:
 
-The game has set an unknown non-negative integer N and an unknown computation function f. The function is selected from the following four candidates:
-- f_A(N, K) = floor((N + K) / 2)
-- f_B(N, K) = ceil((N + K) / 2)
-- f_C(N, K) = floor((N + K) / 3)
-- f_D(N, K) = ceil((N + K) / 3)
+The game has a set S of {N} distinct strings. These strings encode an implicit tree structure relationship, and there is a definite distance value between any two strings.
 
-Throughout the game, N and f remain constant. Your goal is to infer the function type and the exact value of N through multiple tests.
+Your goal is to infer the distance between two specific target strings "{target_a}" and "{target_b}".
 
-## Available Queries
+You can perform the following two operations:
 
-In each test round, you can choose a non-negative integer K as a parameter and make one of the following three types of queries:
+1. Distance Query: Select any two strings x and y from the set (but not the target pair itself), and ask for the distance between them. I will return a non-negative integer.
+2. Submit Answer: When you are ready, submit the distance value you inferred for the target pair.
 
-1. **Read Query**: Request the exact value of R = f(N, K) (a non-negative integer).
-2. **Threshold Comparison Query**: Given a non-negative integer t, ask whether R is greater than or equal to t. Answer "Yes" or "No".
-3. **Equality Comparison Query**: Given a non-negative integer t, ask whether R equals t. Answer "Yes" or "No".
+- You can make at most {Q} queries (including invalid queries).
+- You must complete at least {R} valid queries before submitting your answer.
+- The following cases will be considered invalid queries (counted in total):
+  * The queried strings are not in set S
+  * Directly querying the distance between target pair "{target_a}" and "{target_b}"
+  * Already exceeded the maximum number of queries
+- Accumulating 3 invalid queries will result in game failure.
 
-Where R is always calculated using the selected function f and current parameter K. K and t can be adaptively chosen based on feedback from previous queries.
+{string_list}
 
-## Query Format (strictly required)
+Each operation must contain only one tag. Use the following XML format:
 
-Only one query can be submitted at a time. Use the following XML format:
+- Distance Query (e.g., query distance between "a" and "ab"):
+<query>a,ab</query>
 
-- Read Query (e.g., K=10):
-<query_read>10</query_read>
+- Submit Final Answer (e.g., answer is 5):
+<answer>5</answer>
 
-- Threshold Comparison Query (e.g., K=10, t=15):
-<query_threshold>K=10, t=15</query_threshold>
-
-- Equality Comparison Query (e.g., K=10, t=15):
-<query_equal>K=10, t=15</query_equal>
-
-## Submitting Answer
-
-When you have gathered enough information, submit your final answer. The answer must include the function type (f_A, f_B, f_C, or f_D) and the value of N. Format as follows:
-
-<answer>function=f_A, N=5</answer>
-
-Note: You must perform at least 3 tests before submitting an answer, otherwise the game fails. If the answer is incorrect or the format is invalid, the game also fails.
+Please carefully observe the patterns in the query results to infer the distance of the target pair.
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用"智能路网核心调度算法推断"系统。
+欢迎使用城市轨道交通线网拓扑分析系统。
 
-系统当前已锁定某个片区的初始拥堵基数 N（未知的非负整数），并隐式挂载了调度分配函数 f。该函数从以下四种预设控制策略中选取：
-- f_A(N, K) = 向下取整((N + K) / 2)
-- f_B(N, K) = 向上取整((N + K) / 2)
-- f_C(N, K) = 向下取整((N + K) / 3)
-- f_D(N, K) = 向上取整((N + K) / 3)
+游戏设定了一个包含 {N} 个不同站点代码的集合 S。这些站点代码编码了一个隐含的树状支线路网结构，任意两个站点之间存在确定的运行区间数值。
 
-在整个诊断过程中，N 和 f 保持不变。你的目标是通过输入模拟数据，推测出系统正在使用的策略类型（f）以及真实的拥堵基数（N）。
+你的目标是推断出两个特定目标站点 "{target_a}" 和 "{target_b}" 之间的运行区间数。
 
-## 可进行的测试查询
+你可以进行以下两种操作：
 
-每轮测试中，你可以设定一个非负整数 K 作为"新增汇入车流量"参数，并发起以下三类查询之一：
+1. 区间查询：选择集合中任意两个站点 x 和 y（但不能是目标对本身），询问它们之间的运行区间数。调度系统会返回一个非负整数。
+2. 提交答案：当你准备好后，提交你推断出的目标对之间的运行区间数值。
 
-1. **读数查询**：请求返回系统计算出的最终等效负荷 R = f(N, K) 的具体值（一个非负整数）。
-2. **阈值比较查询**：给定一个非负整数 t（预警阈值），询问 R 是否大于等于 t。系统反馈"是"或"否"。
-3. **等值比较查询**：给定一个非负整数 t（特定匹配值），询问 R 是否等于 t。系统反馈"是"或"否"。
+- 你最多可以进行 {Q} 次查询（包括无效查询）。
+- 你必须至少完成 {R} 次有效查询后才能提交答案。
+- 以下情况会被视为无效查询（计入总次数）：
+  * 查询的站点代码不在集合 S 中
+  * 直接查询目标对 "{target_a}" 和 "{target_b}" 之间的运行区间数
+  * 已超过最大查询次数
+- 累计出现 3 次无效查询将导致分析系统锁定并任务失败。
 
-其中，R 始终按所选策略 f 和当前参数 K 计算得到。K 和 t 可根据先前查询的反馈动态调整。
+{string_list}
 
-## 查询格式（必须严格遵守）
+每次只能包含一个操作标签。使用以下 XML 格式：
 
-每次只能提交一个查询。请使用以下 XML 格式与终端交互：
+- 区间查询（例如查询站点 "a" 和 "ab" 的运行区间数）：
+<query>a,ab</query>
 
-- 读数查询（例如模拟汇入车流量 K=10）：
-<query_read>10</query_read>
+- 提交最终答案（例如答案为 5）：
+<answer>5</answer>
 
-- 阈值比较查询（例如 K=10, t=15）：
-<query_threshold>K=10, t=15</query_threshold>
-
-- 等值比较查询（例如 K=10, t=15）：
-<query_equal>K=10, t=15</query_equal>
-
-## 提交结论
-
-当你收集了足够的数据后，请提交最终结论。答案必须包含策略类型（f_A、f_B、f_C 或 f_D）和拥堵基数 N 的值。格式如下：
-
-<answer>function=f_A, N=5</answer>
-
-注意：必须至少进行 3 次模拟测试后才能提交结论，否则诊断失败。若答案错误或格式不符，同样判定为失败。
+请仔细观察查询结果中的线网拓扑规律，推断出目标站点对的运行区间数。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the "Smart Road Network Core Dispatch Algorithm Inference" system.
+[Transportation Scenario]
+Welcome to the Urban Rail Transit Network Topology Analysis System.
 
-The system has locked onto an initial congestion baseline N (an unknown non-negative integer) for a specific zone and implicitly mounted a dispatch allocation function f. The function is selected from the following four preset control strategies:
-- f_A(N, K) = floor((N + K) / 2)
-- f_B(N, K) = ceil((N + K) / 2)
-- f_C(N, K) = floor((N + K) / 3)
-- f_D(N, K) = ceil((N + K) / 3)
+The system features a set S of {N} distinct station codes. These codes encode an implicit tree-like branch network structure, and there is a definite number of operational intervals between any two stations.
 
-Throughout the diagnostic process, N and f remain constant. Your goal is to infer the strategy type (f) and the exact value of the congestion baseline (N) through data simulations.
+Your goal is to infer the number of intervals between two specific target stations "{target_a}" and "{target_b}".
 
-## Available Test Queries
+You can perform the following two operations:
 
-In each test round, you can set a non-negative integer K as the "additional incoming traffic volume" parameter and make one of the following three types of queries:
+1. Interval Query: Select any two stations x and y from the set (but not the target pair itself), and ask for the number of intervals between them. The dispatch system will return a non-negative integer.
+2. Submit Answer: When you are ready, submit the interval value you inferred for the target pair.
 
-1. **Read Query**: Request the exact value of the final equivalent load R = f(N, K) (a non-negative integer).
-2. **Threshold Comparison Query**: Given a non-negative integer t (warning threshold), ask whether R is greater than or equal to t. The system answers "Yes" or "No".
-3. **Equality Comparison Query**: Given a non-negative integer t (specific match value), ask whether R equals t. The system answers "Yes" or "No".
+- You can make at most {Q} queries (including invalid queries).
+- You must complete at least {R} valid queries before submitting your answer.
+- The following cases will be considered invalid queries (counted in total):
+  * The queried station codes are not in set S
+  * Directly querying the intervals between target pair "{target_a}" and "{target_b}"
+  * Already exceeded the maximum number of queries
+- Accumulating 3 invalid queries will result in system lockout and task failure.
 
-Here, R is always calculated using the selected strategy f and current parameter K. K and t can be adaptively adjusted based on feedback from previous queries.
+{string_list}
 
-## Query Format (strictly required)
+Each operation must contain only one tag. Use the following XML format:
 
-Only one query can be submitted at a time. Use the following XML format to interact with the terminal:
+- Interval Query (e.g., query intervals between station "a" and "ab"):
+<query>a,ab</query>
 
-- Read Query (e.g., incoming volume K=10):
-<query_read>10</query_read>
+- Submit Final Answer (e.g., answer is 5):
+<answer>5</answer>
 
-- Threshold Comparison Query (e.g., K=10, t=15):
-<query_threshold>K=10, t=15</query_threshold>
-
-- Equality Comparison Query (e.g., K=10, t=15):
-<query_equal>K=10, t=15</query_equal>
-
-## Submitting Conclusion
-
-When you have gathered enough data, submit your final conclusion. The answer must include the strategy type (f_A, f_B, f_C, or f_D) and the value of N. Format as follows:
-
-<answer>function=f_A, N=5</answer>
-
-Note: You must perform at least 3 simulation tests before submitting a conclusion; otherwise, the diagnosis fails. If the answer is incorrect or the format is invalid, it also results in a failure.
+Please carefully observe the topological patterns in the query results to infer the number of intervals for the target station pair.
 """
 
     contextualized_rule_zh_2 = """\
-欢迎进入"靶向药物药代动力学分析"系统。
+欢迎使用病毒基因谱系变异分析追踪系统。
 
-系统当前设定了一个未知的患者基础代谢负荷 N（未知的非负整数），以及一个未知的药代动力学反应模型 f。该模型从以下四种预设代谢模型中选取：
-- f_A(N, K) = 向下取整((N + K) / 2)
-- f_B(N, K) = 向上取整((N + K) / 2)
-- f_C(N, K) = 向下取整((N + K) / 3)
-- f_D(N, K) = 向上取整((N + K) / 3)
+本系统包含了一个包含 {N} 个不同毒株代号的集合 S。这些代号编码了一个隐含的树状演化谱系结构，任意两个毒株之间存在确定的基因代差步数。
 
-在整个盲测过程中，N 和 f 保持不变。你的目标是通过输入给药方案，推测出系统正在使用的代谢模型类型（f）以及真实的基础代谢负荷（N）。
+你的目标是推断出两个特定目标毒株 "{target_a}" 和 "{target_b}" 之间的基因代差步数。
 
-## 可进行的测试查询
+你可以进行以下两种操作：
 
-每轮测试中，你可以设定一个非负整数 K 作为"额外干预剂量"参数，并发起以下三类查询之一：
+1. 测序查询：选择集合中任意两个毒株 x 和 y（但不能是目标对本身），询问它们之间的基因代差步数。实验室测序系统会返回一个非负整数。
+2. 提交答案：当你准备好后，提交你推断出的目标对之间的基因代差步数值。
 
-1. **读数查询**：请求返回系统计算出的峰值生理指标 R = f(N, K) 的具体值（一个非负整数）。
-2. **阈值比较查询**：给定一个非负整数 t，询问 R 是否大于等于 t。系统反馈"是"或"否"。
-3. **等值比较查询**：给定一个非负整数 t，询问 R 是否等于 t。系统反馈"是"或"否"。
+- 你最多可以进行 {Q} 次测序查询（包括无效查询）。
+- 你必须至少完成 {R} 次有效查询后才能提交最终诊断答案。
+- 以下情况会被视为无效查询（计入总次数）：
+  * 查询的毒株代号不在集合 S 中
+  * 直接查询目标对 "{target_a}" 和 "{target_b}" 之间的基因代差步数
+  * 已超过最大查询次数
+- 累计出现 3 次无效查询将导致测序资源耗尽，任务失败。
 
-其中，R 始终按所选模型 f 和当前参数 K 计算得到。K 和 t 可根据先前查询的反馈动态调整。
+{string_list}
 
-## 查询格式（必须严格遵守）
+每次只能包含一个操作标签。使用以下 XML 格式：
 
-每次只能提交一个查询。请使用以下 XML 格式与终端交互：
+- 测序查询（例如查询毒株 "a" 和 "ab" 的基因代差步数）：
+<query>a,ab</query>
 
-- 读数查询（例如干预剂量 K=10）：
-<query_read>10</query_read>
+- 提交最终答案（例如答案为 5）：
+<answer>5</answer>
 
-- 阈值比较查询（例如 K=10, t=15）：
-<query_threshold>K=10, t=15</query_threshold>
-
-- 等值比较查询（例如 K=10, t=15）：
-<query_equal>K=10, t=15</query_equal>
-
-## 提交结论
-
-当你收集了足够的数据后，请提交最终结论。答案必须包含代谢模型类型（f_A、f_B、f_C 或 f_D）和基础代谢负荷 N 的值。格式如下：
-
-<answer>function=f_A, N=5</answer>
-
-注意：必须至少进行 3 次模拟测试后才能提交结论，否则分析失败。若答案错误或格式不符，同样判定为失败。
+请仔细观察查询结果中的演化规律，推断出目标毒株对的基因代差步数。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the "Targeted Drug Pharmacokinetics Analysis" system.
+[Healthcare Scenario]
+Welcome to the Viral Genomic Lineage Mutation Tracking System.
 
-The system has set an unknown patient basal metabolic load N (an unknown non-negative integer) and an unknown pharmacokinetic reaction model f. The model is selected from the following four preset metabolic models:
-- f_A(N, K) = floor((N + K) / 2)
-- f_B(N, K) = ceil((N + K) / 2)
-- f_C(N, K) = floor((N + K) / 3)
-- f_D(N, K) = ceil((N + K) / 3)
+The system features a set S of {N} distinct viral strain codes. These codes encode an implicit tree-like evolutionary lineage structure, and there is a definite genetic generational difference (in steps) between any two strains.
 
-Throughout the blind testing process, N and f remain constant. Your goal is to infer the metabolic model type (f) and the exact value of the basal metabolic load (N) by inputting dosing regimens.
+Your goal is to infer the genetic generational difference between two specific target strains "{target_a}" and "{target_b}".
 
-## Available Test Queries
+You can perform the following two operations:
 
-In each test round, you can set a non-negative integer K as the "additional intervention dosage" parameter and make one of the following three types of queries:
+1. Sequencing Query: Select any two strains x and y from the set (but not the target pair itself), and ask for the genetic generational difference between them. The laboratory sequencing system will return a non-negative integer.
+2. Submit Answer: When you are ready, submit the generational difference value you inferred for the target pair.
 
-1. **Read Query**: Request the exact value of the peak physiological index R = f(N, K) (a non-negative integer).
-2. **Threshold Comparison Query**: Given a non-negative integer t, ask whether R is greater than or equal to t. The system answers "Yes" or "No".
-3. **Equality Comparison Query**: Given a non-negative integer t, ask whether R equals t. The system answers "Yes" or "No".
+- You can make at most {Q} sequencing queries (including invalid queries).
+- You must complete at least {R} valid queries before submitting your final diagnostic answer.
+- The following cases will be considered invalid queries (counted in total):
+  * The queried strain codes are not in set S
+  * Directly querying the difference between target pair "{target_a}" and "{target_b}"
+  * Already exceeded the maximum number of queries
+- Accumulating 3 invalid queries will result in depletion of sequencing resources and task failure.
 
-Here, R is always calculated using the selected model f and current parameter K. K and t can be adaptively adjusted based on feedback from previous queries.
+{string_list}
 
-## Query Format (strictly required)
+Each operation must contain only one tag. Use the following XML format:
 
-Only one query can be submitted at a time. Use the following XML format to interact with the terminal:
+- Sequencing Query (e.g., query difference between strain "a" and "ab"):
+<query>a,ab</query>
 
-- Read Query (e.g., intervention dosage K=10):
-<query_read>10</query_read>
+- Submit Final Answer (e.g., answer is 5):
+<answer>5</answer>
 
-- Threshold Comparison Query (e.g., K=10, t=15):
-<query_threshold>K=10, t=15</query_threshold>
-
-- Equality Comparison Query (e.g., K=10, t=15):
-<query_equal>K=10, t=15</query_equal>
-
-## Submitting Conclusion
-
-When you have gathered enough data, submit your final conclusion. The answer must include the metabolic model type (f_A, f_B, f_C, or f_D) and the value of N. Format as follows:
-
-<answer>function=f_A, N=5</answer>
-
-Note: You must perform at least 3 simulation tests before submitting a conclusion; otherwise, the analysis fails. If the answer is incorrect or the format is invalid, it also results in a failure.
+Please carefully observe the evolutionary patterns in the query results to infer the genetic generational difference of the target strain pair.
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用"学情评估与量化分析"终端。
+欢迎使用学科知识图谱先决条件评估引擎。
 
-系统当前设定了一个未知的学生基础学力指数 N（未知的非负整数），以及一个未知的教学评估模型 f。该模型从以下四种预设评估基准中选取：
-- f_A(N, K) = 向下取整((N + K) / 2)
-- f_B(N, K) = 向上取整((N + K) / 2)
-- f_C(N, K) = 向下取整((N + K) / 3)
-- f_D(N, K) = 向上取整((N + K) / 3)
+评估引擎载入了一个包含 {N} 个不同知识点编码的集合 S。这些知识点编码了一个隐含的树状先决条件层级结构，任意两个知识点之间存在确定的认知跨度（关联层级数）。
 
-在整个分析过程中，N 和 f 保持不变。你的目标是通过输入模拟干预方案，推测出系统正在使用的评估模型类型（f）以及真实的基础学力指数（N）。
+你的目标是推断出两个特定目标知识点 "{target_a}" 和 "{target_b}" 之间的关联层级数。
 
-## 可进行的测试查询
+你可以进行以下两种操作：
 
-每轮测试中，你可以设定一个非负整数 K 作为"额外辅导训练强度"参数，并发起以下三类查询之一：
+1. 跨度查询：选择集合中任意两个知识点 x 和 y（但不能是目标对本身），询问它们之间的关联层级数。评估引擎会返回一个非负整数。
+2. 提交答案：当你准备好后，提交你推断出的目标知识点对之间的关联层级数值。
 
-1. **读数查询**：请求返回系统计算出的标准化考核等效分 R = f(N, K) 的具体值（一个非负整数）。
-2. **阈值比较查询**：给定一个非负整数 t，询问 R 是否大于等于 t。系统反馈"是"或"否"。
-3. **等值比较查询**：给定一个非负整数 t，询问 R 是否等于 t。系统反馈"是"或"否"。
+- 你最多可以进行 {Q} 次跨度查询（包括无效查询）。
+- 你必须至少完成 {R} 次有效查询后才能提交评估答案。
+- 以下情况会被视为无效查询（计入总次数）：
+  * 查询的知识点编码不在集合 S 中
+  * 直接查询目标对 "{target_a}" 和 "{target_b}" 之间的关联层级数
+  * 已超过最大查询次数
+- 累计出现 3 次无效查询将导致评估中止，任务失败。
 
-其中，R 始终按所选模型 f 和当前参数 K 计算得到。K 和 t 可根据先前查询的反馈动态调整。
+{string_list}
 
-## 查询格式（必须严格遵守）
+每次只能包含一个操作标签。使用以下 XML 格式：
 
-每次只能提交一个查询。请使用以下 XML 格式与终端交互：
+- 跨度查询（例如查询知识点 "a" 和 "ab" 的关联层级数）：
+<query>a,ab</query>
 
-- 读数查询（例如训练强度 K=10）：
-<query_read>10</query_read>
+- 提交最终答案（例如答案为 5）：
+<answer>5</answer>
 
-- 阈值比较查询（例如 K=10, t=15）：
-<query_threshold>K=10, t=15</query_threshold>
-
-- 等值比较查询（例如 K=10, t=15）：
-<query_equal>K=10, t=15</query_equal>
-
-## 提交结论
-
-当你收集了足够的数据后，请提交最终结论。答案必须包含评估模型类型（f_A、f_B、f_C 或 f_D）和基础学力指数 N 的值。格式如下：
-
-<answer>function=f_A, N=5</answer>
-
-注意：必须至少进行 3 次模拟测试后才能提交结论，否则分析失败。若答案错误或格式不符，同样判定为失败。
+请仔细观察查询结果中的层级结构规律，推断出目标知识点对的关联层级数。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Student Performance Quantitative Analysis" terminal.
+Welcome to the Subject Knowledge Graph Prerequisite Assessment Engine.
 
-The system has set an unknown student foundational competence score N (an unknown non-negative integer) and an unknown pedagogical evaluation model f. The model is selected from the following four preset evaluation baselines:
-- f_A(N, K) = floor((N + K) / 2)
-- f_B(N, K) = ceil((N + K) / 2)
-- f_C(N, K) = floor((N + K) / 3)
-- f_D(N, K) = ceil((N + K) / 3)
+The engine has loaded a set S of {N} distinct knowledge point codes. These codes encode an implicit tree-like prerequisite hierarchical structure, and there is a definite cognitive span (number of relational tiers) between any two knowledge points.
 
-Throughout the analysis process, N and f remain constant. Your goal is to infer the evaluation model type (f) and the exact value of the foundational competence score (N) by inputting simulated intervention plans.
+Your goal is to infer the number of relational tiers between two specific target knowledge points "{target_a}" and "{target_b}".
 
-## Available Test Queries
+You can perform the following two operations:
 
-In each test round, you can set a non-negative integer K as the "additional tutoring intensity" parameter and make one of the following three types of queries:
+1. Span Query: Select any two knowledge points x and y from the set (but not the target pair itself), and ask for the number of relational tiers between them. The assessment engine will return a non-negative integer.
+2. Submit Answer: When you are ready, submit the tier value you inferred for the target pair.
 
-1. **Read Query**: Request the exact value of the standardized assessment metric R = f(N, K) (a non-negative integer).
-2. **Threshold Comparison Query**: Given a non-negative integer t, ask whether R is greater than or equal to t. The system answers "Yes" or "No".
-3. **Equality Comparison Query**: Given a non-negative integer t, ask whether R equals t. The system answers "Yes" or "No".
+- You can make at most {Q} span queries (including invalid queries).
+- You must complete at least {R} valid queries before submitting your answer.
+- The following cases will be considered invalid queries (counted in total):
+  * The queried knowledge point codes are not in set S
+  * Directly querying the tiers between target pair "{target_a}" and "{target_b}"
+  * Already exceeded the maximum number of queries
+- Accumulating 3 invalid queries will result in assessment termination and task failure.
 
-Here, R is always calculated using the selected model f and current parameter K. K and t can be adaptively adjusted based on feedback from previous queries.
+{string_list}
 
-## Query Format (strictly required)
+Each operation must contain only one tag. Use the following XML format:
 
-Only one query can be submitted at a time. Use the following XML format to interact with the terminal:
+- Span Query (e.g., query tiers between point "a" and "ab"):
+<query>a,ab</query>
 
-- Read Query (e.g., tutoring intensity K=10):
-<query_read>10</query_read>
+- Submit Final Answer (e.g., answer is 5):
+<answer>5</answer>
 
-- Threshold Comparison Query (e.g., K=10, t=15):
-<query_threshold>K=10, t=15</query_threshold>
-
-- Equality Comparison Query (e.g., K=10, t=15):
-<query_equal>K=10, t=15</query_equal>
-
-## Submitting Conclusion
-
-When you have gathered enough data, submit your final conclusion. The answer must include the evaluation model type (f_A, f_B, f_C, or f_D) and the value of N. Format as follows:
-
-<answer>function=f_A, N=5</answer>
-
-Note: You must perform at least 3 simulation tests before submitting a conclusion; otherwise, the analysis fails. If the answer is incorrect or the format is invalid, it also results in a failure.
+Please carefully observe the hierarchical patterns in the query results to infer the number of relational tiers of the target knowledge point pair.
 """
 
     contextualized_rule_zh_4 = """\
-欢迎操作"精密制造材料应力测试"控制台。
+欢迎使用企业资源计划(ERP)产品物料清单(BOM)分解系统。
 
-系统当前设定了一个未知的材料初始内应力系数 N（未知的非负整数），以及一个未知的形变计算模型 f。该模型从以下四种预设演算标准中选取：
-- f_A(N, K) = 向下取整((N + K) / 2)
-- f_B(N, K) = 向上取整((N + K) / 2)
-- f_C(N, K) = 向下取整((N + K) / 3)
-- f_D(N, K) = 向上取整((N + K) / 3)
+本系统设定了一个包含 {N} 个不同零部件编号的集合 S。这些编号编码了一个隐含的树状生产装配层级结构，任意两个零部件之间存在确定的工艺节点步数（装配层级差异）。
 
-在整个测试过程中，N 和 f 保持不变。你的目标是通过施加外部压力，推测出系统正在使用的形变计算模型类型（f）以及真实的初始内应力系数（N）。
+你的目标是推断出两个特定目标零部件 "{target_a}" 和 "{target_b}" 之间的工艺节点步数。
 
-## 可进行的测试查询
+你可以进行以下两种操作：
 
-每轮测试中，你可以设定一个非负整数 K 作为"额外施加压强"参数，并发起以下三类查询之一：
+1. 工艺查询：选择集合中任意两个零部件 x 和 y（但不能是目标对本身），询问它们之间的工艺节点步数。ERP系统会返回一个非负整数。
+2. 提交答案：当你准备好后，提交你推断出的目标对之间的工艺节点步数值。
 
-1. **读数查询**：请求返回系统计算出的结构形变指数 R = f(N, K) 的具体值（一个非负整数）。
-2. **阈值比较查询**：给定一个非负整数 t，询问 R 是否大于等于 t。系统反馈"是"或"否"。
-3. **等值比较查询**：给定一个非负整数 t，询问 R 是否等于 t。系统反馈"是"或"否"。
+- 你最多可以进行 {Q} 次工艺查询（包括无效查询）。
+- 你必须至少完成 {R} 次有效查询后才能提交排产答案。
+- 以下情况会被视为无效查询（计入总次数）：
+  * 查询的零部件编号不在物料集合 S 中
+  * 直接查询目标对 "{target_a}" 和 "{target_b}" 之间的工艺节点步数
+  * 已超过最大查询次数
+- 累计出现 3 次无效查询将导致系统阻断排产并判定任务失败。
 
-其中，R 始终按所选模型 f 和当前参数 K 计算得到。K 和 t可根据先前查询的反馈动态调整。
+{string_list}
 
-## 查询格式（必须严格遵守）
+每次只能包含一个操作标签。使用以下 XML 格式：
 
-每次只能提交一个查询。请使用以下 XML 格式与终端交互：
+- 工艺查询（例如查询零部件 "a" 和 "ab" 的工艺节点步数）：
+<query>a,ab</query>
 
-- 读数查询（例如施加压强 K=10）：
-<query_read>10</query_read>
+- 提交最终答案（例如答案为 5）：
+<answer>5</answer>
 
-- 阈值比较查询（例如 K=10, t=15）：
-<query_threshold>K=10, t=15</query_threshold>
-
-- 等值比较查询（例如 K=10, t=15）：
-<query_equal>K=10, t=15</query_equal>
-
-## 提交结论
-
-当你收集了足够的数据后，请提交最终结论。答案必须包含计算模型类型（f_A、f_B、f_C 或 f_D）和初始内应力系数 N 的值。格式如下：
-
-<answer>function=f_A, N=5</answer>
-
-注意：必须至少进行 3 次模拟测试后才能提交结论，否则测试失败。若答案错误或格式不符，同样判定为失败。
+请仔细观察查询结果中的装配分解规律，推断出目标零部件对的工艺节点步数。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Precision Manufacturing Material Stress Test" console.
+[Manufacturing/Industry Scenario]
+Welcome to the Enterprise Resource Planning (ERP) Bill of Materials (BOM) Decomposition System.
 
-The system has set an unknown inherent baseline stress coefficient N (an unknown non-negative integer) and an unknown deformation calculation model f for the material. The model is selected from the following four preset calculation standards:
-- f_A(N, K) = floor((N + K) / 2)
-- f_B(N, K) = ceil((N + K) / 2)
-- f_C(N, K) = floor((N + K) / 3)
-- f_D(N, K) = ceil((N + K) / 3)
+The system features a set S of {N} distinct part numbers. These numbers encode an implicit tree-like production assembly hierarchical structure, and there is a definite number of process node steps (assembly level difference) between any two parts.
 
-Throughout the testing process, N and f remain constant. Your goal is to infer the deformation calculation model type (f) and the exact value of the inherent baseline stress coefficient (N) by applying external pressure.
+Your goal is to infer the number of process node steps between two specific target parts "{target_a}" and "{target_b}".
 
-## Available Test Queries
+You can perform the following two operations:
 
-In each test round, you can set a non-negative integer K as the "applied external pressure units" parameter and make one of the following three types of queries:
+1. Process Query: Select any two parts x and y from the set (but not the target pair itself), and ask for the number of process node steps between them. The ERP system will return a non-negative integer.
+2. Submit Answer: When you are ready, submit the process node step value you inferred for the target pair.
 
-1. **Read Query**: Request the exact value of the structural deformation index R = f(N, K) (a non-negative integer).
-2. **Threshold Comparison Query**: Given a non-negative integer t, ask whether R is greater than or equal to t. The system answers "Yes" or "No".
-3. **Equality Comparison Query**: Given a non-negative integer t, ask whether R equals t. The system answers "Yes" or "No".
+- You can make at most {Q} process queries (including invalid queries).
+- You must complete at least {R} valid queries before submitting your scheduling answer.
+- The following cases will be considered invalid queries (counted in total):
+  * The queried part numbers are not in material set S
+  * Directly querying the steps between target pair "{target_a}" and "{target_b}"
+  * Already exceeded the maximum number of queries
+- Accumulating 3 invalid queries will result in scheduling blockade and task failure.
 
-Here, R is always calculated using the selected model f and current parameter K. K and t can be adaptively adjusted based on feedback from previous queries.
+{string_list}
 
-## Query Format (strictly required)
+Each operation must contain only one tag. Use the following XML format:
 
-Only one query can be submitted at a time. Use the following XML format to interact with the terminal:
+- Process Query (e.g., query steps between part "a" and "ab"):
+<query>a,ab</query>
 
-- Read Query (e.g., applied pressure K=10):
-<query_read>10</query_read>
+- Submit Final Answer (e.g., answer is 5):
+<answer>5</answer>
 
-- Threshold Comparison Query (e.g., K=10, t=15):
-<query_threshold>K=10, t=15</query_threshold>
-
-- Equality Comparison Query (e.g., K=10, t=15):
-<query_equal>K=10, t=15</query_equal>
-
-## Submitting Conclusion
-
-When you have gathered enough data, submit your final conclusion. The answer must include the calculation model type (f_A, f_B, f_C, or f_D) and the value of N. Format as follows:
-
-<answer>function=f_A, N=5</answer>
-
-Note: You must perform at least 3 simulation tests before submitting a conclusion; otherwise, the test fails. If the answer is incorrect or the format is invalid, it also results in a failure.
+Please carefully observe the assembly decomposition patterns in the query results to infer the number of process node steps for the target part pair.
 """
 
     contextualized_rule_zh_5 = """\
-欢迎登录"量刑辅助计算反推"系统。
+欢迎使用智能法律检索引擎与条款溯源系统。
 
-系统当前设定了一个未知的法定基准刑期（月） N，以及一个未知的综合裁量函数 f。该函数从以下四种预设裁量准则中选取：
-- f_A(N, K) = 向下取整((N + K) / 2)
-- f_B(N, K) = 向上取整((N + K) / 2)
-- f_C(N, K) = 向下取整((N + K) / 3)
-- f_D(N, K) = 向上取整((N + K) / 3)
+该检索引擎包含了一个含有 {N} 个不同法典条款编号的集合 S。这些编号编码了一个隐含的树状条款引用与法条层级结构，任意两条款之间存在确定的法律层级跨度。
 
-在整个诊断过程中，N 和 f 保持不变。你的目标是通过输入模拟数据，推测出系统正在使用的裁量函数类型（f）以及真实的基准刑期（N）。
+你的目标是推断出两个特定目标条款 "{target_a}" 和 "{target_b}" 之间的法律层级跨度。
 
-## 可进行的测试查询
+你可以进行以下两种操作：
 
-每轮测试中，你可以设定一个非负整数 K 作为"法定加重情节权重"参数，并发起以下三类查询之一：
+1. 跨度检索：选择集合中任意两条款 x 和 y（但不能是目标对本身），询问它们之间的法律层级跨度。检索引擎会返回一个非负整数。
+2. 提交答案：当你准备好后，提交你推断出的目标条款对之间的法律层级跨度值。
 
-1. **读数查询**：请求返回系统计算出的最终宣告刑期（月） R = f(N, K) 的具体值（一个非负整数）。
-2. **阈值比较查询**：给定一个非负整数 t，询问 R 是否大于等于 t。系统反馈"是"或"否"。
-3. **等值比较查询**：给定一个非负整数 t，询问 R 是否等于 t。系统反馈"是"或"否"。
+- 你最多可以进行 {Q} 次跨度检索（包括无效检索）。
+- 你必须至少完成 {R} 次有效检索后才能提交分析答案。
+- 以下情况会被视为无效检索（计入总次数）：
+  * 检索的条款编号不在法典集合 S 中
+  * 直接检索目标对 "{target_a}" 和 "{target_b}" 之间的法律层级跨度
+  * 已超过最大检索次数
+- 累计出现 3 次无效检索将导致检索引擎拒绝服务及任务失败。
 
-其中，R 始终按所选函数 f 和当前参数 K 计算得到。K 和 t 可根据先前查询的反馈动态调整。
+{string_list}
 
-## 查询格式（必须严格遵守）
+每次只能包含一个操作标签。使用以下 XML 格式：
 
-每次只能提交一个查询。请使用以下 XML 格式与终端交互：
+- 跨度检索（例如检索条款 "a" 和 "ab" 的法律层级跨度）：
+<query>a,ab</query>
 
-- 读数查询（例如 K=10）：
-<query_read>10</query_read>
+- 提交最终答案（例如答案为 5）：
+<answer>5</answer>
 
-- 阈值比较查询（例如 K=10, t=15）：
-<query_threshold>K=10, t=15</query_threshold>
-
-- 等值比较查询（例如 K=10, t=15）：
-<query_equal>K=10, t=15</query_equal>
-
-## 提交结论
-
-当你收集了足够的数据后，请提交最终结论。答案必须包含裁量函数类型（f_A、f_B、f_C 或 f_D）和基准刑期 N 的值。格式如下：
-
-<answer>function=f_A, N=5</answer>
-
-注意：必须至少进行 3 次模拟测试后才能提交结论，否则推断失败。若答案错误或格式不符，同样判定为失败。
+请仔细观察检索结果中的条款引用与层级规律，推断出目标条款对的法律层级跨度。
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Welcome to the "Sentencing Auxiliary Calculation Reverse-Engineering" system.
+[Legal Scenario]
+Welcome to the Intelligent Legal Retrieval Engine and Clause Tracing System.
 
-The system has set an unknown statutory baseline sentence length (in months) N and an unknown comprehensive discretionary function f. The function is selected from the following four preset discretionary guidelines:
-- f_A(N, K) = floor((N + K) / 2)
-- f_B(N, K) = ceil((N + K) / 2)
-- f_C(N, K) = floor((N + K) / 3)
-- f_D(N, K) = ceil((N + K) / 3)
+The retrieval engine contains a set S of {N} distinct legal clause numbers. These numbers encode an implicit tree-like clause citation and hierarchical structure, and there is a definite legal hierarchical span between any two clauses.
 
-Throughout the diagnostic process, N and f remain constant. Your goal is to infer the discretionary function type (f) and the exact value of the baseline sentence length (N) by inputting simulated data.
+Your goal is to infer the legal hierarchical span between two specific target clauses "{target_a}" and "{target_b}".
 
-## Available Test Queries
+You can perform the following two operations:
 
-In each test round, you can set a non-negative integer K as the "aggravating circumstances weight" parameter and make one of the following three types of queries:
+1. Span Retrieval: Select any two clauses x and y from the set (but not the target pair itself), and ask for the legal hierarchical span between them. The retrieval engine will return a non-negative integer.
+2. Submit Answer: When you are ready, submit the span value you inferred for the target pair.
 
-1. **Read Query**: Request the exact value of the final adjudicated term (in months) R = f(N, K) (a non-negative integer).
-2. **Threshold Comparison Query**: Given a non-negative integer t, ask whether R is greater than or equal to t. The system answers "Yes" or "No".
-3. **Equality Comparison Query**: Given a non-negative integer t, ask whether R equals t. The system answers "Yes" or "No".
+- You can make at most {Q} span retrievals (including invalid retrievals).
+- You must complete at least {R} valid retrievals before submitting your analytical answer.
+- The following cases will be considered invalid retrievals (counted in total):
+  * The retrieved clause numbers are not in the legal set S
+  * Directly retrieving the span between target pair "{target_a}" and "{target_b}"
+  * Already exceeded the maximum number of retrievals
+- Accumulating 3 invalid retrievals will result in denial of service and task failure.
 
-Here, R is always calculated using the selected function f and current parameter K. K and t can be adaptively adjusted based on feedback from previous queries.
+{string_list}
 
-## Query Format (strictly required)
+Each operation must contain only one tag. Use the following XML format:
 
-Only one query can be submitted at a time. Use the following XML format to interact with the terminal:
+- Span Retrieval (e.g., retrieve span between clause "a" and "ab"):
+<query>a,ab</query>
 
-- Read Query (e.g., weight K=10):
-<query_read>10</query_read>
+- Submit Final Answer (e.g., answer is 5):
+<answer>5</answer>
 
-- Threshold Comparison Query (e.g., K=10, t=15):
-<query_threshold>K=10, t=15</query_threshold>
-
-- Equality Comparison Query (e.g., K=10, t=15):
-<query_equal>K=10, t=15</query_equal>
-
-## Submitting Conclusion
-
-When you have gathered enough data, submit your final conclusion. The answer must include the discretionary function type (f_A, f_B, f_C, or f_D) and the value of N. Format as follows:
-
-<answer>function=f_A, N=5</answer>
-
-Note: You must perform at least 3 simulation tests before submitting a conclusion; otherwise, the inference fails. If the answer is incorrect or the format is invalid, it also results in a failure.
+Please carefully observe the citation and hierarchical patterns in the retrieval results to infer the legal hierarchical span for the target clause pair.
 """
 
-    tags = ["answer", "query_read", "query_threshold", "query_equal"]
+    tags = ["answer", "query"]
     
-    reasoning_type = "溯因推理"
-    data_structure = "集合"
-
-    # 难度配置：
-    # 1 (简单)      - N=5, f_A (向下取整 除以2)
-    # 2 (中等偏下)  - N=7, f_B (向上取整 除以2)
-    # 3 (中等偏上)  - N=10, f_C (向下取整 除以3)
-    # 4 (较难)      - N=13, f_D (向上取整 除以3)
-    # 5 (难)        - N=20, f_C (向下取整 除以3)
+    reasoning_type = "归纳推理"
+    data_structure = "树"
 
     DIFFICULTY_CONFIG = {
-        1: {"N": 5, "function": "f_A"},
-        2: {"N": 7, "function": "f_B"},
-        3: {"N": 10, "function": "f_C"},
-        4: {"N": 13, "function": "f_D"},
-        5: {"N": 20, "function": "f_C"},
+        "zh": {
+            1: {
+                "N": 5,
+                "Q": 8,
+                "R": 3,
+                "strings": ["a", "ab", "abc", "ad", "ade"],
+                "target_a": "abc",
+                "target_b": "ade",
+            },
+            2: {
+                "N": 7,
+                "Q": 10,
+                "R": 4,
+                "strings": ["x", "xy", "xyz", "xyw", "xa", "xab", "xac"],
+                "target_a": "xyz",
+                "target_b": "xac",
+            },
+            3: {
+                "N": 10,
+                "Q": 12,
+                "R": 5,
+                "strings": ["r", "ra", "rab", "rabc", "rad", "rb", "rba", "rbb", "rc", "rcd"],
+                "target_a": "rabc",
+                "target_b": "rbb",
+            },
+            4: {
+                "N": 12,
+                "Q": 15,
+                "R": 6,
+                "strings": ["s", "sa", "sab", "sabc", "sad", "sade", "sb", "sbc", "sbcd", "sc", "scd", "sce"],
+                "target_a": "sabc",
+                "target_b": "sce",
+            },
+            5: {
+                "N": 15,
+                "Q": 18,
+                "R": 7,
+                "strings": ["t", "ta", "tab", "tabc", "tabcd", "tad", "tade", "tb", "tbc", "tbcd", "tbce", "tc", "tcd", "tce", "tcef"],
+                "target_a": "tabcd",
+                "target_b": "tcef",
+            },
+        },
+        "en": {
+            1: {
+                "N": 5,
+                "Q": 8,
+                "R": 3,
+                "strings": ["a", "ab", "abc", "ad", "ade"],
+                "target_a": "abc",
+                "target_b": "ade",
+            },
+            2: {
+                "N": 7,
+                "Q": 10,
+                "R": 4,
+                "strings": ["x", "xy", "xyz", "xyw", "xa", "xab", "xac"],
+                "target_a": "xyz",
+                "target_b": "xac",
+            },
+            3: {
+                "N": 10,
+                "Q": 12,
+                "R": 5,
+                "strings": ["r", "ra", "rab", "rabc", "rad", "rb", "rba", "rbb", "rc", "rcd"],
+                "target_a": "rabc",
+                "target_b": "rbb",
+            },
+            4: {
+                "N": 12,
+                "Q": 15,
+                "R": 6,
+                "strings": ["s", "sa", "sab", "sabc", "sad", "sade", "sb", "sbc", "sbcd", "sc", "scd", "sce"],
+                "target_a": "sabc",
+                "target_b": "sce",
+            },
+            5: {
+                "N": 15,
+                "Q": 18,
+                "R": 7,
+                "strings": ["t", "ta", "tab", "tabc", "tabcd", "tad", "tade", "tb", "tbc", "tbcd", "tbce", "tc", "tcd", "tce", "tcef"],
+                "target_a": "tabcd",
+                "target_b": "tcef",
+            },
+        },
     }
 
     def __init__(self, config):
-        self.query_count = 0  # 记录查询次数
+        self.query_count = 0
+        self.valid_query_count = 0
+        self.invalid_query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        diff = int(self.config.difficulty)
-        
-        if diff not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported difficulty: {diff}")
-        
-        cfg = self.DIFFICULTY_CONFIG[diff]
-        self.N = cfg["N"]
-        self.function_type = cfg["function"]
-        
-        # 设置游戏信息（用于规则模板）
-        self._game_info["n"] = self.N  # 虽然不在规则中显示，但保持一致性
+        lang = self.config.language
+        diff = self.config.difficulty
 
-    def _compute_function(self, K):
-        """根据函数类型计算 R = f(N, K)"""
-        sum_val = self.N + K
+        if lang not in self.DIFFICULTY_CONFIG:
+            raise KeyError(f"Unsupported language: {lang}")
+        if diff not in self.DIFFICULTY_CONFIG[lang]:
+            raise KeyError(f"Unsupported difficulty: {diff}")
+
+        cfg = self.DIFFICULTY_CONFIG[lang][diff]
         
-        if self.function_type == "f_A":
-            # 向下取整 (N + K) / 2
-            return sum_val // 2
-        elif self.function_type == "f_B":
-            # 向上取整 (N + K) / 2
-            return (sum_val + 1) // 2
-        elif self.function_type == "f_C":
-            # 向下取整 (N + K) / 3
-            return sum_val // 3
-        elif self.function_type == "f_D":
-            # 向上取整 (N + K) / 3
-            return (sum_val + 2) // 3
+        self._game_info["N"] = cfg["N"]
+        self._game_info["Q"] = cfg["Q"]
+        self._game_info["R"] = cfg["R"]
+        self._game_info["target_a"] = cfg["target_a"]
+        self._game_info["target_b"] = cfg["target_b"]
+        
+        self._game_info["string_list"] = ", ".join([f'"{s}"' for s in cfg["strings"]])
+        
+        self.strings = set(cfg["strings"])
+        self.target_a = cfg["target_a"]
+        self.target_b = cfg["target_b"]
+        self.Q = cfg["Q"]
+        self.R = cfg["R"]
+        
+        self.true_distance = self._calculate_distance(self.target_a, self.target_b)
+
+    def _calculate_distance(self, s1: str, s2: str) -> int:
+        lcp_len = 0
+        for i in range(min(len(s1), len(s2))):
+            if s1[i] == s2[i]:
+                lcp_len += 1
+            else:
+                break
+        return len(s1) + len(s2) - 2 * lcp_len
+
+    def _is_valid_query(self, s1: str, s2: str) -> tuple:
+        if self.config.language == "zh":
+            if self.query_count >= self.Q:
+                return False, "错误：已超过最大查询次数。"
+            
+            if s1 not in self.strings:
+                return False, f'错误：字符串 "{s1}" 不在集合中。'
+            if s2 not in self.strings:
+                return False, f'错误：字符串 "{s2}" 不在集合中。'
+            
+            if (s1 == self.target_a and s2 == self.target_b) or \
+               (s1 == self.target_b and s2 == self.target_a):
+                return False, "错误：不能直接查询目标对的距离。"
+            
+            return True, ""
         else:
-            raise ValueError(f"Unknown function type: {self.function_type}")
+            if self.query_count >= self.Q:
+                return False, "Error: Maximum number of queries exceeded."
+            
+            if s1 not in self.strings:
+                return False, f'Error: String "{s1}" is not in the set.'
+            if s2 not in self.strings:
+                return False, f'Error: String "{s2}" is not in the set.'
+            
+            if (s1 == self.target_a and s2 == self.target_b) or \
+               (s1 == self.target_b and s2 == self.target_a):
+                return False, "Error: Cannot directly query the target pair distance."
+            
+            return True, ""
+
+    def step(self, response: str):
+        try:
+            parsed_info = self.parse(response)
+            if "answer" in parsed_info:
+                if self.valid_query_count < self.R:
+                    if self.config.language == "zh":
+                        msg = (f"错误：必须至少完成 {self.R} 次有效查询后才能提交答案。"
+                               f"当前有效查询次数：{self.valid_query_count}")
+                    else:
+                        msg = (f"Error: Must complete at least {self.R} valid queries before submitting. "
+                               f"Current valid queries: {self.valid_query_count}")
+                    self.state.add_message("user", msg)
+                else:
+                    is_success = self.evaluate(parsed_info)
+                    if is_success:
+                        res = "答案正确" if self.config.language == "zh" else "Correct answer."
+                        self.state.set_state("success", "success")
+                        self.state.add_message("user", res)
+                    else:
+                        res = "答案错误" if self.config.language == "zh" else "Incorrect answer."
+                        self.state.set_state("failed", "incorrect answer")
+                        self.state.add_message("user", res)
+            else:
+                game_response = self.produce_response(parsed_info)
+                self.state.add_message("user", game_response)
+        except Exception as e:
+            self.state.set_state("failed", str(e))
+        
+        return self.state
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        # 注意：冗余性测试和长上下文验证中，query_count 可能不会被正确递增，
-        # 因此移除 query_count 检查。最少查询次数的约束由游戏流程（max_turns、规则说明）保证。
-        
-        # 解析答案: function=f_X, N=Y
-        raw_ans = parsed_info["answer"]
-        
-        # 尝试解析 key=value 对
-        ans_dict = {}
-        for part in raw_ans.split(","):
-            part = part.strip()
-            if "=" in part:
-                k, v = part.split("=", 1)
-                ans_dict[k.strip()] = v.strip()
-        
-        if "function" not in ans_dict or "N" not in ans_dict:
-            return False
-        
-        # 检查函数类型
-        if ans_dict["function"] != self.function_type:
-            return False
-        
-        # 检查 N 值
         try:
-            model_N = int(ans_dict["N"])
-        except (ValueError, TypeError):
+            submitted_distance = int(parsed_info["answer"].strip())
+            return submitted_distance == self.true_distance
+        except ValueError:
             return False
-        
-        return model_N == self.N
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举代表性的查询并返回对应的正确答案。
-        """
-        queries = []
-        
-        # 缩小范围：只用少量有代表性的 K 值进行读数查询
-        representative_ks = [0, 1, 2, 5, 10]
-        
-        if self.config.language == "zh":
-            yes_str, no_str = "是", "否"
-        else:
-            yes_str, no_str = "Yes", "No"
-        
-        for K in representative_ks:
-            R = self._compute_function(K)
-            
-            # 读数查询
-            q_read = f"<query_read>{K}</query_read>"
-            queries.append({"query": q_read, "answer": str(R)})
-            
-            # 少量阈值和等值查询
-            for t in [0, R - 1, R, R + 1]:
-                if t < 0:
-                    continue
-                # 阈值比较
-                ans_thresh = yes_str if R >= t else no_str
-                q_thresh = f"<query_threshold>K={K}, t={t}</query_threshold>"
-                queries.append({"query": q_thresh, "answer": ans_thresh})
-                
-                # 等值比较
-                ans_eq = yes_str if R == t else no_str
-                q_eq = f"<query_equal>K={K}, t={t}</query_equal>"
-                queries.append({"query": q_eq, "answer": ans_eq})
-        
-        return queries
-
-    def _cf_make_wrong(self, correct):
-        """
-        根据正确的响应字符串，生成一个错误的响应。
-        """
-        if self.config.language == "zh":
-            yes_str, no_str = "是", "否"
-        else:
-            yes_str, no_str = "Yes", "No"
-
-        # 如果是 Yes/No 类型，翻转
-        if correct == yes_str:
-            return no_str
-        elif correct == no_str:
-            return yes_str
-
-        # 如果是数字字符串，加一个偏移
-        try:
-            val = int(correct)
-            wrong_val = val + 1
-            return str(wrong_val)
-        except (ValueError, TypeError):
-            pass
-
-        # 兜底：返回一个明确错误的值
-        return correct + "_wrong"
 
     def _cf_core_produce(self, parsed_info):
+        if "query" not in parsed_info:
+            if self.config.language == "zh":
+                return "错误：无效的查询格式。"
+            else:
+                return "Error: Invalid query format."
+        
+        self.query_count += 1
+        
+        try:
+            raw_query = parsed_info["query"].strip()
+            parts = [p.strip() for p in raw_query.split(",")]
+            
+            if len(parts) != 2:
+                self.invalid_query_count += 1
+                if self.invalid_query_count >= 3:
+                    self.state.set_state("failed", "too many invalid queries")
+                    if self.config.language == "zh":
+                        return "错误：累计 3 次无效查询，游戏失败。"
+                    else:
+                        return "Error: 3 invalid queries accumulated, game failed."
+                
+                if self.config.language == "zh":
+                    return f"无效查询（{self.invalid_query_count}/3）：格式错误，应为 'x,y' 格式。"
+                else:
+                    return f"Invalid query ({self.invalid_query_count}/3): Format error, should be 'x,y'."
+            
+            s1, s2 = parts[0], parts[1]
+            
+            is_valid, error_msg = self._is_valid_query(s1, s2)
+            
+            if not is_valid:
+                self.invalid_query_count += 1
+                if self.invalid_query_count >= 3:
+                    self.state.set_state("failed", "too many invalid queries")
+                    if self.config.language == "zh":
+                        return f"{error_msg}\n累计 3 次无效查询，游戏失败。"
+                    else:
+                        return f"{error_msg}\n3 invalid queries accumulated, game failed."
+                
+                if self.config.language == "zh":
+                    return f"无效查询（{self.invalid_query_count}/3）：{error_msg}"
+                else:
+                    return f"Invalid query ({self.invalid_query_count}/3): {error_msg}"
+            
+            self.valid_query_count += 1
+            distance = self._calculate_distance(s1, s2)
+            
+            if self.config.language == "zh":
+                return f"距离为 {distance}。（有效查询：{self.valid_query_count}/{self.R}，总查询：{self.query_count}/{self.Q}）"
+            else:
+                return f"Distance is {distance}. (Valid queries: {self.valid_query_count}/{self.R}, Total queries: {self.query_count}/{self.Q})"
+            
+        except Exception as e:
+            self.invalid_query_count += 1
+            if self.invalid_query_count >= 3:
+                self.state.set_state("failed", "too many invalid queries")
+                if self.config.language == "zh":
+                    return "错误：查询解析失败。累计 3 次无效查询，游戏失败。"
+                else:
+                    return "Error: Query parsing failed. 3 invalid queries accumulated, game failed."
+            
+            if self.config.language == "zh":
+                return f"无效查询（{self.invalid_query_count}/3）：查询解析失败。"
+            else:
+                return f"Invalid query ({self.invalid_query_count}/3): Query parsing failed."
+
+    def _cf_make_wrong(self, correct: str) -> str:
         if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            error_format = "错误：格式无效或参数错误。"
+            match = re.search(r'距离为\s*(\d+)', correct)
         else:
-            yes_res, no_res = "Yes", "No"
-            error_format = "Error: Invalid format or parameter."
+            match = re.search(r'Distance is\s*(\d+)', correct)
         
-        # 优先级：read > threshold > equal
-        if "query_read" in parsed_info:
-            # 读数查询
-            try:
-                K = int(parsed_info["query_read"].strip())
-                if K < 0:
-                    return error_format
-                self.query_count += 1
-                R = self._compute_function(K)
-                return str(R)
-            except Exception:
-                return error_format
+        if match:
+            original_val = int(match.group(1))
+            wrong_val = original_val + random.choice([1, 2, 3])
+            return correct.replace(match.group(1), str(wrong_val), 1)
         
-        elif "query_threshold" in parsed_info:
-            # 阈值比较查询：K=x, t=y
-            try:
-                raw = parsed_info["query_threshold"]
-                # 解析 K=x, t=y
-                parts = {}
-                for item in raw.split(","):
-                    item = item.strip()
-                    if "=" in item:
-                        k, v = item.split("=", 1)
-                        parts[k.strip()] = v.strip()
-                
-                K = int(parts.get("K", ""))
-                t = int(parts.get("t", ""))
-                
-                if K < 0 or t < 0:
-                    return error_format
-                
-                self.query_count += 1
-                R = self._compute_function(K)
-                return yes_res if R >= t else no_res
-            except Exception:
-                return error_format
+        if correct.strip().lstrip('-').isdigit():
+            return str(int(correct.strip()) + 1)
         
-        elif "query_equal" in parsed_info:
-            # 等值比较查询：K=x, t=y
-            try:
-                raw = parsed_info["query_equal"]
-                # 解析 K=x, t=y
-                parts = {}
-                for item in raw.split(","):
-                    item = item.strip()
-                    if "=" in item:
-                        k, v = item.split("=", 1)
-                        parts[k.strip()] = v.strip()
-                
-                K = int(parts.get("K", ""))
-                t = int(parts.get("t", ""))
-                
-                if K < 0 or t < 0:
-                    return error_format
-                
-                self.query_count += 1
-                R = self._compute_function(K)
-                return yes_res if R == t else no_res
-            except Exception:
-                return error_format
+        return correct + "_WRONG"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
+        s_list = sorted(list(self.strings))
         
-        else:
-            raise ValueError("No valid query tag found.")
+        for s1 in s_list:
+            for s2 in s_list:
+                if s1 == s2:
+                    continue
+                
+                if (s1 == self.target_a and s2 == self.target_b) or \
+                   (s1 == self.target_b and s2 == self.target_a):
+                    continue
+                
+                dist = self._calculate_distance(s1, s2)
+                
+                query_str = f"<query>{s1},{s2}</query>"
+                
+                if self.config.language == "zh":
+                    answer_str = f"距离为 {dist}。"
+                else:
+                    answer_str = f"Distance is {dist}."
+                
+                queries.append({
+                    "query": query_str,
+                    "answer": answer_str
+                })
+        
+        return queries

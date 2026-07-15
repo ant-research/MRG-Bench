@@ -1,784 +1,783 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gemini-3-pro-preview
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   加边后最短路：添加某条新边后，两节点间最短距离是否改变
-# ============================================================
-
 from .base import Game
-import random
+import re
+import itertools
 
+class TreeValueInferenceGame(Game):
 
-class ShortestPathPerturbationGame(Game):
+    reasoning_type = "溯因推理"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们来玩一个"最短路径扰动判定"游戏，规则如下：
+我们来玩一个"树值函数推断"游戏，规则如下：
 
-游戏设定了一个未知的简单、连通、无向、无权图 G，顶点集合为 {{1, 2, ..., {n}}}。图中有四个特殊的已标注顶点：
-- S = {s}
-- T = {t}
-- U = {u}
-- V = {v}
+游戏设定了一棵固定的有根树，根节点为 P1，树结构如下：
+- P1 的子节点：P2, P3, P4
+- P2 的子节点：P5
+- P5 的子节点：P8
+- P3 的子节点：P6, P7
+- 叶节点：P4, P6, P7, P8
 
-这四个顶点互不相同。图的边集对你不可见，你只能通过查询来获取信息。
+我已经秘密选择了一种"值函数定义"，它为每个节点 u 赋予一个非负整数值 h(u)。值函数定义有且仅有以下四种候选：
 
-你的目标是判断：如果在原图 G 上添加一条新边 (U, V)，从 S 到 T 的最短距离是否会严格减小。
+1. **Alpha（最大值型-0基准）**：
+   - 若 u 是叶节点，h(u) 等于 0
+   - 若 u 非叶节点，h(u) 等于 1 加上其所有子节点的 h 值中的最大值
 
-## 查询方式
+2. **Beta（最大值型-1基准）**：
+   - 若 u 是叶节点，h(u) 等于 1
+   - 若 u 非叶节点，h(u) 等于 1 加上其所有子节点的 h 值中的最大值
 
-你可以进行距离查询，每次查询两个顶点之间在原图 G 上的最短距离。查询格式如下：
+3. **Gamma（最小值型-0基准）**：
+   - 若 u 是叶节点，h(u) 等于 0
+   - 若 u 非叶节点，h(u) 等于 1 加上其所有子节点的 h 值中的最小值
 
-<query_dist>a,b</query_dist>
+4. **Delta（最小值型-1基准）**：
+   - 若 u 是叶节点，h(u) 等于 1
+   - 若 u 非叶节点，h(u) 等于 1 加上其所有子节点的 h 值中的最小值
 
-其中 a 和 b 是顶点编号（1 到 {n} 之间）。我会回复一个非负整数，表示原图 G 上 a 到 b 的最短距离。
+你的目标是：
+1. 推断出我使用的是哪一种值函数定义（Alpha/Beta/Gamma/Delta）
+2. 在该定义下，找到一条从根节点 P1 出发到某个叶节点的路径，使得路径上相邻节点的 h 值恰好相差 1，且每步都递减（即后一个节点的 h 值比前一个节点小 1）
 
-注意：
-1. 所有查询都是针对原图 G 的，不能查询添加边之后的距离。
-2. 请尽可能少地使用查询次数。
-3. 每次只能提交一个查询标签。
+你可以向我提出以下两类问题来收集信息：
 
-## 提交答案
+1. **比较查询**：询问两个不同节点 u 和 v 的 h 值大小关系。我会回答"u大于v"、"u等于v"或"u小于v"之一。
 
-当你收集到足够信息后，请提交最终判定结果。格式如下：
+2. **奇偶查询**：询问某个节点 u 的 h 值是奇数还是偶数。我会回答"是"（偶数）或"否"（奇数）。
 
-<answer>是</answer>
+注意：你需要尽可能少地提问，最多不超过 6 次。
 
-或
+每次只能提出一个问题。请使用以下 XML 格式：
 
-<answer>否</answer>
+- 比较查询（例如比较 P1 和 P2）：
+<query_compare>P1,P2</query_compare>
 
-其中"是"表示添加边 (U, V) 会使 S 到 T 的最短距离严格减小，"否"表示不会减小。
+- 奇偶查询（例如询问 P3）：
+<query_parity>P3</query_parity>
 
-若答案错误或格式不符，游戏失败。
+提交最终答案时，必须说明值函数定义类型（Alpha/Beta/Gamma/Delta）和路径（从 P1 到叶节点的节点序列，用逗号隔开），格式如下：
+
+<answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     game_rule_en = """\
-Let's play a "Shortest Path Perturbation" game. Here are the rules:
+Let's play a "Tree Value Inference" game. Here are the rules:
 
-The game involves an unknown simple, connected, undirected, unweighted graph G with vertex set {{1, 2, ..., {n}}}. There are four special labeled vertices in the graph:
-- S = {s}
-- T = {t}
-- U = {u}
-- V = {v}
+A fixed rooted tree is given with root node P1. The tree structure is:
+- P1's children: P2, P3, P4
+- P2's children: P5
+- P5's children: P8
+- P3's children: P6, P7
+- Leaf nodes: P4, P6, P7, P8
 
-These four vertices are all distinct. The edge set is hidden from you, and you can only obtain information through queries.
+I have secretly chosen a "value function definition" that assigns a non-negative integer value h(u) to each node u. There are exactly four candidate definitions:
 
-Your goal is to determine: if we add a new edge (U, V) to the original graph G, will the shortest distance from S to T strictly decrease?
+1. **Alpha (max-type with 0 base)**:
+   - If u is a leaf node, h(u) equals 0
+   - If u is not a leaf, h(u) equals 1 plus the maximum h value among all its children
 
-## Query Method
+2. **Beta (max-type with 1 base)**:
+   - If u is a leaf node, h(u) equals 1
+   - If u is not a leaf, h(u) equals 1 plus the maximum h value among all its children
 
-You can perform distance queries to ask for the shortest distance between two vertices in the original graph G. The query format is:
+3. **Gamma (min-type with 0 base)**:
+   - If u is a leaf node, h(u) equals 0
+   - If u is not a leaf, h(u) equals 1 plus the minimum h value among all its children
 
-<query_dist>a,b</query_dist>
+4. **Delta (min-type with 1 base)**:
+   - If u is a leaf node, h(u) equals 1
+   - If u is not a leaf, h(u) equals 1 plus the minimum h value among all its children
 
-where a and b are vertex IDs (between 1 and {n}). I will respond with a non-negative integer representing the shortest distance from a to b in the original graph G.
+Your goal is to:
+1. Infer which value function definition I am using (Alpha/Beta/Gamma/Delta)
+2. Under that definition, find a path from root P1 to some leaf node such that adjacent nodes' h values differ by exactly 1, with each step decreasing (the next node's h value is 1 less than the previous)
 
-Note:
-1. All queries are about the original graph G; you cannot query distances after adding the edge.
-2. Please use as few queries as possible.
-3. Each turn can only contain one query tag.
+You can ask me the following two types of questions to gather information:
 
-## Submit Answer
+1. **Comparison Query**: Ask about the relationship between h values of two different nodes u and v. I will answer "u>v", "u=v", or "u<v".
 
-When you have collected enough information, submit your final decision in the following format:
+2. **Parity Query**: Ask whether a node u's h value is even or odd. I will answer "Yes" (even) or "No" (odd).
 
-<answer>Yes</answer>
+Note: You should ask as few questions as possible, with a maximum of 6 queries.
 
-or
+You can ask only one question at a time. Use the following XML format:
 
-<answer>No</answer>
+- Comparison Query (e.g., comparing P1 and P2):
+<query_compare>P1,P2</query_compare>
 
-where "Yes" means adding edge (U, V) will strictly decrease the shortest distance from S to T, and "No" means it will not decrease.
+- Parity Query (e.g., asking about P3):
+<query_parity>P3</query_parity>
 
-If the answer is wrong or the format is invalid, the game fails.
+When submitting the final answer, specify the value function definition type (Alpha/Beta/Gamma/Delta) and the path (node sequence from P1 to a leaf, comma-separated), using this format:
+
+<answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_zh_1 = """\
-这是交通规划领域的"路网最短路径扰动判定"推演。
-我们设定了一个未知的简单、连通的无向路网图 G，代表城市中各个路口，路口集合为 {{1, 2, ..., {n}}}。图中有四个特殊的已标注路口：
-- 核心物流枢纽 S = {s}
-- 目标分拨中心 T = {t}
-- 拟建高架桥起点 U = {u}
-- 拟建高架桥终点 V = {v}
+这是城市交通信号控制网络的故障排查系统。
+系统给定了一个固定的路网拓扑树，主干道起点为 P1，拓扑如下：
+- P1 的下游路口：P2, P3, P4
+- P2 的下游路口：P5
+- P5 的下游路口：P8
+- P3 的下游路口：P6, P7
+- 末端路口：P4, P6, P7, P8
 
-这四个路口互不相同。路网的现有道路分布对你不可见，你只能通过路网探测查询来获取信息。
+系统隐藏了一种“拥堵指数推演算法”，它为每个路口 u 赋予一个非负整数的拥堵指数 h(u)。算法仅限以下四种：
+1. **Alpha（瓶颈模式-零基底）**：
+   - 若 u 是末端路口，h(u) 等于 0
+   - 若 u 是非末端路口，h(u) 等于 1 加上其所有下游路口 h 值中的最大值
+2. **Beta（瓶颈模式-基载）**：
+   - 若 u 是末端路口，h(u) 等于 1
+   - 若 u 是非末端路口，h(u) 等于 1 加上其所有下游路口 h 值中的最大值
+3. **Gamma（畅通模式-零基底）**：
+   - 若 u 是末端路口，h(u) 等于 0
+   - 若 u 是非末端路口，h(u) 等于 1 加上其所有下游路口 h 值中的最小值
+4. **Delta（畅通模式-基载）**：
+   - 若 u 是末端路口，h(u) 等于 1
+   - 若 u 是非末端路口，h(u) 等于 1 加上其所有下游路口 h 值中的最小值
 
-你的目标是判断：如果在现有路网 G 上新增一条直达高架桥通道 (U, V)，从物流枢纽 S 到分拨中心 T 的最短通行距离（经过的路段数）是否会严格减小。
+你的目标是：
+1. 推断出系统当前使用的是哪一种推演算法（Alpha/Beta/Gamma/Delta）。
+2. 在该算法下，找到一条从起点 P1 到某个末端路口的疏导路径，使得路径上相邻路口的拥堵指数恰好相差 1，且逐级递减（即下游路口比上游路口拥堵指数低 1）。
 
-## 查询方式
+你可以通过以下查询收集路网信息：
+1. **比较查询**：对比两个路口 u 和 v 的拥堵指数。系统将返回“u大于v”、“u等于v”或“u小于v”。
+2. **奇偶查询**：询问路口 u 的拥堵指数是否为偶数（对应信号灯的偶数相位周期）。返回“是”（偶数）或“否”（奇数）。
+最多提问 6 次。
 
-你可以进行路径探测，每次查询两个路口之间在现有路网 G 上的最短通行距离。查询格式如下：
-
-<query_dist>a,b</query_dist>
-
-其中 a 和 b 是路口编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有路网 G 上 a 到 b 的最短通行距离。
-
-注意：
-1. 所有查询都是针对原路网 G 的，不能查询添加高架桥之后的距离。
-2. 请尽可能少地使用查询次数。
-3. 每次只能提交一个查询标签。
-
-## 提交答案
-
-当你收集到足够信息后，请提交最终规划判定。格式如下：
-
-<answer>是</answer>
-
-或
-
-<answer>否</answer>
-
-其中"是"表示新增高架通道 (U, V) 会使 S 到 T 的最短距离严格减小，"否"表示不会减小。
-
-若答案错误或格式不符，推演失败。
+询问与提交格式：
+- 比较查询：<query_compare>P1,P2</query_compare>
+- 奇偶查询：<query_parity>P3</query_parity>
+- 最终答案：<answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Let's conduct a "Shortest Path Perturbation Evaluation" in the field of traffic planning.
-The scenario involves an unknown simple, connected, undirected road network graph G, representing various intersections in a city, with the intersection set being {{1, 2, ..., {n}}}. There are four special labeled intersections in the network:
-- Core Logistics Hub S = {s}
-- Target Distribution Center T = {t}
-- Proposed Viaduct Start U = {u}
-- Proposed Viaduct End V = {v}
+Welcome to the Urban Traffic Signal Control Network Troubleshooting System.
+The system features a fixed road network topology tree, with the main arterial starting at P1:
+- P1's downstream intersections: P2, P3, P4
+- P2's downstream intersection: P5
+- P5's downstream intersection: P8
+- P3's downstream intersections: P6, P7
+- Terminal intersections: P4, P6, P7, P8
 
-These four intersections are all distinct. The current road connections are hidden from you, and you can only obtain information through network probing queries.
+The system operates on a hidden "Congestion Index Deduction Algorithm" that assigns a non-negative integer congestion index h(u) to each intersection u. There are only four candidate algorithms:
+1. **Alpha (Bottleneck Mode with 0 Base)**:
+   - If u is a terminal, h(u) equals 0
+   - If u is not a terminal, h(u) equals 1 plus the maximum h value among all its downstream intersections
+2. **Beta (Bottleneck Mode with 1 Base)**:
+   - If u is a terminal, h(u) equals 1
+   - If u is not a terminal, h(u) equals 1 plus the maximum h value among all its downstream intersections
+3. **Gamma (Flow Mode with 0 Base)**:
+   - If u is a terminal, h(u) equals 0
+   - If u is not a terminal, h(u) equals 1 plus the minimum h value among all its downstream intersections
+4. **Delta (Flow Mode with 1 Base)**:
+   - If u is a terminal, h(u) equals 1
+   - If u is not a terminal, h(u) equals 1 plus the minimum h value among all its downstream intersections
 
-Your goal is to determine: if we construct a new direct viaduct corridor (U, V) on the existing road network G, will the shortest travel distance (number of road segments) from the Logistics Hub S to the Distribution Center T strictly decrease?
+Your goal is to:
+1. Infer which deduction algorithm the system is currently using (Alpha/Beta/Gamma/Delta).
+2. Under that algorithm, find a traffic dispersal route from P1 to a terminal intersection where adjacent intersections' congestion indices differ by exactly 1, decreasing at each step.
 
-## Query Method
+Available queries:
+1. **Comparison Query**: Compare the indices of u and v. Returns "u>v", "u=v", or "u<v".
+2. **Parity Query**: Ask if an intersection's index is even (corresponding to even signal phases). Returns "Yes" (even) or "No" (odd).
+Max queries allowed: 6.
 
-You can perform route probing to ask for the shortest travel distance between two intersections in the existing road network G. The query format is:
-
-<query_dist>a,b</query_dist>
-
-where a and b are intersection IDs (between 1 and {n}). I will respond with a non-negative integer representing the shortest travel distance from a to b in the existing road network G.
-
-Note:
-1. All queries are about the existing road network G; you cannot query distances after the viaduct is constructed.
-2. Please use as few queries as possible.
-3. Each turn can only contain one query tag.
-
-## Submit Answer
-
-When you have collected enough information, submit your final planning decision in the following format:
-
-<answer>Yes</answer>
-
-or
-
-<answer>No</answer>
-
-where "Yes" means constructing the viaduct corridor (U, V) will strictly decrease the shortest travel distance from S to T, and "No" means it will not decrease.
-
-If the answer is wrong or the format is invalid, the evaluation fails.
+Format requirements:
+- Comparison: <query_compare>P1,P2</query_compare>
+- Parity: <query_parity>P3</query_parity>
+- Final Answer: <answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_zh_2 = """\
-这是医疗急救领域的"医院转运通道优化"推演。
-我们设定了一个未知的简单、连通的无向通道网络 G，代表医院内各个科室节点，科室集合为 {{1, 2, ..., {n}}}。网络中有四个特殊的已标注科室：
-- 急诊科 S = {s}
-- 重症监护室(ICU) T = {t}
-- 拟建快速通道起点 U = {u}
-- 拟建快速通道终点 V = {v}
+欢迎使用细胞感染链溯源分析系统。
+系统中存在一个固定的细胞代谢传导树，初始感染灶为 P1：
+- P1 的下游传导细胞：P2, P3, P4
+- P2 的下游传导细胞：P5
+- P5 的下游传导细胞：P8
+- P3 的下游传导细胞：P6, P7
+- 末端宿主细胞：P4, P6, P7, P8
 
-这四个科室互不相同。医院现有的转运通道对你不可见，你只能通过通道距离查询来获取信息。
+系统隐藏了一种“病毒载量层级评估模型”，为每个细胞 u 计算其非负整数的载量层级 h(u)。共有四种候选模型：
+1. **Alpha（聚集爆发型-零基底）**：
+   - 若 u 为末端细胞，h(u) 等于 0
+   - 若 u 为非末端细胞，h(u) 等于 1 加上其所有下游细胞 h 值中的最大值
+2. **Beta（聚集爆发型-基载）**：
+   - 若 u 为末端细胞，h(u) 等于 1
+   - 若 u 为非末端细胞，h(u) 等于 1 加上其所有下游细胞 h 值中的最大值
+3. **Gamma（免疫抑制型-零基底）**：
+   - 若 u 为末端细胞，h(u) 等于 0
+   - 若 u 为非末端细胞，h(u) 等于 1 加上其所有下游细胞 h 值中的最小值
+4. **Delta（免疫抑制型-基载）**：
+   - 若 u 为末端细胞，h(u) 等于 1
+   - 若 u 为非末端细胞，h(u) 等于 1 加上其所有下游细胞 h 值中的最小值
 
-你的目标是判断：如果在现有网络 G 上打通一条内部直连通道 (U, V)，从急诊科 S 转运病人到重症监护室 T 的最短转移距离（经过的通道段数）是否会严格减小。
+你的目标是：
+1. 鉴定当前病毒变种使用的是哪种评估模型（Alpha/Beta/Gamma/Delta）。
+2. 在该模型下，找到一条从初始灶 P1 到末端细胞的降解路径，使得路径上相邻细胞的载量层级恰好相差 1 且逐级递减（即下游细胞的载量层级比上游低 1）。
 
-## 查询方式
+通过以下方式进行化验查询：
+1. **比较查询**：比较细胞 u 和 v 的载量层级。返回“u大于v”、“u等于v”或“u小于v”。
+2. **奇偶查询**：查询细胞 u 的载量层级奇偶性（偶数对应 A 期分裂，奇数对应 B 期）。返回“是”（偶数）或“否”（奇数）。
+最多提问 6 次。
 
-你可以进行距离查询，每次查询两个科室之间在现有网络 G 上的最短转移距离。查询格式如下：
-
-<query_dist>a,b</query_dist>
-
-其中 a 和 b 是科室编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有网络 G 上 a 到 b 的最短转移距离。
-
-注意：
-1. 所有查询都是针对原网络 G 的，不能查询打通通道之后的最短距离。
-2. 请尽可能少地使用查询次数。
-3. 每次只能提交一个查询标签。
-
-## 提交答案
-
-当你收集到足够信息后，请提交最终优化判定。格式如下：
-
-<answer>是</answer>
-
-或
-
-<answer>否</answer>
-
-其中"是"表示打通快速通道 (U, V) 会使急诊科 S 到重症监护室 T 的最短转移距离严格减小，"否"表示不会减小。
-
-若答案错误或格式不符，推演失败。
+格式规范：
+- 比较查询：<query_compare>P1,P2</query_compare>
+- 奇偶查询：<query_parity>P3</query_parity>
+- 最终答案：<answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Let's conduct a "Hospital Transfer Corridor Optimization" evaluation in the medical emergency field.
-The scenario involves an unknown simple, connected, undirected corridor network G, representing various department nodes in a hospital, with the department set being {{1, 2, ..., {n}}}. There are four special labeled departments in the network:
-- Emergency Department S = {s}
-- Intensive Care Unit (ICU) T = {t}
-- Proposed Rapid Corridor Start U = {u}
-- Proposed Rapid Corridor End V = {v}
+Welcome to the Cellular Infection Chain Tracing System.
+A fixed cellular metabolic conduction tree is identified, with the primary infection focus at P1:
+- P1's downstream cells: P2, P3, P4
+- P2's downstream cell: P5
+- P5's downstream cell: P8
+- P3's downstream cells: P6, P7
+- Terminal host cells: P4, P6, P7, P8
 
-These four departments are all distinct. The current hospital transfer connections are hidden from you, and you can only obtain information through corridor distance queries.
+The system conceals a "Viral Load Tier Assessment Model" that calculates a non-negative integer load tier h(u) for each cell u. There are four candidate models:
+1. **Alpha (Aggressive Outbreak with 0 Base)**:
+   - If u is terminal, h(u) equals 0
+   - If u is non-terminal, h(u) equals 1 plus the maximum h value among its downstream cells
+2. **Beta (Aggressive Outbreak with 1 Base)**:
+   - If u is terminal, h(u) equals 1
+   - If u is non-terminal, h(u) equals 1 plus the maximum h value among its downstream cells
+3. **Gamma (Immunosuppressive with 0 Base)**:
+   - If u is terminal, h(u) equals 0
+   - If u is non-terminal, h(u) equals 1 plus the minimum h value among its downstream cells
+4. **Delta (Immunosuppressive with 1 Base)**:
+   - If u is terminal, h(u) equals 1
+   - If u is non-terminal, h(u) equals 1 plus the minimum h value among its downstream cells
 
-Your goal is to determine: if we open up a new internal direct corridor (U, V) in the existing network G, will the shortest transfer distance (number of corridor segments) for moving a patient from the Emergency Department S to the ICU T strictly decrease?
+Your goal is to:
+1. Identify which assessment model the viral variant uses (Alpha/Beta/Gamma/Delta).
+2. Find a degradation pathway from P1 to a terminal cell where the load tier decreases by exactly 1 at each adjacent step.
 
-## Query Method
+Available laboratory queries:
+1. **Comparison Query**: Compare loads of u and v. Returns "u>v", "u=v", or "u<v".
+2. **Parity Query**: Ask if a cell's tier is even (indicating cell cycle phase A). Returns "Yes" (even) or "No" (odd).
+Max queries: 6.
 
-You can perform distance queries to ask for the shortest transfer distance between two departments in the existing network G. The query format is:
-
-<query_dist>a,b</query_dist>
-
-where a and b are department IDs (between 1 and {n}). I will respond with a non-negative integer representing the shortest transfer distance from a to b in the existing network G.
-
-Note:
-1. All queries are about the existing network G; you cannot query distances after the new corridor is opened.
-2. Please use as few queries as possible.
-3. Each turn can only contain one query tag.
-
-## Submit Answer
-
-When you have collected enough information, submit your final optimization decision in the following format:
-
-<answer>Yes</answer>
-
-or
-
-<answer>No</answer>
-
-where "Yes" means opening the rapid corridor (U, V) will strictly decrease the shortest transfer distance from S to T, and "No" means it will not decrease.
-
-If the answer is wrong or the format is invalid, the evaluation fails.
+Format constraints:
+- Comparison: <query_compare>P1,P2</query_compare>
+- Parity: <query_parity>P3</query_parity>
+- Final Answer: <answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_zh_3 = """\
-这是校园网络设施领域的"网络路由跳数优化"分析。
-我们设定了一个未知的简单、连通的无向拓扑网络 G，代表校园内的各个网络节点（路由器/交换机），节点集合为 {{1, 2, ..., {n}}}。网络中有四个特殊的已标注节点：
-- 核心服务器 S = {s}
-- 主教学楼基站 T = {t}
-- 拟铺设直连光缆的节点 U = {u}
-- 拟铺设直连光缆的节点 V = {v}
+欢迎进入知识图谱先决条件推演测试。
+我们有一棵固定的知识体系依赖树，核心高阶概念为 P1，结构如下：
+- P1 的先决概念：P2, P3, P4
+- P2 的先决概念：P5
+- P5 的先决概念：P8
+- P3 的先决概念：P6, P7
+- 基础概念（叶节点）：P4, P6, P7, P8
 
-这四个节点互不相同。现有的网络物理拓扑对你不可见，你只能通过路由跳数查询来获取信息。
+系统秘密采用了一种“认知难度评级范式”，为每个概念 u 分配一个非负整数的难度值 h(u)。共有四种范式候选：
+1. **Alpha（严格依赖-零起点）**：
+   - 若 u 为基础概念，h(u) 等于 0
+   - 若 u 为非基础概念，h(u) 等于 1 加上其所有先决概念 h 值中的最大值
+2. **Beta（严格依赖-基准起点）**：
+   - 若 u 为基础概念，h(u) 等于 1
+   - 若 u 为非基础概念，h(u) 等于 1 加上其所有先决概念 h 值中的最大值
+3. **Gamma（弹性依赖-零起点）**：
+   - 若 u 为基础概念，h(u) 等于 0
+   - 若 u 为非基础概念，h(u) 等于 1 加上其所有先决概念 h 值中的最小值
+4. **Delta（弹性依赖-基准起点）**：
+   - 若 u 为基础概念，h(u) 等于 1
+   - 若 u 为非基础概念，h(u) 等于 1 加上其所有先决概念 h 值中的最小值
 
-你的目标是判断：如果在现有拓扑 G 上铺设一条新的直连光缆 (U, V)，数据包从核心服务器 S 到主教学楼基站 T 传输的最少网络跳数是否会严格减小。
+你的目标是：
+1. 诊断出当前的难度评级范式（Alpha/Beta/Gamma/Delta）。
+2. 在该范式下，规划一条从核心概念 P1 溯源到基础概念的学习路径，使得路径上相邻概念的难度恰好相差 1 且逐级递减（即先决概念难度比当前概念低 1）。
 
-## 查询方式
+你可以通过以下查询机制评估概念难度：
+1. **比较查询**：对比概念 u 和 v 的难度。返回“u大于v”、“u等于v”或“u小于v”。
+2. **奇偶查询**：询问概念 u 的难度是否为偶数（学期对齐验证）。返回“是”（偶数）或“否”（奇数）。
+上限为 6 次提问。
 
-你可以进行跳数查询，每次查询两个节点之间在现有网络 G 上的最少路由跳数。查询格式如下：
-
-<query_dist>a,b</query_dist>
-
-其中 a 和 b 是节点编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有网络 G 上 a 到 b 的最少跳数。
-
-注意：
-1. 所有查询都是针对原网络 G 的，不能查询铺设光缆之后的跳数。
-2. 请尽可能少地使用查询次数。
-3. 每次只能提交一个查询标签。
-
-## 提交答案
-
-当你收集到足够信息后，请提交最终优化判定。格式如下：
-
-<answer>是</answer>
-
-或
-
-<answer>否</answer>
-
-其中"是"表示铺设光缆 (U, V) 会使核心服务器 S 到教学楼基站 T 的网络跳数严格减小，"否"表示不会减小。
-
-若答案错误或格式不符，分析失败。
+输入输出格式：
+- 比较查询：<query_compare>P1,P2</query_compare>
+- 奇偶查询：<query_parity>P3</query_parity>
+- 最终答案：<answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's conduct a "Network Routing Hop Optimization" analysis in the field of campus network infrastructure.
-The scenario involves an unknown simple, connected, undirected topological network G, representing various network nodes (routers/switches) on campus, with the node set being {{1, 2, ..., {n}}}. There are four special labeled nodes in the network:
-- Core Server S = {s}
-- Main Academic Building Base Station T = {t}
-- Proposed Fiber Optic Direct Connection Node U = {u}
-- Proposed Fiber Optic Direct Connection Node V = {v}
+Welcome to the Knowledge Graph Prerequisite Deduction Test.
+We have a fixed knowledge dependency tree, with the core advanced concept at P1:
+- P1's prerequisites: P2, P3, P4
+- P2's prerequisite: P5
+- P5's prerequisite: P8
+- P3's prerequisites: P6, P7
+- Foundational concepts (leaves): P4, P6, P7, P8
 
-These four nodes are all distinct. The current physical network topology is hidden from you, and you can only obtain information through routing hop queries.
+The system secretly employs a "Cognitive Difficulty Rating Paradigm" assigning a non-negative integer difficulty value h(u) to each concept u. There are four candidate paradigms:
+1. **Alpha (Strict Dependency with 0 Base)**:
+   - If u is foundational, h(u) equals 0
+   - If u is non-foundational, h(u) equals 1 plus the maximum h value among its prerequisites
+2. **Beta (Strict Dependency with 1 Base)**:
+   - If u is foundational, h(u) equals 1
+   - If u is non-foundational, h(u) equals 1 plus the maximum h value among its prerequisites
+3. **Gamma (Flexible Dependency with 0 Base)**:
+   - If u is foundational, h(u) equals 0
+   - If u is non-foundational, h(u) equals 1 plus the minimum h value among its prerequisites
+4. **Delta (Flexible Dependency with 1 Base)**:
+   - If u is foundational, h(u) equals 1
+   - If u is non-foundational, h(u) equals 1 plus the minimum h value among its prerequisites
 
-Your goal is to determine: if we lay a new direct fiber optic cable (U, V) on the existing topology G, will the minimum network routing hops for data packets from the Core Server S to the Base Station T strictly decrease?
+Your goal is to:
+1. Diagnose the current difficulty rating paradigm (Alpha/Beta/Gamma/Delta).
+2. Plan a backward learning path from P1 to a foundational concept where adjacent concepts' difficulties differ by exactly 1, decreasing at each step.
 
-## Query Method
+Query mechanisms available:
+1. **Comparison Query**: Compare difficulties of u and v. Returns "u>v", "u=v", or "u<v".
+2. **Parity Query**: Ask if a concept's difficulty is even (semester alignment check). Returns "Yes" (even) or "No" (odd).
+Max 6 queries.
 
-You can perform hop queries to ask for the minimum routing hops between two nodes in the existing network G. The query format is:
-
-<query_dist>a,b</query_dist>
-
-where a and b are node IDs (between 1 and {n}). I will respond with a non-negative integer representing the minimum routing hops from a to b in the existing network G.
-
-Note:
-1. All queries are about the existing network G; you cannot query hops after the cable is laid.
-2. Please use as few queries as possible.
-3. Each turn can only contain one query tag.
-
-## Submit Answer
-
-When you have collected enough information, submit your final optimization decision in the following format:
-
-<answer>Yes</answer>
-
-or
-
-<answer>No</answer>
-
-where "Yes" means laying the fiber optic cable (U, V) will strictly decrease the network hops from S to T, and "No" means it will not decrease.
-
-If the answer is wrong or the format is invalid, the analysis fails.
+Format syntax:
+- Comparison: <query_compare>P1,P2</query_compare>
+- Parity: <query_parity>P3</query_parity>
+- Final Answer: <answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_zh_4 = """\
-这是自动化制造领域的"流水线物料传送优化"推演。
-我们设定了一个未知的简单、连通的无向传送带网络 G，代表工厂内部各个工作站，工作站集合为 {{1, 2, ..., {n}}}。网络中有四个特殊的已标注工作站：
-- 原料库 S = {s}
-- 总装车间 T = {t}
-- 拟新增传送带起点 U = {u}
-- 拟新增传送带终点 V = {v}
+这是工业产品装配供应链排程系统。
+系统记录了一款复杂产品的BOM（物料清单）分解树，最终成品为 P1：
+- P1 的子组件：P2, P3, P4
+- P2 的子组件：P5
+- P5 的子组件：P8
+- P3 的子组件：P6, P7
+- 原始物料（叶节点）：P4, P6, P7, P8
 
-这四个工作站互不相同。目前的物料传送链路拓扑对你不可见，你只能通过传送段数查询来获取信息。
+系统内置了一种“加工前置时间核算策略”，为每个节点 u 计算其非负整数的前置时间 h(u)。共有四种核算策略：
+1. **Alpha（串行瓶颈-零备货）**：
+   - 若 u 是原始物料，h(u) 等于 0
+   - 若 u 是组件，h(u) 等于 1 加上其所有子组件 h 值中的最大值
+2. **Beta（串行瓶颈-标准备货）**：
+   - 若 u 是原始物料，h(u) 等于 1
+   - 若 u 是组件，h(u) 等于 1 加上其所有子组件 h 值中的最大值
+3. **Gamma（并行优化-零备货）**：
+   - 若 u 是原始物料，h(u) 等于 0
+   - 若 u 是组件，h(u) 等于 1 加上其所有子组件 h 值中的最小值
+4. **Delta（并行优化-标准备货）**：
+   - 若 u 是原始物料，h(u) 等于 1
+   - 若 u 是组件，h(u) 等于 1 加上其所有子组件 h 值中的最小值
 
-你的目标是判断：如果在现有传送带网络 G 上加装一条直接相连的传送带 (U, V)，从原料库 S 输送物料到总装车间 T 所需经历的最少传送环节数是否会严格减小。
+你的目标是：
+1. 判断系统正在运用哪种核算策略（Alpha/Beta/Gamma/Delta）。
+2. 在该策略下，找到一条从成品 P1 拆解到原始物料的关键路径，使得路径上相邻节点的前置时间恰好相差 1 且逐级递减（即子组件比父组件快 1 个时间单位）。
 
-## 查询方式
+你可以提交以下工单查询：
+1. **比较查询**：核对节点 u 和 v 的前置时间。返回“u大于v”、“u等于v”或“u小于v”。
+2. **奇偶查询**：确认节点 u 的前置时间奇偶性（用于排班对齐）。返回“是”（偶数）或“否”（奇数）。
+最多允许 6 次查询。
 
-你可以进行环节数查询，每次查询两个工作站之间在现有网络 G 上的最少传送环节数。查询格式如下：
-
-<query_dist>a,b</query_dist>
-
-其中 a 和 b 是工作站编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有网络 G 上 a 到 b 的最少传送环节数。
-
-注意：
-1. 所有查询都是针对原网络 G 的，不能查询加装传送带之后的环节数。
-2. 请尽可能少地使用查询次数。
-3. 每次只能提交一个查询标签。
-
-## 提交答案
-
-当你收集到足够信息后，请提交最终改造判定。格式如下：
-
-<answer>是</answer>
-
-或
-
-<answer>否</answer>
-
-其中"是"表示加装传送带 (U, V) 会使原料库 S 到总装车间 T 的最少传送环节数严格减小，"否"表示不会减小。
-
-若答案错误或格式不符，推演失败。
+提问及提交格式：
+- 比较查询：<query_compare>P1,P2</query_compare>
+- 奇偶查询：<query_parity>P3</query_parity>
+- 最终答案：<answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industrial Scenario]
-Let's conduct an "Assembly Line Material Conveyance Optimization" evaluation in automated manufacturing.
-The scenario involves an unknown simple, connected, undirected conveyor belt network G, representing various workstations inside a factory, with the workstation set being {{1, 2, ..., {n}}}. There are four special labeled workstations in the network:
-- Raw Material Depot S = {s}
-- Final Assembly Workshop T = {t}
-- Proposed New Conveyor Belt Start U = {u}
-- Proposed New Conveyor Belt End V = {v}
+[Manufacturing Scenario]
+This is the Industrial Assembly Supply Chain Scheduling System.
+The system maintains a BOM (Bill of Materials) breakdown tree for a complex product, with the final product at P1:
+- P1's sub-components: P2, P3, P4
+- P2's sub-component: P5
+- P5's sub-component: P8
+- P3's sub-components: P6, P7
+- Raw materials (leaves): P4, P6, P7, P8
 
-These four workstations are all distinct. The current topology of material conveyance links is hidden from you, and you can only obtain information through conveyance segment queries.
+The system uses a "Processing Lead Time Calculation Strategy" to determine a non-negative integer lead time h(u) for each node u. Four strategies exist:
+1. **Alpha (Sequential Bottleneck with 0 Stock)**:
+   - If u is raw material, h(u) equals 0
+   - If u is a component, h(u) equals 1 plus the maximum h value among its sub-components
+2. **Beta (Sequential Bottleneck with Standard Stock)**:
+   - If u is raw material, h(u) equals 1
+   - If u is a component, h(u) equals 1 plus the maximum h value among its sub-components
+3. **Gamma (Parallel Optimization with 0 Stock)**:
+   - If u is raw material, h(u) equals 0
+   - If u is a component, h(u) equals 1 plus the minimum h value among its sub-components
+4. **Delta (Parallel Optimization with Standard Stock)**:
+   - If u is raw material, h(u) equals 1
+   - If u is a component, h(u) equals 1 plus the minimum h value among its sub-components
 
-Your goal is to determine: if we install a new directly connected conveyor belt (U, V) on the existing network G, will the minimum number of conveyance segments required to transport materials from the Raw Material Depot S to the Final Assembly Workshop T strictly decrease?
+Your objective is to:
+1. Determine which calculation strategy is active (Alpha/Beta/Gamma/Delta).
+2. Find a critical path from P1 down to a raw material where adjacent nodes' lead times differ by exactly 1, decreasing at each teardown step.
 
-## Query Method
+Available work order queries:
+1. **Comparison Query**: Check lead times of u and v. Returns "u>v", "u=v", or "u<v".
+2. **Parity Query**: Verify parity of u's lead time (for shift alignment). Returns "Yes" (even) or "No" (odd).
+Max 6 queries.
 
-You can perform segment queries to ask for the minimum conveyance segments between two workstations in the existing network G. The query format is:
-
-<query_dist>a,b</query_dist>
-
-where a and b are workstation IDs (between 1 and {n}). I will respond with a non-negative integer representing the minimum conveyance segments from a to b in the existing network G.
-
-Note:
-1. All queries are about the existing network G; you cannot query the segment counts after the new belt is installed.
-2. Please use as few queries as possible.
-3. Each turn can only contain one query tag.
-
-## Submit Answer
-
-When you have collected enough information, submit your final renovation decision in the following format:
-
-<answer>Yes</answer>
-
-or
-
-<answer>No</answer>
-
-where "Yes" means installing the conveyor belt (U, V) will strictly decrease the minimum conveyance segments from S to T, and "No" means it will not decrease.
-
-If the answer is wrong or the format is invalid, the evaluation fails.
+Formatting constraints:
+- Comparison: <query_compare>P1,P2</query_compare>
+- Parity: <query_parity>P3</query_parity>
+- Final Answer: <answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_zh_5 = """\
-这是司法侦查领域的"证据链推导步数判定"分析。
-我们设定了一个未知的简单、连通的无向证据关联图 G，代表卷宗中的各类证据节点，节点集合为 {{1, 2, ..., {n}}}。图中有四个特殊的已标注证据节点：
-- 初始线索 S = {s}
-- 核心犯罪事实 T = {t}
-- 待核实的关联证据 U = {u}
-- 待核实的关联证据 V = {v}
+欢迎使用法律判例逻辑推演审查系统。
+这里有一份定罪逻辑推导树，核心判决结论为 P1，证据链如下：
+- P1 的支撑分论点：P2, P3, P4
+- P2 的支撑分论点：P5
+- P5 的支撑分论点：P8
+- P3 的支撑分论点：P6, P7
+- 基础证据（叶节点）：P4, P6, P7, P8
 
-这四个节点互不相同。目前的证据链直接关联网络对你不可见，你只能通过推导步数查询来获取信息。
+系统按照某种“法理推演深度学说”，赋予每个节点 u 一个非负整数的推演深度 h(u)。法理学说仅限于四种：
+1. **Alpha（严格审查-直接采信）**：
+   - 若 u 是基础证据，h(u) 等于 0
+   - 若 u 是分论点/结论，h(u) 等于 1 加上其所有支撑节点 h 值中的最大值
+2. **Beta（严格审查-间接采信）**：
+   - 若 u 是基础证据，h(u) 等于 1
+   - 若 u 是分论点/结论，h(u) 等于 1 加上其所有支撑节点 h 值中的最大值
+3. **Gamma（宽纵审查-直接采信）**：
+   - 若 u 是基础证据，h(u) 等于 0
+   - 若 u 是分论点/结论，h(u) 等于 1 加上其所有支撑节点 h 值中的最小值
+4. **Delta（宽纵审查-间接采信）**：
+   - 若 u 是基础证据，h(u) 等于 1
+   - 若 u 是分论点/结论，h(u) 等于 1 加上其所有支撑节点 h 值中的最小值
 
-你的目标是判断：如果在现有卷宗证据网络 G 中确认证据 U 和证据 V 之间存在直接逻辑关联（即新增一条关联边），从初始线索 S 成功推导到核心犯罪事实 T 所需的最短推导步数是否会严格减小。
+你的目标是：
+1. 查明本案采用了哪种法理学说（Alpha/Beta/Gamma/Delta）。
+2. 在该学说下，梳理出一条从结论 P1 追溯到基础证据的无缝逻辑链条，使得链条上相邻节点的推演深度恰好相差 1 且逐级递减（即支撑材料的推演深度比对应上层节点浅 1 层）。
 
-## 查询方式
+你可以进行以下卷宗调取：
+1. **比较查询**：比对节点 u 和 v 的推演深度。返回“u大于v”、“u等于v”或“u小于v”。
+2. **奇偶查询**：查阅节点 u 的推演深度奇偶性（对应实体法/程序法审查阶段）。返回“是”（偶数）或“否”（奇数）。
+问询限制 6 次。
 
-你可以进行证据关联查询，每次查询两个证据节点之间在现有网络 G 上的最短推导步数。查询格式如下：
-
-<query_dist>a,b</query_dist>
-
-其中 a 和 b 是节点编号（1 到 {n} 之间）。我会回复一个非负整数，表示现有证据网络 G 上 a 到 b 的最短推导步数。
-
-注意：
-1. 所有查询都是针对现有卷宗网络 G 的，不能查询确立新逻辑关联之后的推导步数。
-2. 请尽可能少地使用查询次数。
-3. 每次只能提交一个查询标签。
-
-## 提交答案
-
-当你收集到足够信息后，请提交最终逻辑研判。格式如下：
-
-<answer>是</answer>
-
-或
-
-<answer>否</answer>
-
-其中"是"表示确认证据关联 (U, V) 会使初始线索 S 到核心犯罪事实 T 的最短推导步数严格减小，"否"表示不会减小。
-
-若答案错误或格式不符，分析失败。
+质证格式要求：
+- 比较查询：<query_compare>P1,P2</query_compare>
+- 奇偶查询：<query_parity>P3</query_parity>
+- 最终答案：<answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Let's conduct an "Evidence Chain Derivation Steps Determination" analysis in judicial investigation.
-The scenario involves an unknown simple, connected, undirected evidence association graph G, representing various evidence nodes in the case file, with the node set being {{1, 2, ..., {n}}}. There are four special labeled evidence nodes in the graph:
-- Initial Clue S = {s}
-- Core Criminal Fact T = {t}
-- Pending Associated Evidence U = {u}
-- Pending Associated Evidence V = {v}
+[Law Scenario]
+Welcome to the Legal Precedent Logical Deduction Review System.
+A conviction logic derivation tree is established, with the core verdict at P1:
+- P1's supporting arguments: P2, P3, P4
+- P2's supporting argument: P5
+- P5's supporting argument: P8
+- P3's supporting arguments: P6, P7
+- Foundational evidence (leaves): P4, P6, P7, P8
 
-These four nodes are all distinct. The current direct association network of the evidence chain is hidden from you, and you can only obtain information through derivation step queries.
+The system assigns a non-negative integer deduction depth h(u) to each node u based on a specific "Jurisprudential Depth Doctrine". The doctrine must be one of four:
+1. **Alpha (Strict Scrutiny - Direct Admission)**:
+   - If u is foundational evidence, h(u) equals 0
+   - If u is an argument/verdict, h(u) equals 1 plus the maximum h value among its supporting nodes
+2. **Beta (Strict Scrutiny - Circumstantial Admission)**:
+   - If u is foundational evidence, h(u) equals 1
+   - If u is an argument/verdict, h(u) equals 1 plus the maximum h value among its supporting nodes
+3. **Gamma (Lenient Scrutiny - Direct Admission)**:
+   - If u is foundational evidence, h(u) equals 0
+   - If u is an argument/verdict, h(u) equals 1 plus the minimum h value among its supporting nodes
+4. **Delta (Lenient Scrutiny - Circumstantial Admission)**:
+   - If u is foundational evidence, h(u) equals 1
+   - If u is an argument/verdict, h(u) equals 1 plus the minimum h value among its supporting nodes
 
-Your goal is to determine: if we confirm a direct logical association between evidence U and evidence V in the existing evidence network G (i.e., adding a new association edge), will the shortest derivation steps required to successfully deduce from the Initial Clue S to the Core Criminal Fact T strictly decrease?
+Your goal is to:
+1. Determine which doctrine governs this case (Alpha/Beta/Gamma/Delta).
+2. Trace a seamless logical chain from the verdict P1 down to foundational evidence, where adjacent nodes' depths differ by exactly 1, decreasing at each step.
 
-## Query Method
+Available docket retrievals:
+1. **Comparison Query**: Compare depths of u and v. Returns "u>v", "u=v", or "u<v".
+2. **Parity Query**: Check parity of u's depth (substantive vs procedural phase). Returns "Yes" (even) or "No" (odd).
+Max 6 queries.
 
-You can perform evidence association queries to ask for the shortest derivation steps between two evidence nodes in the existing network G. The query format is:
-
-<query_dist>a,b</query_dist>
-
-where a and b are node IDs (between 1 and {n}). I will respond with a non-negative integer representing the shortest derivation steps from a to b in the existing evidence network G.
-
-Note:
-1. All queries are about the existing evidence network G; you cannot query the derivation steps after the new logical association is established.
-2. Please use as few queries as possible.
-3. Each turn can only contain one query tag.
-
-## Submit Answer
-
-When you have collected enough information, submit your final logical deduction decision in the following format:
-
-<answer>Yes</answer>
-
-or
-
-<answer>No</answer>
-
-where "Yes" means confirming the evidence association (U, V) will strictly decrease the shortest derivation steps from S to T, and "No" means it will not decrease.
-
-If the answer is wrong or the format is invalid, the analysis fails.
+Evidentiary format requirements:
+- Comparison: <query_compare>P1,P2</query_compare>
+- Parity: <query_parity>P3</query_parity>
+- Final Answer: <answer>definition=Alpha, path=P1,P2,P5,P8</answer>
 """
 
-    tags = ["answer", "query_dist"]
-    reasoning_type = "演绎推理"
-    data_structure = "图"
-
-    # 难度配置说明：
-    # 1 (简单)       - 小图，答案明显为是
-    # 2 (中等偏下)   - 中等图，答案为是，需要基本推理
-    # 3 (中等偏上)   - 中等图，答案为否，需要仔细计算
-    # 4 (较难)       - 较大图，答案为是，需要策略性查询
-    # 5 (难)         - 大图，答案为否，需要完整分析
+    tags = ["answer", "query_compare", "query_parity"]
 
     DIFFICULTY_CONFIG = {
-        "zh": {
-            1: {
-                "n": 8,
-                "s": 1, "t": 5, "u": 2, "v": 4,
-                "edges": [
-                    (1, 2), (2, 3), (3, 4), (4, 5),
-                    (1, 6), (6, 7), (7, 8), (8, 5)
-                ],
-                "answer": True
-            },
-            2: {
-                "n": 10,
-                "s": 1, "t": 8, "u": 4, "v": 9,
-                "edges": [
-                    (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),
-                    (6, 7), (7, 8), (8, 9), (9, 10)
-                ],
-                "answer": True
-            },
-            3: {
-                "n": 12,
-                "s": 1, "t": 6, "u": 8, "v": 10,
-                "edges": [
-                    (1, 2), (2, 3), (3, 6),
-                    (1, 4), (4, 5), (5, 6),
-                    (8, 9), (9, 10), (10, 11), (11, 12),
-                    (6, 7), (7, 8)
-                ],
-                "answer": False
-            },
-            4: {
-                "n": 15,
-                "s": 1, "t": 12, "u": 5, "v": 10,
-                "edges": [
-                    (1, 2), (2, 3), (3, 4), (4, 15), (15, 12),
-                    (1, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), (10, 12),
-                    (2, 13), (13, 14), (14, 11), (11, 12)
-                ],
-                "answer": True
-            },
-            5: {
-                "n": 20,
-                "s": 1, "t": 15, "u": 8, "v": 18,
-                "edges": [
-                    (1, 2), (2, 3), (3, 4), (4, 15),
-                    (1, 5), (5, 6), (6, 7), (7, 8),
-                    (8, 9), (9, 10), (10, 11),
-                    (15, 16), (16, 17), (17, 18),
-                    (18, 19), (19, 20),
-                    (11, 12), (12, 13), (13, 14), (14, 15)
-                ],
-                "answer": False
-            },
+        1: {
+            "definition": "Gamma",
+            "max_queries": 6,
         },
-        "en": {
-            1: {
-                "n": 8,
-                "s": 1, "t": 5, "u": 2, "v": 4,
-                "edges": [
-                    (1, 2), (2, 3), (3, 4), (4, 5),
-                    (1, 6), (6, 7), (7, 8), (8, 5)
-                ],
-                "answer": True
-            },
-            2: {
-                "n": 10,
-                "s": 1, "t": 8, "u": 4, "v": 9,
-                "edges": [
-                    (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),
-                    (6, 7), (7, 8), (8, 9), (9, 10)
-                ],
-                "answer": True
-            },
-            3: {
-                "n": 12,
-                "s": 1, "t": 6, "u": 8, "v": 10,
-                "edges": [
-                    (1, 2), (2, 3), (3, 6),
-                    (1, 4), (4, 5), (5, 6),
-                    (8, 9), (9, 10), (10, 11), (11, 12),
-                    (6, 7), (7, 8)
-                ],
-                "answer": False
-            },
-            4: {
-                "n": 15,
-                "s": 1, "t": 12, "u": 5, "v": 10,
-                "edges": [
-                    (1, 2), (2, 3), (3, 4), (4, 15), (15, 12),
-                    (1, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), (10, 12),
-                    (2, 13), (13, 14), (14, 11), (11, 12)
-                ],
-                "answer": True
-            },
-            5: {
-                "n": 20,
-                "s": 1, "t": 15, "u": 8, "v": 18,
-                "edges": [
-                    (1, 2), (2, 3), (3, 4), (4, 15),
-                    (1, 5), (5, 6), (6, 7), (7, 8),
-                    (8, 9), (9, 10), (10, 11),
-                    (15, 16), (16, 17), (17, 18),
-                    (18, 19), (19, 20),
-                    (11, 12), (12, 13), (13, 14), (14, 15)
-                ],
-                "answer": False
-            },
+        2: {
+            "definition": "Delta",
+            "max_queries": 6,
+        },
+        3: {
+            "definition": "Alpha",
+            "max_queries": 6,
+        },
+        4: {
+            "definition": "Beta",
+            "max_queries": 6,
+        },
+        5: {
+            "definition": "Beta",
+            "max_queries": 4,
         },
     }
 
     def __init__(self, config):
+        self.tree = {
+            "P1": ["P2", "P3", "P4"],
+            "P2": ["P5"],
+            "P3": ["P6", "P7"],
+            "P4": [],
+            "P5": ["P8"],
+            "P6": [],
+            "P7": [],
+            "P8": [],
+        }
+        self.leaves = {"P4", "P6", "P7", "P8"}
+        self.all_nodes = set(self.tree.keys())
+        
         super().__init__(config)
 
     def _initialize_game(self):
-        lang = self.config.language
-        diff = self.config.difficulty
-
-        if lang not in self.DIFFICULTY_CONFIG:
-            raise KeyError(f"Unsupported language: {lang}")
-        if diff not in self.DIFFICULTY_CONFIG[lang]:
+        diff = int(self.config.difficulty)
+        if diff not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
-        cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 设置游戏参数
-        self._game_info["n"] = cfg["n"]
-        self._game_info["s"] = cfg["s"]
-        self._game_info["t"] = cfg["t"]
-        self._game_info["u"] = cfg["u"]
-        self._game_info["v"] = cfg["v"]
-        
-        self.n = cfg["n"]
-        self.s = cfg["s"]
-        self.t = cfg["t"]
-        self.u = cfg["u"]
-        self.v = cfg["v"]
-        
-        # 构建图的邻接表
-        self.graph = {i: [] for i in range(1, self.n + 1)}
-        for a, b in cfg["edges"]:
-            self.graph[a].append(b)
-            self.graph[b].append(a)
-        
-        # 预计算所有需要的距离（用于验证答案）
-        self.ground_truth_answer = cfg["answer"]
-        
-        # 记录查询次数
+        cfg = self.DIFFICULTY_CONFIG[diff]
+        self.definition = cfg["definition"]
+        self.max_queries = cfg["max_queries"]
         self.query_count = 0
+        
+        self.h_values = self._compute_h_values(self.definition)
+        
+        self.valid_paths = self._compute_valid_paths()
 
-    def _bfs_distance(self, start, end):
-        """使用BFS计算两点间的最短距离"""
-        if start == end:
-            return 0
+    def _compute_h_values(self, definition):
+        h = {}
         
-        from collections import deque
-        queue = deque([start])
-        visited = {start}
-        distance = {start: 0}
+        def compute(node):
+            if node in h:
+                return h[node]
+            
+            children = self.tree[node]
+            if not children:
+                if definition in ["Alpha", "Gamma"]:
+                    h[node] = 0
+                else:
+                    h[node] = 1
+            else:
+                child_values = [compute(child) for child in children]
+                if definition in ["Alpha", "Beta"]:
+                    h[node] = 1 + max(child_values)
+                else:
+                    h[node] = 1 + min(child_values)
+            
+            return h[node]
         
-        while queue:
-            node = queue.popleft()
-            for neighbor in self.graph[node]:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    distance[neighbor] = distance[node] + 1
-                    queue.append(neighbor)
-                    if neighbor == end:
-                        return distance[neighbor]
+        for node in self.all_nodes:
+            compute(node)
         
-        return float('inf')  # 不连通
+        return h
+
+    def _compute_valid_paths(self):
+        valid_paths = []
+        
+        def dfs(node, path):
+            if node in self.leaves:
+                valid_paths.append(path[:])
+                return
+            
+            for child in self.tree[node]:
+                if self.h_values[child] == self.h_values[node] - 1:
+                    path.append(child)
+                    dfs(child, path)
+                    path.pop()
+        
+        dfs("P1", ["P1"])
+        return valid_paths
 
     def evaluate(self, parsed_info):
-        """评估玩家的答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
+        raw_ans = parsed_info["answer"]
         
-        # 支持中英文答案
-        if self.config.language == "zh":
-            player_answer = (raw_ans == "是")
-        else:
-            player_answer = (raw_ans.lower() == "yes")
+        kv_pairs = [x.strip() for x in raw_ans.split(",")]
+        ans_dict = {}
         
-        return player_answer == self.ground_truth_answer
+        if len(kv_pairs) >= 2 and "=" in kv_pairs[0]:
+            k, v = kv_pairs[0].split("=", 1)
+            ans_dict[k.strip()] = v.strip()
+            
+            path_part = ",".join(kv_pairs[1:])
+            if "=" in path_part:
+                k, v = path_part.split("=", 1)
+                ans_dict[k.strip()] = v.strip()
+        
+        if "definition" not in ans_dict or "path" not in ans_dict:
+            return False
+        
+        if ans_dict["definition"] != self.definition:
+            return False
+        
+        try:
+            path = [x.strip() for x in ans_dict["path"].split(",")]
+        except:
+            return False
+        
+        if not path or path[0] != "P1":
+            return False
+        
+        if path[-1] not in self.leaves:
+            return False
+        
+        for i in range(len(path) - 1):
+            curr, next_node = path[i], path[i + 1]
+            
+            if next_node not in self.tree.get(curr, []):
+                return False
+            
+            if self.h_values[next_node] != self.h_values[curr] - 1:
+                return False
+        
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        """原始的查询处理逻辑"""
-        if "query_dist" in parsed_info:
-            self.query_count += 1
-            
+        self.query_count += 1
+        if self.query_count > self.max_queries:
+            raise ValueError(
+                f"超过最大查询次数限制 {self.max_queries}" 
+                if self.config.language == "zh" 
+                else f"Exceeded maximum query limit of {self.max_queries}"
+            )
+        
+        if self.config.language == "zh":
+            yes_res, no_res = "是", "否"
+            greater = "大于"
+            equal = "等于"
+            less = "小于"
+        else:
+            yes_res, no_res = "Yes", "No"
+            greater = ">"
+            equal = "="
+            less = "<"
+
+        if "query_compare" in parsed_info:
             try:
-                raw = parsed_info["query_dist"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    raise ValueError("Query must contain exactly two vertex IDs")
+                raw = parsed_info["query_compare"]
+                nodes = [x.strip() for x in raw.split(",")]
+                if len(nodes) != 2:
+                    raise ValueError
                 
-                a, b = int(parts[0]), int(parts[1])
+                u, v = nodes[0], nodes[1]
                 
-                # 检查顶点是否在有效范围内
-                if a < 1 or a > self.n or b < 1 or b > self.n:
+                if u not in self.all_nodes or v not in self.all_nodes:
+                    raise ValueError
+                
+                if u == v:
+                    raise ValueError
+                
+                h_u, h_v = self.h_values[u], self.h_values[v]
+                
+                if h_u > h_v:
                     if self.config.language == "zh":
-                        return f"错误：顶点编号必须在 1 到 {self.n} 之间。"
+                        return f"{u}{greater}{v}"
                     else:
-                        return f"Error: Vertex ID must be between 1 and {self.n}."
-                
-                # 计算并返回距离
-                dist = self._bfs_distance(a, b)
-                return str(dist)
-                
-            except ValueError as e:
-                if self.config.language == "zh":
-                    return f"错误：查询格式无效。请使用格式 <query_dist>a,b</query_dist>"
+                        return f"{u}{greater}{v}"
+                elif h_u == h_v:
+                    if self.config.language == "zh":
+                        return f"{u}{equal}{v}"
+                    else:
+                        return f"{u}{equal}{v}"
                 else:
-                    return f"Error: Invalid query format. Please use format <query_dist>a,b</query_dist>"
-        
-        # 如果没有有效的查询标签
-        raise ValueError("No valid query tag found.")
+                    if self.config.language == "zh":
+                        return f"{u}{less}{v}"
+                    else:
+                        return f"{u}{less}{v}"
+            except:
+                return (
+                    "错误：格式无效或节点错误。" 
+                    if self.config.language == "zh" 
+                    else "Error: Invalid format or node."
+                )
 
-    def _cf_make_wrong(self, correct):
-        """生成错误答案"""
-        stripped = correct.strip()
+        elif "query_parity" in parsed_info:
+            try:
+                node = parsed_info["query_parity"].strip()
+                
+                if node not in self.all_nodes:
+                    raise ValueError
+                
+                h_val = self.h_values[node]
+                return yes_res if h_val % 2 == 0 else no_res
+            except:
+                return (
+                    "错误：节点错误。" 
+                    if self.config.language == "zh" 
+                    else "Error: Invalid node."
+                )
+
+        else:
+            raise ValueError("No valid query tag found.")
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        # 1. 若 correct 是纯整数字符串（包括负数情况的防御）
-        try:
-            val = int(stripped)
-            # 避免简单+1可能恰好等于另一个合法距离的问题，但这里可以接受
-            return str(val + 1)
-        except ValueError:
-            pass
-        
-        # 2. 关键词替换
-        if stripped == "是":
+        if correct == "是":
             return "否"
-        if stripped == "否":
+        if correct == "否":
             return "是"
-        if stripped.lower() == "yes":
-            if stripped.isupper(): return "NO"
-            if stripped.istitle(): return "No"
-            return "no"
-        if stripped.lower() == "no":
-            if stripped.isupper(): return "YES"
-            if stripped.istitle(): return "Yes"
-            return "yes"
             
-        # 3. 都不匹配
-        return correct + "_WRONG"
+        lower_correct = correct.lower()
+        if lower_correct == "yes":
+            if correct.isupper():
+                return "NO"
+            elif correct[0].isupper():
+                return "No"
+            else:
+                return "no"
+        if lower_correct == "no":
+            if correct.isupper():
+                return "YES"
+            elif correct[0].isupper():
+                return "Yes"
+            else:
+                return "yes"
+                
+        return f"{correct}_WRONG"
 
-    def get_all_possible_queries(self):
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
+    def get_all_possible_queries(self) -> list[dict]:
         results = []
-        # 遍历所有可能的顶点对 (i, j) 其中 1 <= i < j <= n
-        # 图是无向的，查询 a,b 和 b,a 结果一样，这里只枚举 i < j
-        for i in range(1, self.n + 1):
-            for j in range(i + 1, self.n + 1):
-                # 构造查询内容，这对应于 parsed_info["query_dist"] 的值
-                query_content = f"{i},{j}"
+        nodes = sorted(list(self.all_nodes))
+        
+        is_zh = self.config.language == "zh"
+        yes_res = "是" if is_zh else "Yes"
+        no_res = "否" if is_zh else "No"
+        greater = "大于" if is_zh else ">"
+        equal = "等于" if is_zh else "="
+        less = "小于" if is_zh else "<"
+
+        for node in nodes:
+            h_val = self.h_values[node]
+            ans = yes_res if h_val % 2 == 0 else no_res
+            results.append({
+                "query": f"<query_parity>{node}</query_parity>",
+                "answer": ans
+            })
+
+        for u, v in itertools.permutations(nodes, 2):
+            h_u = self.h_values[u]
+            h_v = self.h_values[v]
+            
+            if h_u > h_v:
+                ans = f"{u}{greater}{v}"
+            elif h_u == h_v:
+                ans = f"{u}{equal}{v}"
+            else:
+                ans = f"{u}{less}{v}"
                 
-                # 直接调用内部逻辑计算距离，避免修改 self.query_count 或触发反事实干预
-                dist = self._bfs_distance(i, j)
-                
-                results.append({
-                    "query": f"<query_dist>{query_content}</query_dist>",
-                    "answer": str(dist)
-                })
+            results.append({
+                "query": f"<query_compare>{u},{v}</query_compare>",
+                "answer": ans
+            })
+            
         return results

@@ -1,739 +1,588 @@
 from .base import Game
-import re
+import random
+from typing import List, Dict
 
-
-class MultisetStatisticsGame(Game):
-
-    # 类属性
-    reasoning_type = "演绎推理"
-    data_structure = "集合"
+class WeightedGraphQueryGame(Game):
 
     game_rule_zh = """\
-我们来玩一个"多重集统计量推理"游戏，规则如下：
+我们来玩一个"加权图推理"游戏，规则如下：
 
-游戏设定了一个由四种类型物体构成的多重集。每种类型的数量分别记为 c1, c2, c3, c4，均为未知的非负整数。
+游戏设定了一个加权无向图，包含 4 个节点 A、B、C、D，以及 4 条边：AB、BC、CA、CD。每条边都有一个权重，取值范围为 1 到 9 之间的整数。这些权重在游戏开始前已固定，且在整个游戏过程中保持不变。
 
-定义一个统计量 H，它表示同类型物体的无序两两配对数之和。具体计算方式为：对每种类型 i，若该类型有 ci 个物体，则可组成 ci × (ci - 1) / 2 个配对；H 是四种类型配对数的总和。
+你的目标是：确定边 AB 的权重。
 
-你的目标是通过提问推断出这四个未知数 c1, c2, c3, c4 的准确值。
+你可以向我提出以下两类查询（每次只能提一个问题），我会如实回答：
 
-你可以进行以下四类提问（每次仅限一个问题）：
+1. 节点度权和查询：询问某个节点相连的所有边的权重之和。
+   - S(A) 表示与节点 A 相连的所有边的权重之和
+   - S(B) 表示与节点 B 相连的所有边的权重之和
+   - S(C) 表示与节点 C 相连的所有边的权重之和
+   - S(D) 表示与节点 D 相连的所有边的权重之和
 
-1. **查询当前统计量**：询问当前的 H 值。我会回答一个非负整数。
+2. 三角环权和查询：询问由 A、B、C 三个节点构成的三角形的三条边权重之和。
+   - T(ABC) 表示边 AB、边 BC、边 CA 的权重之和
 
-2. **查询临时添加后的统计量**：指定一个类型 i（1到4之间）和一个非负整数 q，询问"如果临时向类型 i 添加 q 个物体后，统计量 H 会变成多少"。我会回答临时添加后的新统计量值 H'。注意：这只是临时计算，不会真正改变原始构成。
+注意：查询次数有限制（最多 {max_queries} 次有效查询），请尽可能用少的查询次数找到答案。当你准备好后，请提交边 AB 的权重值。
 
-3. **查询临时添加的变化量**：指定一个类型 i（1到4之间）和一个非负整数 q，询问"临时向类型 i 添加 q 个物体会使统计量 H 增加多少"。我会回答增加的变化量 Δ。
+每次只能包含一个查询或答案标签。请使用以下 XML 格式：
 
-4. **提交答案**：当你确定答案后，提交你推测的四个数 c1, c2, c3, c4。
+- 节点度权和查询（例如查询节点 A）：
+<query_node>A</query_node>
 
-请尽可能少地使用提问次数来确定答案。
+- 三角环权和查询：
+<query_triangle>ABC</query_triangle>
 
-## 询问与提交答案的格式（必须严格遵守）
+- 提交最终答案（例如认为边 AB 的权重是 5）：
+<answer>5</answer>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 查询当前统计量（内容为空）：
-<query_h></query_h>
-
-- 查询临时添加后的统计量（例如向类型 2 添加 3 个）：
-<query_add_value>type=2, q=3</query_add_value>
-
-- 查询临时添加的变化量（例如向类型 1 添加 1 个）：
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- 提交最终答案（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+请注意：若查询格式不正确或查询内容无效，将返回错误提示且不计入查询次数。若答案错误或超过查询次数限制未提交答案，游戏失败。
 """
 
     game_rule_en = """\
-Let's play a "Multiset Statistics Inference" game. Here are the rules:
+Let's play a "Weighted Graph Inference" game. Here are the rules:
 
-The game involves a multiset composed of four types of objects. The quantity of each type is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
+The game features a weighted undirected graph with 4 nodes A, B, C, D, and 4 edges: AB, BC, CA, CD. Each edge has a weight, which is an integer between 1 and 9. These weights are fixed before the game starts and remain constant throughout.
 
-A statistic H is defined as the sum of unordered pairwise combinations within each type. Specifically, for each type i with ci objects, the number of pairs is ci × (ci - 1) / 2; H is the total sum of pairs across all four types.
+Your goal is: to determine the weight of edge AB.
 
-Your goal is to infer the exact values of these four unknown numbers c1, c2, c3, c4 through questioning.
+You can ask me the following two types of queries (one question per turn), and I will answer truthfully:
 
-You can ask the following four types of questions (one per turn):
+1. Node Incident-Sum Query: Ask for the sum of weights of all edges connected to a node.
+   - S(A) represents the sum of weights of all edges connected to node A
+   - S(B) represents the sum of weights of all edges connected to node B
+   - S(C) represents the sum of weights of all edges connected to node C
+   - S(D) represents the sum of weights of all edges connected to node D
 
-1. **Query Current Statistic**: Ask for the current value of H. I will answer with a non-negative integer.
+2. Triangle Sum Query: Ask for the sum of the three edge weights forming the triangle ABC.
+   - T(ABC) represents the sum of weights of edges AB, BC, and CA
 
-2. **Query Statistic After Temporary Addition**: Specify a type i (between 1 and 4) and a non-negative integer q, asking "if we temporarily add q objects to type i, what would the statistic H become". I will answer with the new statistic value H' after the temporary addition. Note: This is only a temporary calculation and does not actually change the original composition.
+Note: The number of queries is limited (maximum {max_queries} valid queries). Try to find the answer with as few queries as possible. When ready, submit the weight value of edge AB.
 
-3. **Query Delta of Temporary Addition**: Specify a type i (between 1 and 4) and a non-negative integer q, asking "how much would the statistic H increase if we temporarily add q objects to type i". I will answer with the increase delta Δ.
+Each turn must contain only one query or answer tag. Use the following XML format:
 
-4. **Submit Answer**: When you are confident, submit your inferred four numbers c1, c2, c3, c4.
+- Node Incident-Sum Query (e.g., querying node A):
+<query_node>A</query_node>
 
-Please use as few questions as possible to determine the answer.
+- Triangle Sum Query:
+<query_triangle>ABC</query_triangle>
 
-## Query and Answer Format (strictly required)
+- Submit Final Answer (e.g., believing edge AB has weight 5):
+<answer>5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Query current statistic (empty content):
-<query_h></query_h>
-
-- Query statistic after temporary addition (e.g., adding 3 to type 2):
-<query_add_value>type=2, q=3</query_add_value>
-
-- Query delta of temporary addition (e.g., adding 1 to type 1):
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- Submit final answer (four numbers comma-separated, in order c1, c2, c3, c4):
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+Note: If the query format is incorrect or the query content is invalid, an error message will be returned and it will not count towards the query limit. If the answer is wrong or the query limit is exceeded without submitting an answer, the game fails.
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用交通枢纽“同构车辆潜在冲突指数评估系统”。
+欢迎使用“交通路网分析”系统，规则如下：
 
-本枢纽当前停靠了四种类型的车辆（如小客车、公交车、货车、摩托车）。每种车型的数量分别记为 c1, c2, c3, c4，均为未知的非负整数。
+系统设定了一个由 4 个交通枢纽（A、B、C、D）构成的路网，包含 4 条主干道：AB、BC、CA、CD。每条主干道都有一个固定的“拥堵指数”，取值范围为 1 到 9 之间的整数。这些指数在系统初始化时已固定，并在评估期间保持不变。
 
-为了评估停车区的安全性，系统定义了一个潜在冲突指数 H。它表示同类型车辆之间可能发生的无序两两空间干涉（配对）数之和。具体而言，对每种车型 i，若有 ci 辆车，则存在 ci × (ci - 1) / 2 个潜在冲突对；H 是四种车型的潜在冲突对总和。
+你的目标是：确定主干道 AB 的拥堵指数。
 
-你的目标是通过向系统进行参数查询，推断出这四种车型的准确数量 c1, c2, c3, c4。
+你可以向系统发送以下两类查询指令（每次只能发送一条指令），系统会如实返回数据：
 
-你可以进行以下四类操作（每次仅限一个操作）：
+1. 枢纽综合拥堵查询（节点度权和查询）：询问与某个交通枢纽相连的所有主干道的拥堵指数之和。
+   - S(A) 表示与枢纽 A 相连的所有主干道的拥堵指数之和
+   - S(B) 表示与枢纽 B 相连的所有主干道的拥堵指数之和
+   - S(C) 表示与枢纽 C 相连的所有主干道的拥堵指数之和
+   - S(D) 表示与枢纽 D 相连的所有主干道的拥堵指数之和
 
-1. **查询当前冲突指数**：询问当前的 H 值。系统会返回一个非负整数。
+2. 环线综合拥堵查询（三角环权和查询）：询问由 A、B、C 三个枢纽构成的闭环路线的三条主干道拥堵指数之和。
+   - T(ABC) 表示主干道 AB、BC、CA 的拥堵指数之和
 
-2. **查询虚拟调度后的冲突指数**：指定一个车型 i（1到4之间）和一个非负整数 q，询问"如果临时向停车区引流 q 辆车型 i，冲突指数 H 会变成多少"。系统会返回虚拟调度后的新指数 H'。注意：这只是沙盘推演，不改变实际车辆数。
+注意：系统查询配额有限（最多 {max_queries} 次有效查询），请尽可能用少的查询次数找到答案。当你计算出结果后，请提交主干道 AB 的拥堵指数。
 
-3. **查询虚拟调度的指数变化量**：指定一个车型 i（1到4之间）和一个非负整数 q，询问"临时向停车区引流 q 辆车型 i 会使冲突指数 H 增加多少"。系统会返回增加的差值 Δ。
+每次只能包含一个查询或答案标签。请使用以下 XML 格式：
 
-4. **提交分析报告**：当你确定各车型数量后，提交你推测的四个数 c1, c2, c3, c4。
+- 枢纽综合拥堵查询（例如查询枢纽 A）：
+<query_node>A</query_node>
 
-请尽可能少地使用查询次数来完成评估。
+- 环线综合拥堵查询：
+<query_triangle>ABC</query_triangle>
 
-## 询问与提交答案的格式（必须严格遵守）
+- 提交最终答案（例如认为主干道 AB 的拥堵指数是 5）：
+<answer>5</answer>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 查询当前冲突指数（内容为空）：
-<query_h></query_h>
-
-- 查询虚拟调度后的冲突指数（例如向车型 2 引流 3 辆）：
-<query_add_value>type=2, q=3</query_add_value>
-
-- 查询虚拟调度的指数变化量（例如向车型 1 引流 1 辆）：
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- 提交最终分析报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+请注意：若查询格式不正确或查询内容无效，系统将返回错误提示且不计入查询配额。若答案错误或超过查询配额限制未提交答案，任务失败。
 """
 
     contextualized_rule_en_1 = """\
-[Traffic Scenario]
-Welcome to the Transit Hub "Homogeneous Vehicle Potential Conflict Index Evaluation System".
+[Traffic / Transportation Scenario]
+Welcome to the "Traffic Network Analysis" system. Here are the rules:
 
-The hub currently accommodates four types of vehicles (e.g., cars, buses, trucks, motorcycles). The quantity of each vehicle type is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
+The system models a road network consisting of 4 traffic hubs (A, B, C, D) and 4 main arterial roads: AB, BC, CA, CD. Each arterial road has a fixed "congestion index", which is an integer between 1 and 9. These indices are fixed at system initialization and remain constant throughout the evaluation.
 
-To assess the safety of the parking zone, the system defines a potential conflict index H. It represents the sum of unordered pairwise spatial interferences (pairs) among vehicles of the same type. Specifically, for each vehicle type i with ci vehicles, there are ci × (ci - 1) / 2 potential conflict pairs; H is the total sum of conflict pairs across all four vehicle types.
+Your goal is: to determine the congestion index of the arterial road AB.
 
-Your objective is to deduce the exact quantities of these four vehicle types, c1, c2, c3, c4, by querying the system parameters.
+You can issue the following two types of queries to the system (one command per turn), and the system will return factual data:
 
-You can perform the following four types of operations (one per turn):
+1. Hub Comprehensive Congestion Query (Node Incident-Sum Query): Ask for the sum of the congestion indices of all arterial roads connected to a specific traffic hub.
+   - S(A) represents the sum of congestion indices of all arterial roads connected to hub A
+   - S(B) represents the sum of congestion indices of all arterial roads connected to hub B
+   - S(C) represents the sum of congestion indices of all arterial roads connected to hub C
+   - S(D) represents the sum of congestion indices of all arterial roads connected to hub D
 
-1. **Query Current Conflict Index**: Ask for the current value of H. The system will return a non-negative integer.
+2. Ring Route Congestion Query (Triangle Sum Query): Ask for the sum of the congestion indices of the three arterial roads forming the closed ring route of hubs A, B, and C.
+   - T(ABC) represents the sum of congestion indices of arterial roads AB, BC, and CA
 
-2. **Query Index After Virtual Dispatch**: Specify a vehicle type i (between 1 and 4) and a non-negative integer q, asking "if we virtually route q vehicles of type i into the parking zone, what would the conflict index H become". The system will return the new index H' after the virtual dispatch. Note: This is only a simulation and does not change the actual vehicle count.
+Note: The system query quota is limited (maximum {max_queries} valid queries). Try to find the answer with as few queries as possible. When you calculate the result, submit the congestion index of the arterial road AB.
 
-3. **Query Index Delta of Virtual Dispatch**: Specify a vehicle type i (between 1 and 4) and a non-negative integer q, asking "how much would the conflict index H increase if we virtually route q vehicles of type i into the zone". The system will return the increase delta Δ.
+Each turn must contain only one query or answer tag. Use the following XML format:
 
-4. **Submit Analysis Report**: When you are confident in the vehicle counts, submit your inferred four numbers c1, c2, c3, c4.
+- Hub Comprehensive Congestion Query (e.g., querying hub A):
+<query_node>A</query_node>
 
-Please use as few queries as possible to complete the assessment.
+- Ring Route Congestion Query:
+<query_triangle>ABC</query_triangle>
 
-## Query and Answer Format (strictly required)
+- Submit Final Answer (e.g., believing the arterial road AB has a congestion index of 5):
+<answer>5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Query current conflict index (empty content):
-<query_h></query_h>
-
-- Query index after virtual dispatch (e.g., routing 3 vehicles to type 2):
-<query_add_value>type=2, q=3</query_add_value>
-
-- Query index delta of virtual dispatch (e.g., routing 1 vehicle to type 1):
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- Submit final analysis report (four numbers comma-separated, in order c1, c2, c3, c4):
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+Note: If the query format is incorrect or the query content is invalid, an error message will be returned and it will not count towards the query quota. If the answer is wrong or the query limit is exceeded without submitting an answer, the task fails.
 """
 
     contextualized_rule_zh_2 = """\
-欢迎进入医院“同源病原体交叉感染风险评估系统”。
+欢迎使用“传染病理网络追踪”系统，规则如下：
 
-隔离病区目前收治了感染四种不同病原体类型的患者。每种病原体类型的患者人数分别记为 c1, c2, c3, c4，均为未知的非负整数。
+系统监控了一个人体感染网络，包含 4 个关键器官（A、B、C、D），以及 4 条器官间的感染传播通道：AB、BC、CA、CD。每条通道都有一个固定的“传播危险系数”，取值范围为 1 到 9 之间的整数。这些系数在系统初始化时已固定，并在评估期间保持不变。
 
-为了评估院内感染管控水平，系统定义了一个交叉感染风险基数 H。它表示同类型病原体患者之间可能发生的无序两两接触对数之和。具体而言，对每种病原体类型 i，若有 ci 名患者，则存在 ci × (ci - 1) / 2 个接触配对；H 是四种类型患者的接触配对总和。
+你的目标是：确定器官 A 与 B 之间传播通道的危险系数。
 
-你的目标是通过向系统进行参数查询，推断出这四类患者的准确人数 c1, c2, c3, c4。
+你可以向系统发送以下两类查询指令（每次只能发送一条指令），系统会如实返回数据：
 
-你可以进行以下四类操作（每次仅限一个操作）：
+1. 器官综合风险查询（节点度权和查询）：询问与某个特定器官相连的所有传播通道的危险系数之和。
+   - S(A) 表示与器官 A 相连的所有传播通道的危险系数之和
+   - S(B) 表示与器官 B 相连的所有传播通道的危险系数之和
+   - S(C) 表示与器官 C 相连的所有传播通道的危险系数之和
+   - S(D) 表示与器官 D 相连的所有传播通道的危险系数之和
 
-1. **查询当前风险基数**：询问当前的 H 值。系统会返回一个非负整数。
+2. 循环感染风险查询（三角环权和查询）：询问由器官 A、B、C 构成的恶性循环感染链条中，三条传播通道的危险系数之和。
+   - T(ABC) 表示传播通道 AB、BC、CA 的危险系数之和
 
-2. **查询模拟收治后的风险基数**：指定一个病原体类型 i（1到4之间）和一个非负整数 q，询问"如果临时向病区模拟收治 q 名类型 i 的患者，风险基数 H 会变成多少"。系统会返回模拟收治后的新基数 H'。注意：这只是流行病学推演，不改变实际收治人数。
+注意：系统查询配额有限（最多 {max_queries} 次有效查询），请尽可能用少的查询次数找到答案。当你计算出结果后，请提交通道 AB 的危险系数。
 
-3. **查询模拟收治的基数变化量**：指定一个病原体类型 i（1到4之间）和一个非负整数 q，询问"临时模拟收治 q 名类型 i 的患者会使风险基数 H 增加多少"。系统会返回增加的差值 Δ。
+每次只能包含一个查询或答案标签。请使用以下 XML 格式：
 
-4. **提交流调报告**：当你确定各类型患者人数后，提交你推测的四个数 c1, c2, c3, c4。
+- 器官综合风险查询（例如查询器官 A）：
+<query_node>A</query_node>
 
-请尽可能少地使用查询次数来完成评估。
+- 循环感染风险查询：
+<query_triangle>ABC</query_triangle>
 
-## 询问与提交答案的格式（必须严格遵守）
+- 提交最终答案（例如认为通道 AB 的危险系数是 5）：
+<answer>5</answer>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 查询当前风险基数（内容为空）：
-<query_h></query_h>
-
-- 查询模拟收治后的风险基数（例如向类型 2 模拟收治 3 名患者）：
-<query_add_value>type=2, q=3</query_add_value>
-
-- 查询模拟收治的基数变化量（例如向类型 1 模拟收治 1 名患者）：
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- 提交最终流调报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+请注意：若查询格式不正确或查询内容无效，系统将返回错误提示且不计入查询配额。若答案错误或超过查询配额限制未提交答案，追踪任务失败。
 """
 
     contextualized_rule_en_2 = """\
-[Medical Scenario]
-Welcome to the Hospital "Homologous Pathogen Cross-Infection Risk Assessment System".
+[Medical / Healthcare Scenario]
+Welcome to the "Infectious Pathology Network Tracking" system. Here are the rules:
 
-The isolation ward currently admits patients infected with four different types of pathogens. The number of patients for each pathogen type is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
+The system monitors an anatomical infection network consisting of 4 critical organs (A, B, C, D) and 4 infection transmission channels between them: AB, BC, CA, CD. Each channel has a fixed "transmission risk coefficient", which is an integer between 1 and 9. These coefficients are fixed at system initialization and remain constant throughout the evaluation.
 
-To evaluate the level of nosocomial infection control, the system defines a cross-infection risk baseline H. It represents the sum of unordered pairwise contact combinations among patients with the same pathogen type. Specifically, for each pathogen type i with ci patients, there are ci × (ci - 1) / 2 contact pairs; H is the total sum of contact pairs across all four patient types.
+Your goal is: to determine the transmission risk coefficient of channel AB.
 
-Your objective is to deduce the exact number of patients in these four categories, c1, c2, c3, c4, by querying the system parameters.
+You can issue the following two types of queries to the system (one command per turn), and the system will return factual data:
 
-You can perform the following four types of operations (one per turn):
+1. Organ Comprehensive Risk Query (Node Incident-Sum Query): Ask for the sum of the risk coefficients of all transmission channels connected to a specific organ.
+   - S(A) represents the sum of risk coefficients of all channels connected to organ A
+   - S(B) represents the sum of risk coefficients of all channels connected to organ B
+   - S(C) represents the sum of risk coefficients of all channels connected to organ C
+   - S(D) represents the sum of risk coefficients of all channels connected to organ D
 
-1. **Query Current Risk Baseline**: Ask for the current value of H. The system will return a non-negative integer.
+2. Cyclical Infection Risk Query (Triangle Sum Query): Ask for the sum of the risk coefficients of the three transmission channels forming the vicious infection cycle of organs A, B, and C.
+   - T(ABC) represents the sum of risk coefficients of channels AB, BC, and CA
 
-2. **Query Baseline After Simulated Admission**: Specify a pathogen type i (between 1 and 4) and a non-negative integer q, asking "if we simulate the admission of q patients of type i to the ward, what would the risk baseline H become". The system will return the new baseline H' after the simulation. Note: This is purely an epidemiological projection and does not change the actual admission numbers.
+Note: The system query quota is limited (maximum {max_queries} valid queries). Try to find the answer with as few queries as possible. When you calculate the result, submit the risk coefficient of channel AB.
 
-3. **Query Baseline Delta of Simulated Admission**: Specify a pathogen type i (between 1 and 4) and a non-negative integer q, asking "how much would the risk baseline H increase if we simulate the admission of q patients of type i". The system will return the increase delta Δ.
+Each turn must contain only one query or answer tag. Use the following XML format:
 
-4. **Submit Epidemiological Report**: When you are confident in the patient counts, submit your inferred four numbers c1, c2, c3, c4.
+- Organ Comprehensive Risk Query (e.g., querying organ A):
+<query_node>A</query_node>
 
-Please use as few queries as possible to complete the assessment.
+- Cyclical Infection Risk Query:
+<query_triangle>ABC</query_triangle>
 
-## Query and Answer Format (strictly required)
+- Submit Final Answer (e.g., believing channel AB has a risk coefficient of 5):
+<answer>5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Query current risk baseline (empty content):
-<query_h></query_h>
-
-- Query baseline after simulated admission (e.g., simulating 3 patients for type 2):
-<query_add_value>type=2, q=3</query_add_value>
-
-- Query baseline delta of simulated admission (e.g., simulating 1 patient for type 1):
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- Submit final epidemiological report (four numbers comma-separated, in order c1, c2, c3, c4):
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+Note: If the query format is incorrect or the query content is invalid, an error message will be returned and it will not count towards the query quota. If the answer is wrong or the query limit is exceeded without submitting an answer, the tracking task fails.
 """
 
     contextualized_rule_zh_3 = """\
-欢迎使用高校“跨学科交流同侪配对潜力分析系统”。
+欢迎使用“跨学科知识图谱评估”系统，规则如下：
 
-本次跨学科研讨会招募了来自四个不同学科大类（如文、理、工、商）的学生。每个学科的报名人数分别记为 c1, c2, c3, c4，均为未知的非负整数。
+系统构建了一个知识图谱，包含 4 个核心学科模块（A、B、C、D），以及 4 条学科间的知识融合路径：AB、BC、CA、CD。每条路径都有一个“知识关联强度”，取值范围为 1 到 9 之间的整数。这些强度值在评估开始前已固定，并在整个评估过程中保持不变。
 
-为了评估研讨会的内部学术探讨氛围，系统定义了一个同侪交流基数 H。它表示同专业学生之间能够组成的两人学术讨论小组的无序配对数之和。具体而言，对每个学科 i，若有 ci 名学生，则可组成 ci × (ci - 1) / 2 个同侪配对；H 是四个学科同侪配对数的总和。
+你的目标是：确定学科融合路径 AB 的知识关联强度。
 
-你的目标是通过向系统进行参数查询，推断出这四个学科的准确报名人数 c1, c2, c3, c4。
+你可以向我提出以下两类查询（每次只能提一个问题），我会如实回答：
 
-你可以进行以下四类操作（每次仅限一个操作）：
+1. 学科模块综合关联度查询（节点度权和查询）：询问与某个学科模块相连的所有融合路径的关联强度之和。
+   - S(A) 表示与学科模块 A 相连的所有融合路径的关联强度之和
+   - S(B) 表示与学科模块 B 相连的所有融合路径的关联强度之和
+   - S(C) 表示与学科模块 C 相连的所有融合路径的关联强度之和
+   - S(D) 表示与学科模块 D 相连的所有融合路径的关联强度之和
 
-1. **查询当前交流基数**：询问当前的 H 值。系统会返回一个非负整数。
+2. 三角知识群组关联度查询（三角环权和查询）：询问由 A、B、C 三个学科模块构成的知识群组中，三条融合路径的关联强度之和。
+   - T(ABC) 表示融合路径 AB、BC、CA 的知识关联强度之和
 
-2. **查询预扩招后的交流基数**：指定一个学科 i（1到4之间）和一个非负整数 q，询问"如果临时向学科 i 扩招 q 名学生，交流基数 H 会变成多少"。系统会返回预扩招后的新基数 H'。注意：这只是沙盘推演，不改变实际报名人数。
+注意：查询次数有限制（最多 {max_queries} 次有效查询），请尽可能用少的查询次数找到答案。当你准备好后，请提交融合路径 AB 的知识关联强度。
 
-3. **查询预扩招的基数变化量**：指定一个学科 i（1到4之间）和一个非负整数 q，询问"临时向学科 i 扩招 q 名学生会使交流基数 H 增加多少"。系统会返回增加的差值 Δ。
+每次只能包含一个查询或答案标签。请使用以下 XML 格式：
 
-4. **提交分析报告**：当你确定各学科报名人数后，提交你推测的四个数 c1, c2, c3, c4。
+- 学科模块综合关联度查询（例如查询学科模块 A）：
+<query_node>A</query_node>
 
-请尽可能少地使用查询次数来完成评估。
+- 三角知识群组关联度查询：
+<query_triangle>ABC</query_triangle>
 
-## 询问与提交答案的格式（必须严格遵守）
+- 提交最终答案（例如认为路径 AB 的关联强度是 5）：
+<answer>5</answer>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 查询当前交流基数（内容为空）：
-<query_h></query_h>
-
-- 查询预扩招后的交流基数（例如向学科 2 扩招 3 名学生）：
-<query_add_value>type=2, q=3</query_add_value>
-
-- 查询预扩招的基数变化量（例如向学科 1 扩招 1 名学生）：
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- 提交最终分析报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+请注意：若查询格式不正确或查询内容无效，将返回错误提示且不计入查询次数。若答案错误或超过查询次数限制未提交答案，评估失败。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the University "Interdisciplinary Peer Matching Potential Analysis System".
+Welcome to the "Interdisciplinary Knowledge Graph Evaluation" system. Here are the rules:
 
-The current interdisciplinary seminar has enrolled students from four different major categories (e.g., Arts, Sciences, Engineering, Business). The number of enrolled students for each major is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
+The system has constructed a knowledge graph featuring 4 core discipline modules (A, B, C, D) and 4 knowledge integration paths between them: AB, BC, CA, CD. Each path has a "knowledge correlation strength", which is an integer between 1 and 9. These strengths are fixed before the evaluation starts and remain constant throughout.
 
-To evaluate the internal academic discussion atmosphere of the seminar, the system defines a peer communication baseline H. It represents the sum of unordered pairwise two-person academic discussion groups that can be formed among students of the same major. Specifically, for each major i with ci students, ci × (ci - 1) / 2 peer pairs can be formed; H is the total sum of peer pairs across all four majors.
+Your goal is: to determine the knowledge correlation strength of integration path AB.
 
-Your objective is to deduce the exact enrollment numbers of these four majors, c1, c2, c3, c4, by querying the system parameters.
+You can ask me the following two types of queries (one question per turn), and I will answer truthfully:
 
-You can perform the following four types of operations (one per turn):
+1. Discipline Module Comprehensive Correlation Query (Node Incident-Sum Query): Ask for the sum of the correlation strengths of all integration paths connected to a specific discipline module.
+   - S(A) represents the sum of correlation strengths of all paths connected to module A
+   - S(B) represents the sum of correlation strengths of all paths connected to module B
+   - S(C) represents the sum of correlation strengths of all paths connected to module C
+   - S(D) represents the sum of correlation strengths of all paths connected to module D
 
-1. **Query Current Communication Baseline**: Ask for the current value of H. The system will return a non-negative integer.
+2. Triangular Knowledge Group Correlation Query (Triangle Sum Query): Ask for the sum of the correlation strengths of the three integration paths forming the knowledge group of modules A, B, and C.
+   - T(ABC) represents the sum of correlation strengths of paths AB, BC, and CA
 
-2. **Query Baseline After Virtual Expansion**: Specify a major i (between 1 and 4) and a non-negative integer q, asking "if we virtually enroll q more students to major i, what would the communication baseline H become". The system will return the new baseline H' after the virtual expansion. Note: This is purely a simulation and does not change the actual enrollment.
+Note: The number of queries is limited (maximum {max_queries} valid queries). Try to find the answer with as few queries as possible. When ready, submit the knowledge correlation strength of integration path AB.
 
-3. **Query Baseline Delta of Virtual Expansion**: Specify a major i (between 1 and 4) and a non-negative integer q, asking "how much would the communication baseline H increase if we virtually enroll q more students to major i". The system will return the increase delta Δ.
+Each turn must contain only one query or answer tag. Use the following XML format:
 
-4. **Submit Analysis Report**: When you are confident in the enrollment numbers, submit your inferred four numbers c1, c2, c3, c4.
+- Discipline Module Comprehensive Correlation Query (e.g., querying module A):
+<query_node>A</query_node>
 
-Please use as few queries as possible to complete the assessment.
+- Triangular Knowledge Group Correlation Query:
+<query_triangle>ABC</query_triangle>
 
-## Query and Answer Format (strictly required)
+- Submit Final Answer (e.g., believing path AB has a correlation strength of 5):
+<answer>5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Query current communication baseline (empty content):
-<query_h></query_h>
-
-- Query baseline after virtual expansion (e.g., adding 3 students to major 2):
-<query_add_value>type=2, q=3</query_add_value>
-
-- Query baseline delta of virtual expansion (e.g., adding 1 student to major 1):
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- Submit final analysis report (four numbers comma-separated, in order c1, c2, c3, c4):
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+Note: If the query format is incorrect or the query content is invalid, an error message will be returned and it will not count towards the query limit. If the answer is wrong or the query limit is exceeded without submitting an answer, the evaluation fails.
 """
 
     contextualized_rule_zh_4 = """\
-欢迎使用工厂流水线“同型号零件批次兼容性测试评估系统”。
+欢迎使用“工业供应链物流调度”系统，规则如下：
 
-当前库存中存放着四种不同型号的关键零部件。每种型号零件的批次数量分别记为 c1, c2, c3, c4，均为未知的非负整数。
+系统设定了一个厂区物流网络，包含 4 个生产车间（A、B、C、D），以及 4 条车间之间的物流运输专线：AB、BC、CA、CD。每条运输专线都有一个“日均物料吞吐量”（单位：百吨），取值范围为 1 到 9 之间的整数。这些吞吐量在生产周期开始前已固定，并在调度期间保持不变。
 
-为了保障装配质量，品控部门定义了一个批次兼容性测试指标 H。它表示任意抽取两个同型号零件批次进行无序两两交叉对比测试的总组合数。具体而言，对每种型号 i，若有 ci 个批次，则需要进行 ci × (ci - 1) / 2 次交叉测试；H 是四种型号零件交叉测试次数的总和。
+你的目标是：确定运输专线 AB 的日均物料吞吐量。
 
-你的目标是通过向系统进行参数查询，推断出这四种型号的准确批次数量 c1, c2, c3, c4。
+你可以向我提出以下两类数据查询（每次只能提一个问题），我会如实回答：
 
-你可以进行以下四类操作（每次仅限一个操作）：
+1. 车间总吞吐量查询（节点度权和查询）：询问与某个生产车间相连的所有运输专线的物料吞吐量之和。
+   - S(A) 表示与车间 A 相连的所有运输专线的物料吞吐量之和
+   - S(B) 表示与车间 B 相连的所有运输专线的物料吞吐量之和
+   - S(C) 表示与车间 C 相连的所有运输专线的物料吞吐量之和
+   - S(D) 表示与车间 D 相连的所有运输专线的物料吞吐量之和
 
-1. **查询当前测试指标**：询问当前的 H 值。系统会返回一个非负整数。
+2. 闭环生产线吞吐量查询（三角环权和查询）：询问由 A、B、C 三个车间构成的闭环生产线中，三条运输专线的物料吞吐量之和。
+   - T(ABC) 表示运输专线 AB、BC、CA 的物料吞吐量之和
 
-2. **查询虚拟入库后的测试指标**：指定一个零件型号 i（1到4之间）和一个非负整数 q，询问"如果临时向库房虚拟调拨 q 个批次的型号 i，测试指标 H 会变成多少"。系统会返回虚拟入库后的新指标 H'。注意：这只是品控推演，不改变实际库存批次数。
+注意：系统查询配额有限（最多 {max_queries} 次有效查询），请尽可能用少的查询次数找到答案。当你计算出结果后，请提交专线 AB 的物料吞吐量。
 
-3. **查询虚拟入库的指标变化量**：指定一个零件型号 i（1到4之间）和一个非负整数 q，询问"临时虚拟调拨 q 个批次的型号 i 会使测试指标 H 增加多少"。系统会返回增加的差值 Δ。
+每次只能包含一个查询或答案标签。请使用以下 XML 格式：
 
-4. **提交品控盘点报告**：当你确定各型号批次数量后，提交你推测的四个数 c1, c2, c3, c4。
+- 车间总吞吐量查询（例如查询车间 A）：
+<query_node>A</query_node>
 
-请尽可能少地使用查询次数来完成盘点。
+- 闭环生产线吞吐量查询：
+<query_triangle>ABC</query_triangle>
 
-## 询问与提交答案的格式（必须严格遵守）
+- 提交最终答案（例如认为专线 AB 的物料吞吐量是 5）：
+<answer>5</answer>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 查询当前测试指标（内容为空）：
-<query_h></query_h>
-
-- 查询虚拟入库后的测试指标（例如向型号 2 调拨 3 个批次）：
-<query_add_value>type=2, q=3</query_add_value>
-
-- 查询虚拟入库的指标变化量（例如向型号 1 调拨 1 个批次）：
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- 提交最终品控盘点报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+请注意：若查询格式不正确或查询内容无效，将返回错误提示且不计入查询次数。若答案错误或超过查询次数限制未提交答案，调度任务失败。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Welcome to the Factory Assembly Line "Homogeneous Part Batch Compatibility Testing Evaluation System".
+[Manufacturing / Industry Scenario]
+Welcome to the "Industrial Supply Chain Logistics Scheduling" system. Here are the rules:
 
-The current inventory holds critical components of four different models. The number of batches for each component model is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
+The system models a factory logistics network comprising 4 production workshops (A, B, C, D) and 4 exclusive logistics transport lines between them: AB, BC, CA, CD. Each transport line has an "average daily material throughput" (in hundreds of tons), which is an integer between 1 and 9. These throughput values are fixed before the production cycle begins and remain constant throughout the scheduling period.
 
-To ensure assembly quality, the quality control (QC) department defines a batch compatibility testing metric H. It represents the total number of unordered pairwise cross-comparison tests that can be conducted by randomly drawing two batches of the same component model. Specifically, for each model i with ci batches, ci × (ci - 1) / 2 cross-tests are required; H is the total sum of cross-tests across all four models.
+Your goal is: to determine the average daily material throughput of the transport line AB.
 
-Your objective is to deduce the exact batch quantities of these four models, c1, c2, c3, c4, by querying the system parameters.
+You can ask me the following two types of data queries (one question per turn), and I will answer truthfully:
 
-You can perform the following four types of operations (one per turn):
+1. Workshop Total Throughput Query (Node Incident-Sum Query): Ask for the sum of the material throughput of all transport lines connected to a specific production workshop.
+   - S(A) represents the sum of material throughput of all transport lines connected to workshop A
+   - S(B) represents the sum of material throughput of all transport lines connected to workshop B
+   - S(C) represents the sum of material throughput of all transport lines connected to workshop C
+   - S(D) represents the sum of material throughput of all transport lines connected to workshop D
 
-1. **Query Current Testing Metric**: Ask for the current value of H. The system will return a non-negative integer.
+2. Closed-Loop Production Line Throughput Query (Triangle Sum Query): Ask for the sum of the material throughput of the three transport lines forming the closed-loop production line of workshops A, B, and C.
+   - T(ABC) represents the sum of material throughput of transport lines AB, BC, and CA
 
-2. **Query Metric After Virtual Restocking**: Specify a component model i (between 1 and 4) and a non-negative integer q, asking "if we virtually transfer q batches of model i to the warehouse, what would the testing metric H become". The system will return the new metric H' after the virtual restocking. Note: This is merely a QC projection and does not change the actual inventory.
+Note: The system query quota is limited (maximum {max_queries} valid queries). Try to find the answer with as few queries as possible. When you calculate the result, submit the material throughput of transport line AB.
 
-3. **Query Metric Delta of Virtual Restocking**: Specify a component model i (between 1 and 4) and a non-negative integer q, asking "how much would the testing metric H increase if we virtually transfer q batches of model i". The system will return the increase delta Δ.
+Each turn must contain only one query or answer tag. Use the following XML format:
 
-4. **Submit QC Inventory Report**: When you are confident in the batch quantities, submit your inferred four numbers c1, c2, c3, c4.
+- Workshop Total Throughput Query (e.g., querying workshop A):
+<query_node>A</query_node>
 
-Please use as few queries as possible to complete the inventory check.
+- Closed-Loop Production Line Throughput Query:
+<query_triangle>ABC</query_triangle>
 
-## Query and Answer Format (strictly required)
+- Submit Final Answer (e.g., believing transport line AB has a throughput of 5):
+<answer>5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Query current testing metric (empty content):
-<query_h></query_h>
-
-- Query metric after virtual restocking (e.g., transferring 3 batches of model 2):
-<query_add_value>type=2, q=3</query_add_value>
-
-- Query metric delta of virtual restocking (e.g., transferring 1 batch of model 1):
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- Submit final QC inventory report (four numbers comma-separated, in order c1, c2, c3, c4):
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+Note: If the query format is incorrect or the query content is invalid, an error message will be returned and it will not count towards the query limit. If the answer is wrong or the query limit is exceeded without submitting an answer, the scheduling task fails.
 """
 
     contextualized_rule_zh_5 = """\
-欢迎进入法院档案室“同案由卷宗类案比对分析系统”。
+欢迎进入“金融犯罪资金链审计”系统，规则如下：
 
-档案室目前积压了四种不同案件类型的卷宗（如民事、刑事、行政、经济）。每种类型案件的卷宗数量分别记为 c1, c2, c3, c4，均为未知的非负整数。
+系统正在追踪一个复杂的洗钱网络，涉及 4 个涉案主体（A、B、C、D），以及 4 条主体间的隐秘资金流转通道：AB、BC、CA、CD。每条流转通道都有一个“非法交易频次级”，取值范围为 1 到 9 之间的整数。这些频次级在案件取证时已固定，并在本次审计中保持不变。
 
-为了评估文书审查的工作量，系统定义了一个类案比对基数 H。它表示在同类型卷宗之间进行无序两两交叉比对寻找类案参考的总操作次数。具体而言，对每种案件类型 i，若有 ci 本卷宗，则需进行 ci × (ci - 1) / 2 次交叉比对；H 是四种类型卷宗比对次数的总和。
+你的目标是：确定资金流转通道 AB 的非法交易频次级。
 
-你的目标是通过向系统进行参数查询，推断出这四类卷宗的准确数量 c1, c2, c3, c4。
+你可以向系统调取以下两类审计数据（每次只能调取一类），系统会如实返回结果：
 
-你可以进行以下四类操作（每次仅限一个操作）：
+1. 主体关联交易总频次查询（节点度权和查询）：询问与某个涉案主体相连的所有流转通道的非法交易频次级之和。
+   - S(A) 表示与主体 A 相连的所有流转通道的非法交易频次级之和
+   - S(B) 表示与主体 B 相连的所有流转通道的非法交易频次级之和
+   - S(C) 表示与主体 C 相连的所有流转通道的非法交易频次级之和
+   - S(D) 表示与主体 D 相连的所有流转通道的非法交易频次级之和
 
-1. **查询当前比推基数**：询问当前的 H 值。系统会返回一个非负整数。
+2. 三角洗钱网络交易总频次查询（三角环权和查询）：询问由 A、B、C 三个主体构成的三角洗钱网络中，三条资金流转通道的非法交易频次级之和。
+   - T(ABC) 表示流转通道 AB、BC、CA 的非法交易频次级之和
 
-2. **查询模拟归档后的比对基数**：指定一个卷宗类型 i（1到4之间）和一个非负整数 q，询问"如果临时向档案室模拟移交 q 本类型 i 的卷宗，比对基数 H 会变成多少"。系统会返回模拟移交后的新基数 H'。注意：这只是算力推演，不改变实际积压的卷宗数。
+注意：审计指令调用次数有限制（最多 {max_queries} 次有效查询），请尽可能用少的查询次数锁定证据。当你的证据链完整后，请提交流转通道 AB 的非法交易频次级。
 
-3. **查询模拟归档的基数变化量**：指定一个卷宗类型 i（1到4之间）和一个非负整数 q，询问"临时模拟移交 q 本类型 i 的卷宗会使比对基数 H 增加多少"。系统会返回增加的差值 Δ。
+每次只能包含一个查询或答案标签。请使用以下 XML 格式：
 
-4. **提交审查排期报告**：当你确定各类型卷宗数量后，提交你推测的四个数 c1, c2, c3, c4。
+- 主体关联交易总频次查询（例如查询主体 A）：
+<query_node>A</query_node>
 
-请尽可能少地使用查询次数来完成评估。
+- 三角洗钱网络交易总频次查询：
+<query_triangle>ABC</query_triangle>
 
-## 询问与提交答案的格式（必须严格遵守）
+- 提交最终答案（例如认为通道 AB 的非法交易频次级是 5）：
+<answer>5</answer>
 
-每次询问只能包含一个标签。请使用以下 XML 格式：
-
-- 查询当前比对基数（内容为空）：
-<query_h></query_h>
-
-- 查询模拟归档后的比对基数（例如向类型 2 模拟移交 3 本）：
-<query_add_value>type=2, q=3</query_add_value>
-
-- 查询模拟归档的基数变化量（例如向类型 1 模拟移交 1 本）：
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- 提交最终审查排期报告（四个数用逗号分隔，按 c1, c2, c3, c4 的顺序）：
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+请注意：若查询格式不正确或查询内容无效，系统将返回错误提示且不计入查询次数。若答案错误或超过查询次数限制未提交答案，案件审计失败。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the Court Archives "Homogeneous Case File Precedent Comparison System".
+[Law / Legal Scenario]
+Welcome to the "Financial Crime Funds Chain Audit" system. Here are the rules:
 
-The archives currently have a backlog of case files from four different legal domains (e.g., Civil, Criminal, Administrative, Economic). The number of files for each domain is denoted as c1, c2, c3, c4, which are unknown non-negative integers.
+The system is tracking a complex money laundering network involving 4 case subjects (A, B, C, D) and 4 covert funds transfer channels between them: AB, BC, CA, CD. Each transfer channel has an "illegal transaction frequency tier", which is an integer between 1 and 9. These tiers were fixed during evidence collection and remain constant throughout this audit.
 
-To evaluate the workload of document review, the system defines a precedent comparison baseline H. It represents the total number of unordered pairwise cross-comparisons performed among files of the same domain to find precedent references. Specifically, for each domain i with ci files, ci × (ci - 1) / 2 cross-comparisons are required; H is the total sum of comparison operations across all four domains.
+Your goal is: to determine the illegal transaction frequency tier of funds transfer channel AB.
 
-Your objective is to deduce the exact number of backlogged files in these four domains, c1, c2, c3, c4, by querying the system parameters.
+You can request the following two types of audit data from the system (one request per turn), and the system will return factual results:
 
-You can perform the following four types of operations (one per turn):
+1. Subject Associated Transaction Total Frequency Query (Node Incident-Sum Query): Ask for the sum of the illegal transaction frequency tiers of all transfer channels connected to a specific case subject.
+   - S(A) represents the sum of illegal transaction frequency tiers of all transfer channels connected to subject A
+   - S(B) represents the sum of illegal transaction frequency tiers of all transfer channels connected to subject B
+   - S(C) represents the sum of illegal transaction frequency tiers of all transfer channels connected to subject C
+   - S(D) represents the sum of illegal transaction frequency tiers of all transfer channels connected to subject D
 
-1. **Query Current Comparison Baseline**: Ask for the current value of H. The system will return a non-negative integer.
+2. Triangular Money Laundering Network Transaction Total Frequency Query (Triangle Sum Query): Ask for the sum of the illegal transaction frequency tiers of the three funds transfer channels forming the triangular money laundering network of subjects A, B, and C.
+   - T(ABC) represents the sum of illegal transaction frequency tiers of transfer channels AB, BC, and CA
 
-2. **Query Baseline After Simulated Archiving**: Specify a case domain i (between 1 and 4) and a non-negative integer q, asking "if we simulate the transfer of q files of domain i into the archives, what would the comparison baseline H become". The system will return the new baseline H' after the simulation. Note: This is merely a computational projection and does not change the actual backlog.
+Note: The number of audit command invocations is limited (maximum {max_queries} valid queries). Try to lock in the evidence with as few queries as possible. Once your chain of evidence is complete, submit the illegal transaction frequency tier of transfer channel AB.
 
-3. **Query Baseline Delta of Simulated Archiving**: Specify a case domain i (between 1 and 4) and a non-negative integer q, asking "how much would the comparison baseline H increase if we simulate the transfer of q files of domain i". The system will return the increase delta Δ.
+Each turn must contain only one query or answer tag. Use the following XML format:
 
-4. **Submit Review Schedule Report**: When you are confident in the file counts, submit your inferred four numbers c1, c2, c3, c4.
+- Subject Associated Transaction Total Frequency Query (e.g., querying subject A):
+<query_node>A</query_node>
 
-Please use as few queries as possible to complete the assessment.
+- Triangular Money Laundering Network Transaction Total Frequency Query:
+<query_triangle>ABC</query_triangle>
 
-## Query and Answer Format (strictly required)
+- Submit Final Answer (e.g., believing channel AB has an illegal transaction frequency tier of 5):
+<answer>5</answer>
 
-Each query must contain only one tag. Use the following XML format:
-
-- Query current comparison baseline (empty content):
-<query_h></query_h>
-
-- Query baseline after simulated archiving (e.g., simulating transfer of 3 files to domain 2):
-<query_add_value>type=2, q=3</query_add_value>
-
-- Query baseline delta of simulated archiving (e.g., simulating transfer of 1 file to domain 1):
-<query_add_delta>type=1, q=1</query_add_delta>
-
-- Submit final review schedule report (four numbers comma-separated, in order c1, c2, c3, c4):
-<answer>c1=5, c2=3, c3=4, c4=2</answer>
+Note: If the query format is incorrect or the query content is invalid, an error message will be returned and it will not count towards the query limit. If the answer is wrong or the query limit is exceeded without submitting an answer, the case audit fails.
 """
 
-    tags = ["answer", "query_h", "query_add_value", "query_add_delta"]
+    tags = ["answer", "query_node", "query_triangle"]
+    reasoning_type = "演绎推理"
+    data_structure = "图"
 
-    # 难度配置：
-    # 1 (简单)       - 小数值，容易推断
-    # 2 (中等偏下)   - 中等数值，有一定挑战
-    # 3 (中等偏上)   - 较大数值，需要策略
-    # 4 (较难)       - 大数值，包含零值
-    # 5 (难)         - 复杂配置，多个零值或大数值
     DIFFICULTY_CONFIG = {
-        1: {
-            "c1": 2,
-            "c2": 3,
-            "c3": 2,
-            "c4": 1,
+        "zh": {
+            1: {
+                "max_queries": 4,
+                "weights": {"AB": 3, "BC": 4, "CA": 5, "CD": 2},
+            },
+            2: {
+                "max_queries": 4,
+                "weights": {"AB": 7, "BC": 2, "CA": 6, "CD": 8},
+            },
+            3: {
+                "max_queries": 3,
+                "weights": {"AB": 5, "BC": 5, "CA": 3, "CD": 4},
+            },
+            4: {
+                "max_queries": 3,
+                "weights": {"AB": 8, "BC": 1, "CA": 9, "CD": 6},
+            },
+            5: {
+                "max_queries": 3,
+                "weights": {"AB": 6, "BC": 7, "CA": 4, "CD": 9},
+            },
         },
-        2: {
-            "c1": 4,
-            "c2": 5,
-            "c3": 3,
-            "c4": 4,
-        },
-        3: {
-            "c1": 6,
-            "c2": 7,
-            "c3": 5,
-            "c4": 8,
-        },
-        4: {
-            "c1": 0,
-            "c2": 10,
-            "c3": 8,
-            "c4": 12,
-        },
-        5: {
-            "c1": 15,
-            "c2": 0,
-            "c3": 0,
-            "c4": 20,
+        "en": {
+            1: {
+                "max_queries": 4,
+                "weights": {"AB": 3, "BC": 4, "CA": 5, "CD": 2},
+            },
+            2: {
+                "max_queries": 4,
+                "weights": {"AB": 7, "BC": 2, "CA": 6, "CD": 8},
+            },
+            3: {
+                "max_queries": 3,
+                "weights": {"AB": 5, "BC": 5, "CA": 3, "CD": 4},
+            },
+            4: {
+                "max_queries": 3,
+                "weights": {"AB": 8, "BC": 1, "CA": 9, "CD": 6},
+            },
+            5: {
+                "max_queries": 3,
+                "weights": {"AB": 6, "BC": 7, "CA": 4, "CD": 9},
+            },
         },
     }
 
     def __init__(self, config):
+        self.query_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏参数"""
+        lang = self.config.language
         diff = int(self.config.difficulty)
+
+        max_queries_map = {1: 4, 2: 4, 3: 3, 4: 3, 5: 3}
         
-        if diff not in self.DIFFICULTY_CONFIG:
+        if diff not in max_queries_map:
             raise KeyError(f"Unsupported difficulty: {diff}")
         
-        cfg = self.DIFFICULTY_CONFIG[diff]
+        self.max_queries = max_queries_map[diff]
         
-        # 设置四种类型的数量
-        self.c1 = cfg["c1"]
-        self.c2 = cfg["c2"]
-        self.c3 = cfg["c3"]
-        self.c4 = cfg["c4"]
+        rng = random.Random()
+        self.weights = {
+            "AB": rng.randint(1, 9),
+            "BC": rng.randint(1, 9),
+            "CA": rng.randint(1, 9),
+            "CD": rng.randint(1, 9),
+        }
         
-        # 存储到数组便于索引（索引从1开始）
-        self.counts = [0, self.c1, self.c2, self.c3, self.c4]
-        
-        # 计算初始统计量 H
-        self.H = self._calculate_h(self.counts)
-        
-        # 游戏信息（用于格式化规则文本，本游戏无需特殊格式化）
-        self._game_info = {}
-
-    def _calculate_h(self, counts):
-        """
-        计算统计量 H
-        counts: 长度为5的列表，索引0不使用，索引1-4分别对应c1-c4
-        返回: H = Σ C(ci, 2)
-        """
-        h = 0
-        for i in range(1, 5):
-            ci = counts[i]
-            h += ci * (ci - 1) // 2
-        return h
-
-    def _parse_type_q(self, content):
-        """
-        解析 type=i, q=j 格式
-        返回: (type_idx, q_value)
-        """
-        try:
-            parts = [x.strip() for x in content.split(",")]
-            type_val = None
-            q_val = None
-            
-            for part in parts:
-                if "=" in part:
-                    key, val = part.split("=", 1)
-                    key = key.strip()
-                    val = val.strip()
-                    if key == "type":
-                        type_val = int(val)
-                    elif key == "q":
-                        q_val = int(val)
-            
-            if type_val is None or q_val is None:
-                raise ValueError("Missing type or q")
-            
-            if type_val < 1 or type_val > 4:
-                raise ValueError("Type must be between 1 and 4")
-            
-            if q_val < 0:
-                raise ValueError("q must be non-negative")
-            
-            return type_val, q_val
-        
-        except Exception as e:
-            raise ValueError(f"Invalid format for type and q: {str(e)}")
+        self._game_info["max_queries"] = self.max_queries
+        self.target_weight = self.weights["AB"]
 
     def evaluate(self, parsed_info):
-        """
-        评估答案是否正确
-        答案格式: c1=x, c2=y, c3=z, c4=w
-        """
-        raw_ans = parsed_info["answer"]
-        
         try:
-            # 解析答案
-            parts = [x.strip() for x in raw_ans.split(",")]
-            ans_dict = {}
-            
-            for part in parts:
-                if "=" in part:
-                    key, val = part.split("=", 1)
-                    key = key.strip()
-                    val = val.strip()
-                    ans_dict[key] = int(val)
-            
-            # 检查是否包含所有四个值
-            if not all(key in ans_dict for key in ["c1", "c2", "c3", "c4"]):
-                return False
-            
-            # 检查答案是否正确
-            return (ans_dict["c1"] == self.c1 and
-                    ans_dict["c2"] == self.c2 and
-                    ans_dict["c3"] == self.c3 and
-                    ans_dict["c4"] == self.c4)
-        
-        except Exception:
+            answer = int(parsed_info["answer"].strip())
+            return answer == self.target_weight
+        except:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """
-        原始的业务逻辑处理
-        """
-        # 优先级：query_h > query_add_value > query_add_delta
-        
-        if "query_h" in parsed_info:
-            # 返回当前统计量 H
-            return str(self.H)
-        
-        elif "query_add_value" in parsed_info:
-            # 查询临时添加后的统计量值
-            try:
-                type_idx, q = self._parse_type_q(parsed_info["query_add_value"])
-                
-                # 创建临时的counts副本
-                temp_counts = self.counts.copy()
-                temp_counts[type_idx] += q
-                
-                # 计算新的H'
-                h_prime = self._calculate_h(temp_counts)
-                
-                return str(h_prime)
-            
-            except ValueError as e:
-                if self.config.language == "zh":
-                    return f"错误：{str(e)}"
-                else:
-                    return f"Error: {str(e)}"
-        
-        elif "query_add_delta" in parsed_info:
-            # 查询临时添加的变化量
-            try:
-                type_idx, q = self._parse_type_q(parsed_info["query_add_delta"])
-                
-                # 计算 Δ = q * ci + C(q, 2)
-                ci = self.counts[type_idx]
-                delta = q * ci + q * (q - 1) // 2
-                
-                return str(delta)
-            
-            except ValueError as e:
-                if self.config.language == "zh":
-                    return f"错误：{str(e)}"
-                else:
-                    return f"Error: {str(e)}"
-        
+        if self.config.language == "zh":
+            error_format = "错误：查询格式无效或内容不被允许。"
+            error_limit = f"错误：已达到查询次数上限（{self.max_queries} 次）。请直接提交你的最终答案。"
         else:
-            raise ValueError("No valid query tag found.")
+            error_format = "Error: Invalid query format or content not allowed."
+            error_limit = f"Error: Query limit reached ({self.max_queries} queries). Please submit your final answer now."
 
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        限于篇幅和实用性，q 的取值范围限定为 [1, 5]。
-        """
-        queries = []
+        if self.query_count >= self.max_queries:
+            return error_limit
+
+        if "query_node" in parsed_info:
+            node = parsed_info["query_node"].strip().upper()
+            
+            node_sums = {
+                "A": self.weights["AB"] + self.weights["CA"],
+                "B": self.weights["AB"] + self.weights["BC"],
+                "C": self.weights["CA"] + self.weights["BC"] + self.weights["CD"],
+                "D": self.weights["CD"],
+            }
+            
+            if node in node_sums:
+                self.query_count += 1
+                return str(node_sums[node])
+            else:
+                return error_format
+
+        elif "query_triangle" in parsed_info:
+            triangle = parsed_info["query_triangle"].strip().upper()
+            if set(triangle) == {"A", "B", "C"} and len(triangle) == 3:
+                triangle_sum = self.weights["AB"] + self.weights["BC"] + self.weights["CA"]
+                self.query_count += 1
+                return str(triangle_sum)
+            else:
+                return error_format
+
+        else:
+            return error_format
+
+    def _cf_make_wrong(self, correct):
+        if correct.isdigit():
+            return str(int(correct) + 1)
         
-        # 1. 查询当前统计量
-        queries.append({
-            "query": "<query_h></query_h>",
-            "answer": str(self.H)
+        if self.config.language == "zh":
+            if "是" in correct:
+                return correct.replace("是", "否")
+            if "否" in correct:
+                return correct.replace("否", "是")
+        else:
+            if "Yes" in correct:
+                return correct.replace("Yes", "No")
+            if "No" in correct:
+                return correct.replace("No", "Yes")
+            if "yes" in correct:
+                return correct.replace("yes", "no")
+            if "no" in correct:
+                return correct.replace("no", "yes")
+        
+        return correct + "_WRONG"
+
+    def get_all_possible_queries(self) -> List[Dict]:
+        results = []
+        
+        node_sums = {
+            "A": self.weights["AB"] + self.weights["CA"],
+            "B": self.weights["AB"] + self.weights["BC"],
+            "C": self.weights["CA"] + self.weights["BC"] + self.weights["CD"],
+            "D": self.weights["CD"],
+        }
+        
+        for node in ["A", "B", "C", "D"]:
+            if node in node_sums:
+                results.append({
+                    "query": f"<query_node>{node}</query_node>",
+                    "answer": str(node_sums[node])
+                })
+        
+        triangle_sum = self.weights["AB"] + self.weights["BC"] + self.weights["CA"]
+        results.append({
+            "query": "<query_triangle>ABC</query_triangle>",
+            "answer": str(triangle_sum)
         })
         
-        # 设定 q 的枚举范围
-        q_range = range(1, 6)
-        
-        for type_idx in range(1, 5):
-            for q in q_range:
-                content = f"type={type_idx}, q={q}"
-                
-                # 2. 查询临时添加后的统计量
-                # 计算 H'
-                temp_counts = self.counts.copy()
-                temp_counts[type_idx] += q
-                h_prime = self._calculate_h(temp_counts)
-                
-                queries.append({
-                    "query": f"<query_add_value>{content}</query_add_value>",
-                    "answer": str(h_prime)
-                })
-                
-                # 3. 查询临时添加的变化量
-                # 计算 delta
-                ci = self.counts[type_idx]
-                delta = q * ci + q * (q - 1) // 2
-                
-                queries.append({
-                    "query": f"<query_add_delta>{content}</query_add_delta>",
-                    "answer": str(delta)
-                })
-                
-        return queries
+        return results
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """
-        根据正确答案生成一个明显不同的错误答案
-        """
-        # 尝试将 correct 解析为整数（支持负数）
-        try:
-            val = int(correct)
-            # 生成一个有明显偏差的错误值
-            if val == 0:
-                return str(val + 3)
-            elif val > 0:
-                return str(val + max(3, val // 2))
-            else:
-                return str(val - max(3, abs(val) // 2))
-        except ValueError:
-            pass
-        
-        # 关键词替换
-        if "是" in correct:
-            return correct.replace("是", "否")
-        if "Yes" in correct:
-            return correct.replace("Yes", "No")
-        if "YES" in correct:
-            return correct.replace("YES", "NO")
-        if "yes" in correct:
-            return correct.replace("yes", "no")
-            
-        # 默认情况
-        return correct + "_WRONG"

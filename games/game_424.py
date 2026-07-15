@@ -1,560 +1,804 @@
-# -*- coding: utf-8 -*-
-# 推理类型: 演绎推理（明确的规则系统）：从游戏既定规则和已知线索，推导出必定的事实。例如扫雷，需要推断出哪些格子埋有地雷。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   连通判断：两个给定节点之间是否存在路径（是否连通）
-# ============================================================
-
-import random
 from .base import Game
+import re
 
-class GraphConnectivityGame(Game):
+class StateTransitionGame(Game):
 
-    reasoning_type = "演绎推理"
-    data_structure = "图"
+    reasoning_type = "溯因推理"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们现在来玩一个"图连通性推理"游戏，规则如下：
+我们现在来玩一个"状态空间探索"游戏，规则如下：
 
-游戏设定了一个隐藏的简单无向图 G，包含 {n} 个顶点，编号从 1 到 {n}。图中没有自环和重边，边集对你完全未知。你的任务是判断两个指定的顶点 S={s} 和 T={t} 是否处于同一连通分量，并提供可核验的证据。
+游戏设定了一个有序序列 S = {{1, 2, 3, 4, 5, 6, 7}}。你的初始状态是 {init_state}，目标状态是 {goal_state}。
 
-你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
+你有两种控制动作可用，记为 B 与 R。每次执行动作，你的状态会在相邻元素间移动一步。但具体移动规则由一个隐藏的转移方案决定。
 
-1. 边查询：询问顶点 u 和 v 之间是否存在边。回答"是"或"否"。
-2. 度数查询：询问顶点 u 的度数（连接的边数）。回答一个非负整数。
-3. 邻居查询：询问顶点 u 的下一个未知邻居。返回一个顶点编号或"无"。
-   - 每个顶点的邻居按照编号升序排列
-   - 每次返回你尚未获知的最小编号邻居
-   - "已获知"是指：之前通过边查询得到"是"，或通过邻居查询返回过该邻居
-   - 如果所有邻居都已获知，则返回"无"
+环境从四个确定性转移方案中选择了其中一个（记为 H），你需要通过试探来推断它。四个方案由两个维度决定：
 
-请尽可能少地使用查询次数，收集足够信息后提交最终答案。
+1. 动作-方向映射：
+   - 对齐：B 表示后继（向右），R 表示前驱（向左）
+   - 反转：B 表示前驱（向左），R 表示后继（向右）
 
-## 查询与提交答案的格式（必须严格遵守）
+2. 边界处理：
+   - 堵住（夹持）：在状态 7 时后继仍为 7；在状态 1 时前驱仍为 1
+   - 环回（循环）：在状态 7 时后继为 1；在状态 1 时前驱为 7
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+具体四个方案：
+- A（对齐且堵住）：B=后继，R=前驱；边界堵住
+- B（反转且堵住）：B=前驱，R=后继；边界堵住
+- C（对齐且环回）：B=后继，R=前驱；边界环回
+- D（反转且环回）：B=前驱，R=后继；边界环回
 
-- 边查询（例如询问顶点 3 和 5 之间是否有边）：
-<query_edge>3,5</query_edge>
+其他位置的移动均为相邻一步：后继(i)=i+1（若可行），前驱(i)=i-1（若可行），仅在端点受边界规则修正。
 
-- 度数查询（例如询问顶点 7 的度数）：
-<query_degree>7</query_degree>
+你可以执行以下操作：
 
-- 邻居查询（例如询问顶点 2 的下一个未知邻居）：
-<query_neighbor>2</query_neighbor>
+1. 执行动作：使用 B 或 R 动作。环境会返回执行后的当前状态编号。
 
-提交最终答案时，必须说明连通性并提供证据：
+2. 查询状态：询问当前状态是多少（注意：每次动作后环境会自动告知状态，此查询通常是冗余的）。
 
-- 如果判断"连通"，提供从 S 到 T 的路径（顶点序列，用逗号分隔）：
-<answer>connected, path={s},3,7,{t}</answer>
+3. 宣告方案：提交你认为的真实方案（A、B、C 或 D）。
+   - 前置条件：已累计执行至少两次动作，且至少有一次动作发生于端点状态（1 或 7）。
+   - 若未满足前置条件，环境会提示你继续探索。
+   - 若满足前置条件，环境会告知你的宣告是否正确。
 
-- 如果判断"不连通"，提供包含 S 但不包含 T 的完整连通分量（顶点集合，用逗号分隔）：
-<answer>disconnected, component={s},2,3</answer>
+你的目标：
+1. 通过试探推断出真实的转移方案 H。
+2. 正确宣告后，使你的最终状态到达目标状态 {goal_state}。
+
+约束：
+- 动作预算有限（仅计 B/R 动作次数；查询与宣告不计入）。
+- 请尽可能少地使用动作次数完成任务。
+
+成功条件：
+1. 在动作预算内正确宣告真实方案 H。
+2. 在正确宣告后最终到达目标状态 {goal_state}。
+
+每次操作只能包含一个标签。请使用以下 XML 格式：
+
+- 执行动作 B：
+<action>B</action>
+
+- 执行动作 R：
+<action>R</action>
+
+- 查询当前状态：
+<query_state></query_state>
+
+- 宣告方案（例如宣告方案 A）：
+<declare>A</declare>
+
+- 提交最终答案（当你已正确宣告方案且到达目标状态后）：
+<answer>success</answer>
 """
 
     game_rule_en = """\
-Let's play a "Graph Connectivity Reasoning" game. Here are the rules:
+Let's play a "State Space Exploration" game. Here are the rules:
 
-The game has a hidden simple undirected graph G with {n} vertices numbered from 1 to {n}. The graph has no self-loops or multiple edges, and the edge set is completely unknown to you. Your task is to determine whether two specified vertices S={s} and T={t} are in the same connected component and provide verifiable evidence.
+The game defines an ordered sequence S = {{1, 2, 3, 4, 5, 6, 7}}. Your initial state is {init_state}, and the goal state is {goal_state}.
 
-You can obtain information through three types of queries (only one query per turn):
+You have two control actions available, denoted as B and R. Each action moves your state one step between adjacent elements. However, the specific movement rules are determined by a hidden transition scheme.
 
-1. Edge Query: Ask if there is an edge between vertices u and v. Answer "Yes" or "No".
-2. Degree Query: Ask for the degree of vertex u (number of connected edges). Answer a non-negative integer.
-3. Neighbor Query: Ask for the next unknown neighbor of vertex u. Returns a vertex number or "None".
-   - Neighbors of each vertex are ordered by ascending vertex number
-   - Each call returns the smallest-numbered neighbor you haven't learned about yet
-   - "Learned" means: previously got "Yes" from an edge query, or got that neighbor from a neighbor query
-   - If all neighbors are already learned, returns "None"
+The environment has selected one of four deterministic transition schemes (denoted as H), and you need to infer it through exploration. The four schemes are determined by two dimensions:
 
-Use as few queries as possible. After collecting sufficient information, submit your final answer.
+1. Action-Direction Mapping:
+   - Aligned: B means successor (right), R means predecessor (left)
+   - Reversed: B means predecessor (left), R means successor (right)
 
-## Query and Answer Format (strictly required)
+2. Boundary Handling:
+   - Clamped: At state 7, successor remains 7; at state 1, predecessor remains 1
+   - Wrapped: At state 7, successor becomes 1; at state 1, predecessor becomes 7
 
-Each turn must contain only one query tag. Use the following XML format:
+The four specific schemes:
+- A (Aligned and Clamped): B=successor, R=predecessor; boundaries clamped
+- B (Reversed and Clamped): B=predecessor, R=successor; boundaries clamped
+- C (Aligned and Wrapped): B=successor, R=predecessor; boundaries wrapped
+- D (Reversed and Wrapped): B=predecessor, R=successor; boundaries wrapped
 
-- Edge Query (e.g., asking if there's an edge between vertices 3 and 5):
-<query_edge>3,5</query_edge>
+Movement at other positions is always one adjacent step: successor(i)=i+1 (if possible), predecessor(i)=i-1 (if possible), only modified at endpoints by boundary rules.
 
-- Degree Query (e.g., asking for the degree of vertex 7):
-<query_degree>7</query_degree>
+You can perform the following operations:
 
-- Neighbor Query (e.g., asking for the next unknown neighbor of vertex 2):
-<query_neighbor>2</query_neighbor>
+1. Execute Action: Use B or R action. The environment will return the current state number after execution.
 
-When submitting the final answer, specify connectivity and provide evidence:
+2. Query State: Ask what the current state is (note: the environment automatically reports the state after each action, so this query is usually redundant).
 
-- If judging "connected", provide a path from S to T (vertex sequence, comma-separated):
-<answer>connected, path={s},3,7,{t}</answer>
+3. Declare Scheme: Submit what you believe is the true scheme (A, B, C, or D).
+   - Precondition: You must have executed at least two actions, and at least one action occurred at a boundary state (1 or 7).
+   - If the precondition is not met, the environment will prompt you to continue exploring.
+   - If the precondition is met, the environment will tell you whether your declaration is correct.
 
-- If judging "disconnected", provide the complete connected component containing S but not T (vertex set, comma-separated):
-<answer>disconnected, component={s},2,3</answer>
+Your goals:
+1. Infer the true transition scheme H through exploration.
+2. After correctly declaring, make your final state reach the goal state {goal_state}.
+
+Constraints:
+- Action budget is limited (only counts B/R actions; queries and declarations do not count).
+- Please use as few actions as possible to complete the task.
+
+Success conditions:
+1. Correctly declare the true scheme H within the action budget.
+2. Finally reach the goal state {goal_state} after correct declaration.
+
+Each operation can only contain one tag. Use the following XML format:
+
+- Execute action B:
+<action>B</action>
+
+- Execute action R:
+<action>R</action>
+
+- Query current state:
+<query_state></query_state>
+
+- Declare scheme (e.g., declare scheme A):
+<declare>A</declare>
+
+- Submit final answer (after you have correctly declared the scheme and reached the goal state):
+<answer>success</answer>
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-我们现在来进行"物流路网连通性"排查。系统内有一个隐藏的区域公路网，包含 {n} 个物流枢纽（编号从 1 到 {n}）。枢纽间仅存在双向直达公路，无自环和重边，具体路线对你保密。你的任务是判断始发枢纽 S={s} 和目标枢纽 T={t} 是否连通，并提供可核验的路线规划或孤岛证明。
+这是一款自动驾驶路径控制测试环境。你的测试车辆处于一条具有7个连续路段的跑道序列 S = {{1, 2, 3, 4, 5, 6, 7}} 中。初始所在的路段是 {init_state}，目标路段是 {goal_state}。
 
-你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
+你有两种控制指令可用，记为 B 与 R。每次发送指令，车辆会在相邻路段间移动一步。但具体移动方向由一个隐藏的系统调度方案决定。
 
-1. 路线查询：询问枢纽 u 和 v 之间是否有直达公路。回答"是"或"否"。
-2. 线路数查询：询问枢纽 u 连接的直达公路总数。回答一个非负整数。
-3. 邻近枢纽查询：询问枢纽 u 的下一个未知相邻枢纽。返回一个枢纽编号或"无"。
-   - 每个枢纽的相邻枢纽按照编号升序排列
-   - 每次返回你尚未获知的最小编号相邻枢纽
-   - "已获知"是指：之前通过路线查询得到"是"，或通过邻近枢纽查询返回过该枢纽
-   - 如果所有相邻枢纽都已获知，则返回"无"
+环境从四个确定性调度方案中选择了其中一个（记为 H），你需要通过试探来推断它。四个方案由两个维度决定：
 
-请尽可能少地使用查询次数，收集足够信息后提交最终答案。
+1. 指令-方向映射：
+   - 标准：B 表示前进（路段编号增加），R 表示后退（路段编号减少）
+   - 反转：B 表示后退（路段编号减少），R 表示前进（路段编号增加）
 
-## 查询与提交答案的格式（必须严格遵守）
+2. 边界处理：
+   - 尽头死胡同（夹持）：在路段 7 时继续前进仍停在 7；在路段 1 时继续后退仍停在 1
+   - 环形立交（环回）：在路段 7 时继续前进将进入路段 1；在路段 1 时继续后退将进入路段 7
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+具体四个方案：
+- A（标准且死胡同）：B=前进，R=后退；边界为尽头死胡同
+- B（反转且死胡同）：B=后退，R=前进；边界为尽头死胡同
+- C（标准且环形立交）：B=前进，R=后退；边界为环形立交
+- D（反转且环形立交）：B=后退，R=前进；边界为环形立交
 
-- 路线查询（例如询问枢纽 3 和 5 之间是否有直达公路）：
-<query_edge>3,5</query_edge>
+其他路段的移动均为相邻一步：前进(i)=i+1（若可行），后退(i)=i-1（若可行），仅在端点受边界规则修正。
 
-- 线路数查询（例如询问枢纽 7 的线路数）：
-<query_degree>7</query_degree>
+你可以执行以下操作：
 
-- 邻近枢纽查询（例如询问枢纽 2 的下一个未知相邻枢纽）：
-<query_neighbor>2</query_neighbor>
+1. 执行指令：使用 B 或 R 指令。环境会返回执行后的当前路段编号。
 
-提交最终答案时，必须说明连通性并提供证据：
+2. 查询路段：询问当前所在的路段是多少（注意：每次指令后环境会自动告知路段，此查询通常是冗余的）。
 
-- 如果判断"连通"，提供从 S 到 T 的路径（枢纽编号序列，用逗号分隔）：
-<answer>connected, path={s},3,7,{t}</answer>
+3. 宣告方案：提交你认为的真实方案（A、B、C 或 D）。
+   - 前置条件：已累计执行至少两次指令，且至少有一次指令发生于端点路段（1 或 7）。
+   - 若未满足前置条件，环境会提示你继续探索。
+   - 若满足前置条件，环境会告知你的宣告是否正确。
 
-- 如果判断"不连通"，提供包含 S 但不包含 T 的完整连通路网（枢纽编号集合，用逗号分隔）：
-<answer>disconnected, component={s},2,3</answer>
+你的目标：
+1. 通过试探推断出真实的调度方案 H。
+2. 正确宣告后，使车辆最终到达目标路段 {goal_state}。
+
+约束：
+- 指令预算有限（仅计 B/R 动作次数；查询与宣告不计入）。
+- 请尽可能少地使用指令次数完成任务。
+
+成功条件：
+1. 在指令预算内正确宣告真实方案 H。
+2. 在正确宣告后最终到达目标路段 {goal_state}。
+
+每次操作只能包含一个标签。请使用以下 XML 格式：
+
+- 发送指令 B：
+<action>B</action>
+
+- 发送指令 R：
+<action>R</action>
+
+- 查询当前路段：
+<query_state></query_state>
+
+- 宣告方案（例如宣告方案 A）：
+<declare>A</declare>
+
+- 提交最终答案（当你已正确宣告方案且到达目标路段后）：
+<answer>success</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-Let's perform a "Logistics Network Connectivity" analysis. The system contains a hidden regional highway network with {n} logistics hubs numbered 1 to {n}. Hubs are connected by two-way direct highways with no self-loops or multiple routes. The exact routing is confidential. Your task is to determine whether origin hub S={s} and destination hub T={t} are connected, providing verifiable routing or proof of isolation.
+[Traffic Scenario]
+This is an autonomous vehicle routing test environment. Your test vehicle is on a track sequence of 7 continuous segments S = {{1, 2, 3, 4, 5, 6, 7}}. Your initial segment is {init_state}, and the target segment is {goal_state}.
 
-You can obtain information through three types of queries (only one query per turn):
+You have two control commands available, denoted as B and R. Each command moves the vehicle one step to an adjacent segment. However, the specific movement direction is determined by a hidden system scheduling scheme.
 
-1. Route Query: Ask if there is a direct highway between hubs u and v. Answer "Yes" or "No".
-2. Route Count Query: Ask for the total number of direct highways connected to hub u. Answer a non-negative integer.
-3. Adjacent Hub Query: Ask for the next unknown adjacent hub of hub u. Returns a hub number or "None".
-   - Adjacent hubs of each hub are ordered by ascending hub number
-   - Each call returns the smallest-numbered adjacent hub you haven't learned about yet
-   - "Learned" means: previously got "Yes" from a route query, or got that hub from an adjacent hub query
-   - If all adjacent hubs are already learned, returns "None"
+The environment has selected one of four deterministic scheduling schemes (denoted as H), and you need to infer it through exploration. The four schemes are defined by two dimensions:
 
-Use as few queries as possible. After collecting sufficient information, submit your final answer.
+1. Command-Direction Mapping:
+   - Standard: B means Forward (segment number increases), R means Backward (segment number decreases)
+   - Reversed: B means Backward (segment number decreases), R means Forward (segment number increases)
 
-## Query and Answer Format (strictly required)
+2. Boundary Handling:
+   - Dead End (Clamped): At segment 7, continuing forward remains at 7; at segment 1, continuing backward remains at 1
+   - Circular Interchange (Wrapped): At segment 7, continuing forward enters segment 1; at segment 1, continuing backward enters segment 7
 
-Each turn must contain only one query tag. Use the following XML format:
+The four specific schemes:
+- A (Standard & Dead End): B=Forward, R=Backward; boundaries clamped
+- B (Reversed & Dead End): B=Backward, R=Forward; boundaries clamped
+- C (Standard & Circular): B=Forward, R=Backward; boundaries wrapped
+- D (Reversed & Circular): B=Backward, R=Forward; boundaries wrapped
 
-- Route Query (e.g., asking if there's a direct highway between hubs 3 and 5):
-<query_edge>3,5</query_edge>
+Movement at other segments is always one adjacent step: Forward(i)=i+1 (if possible), Backward(i)=i-1 (if possible), only modified at endpoints by boundary rules.
 
-- Route Count Query (e.g., asking for the route count of hub 7):
-<query_degree>7</query_degree>
+You can perform the following operations:
 
-- Adjacent Hub Query (e.g., asking for the next unknown adjacent hub of hub 2):
-<query_neighbor>2</query_neighbor>
+1. Execute Command: Use B or R command. The environment will return the current segment number after execution.
 
-When submitting the final answer, specify connectivity and provide evidence:
+2. Query Segment: Ask what the current segment is (note: the environment automatically reports the segment after each command, so this query is usually redundant).
 
-- If judging "connected", provide a path from S to T (hub number sequence, comma-separated):
-<answer>connected, path={s},3,7,{t}</answer>
+3. Declare Scheme: Submit what you believe is the true scheme (A, B, C, or D).
+   - Precondition: You must have executed at least two commands, and at least one command must have occurred at an endpoint segment (1 or 7).
+   - If the precondition is not met, the environment will prompt you to continue exploring.
+   - If the precondition is met, the environment will tell you whether your declaration is correct.
 
-- If judging "disconnected", provide the complete connected network containing S but not T (hub number set, comma-separated):
-<answer>disconnected, component={s},2,3</answer>
+Your goals:
+1. Infer the true scheduling scheme H through exploration.
+2. After correctly declaring, make your vehicle reach the target segment {goal_state}.
+
+Constraints:
+- Command budget is limited (only counts B/R commands; queries and declarations do not count).
+- Please use as few commands as possible to complete the task.
+
+Success conditions:
+1. Correctly declare the true scheme H within the command budget.
+2. Finally reach the target segment {goal_state} after correct declaration.
+
+Each operation can only contain one tag. Use the following XML format:
+
+- Execute command B:
+<action>B</action>
+
+- Execute command R:
+<action>R</action>
+
+- Query current segment:
+<query_state></query_state>
+
+- Declare scheme (e.g., declare scheme A):
+<declare>A</declare>
+
+- Submit final answer (after you have correctly declared the scheme and reached the target segment):
+<answer>success</answer>
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-我们现在来进行"传染病接触史"溯源。系统中有一个隐藏的流行病学接触图谱，包含 {n} 名确诊或疑似感染者（编号 1 到 {n}）。人员之间存在双向的密切接触史（无自环，无重复接触记录），具体接触名单对你保密。你需要判断首发病例 S={s} 与新发病例 T={t} 是否属于同一条传播链，并提供接触路径或独立传播圈的证据。
+这是一款临床治疗方案动态调整系统。患者的康复过程被划分为7个阶段序列 S = {{1, 2, 3, 4, 5, 6, 7}}。初始阶段是 {init_state}，目标阶段是 {goal_state}。
 
-你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
+你有两种干预药物可用，记为 B 与 R。每次用药，患者的病情阶段会在相邻级别间变化。但具体药效方向由一个隐藏的病理代谢方案决定。
 
-1. 接触查询：询问病例 u 和 v 之间是否有过密切接触。回答"是"或"否"。
-2. 接触人数查询：询问病例 u 的密切接触者总数。回答一个非负整数。
-3. 下一名接触者查询：询问病例 u 的下一个未知密切接触者。返回一个病例编号或"无"。
-   - 每个病例的接触者按照编号升序排列
-   - 每次返回你尚未获知的最小编号接触者
-   - "已获知"是指：之前通过接触查询得到"是"，或通过下一名接触者查询返回过该病例
-   - 如果所有接触者都已获知，则返回"无"
+系统从四个确定性代谢方案中选择了其中一个（记为 H），你需要通过临床试探来推断它。四个方案由两个维度决定：
 
-请尽可能少地使用查询次数，收集足够信息后提交最终答案。
+1. 药效-方向映射：
+   - 正向：B 表示好转（阶段编号增加），R 表示恶化（阶段编号减少）
+   - 反向：B 表示恶化（阶段编号减少），R 表示好转（阶段编号增加）
 
-## 查询与提交答案的格式（必须严格遵守）
+2. 极值边界处理：
+   - 稳定极值（夹持）：在阶段 7 时继续好转仍稳定在 7；在阶段 1 时继续恶化仍停留在 1
+   - 周期复发（环回）：在阶段 7 时继续好转将复发跌回阶段 1；在阶段 1 时继续恶化将反弹至阶段 7
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+具体四个方案：
+- A（正向且稳定）：B=好转，R=恶化；极值稳定
+- B（反向且稳定）：B=恶化，R=好转；极值稳定
+- C（正向且复发）：B=好转，R=恶化；极值周期复发
+- D（反向且复发）：B=恶化，R=好转；极值周期复发
 
-- 接触查询（例如询问病例 3 和 5 之间是否有密切接触）：
-<query_edge>3,5</query_edge>
+其他阶段的药效变化均为相邻一步：好转(i)=i+1（若可行），恶化(i)=i-1（若可行），仅在极值点受边界规则修正。
 
-- 接触人数查询（例如询问病例 7 的接触人数）：
-<query_degree>7</query_degree>
+你可以执行以下操作：
 
-- 下一名接触者查询（例如询问病例 2 的下一个未知接触者）：
-<query_neighbor>2</query_neighbor>
+1. 执行干预：使用药物 B 或 R。系统会返回用药后的当前病情阶段。
 
-提交最终答案时，必须说明连通性并提供证据：
+2. 查询阶段：询问当前的病情阶段（注意：每次用药后系统会自动告知阶段，此查询通常是冗余的）。
 
-- 如果判断"连通"，提供从 S 到 T 的传播链路径（病例编号序列，用逗号分隔）：
-<answer>connected, path={s},3,7,{t}</answer>
+3. 宣告方案：提交你认为的真实方案（A、B、C 或 D）。
+   - 前置条件：已累计执行至少两次干预，且至少有一次干预发生于极值阶段（1 或 7）。
+   - 若未满足前置条件，系统会提示你继续观察。
+   - 若满足前置条件，系统会告知你的宣告是否正确。
 
-- 如果判断"不连通"，提供包含 S 但不包含 T 的完整接触圈套（病例编号集合，用逗号分隔）：
-<answer>disconnected, component={s},2,3</answer>
+你的目标：
+1. 通过试探推断出真实的病理代谢方案 H。
+2. 正确宣告后，使患者最终达到目标阶段 {goal_state}。
+
+约束：
+- 用药次数有限（仅计 B/R 药物使用次数；查询与宣告不计入）。
+- 请尽可能少地使用干预次数完成任务。
+
+成功条件：
+1. 在用药预算内正确宣告真实方案 H。
+2. 在正确宣告后最终到达目标阶段 {goal_state}。
+
+每次操作只能包含一个标签。请使用以下 XML 格式：
+
+- 使用药物 B：
+<action>B</action>
+
+- 使用药物 R：
+<action>R</action>
+
+- 查询当前阶段：
+<query_state></query_state>
+
+- 宣告方案（例如宣告方案 A）：
+<declare>A</declare>
+
+- 提交最终答案（当你已正确宣告方案且到达目标阶段后）：
+<answer>success</answer>
 """
 
     contextualized_rule_en_2 = """\
-[Healthcare Scenario]
-Let's conduct an "Epidemiological Contact Tracing" analysis. The system has a hidden contact network of {n} patients (numbered 1 to {n}). There are two-way close contact histories between individuals (no self-loops or duplicate records). The exact contact list is confidential. Your task is to determine if the primary case S={s} and the newly confirmed case T={t} belong to the same transmission cluster, providing the contact path or proof of isolated clusters.
+[Medical Scenario]
+This is a clinical treatment dynamic adjustment system. The patient's recovery process is divided into a sequence of 7 stages S = {{1, 2, 3, 4, 5, 6, 7}}. The initial stage is {init_state}, and the target stage is {goal_state}.
 
-You can obtain information through three types of queries (only one query per turn):
+You have two intervention medications available, denoted as B and R. Each medication causes the patient's condition to shift by one adjacent stage. However, the specific therapeutic direction is determined by a hidden pathological metabolic scheme.
 
-1. Contact Query: Ask if there is a close contact history between patients u and v. Answer "Yes" or "No".
-2. Contact Count Query: Ask for the total number of close contacts of patient u. Answer a non-negative integer.
-3. Next Contact Query: Ask for the next unknown close contact of patient u. Returns a patient number or "None".
-   - Contacts of each patient are ordered by ascending patient number
-   - Each call returns the smallest-numbered contact you haven't learned about yet
-   - "Learned" means: previously got "Yes" from a contact query, or got that patient from a next contact query
-   - If all contacts are already learned, returns "None"
+The system has selected one of four deterministic metabolic schemes (denoted as H), and you need to infer it through clinical trials. The four schemes are defined by two dimensions:
 
-Use as few queries as possible. After collecting sufficient information, submit your final answer.
+1. Therapeutic-Direction Mapping:
+   - Direct: B means Improvement (stage number increases), R means Deterioration (stage number decreases)
+   - Inverse: B means Deterioration (stage number decreases), R means Improvement (stage number increases)
 
-## Query and Answer Format (strictly required)
+2. Extreme Boundary Handling:
+   - Stable Extremes (Clamped): At stage 7, further improvement remains stable at 7; at stage 1, further deterioration remains at 1
+   - Periodic Relapse (Wrapped): At stage 7, further improvement triggers a relapse back to stage 1; at stage 1, further deterioration rebounds to stage 7
 
-Each turn must contain only one query tag. Use the following XML format:
+The four specific schemes:
+- A (Direct & Stable): B=Improvement, R=Deterioration; extremes clamped
+- B (Inverse & Stable): B=Deterioration, R=Improvement; extremes clamped
+- C (Direct & Relapse): B=Improvement, R=Deterioration; extremes wrapped
+- D (Inverse & Relapse): B=Deterioration, R=Improvement; extremes wrapped
 
-- Contact Query (e.g., asking if there's a close contact between patients 3 and 5):
-<query_edge>3,5</query_edge>
+Condition changes at other stages are always one adjacent step: Improvement(i)=i+1 (if possible), Deterioration(i)=i-1 (if possible), only modified at extreme points by boundary rules.
 
-- Contact Count Query (e.g., asking for the contact count of patient 7):
-<query_degree>7</query_degree>
+You can perform the following operations:
 
-- Next Contact Query (e.g., asking for the next unknown contact of patient 2):
-<query_neighbor>2</query_neighbor>
+1. Execute Intervention: Administer medication B or R. The system will return the current stage after administration.
 
-When submitting the final answer, specify connectivity and provide evidence:
+2. Query Stage: Ask what the current stage is (note: the system automatically reports the stage after each medication, so this query is usually redundant).
 
-- If judging "connected", provide a transmission path from S to T (patient number sequence, comma-separated):
-<answer>connected, path={s},3,7,{t}</answer>
+3. Declare Scheme: Submit what you believe is the true scheme (A, B, C, or D).
+   - Precondition: You must have executed at least two interventions, and at least one must have occurred at an extreme stage (1 or 7).
+   - If the precondition is not met, the system will prompt you to continue observing.
+   - If the precondition is met, the system will tell you whether your declaration is correct.
 
-- If judging "disconnected", provide the complete transmission cluster containing S but not T (patient number set, comma-separated):
-<answer>disconnected, component={s},2,3</answer>
+Your goals:
+1. Infer the true metabolic scheme H through clinical trials.
+2. After correctly declaring, ensure the patient reaches the target stage {goal_state}.
+
+Constraints:
+- Medication budget is limited (only counts B/R usage; queries and declarations do not count).
+- Please use as few interventions as possible to complete the task.
+
+Success conditions:
+1. Correctly declare the true scheme H within the medication budget.
+2. Finally reach the target stage {goal_state} after correct declaration.
+
+Each operation can only contain one tag. Use the following XML format:
+
+- Administer medication B:
+<action>B</action>
+
+- Administer medication R:
+<action>R</action>
+
+- Query current stage:
+<query_state></query_state>
+
+- Declare scheme (e.g., declare scheme A):
+<declare>A</declare>
+
+- Submit final answer (after you have correctly declared the scheme and reached the target stage):
+<answer>success</answer>
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-我们现在来进行"学术合作网络"分析。数据库中隐藏了一个包含 {n} 名学者（编号 1 到 {n}）的科研合作关系图。学者之间通过共同署名论文建立无向的合作关系，无自环和重复关联，具体合作清单未公开。你的任务是判断学者 S={s} 和学者 T={t} 是否属于同一个学术连通圈，并提供可核实的合作路径或孤立圈层名单。
+这是一款自适应学习难度调节系统。认知等级序列 S = {{1, 2, 3, 4, 5, 6, 7}}，代表了知识深度的7个递进层级。初始所在的等级是 {init_state}，目标等级是 {goal_state}。
 
-你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
+你有两种教学策略可用，记为 B 与 R。每次应用策略，学生的认知等级会在相邻层级间浮动。但具体浮动方向由一个隐藏的学习者模型方案决定。
 
-1. 合作查询：询问学者 u 和 v 之间是否合作过论文。回答"是"或"否"。
-2. 合作者数量查询：询问学者 u 的合作者总数。回答一个非负整数。
-3. 下一位合作者查询：询问学者 u 的下一个未知合作者。返回一个学者编号或"无"。
-   - 每个学者的合作者按照编号升序排列
-   - 每次返回你尚未获知的最小编号合作者
-   - "已获知"是指：之前通过合作查询得到"是"，或通过下一位合作者查询返回过该学者
-   - 如果所有合作者都已获知，则返回"无"
+系统从四个确定性模型方案中选择了其中一个（记为 H），你需要通过教学试探来推断它。四个方案由两个维度决定：
 
-请尽可能少地使用查询次数，收集足够信息后提交最终答案。
+1. 策略-方向映射：
+   - 顺向：B 表示升级（向更高层级），R 表示降级（向更低层级）
+   - 逆向：B 表示降级（向更低层级），R 表示升级（向更高层级）
 
-## 查询与提交答案的格式（必须严格遵守）
+2. 瓶颈边界处理：
+   - 封顶锁死（夹持）：在等级 7 时继续升级仍停留在 7；在等级 1 时继续降级仍停留在 1
+   - 循环重置（环回）：在等级 7 时继续升级将重置回等级 1；在等级 1 时继续降级将直接跃迁至等级 7
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+具体四个方案：
+- A（顺向且封顶）：B=升级，R=降级；边界封顶锁死
+- B（逆向且封顶）：B=降级，R=升级；边界封顶锁死
+- C（顺向且重置）：B=升级，R=降级；边界循环重置
+- D（逆向且重置）：B=降级，R=升级；边界循环重置
 
-- 合作查询（例如询问学者 3 和 5 是否有合作）：
-<query_edge>3,5</query_edge>
+其他层级的浮动均为相邻一步：升级(i)=i+1（若可行），降级(i)=i-1（若可行），仅在极端层级受边界规则修正。
 
-- 合作者数量查询（例如询问学者 7 的合作者数量）：
-<query_degree>7</query_degree>
+你可以执行以下操作：
 
-- 下一位合作者查询（例如询问学者 2 的下一个未知合作者）：
-<query_neighbor>2</query_neighbor>
+1. 应用策略：使用 B 或 R 策略。系统会返回应用后的当前认知等级。
 
-提交最终答案时，必须说明连通性并提供证据：
+2. 查询等级：询问当前的认知等级是多少（注意：每次策略应用后系统会自动告知等级，此查询通常是冗余的）。
 
-- 如果判断"连通"，提供从 S 到 T 的合作路径（学者编号序列，用逗号分隔）：
-<answer>connected, path={s},3,7,{t}</answer>
+3. 宣告方案：提交你认为的真实方案（A、B、C 或 D）。
+   - 前置条件：已累计应用至少两次策略，且至少有一次策略发生于极端等级（1 或 7）。
+   - 若未满足前置条件，系统会提示你继续试探。
+   - 若满足前置条件，系统会告知你的宣告是否正确。
 
-- 如果判断"不连通"，提供包含 S 但不包含 T 的完整学术圈层（学者编号集合，用逗号分隔）：
-<answer>disconnected, component={s},2,3</answer>
+你的目标：
+1. 通过试探推断出真实的学习者模型方案 H。
+2. 正确宣告后，使学生最终达到目标等级 {goal_state}。
+
+约束：
+- 策略次数预算有限（仅计 B/R 策略次数；查询与宣告不计入）。
+- 请尽可能少地应用策略完成任务。
+
+成功条件：
+1. 在策略预算内正确宣告真实方案 H。
+2. 在正确宣告后最终到达目标等级 {goal_state}。
+
+每次操作只能包含一个标签。请使用以下 XML 格式：
+
+- 应用策略 B：
+<action>B</action>
+
+- 应用策略 R：
+<action>R</action>
+
+- 查询当前等级：
+<query_state></query_state>
+
+- 宣告方案（例如宣告方案 A）：
+<declare>A</declare>
+
+- 提交最终答案（当你已正确宣告方案且到达目标等级后）：
+<answer>success</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Let's perform an "Academic Collaboration Network" analysis. The database hides a research collaboration graph containing {n} scholars (numbered 1 to {n}). Scholars are linked by undirected co-authorship relations (no self-loops or duplicate links). The exact collaboration list is undisclosed. Your task is to determine if Scholar S={s} and Scholar T={t} belong to the same academic circle, providing verifiable collaboration paths or a list of isolated clusters.
+This is an adaptive learning difficulty adjustment system. The cognitive level sequence is S = {{1, 2, 3, 4, 5, 6, 7}}, representing 7 progressive layers of knowledge depth. The initial level is {init_state}, and the target level is {goal_state}.
 
-You can obtain information through three types of queries (only one query per turn):
+You have two teaching strategies available, denoted as B and R. Each applied strategy shifts the student's cognitive level to an adjacent layer. However, the specific shift direction is determined by a hidden learner model scheme.
 
-1. Collaboration Query: Ask if there is a co-authorship between scholars u and v. Answer "Yes" or "No".
-2. Collaborator Count Query: Ask for the total number of collaborators for scholar u. Answer a non-negative integer.
-3. Next Collaborator Query: Ask for the next unknown collaborator of scholar u. Returns a scholar number or "None".
-   - Collaborators of each scholar are ordered by ascending scholar number
-   - Each call returns the smallest-numbered collaborator you haven't learned about yet
-   - "Learned" means: previously got "Yes" from a collaboration query, or got that scholar from a next collaborator query
-   - If all collaborators are already learned, returns "None"
+The system has selected one of four deterministic model schemes (denoted as H), and you need to infer it through pedagogical trials. The four schemes are defined by two dimensions:
 
-Use as few queries as possible. After collecting sufficient information, submit your final answer.
+1. Strategy-Direction Mapping:
+   - Proactive: B means Level Up (to a higher layer), R means Level Down (to a lower layer)
+   - Reactive: B means Level Down (to a lower layer), R means Level Up (to a higher layer)
 
-## Query and Answer Format (strictly required)
+2. Bottleneck Boundary Handling:
+   - Locked Cap (Clamped): At level 7, leveling up remains at 7; at level 1, leveling down remains at 1
+   - Cycle Reset (Wrapped): At level 7, leveling up resets back to level 1; at level 1, leveling down leaps to level 7
 
-Each turn must contain only one query tag. Use the following XML format:
+The four specific schemes:
+- A (Proactive & Locked): B=Level Up, R=Level Down; boundaries clamped
+- B (Reactive & Locked): B=Level Down, R=Level Up; boundaries clamped
+- C (Proactive & Reset): B=Level Up, R=Level Down; boundaries wrapped
+- D (Reactive & Reset): B=Level Down, R=Level Up; boundaries wrapped
 
-- Collaboration Query (e.g., asking if scholars 3 and 5 collaborated):
-<query_edge>3,5</query_edge>
+Level shifts at other layers are always one adjacent step: Level Up(i)=i+1 (if possible), Level Down(i)=i-1 (if possible), only modified at extreme levels by boundary rules.
 
-- Collaborator Count Query (e.g., asking for the collaborator count of scholar 7):
-<query_degree>7</query_degree>
+You can perform the following operations:
 
-- Next Collaborator Query (e.g., asking for the next unknown collaborator of scholar 2):
-<query_neighbor>2</query_neighbor>
+1. Apply Strategy: Use strategy B or R. The system will return the current cognitive level after application.
 
-When submitting the final answer, specify connectivity and provide evidence:
+2. Query Level: Ask what the current cognitive level is (note: the system automatically reports the level after each strategy, so this query is usually redundant).
 
-- If judging "connected", provide a collaboration path from S to T (scholar number sequence, comma-separated):
-<answer>connected, path={s},3,7,{t}</answer>
+3. Declare Scheme: Submit what you believe is the true scheme (A, B, C, or D).
+   - Precondition: You must have applied at least two strategies, and at least one must have occurred at an extreme level (1 or 7).
+   - If the precondition is not met, the system will prompt you to continue testing.
+   - If the precondition is met, the system will tell you whether your declaration is correct.
 
-- If judging "disconnected", provide the complete academic circle containing S but not T (scholar number set, comma-separated):
-<answer>disconnected, component={s},2,3</answer>
+Your goals:
+1. Infer the true learner model scheme H through pedagogical trials.
+2. After correctly declaring, guide the student to the target level {goal_state}.
+
+Constraints:
+- Strategy budget is limited (only counts B/R applications; queries and declarations do not count).
+- Please use as few strategies as possible to complete the task.
+
+Success conditions:
+1. Correctly declare the true scheme H within the strategy budget.
+2. Finally reach the target level {goal_state} after correct declaration.
+
+Each operation can only contain one tag. Use the following XML format:
+
+- Apply strategy B:
+<action>B</action>
+
+- Apply strategy R:
+<action>R</action>
+
+- Query current level:
+<query_state></query_state>
+
+- Declare scheme (e.g., declare scheme A):
+<declare>A</declare>
+
+- Submit final answer (after you have correctly declared the scheme and reached the target level):
+<answer>success</answer>
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-我们现在进行"工厂管网连通性"排查。车间内埋设了一个包含 {n} 个关键设备节点（编号 1 到 {n}）的隐藏工业管网。节点间由双向管道直接相连，无自环和复线，具体管线拓扑未知。你的任务是判断控制阀 S={s} 与终端设备 T={t} 是否处于同一连通的管网系统中，并提供物理路径或系统隔离的证明。
+这是一款柔性制造流水线调度系统。工位序列 S = {{1, 2, 3, 4, 5, 6, 7}}，代表生产线上的7个关键装配节点。物料的初始工位是 {init_state}，目标工位是 {goal_state}。
 
-你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
+你有两种传送带驱动指令，记为 B 与 R。每次下达指令，物料会在相邻工位间流转。但具体流转方向由当前隐藏的机械传动方案决定。
 
-1. 管线查询：询问节点 u 和 v 之间是否有直连管道。回答"是"或"否"。
-2. 接口数查询：询问节点 u 上的已接管道总数。回答一个非负整数。
-3. 邻接节点查询：询问节点 u 的下一个未知直连节点。返回一个节点编号或"无"。
-   - 每个节点的相邻节点按照编号升序排列
-   - 每次返回你尚未获知的最小编号直连节点
-   - "已获知"是指：之前通过管线查询得到"是"，或通过邻接节点查询返回过该节点
-   - 如果所有相邻节点都已获知，则返回"无"
+控制台从四个确定性传动方案中选择了其中一个（记为 H），你需要通过流转测试来推断它。四个方案由两个维度决定：
 
-请尽可能少地使用查询次数，收集足够信息后提交最终答案。
+1. 指令-方向映射：
+   - 顺流：B 表示流向下游（工位编号增加），R 表示退回上游（工位编号减少）
+   - 逆流：B 表示退回上游（工位编号减少），R 表示流向下游（工位编号增加）
 
-## 查询与提交答案的格式（必须严格遵守）
+2. 传送带边界处理：
+   - 物理挡板（夹持）：在工位 7 时继续向下游仍滞留于 7；在工位 1 时继续向上游仍滞留于 1
+   - 闭环轨道（环回）：在工位 7 时继续向下游将重新传回工位 1；在工位 1 时继续向上游将倒退至工位 7
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+具体四个方案：
+- A（顺流且物理阻挡）：B=下游，R=上游；边界为物理挡板
+- B（逆流且物理阻挡）：B=上游，R=下游；边界为物理挡板
+- C（顺流且闭环轨道）：B=下游，R=上游；边界为闭环轨道
+- D（逆流且闭环轨道）：B=上游，R=下游；边界为闭环轨道
 
-- 管线查询（例如询问节点 3 和 5 之间是否有直连管道）：
-<query_edge>3,5</query_edge>
+其他工位的流转均为相邻一步：下游(i)=i+1（若可行），上游(i)=i-1（若可行），仅在首尾工位受边界规则修正。
 
-- 接口数查询（例如询问节点 7 的已接管道数）：
-<query_degree>7</query_degree>
+你可以执行以下操作：
 
-- 邻接节点查询（例如询问节点 2 的下一个未知直连节点）：
-<query_neighbor>2</query_neighbor>
+1. 下达指令：发送 B 或 R 指令。系统会返回执行后的物料当前工位。
 
-提交最终答案时，必须说明连通性并提供证据：
+2. 查询工位：询问当前的物料所在工位（注意：每次指令后系统会自动告知工位，此查询通常是冗余的）。
 
-- 如果判断"连通"，提供从 S 到 T 的流体路径（节点编号序列，用逗号分隔）：
-<answer>connected, path={s},3,7,{t}</answer>
+3. 宣告方案：提交你认为的真实传动方案（A、B、C 或 D）。
+   - 前置条件：已累计下达至少两次指令，且至少有一次指令发生于首尾工位（1 或 7）。
+   - 若未满足前置条件，系统会提示你继续测试。
+   - 若满足前置条件，系统会告知你的宣告是否正确。
 
-- 如果判断"不连通"，提供包含 S 但不包含 T 的完整隔离管网（节点编号集合，用逗号分隔）：
-<answer>disconnected, component={s},2,3</answer>
+你的目标：
+1. 通过流转测试推断出真实的传动方案 H。
+2. 正确宣告后，使物料最终停靠在目标工位 {goal_state}。
+
+约束：
+- 驱动能耗预算有限（仅计 B/R 指令次数；查询与宣告不计入）。
+- 请尽可能少地消耗指令次数完成调度任务。
+
+成功条件：
+1. 在指令预算内正确宣告真实方案 H。
+2. 在正确宣告后物料最终到达目标工位 {goal_state}。
+
+每次操作只能包含一个标签。请使用以下 XML 格式：
+
+- 下达指令 B：
+<action>B</action>
+
+- 下达指令 R：
+<action>R</action>
+
+- 查询当前工位：
+<query_state></query_state>
+
+- 宣告方案（例如宣告方案 A）：
+<declare>A</declare>
+
+- 提交最终调度结果（当你已正确宣告方案且到达目标工位后）：
+<answer>success</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-Let's conduct an "Industrial Pipeline Connectivity" inspection. The factory floor contains a hidden pipeline network with {n} key equipment nodes (numbered 1 to {n}). Nodes are connected by two-way pipes with no self-loops or duplicate lines. The exact pipeline topology is unknown. Your task is to determine if Control Valve S={s} and Terminal Equipment T={t} are in the same connected piping system, providing physical routing or proof of system isolation.
+[Manufacturing Scenario]
+This is a flexible manufacturing pipeline scheduling system. The workstation sequence is S = {{1, 2, 3, 4, 5, 6, 7}}, representing 7 key assembly nodes on the production line. The material's initial workstation is {init_state}, and the target workstation is {goal_state}.
 
-You can obtain information through three types of queries (only one query per turn):
+You have two conveyor drive commands available, denoted as B and R. Each issued command transfers the material between adjacent workstations. However, the specific transfer direction is determined by a hidden mechanical transmission scheme.
 
-1. Pipe Query: Ask if there is a direct pipe between nodes u and v. Answer "Yes" or "No".
-2. Interface Count Query: Ask for the total number of connected pipes on node u. Answer a non-negative integer.
-3. Adjacent Node Query: Ask for the next unknown directly connected node of node u. Returns a node number or "None".
-   - Adjacent nodes of each node are ordered by ascending node number
-   - Each call returns the smallest-numbered adjacent node you haven't learned about yet
-   - "Learned" means: previously got "Yes" from a pipe query, or got that node from an adjacent node query
-   - If all adjacent nodes are already learned, returns "None"
+The console has selected one of four deterministic transmission schemes (denoted as H), and you need to infer it through transfer testing. The four schemes are defined by two dimensions:
 
-Use as few queries as possible. After collecting sufficient information, submit your final answer.
+1. Command-Direction Mapping:
+   - Downstream Focus: B means Flow Downstream (workstation number increases), R means Return Upstream (workstation number decreases)
+   - Upstream Focus: B means Return Upstream (workstation number decreases), R means Flow Downstream (workstation number increases)
 
-## Query and Answer Format (strictly required)
+2. Conveyor Boundary Handling:
+   - Physical Stop (Clamped): At workstation 7, further downstream flow stalls at 7; at workstation 1, further upstream return stalls at 1
+   - Closed-Loop Track (Wrapped): At workstation 7, further downstream flow loops back to workstation 1; at workstation 1, further upstream return shifts to workstation 7
 
-Each turn must contain only one query tag. Use the following XML format:
+The four specific schemes:
+- A (Downstream & Physical Stop): B=Downstream, R=Upstream; boundaries clamped
+- B (Upstream & Physical Stop): B=Upstream, R=Downstream; boundaries clamped
+- C (Downstream & Closed-Loop): B=Downstream, R=Upstream; boundaries wrapped
+- D (Upstream & Closed-Loop): B=Upstream, R=Downstream; boundaries wrapped
 
-- Pipe Query (e.g., asking if there's a direct pipe between nodes 3 and 5):
-<query_edge>3,5</query_edge>
+Transfers at other workstations are always one adjacent step: Downstream(i)=i+1 (if possible), Upstream(i)=i-1 (if possible), only modified at endpoints by boundary rules.
 
-- Interface Count Query (e.g., asking for the connected pipe count of node 7):
-<query_degree>7</query_degree>
+You can perform the following operations:
 
-- Adjacent Node Query (e.g., asking for the next unknown connected node of node 2):
-<query_neighbor>2</query_neighbor>
+1. Issue Command: Send B or R command. The system will return the material's current workstation after execution.
 
-When submitting the final answer, specify connectivity and provide evidence:
+2. Query Workstation: Ask for the current material workstation (note: the system automatically reports the workstation after each command, so this query is usually redundant).
 
-- If judging "connected", provide a fluid path from S to T (node number sequence, comma-separated):
-<answer>connected, path={s},3,7,{t}</answer>
+3. Declare Scheme: Submit what you believe is the true scheme (A, B, C, or D).
+   - Precondition: You must have issued at least two commands, and at least one must have occurred at an endpoint workstation (1 or 7).
+   - If the precondition is not met, the system will prompt you to continue testing.
+   - If the precondition is met, the system will tell you whether your declaration is correct.
 
-- If judging "disconnected", provide the completely isolated piping sub-system containing S but not T (node number set, comma-separated):
-<answer>disconnected, component={s},2,3</answer>
+Your goals:
+1. Infer the true transmission scheme H through transfer testing.
+2. After correctly declaring, ensure the material parks at the target workstation {goal_state}.
+
+Constraints:
+- Drive energy budget is limited (only counts B/R commands; queries and declarations do not count).
+- Please use as few commands as possible to complete the scheduling task.
+
+Success conditions:
+1. Correctly declare the true scheme H within the command budget.
+2. Finally reach the target workstation {goal_state} after correct declaration.
+
+Each operation can only contain one tag. Use the following XML format:
+
+- Issue command B:
+<action>B</action>
+
+- Issue command R:
+<action>R</action>
+
+- Query current workstation:
+<query_state></query_state>
+
+- Declare scheme (e.g., declare scheme A):
+<declare>A</declare>
+
+- Submit final result (after you have correctly declared the scheme and reached the target workstation):
+<answer>success</answer>
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-我们现在进行"涉案资金流转网络"审查。金融系统中有一个隐藏的账户往来图谱，包含 {n} 个嫌疑账户（编号 1 到 {n}）。账户之间存在双向的资金流转记录，无自环和重复关联，具体流水对你保密。你的任务是判断源头账户 S={s} 与目标账户 T={t} 是否属于同一个资金清洗网络（连通分量），并提供资金链路或闭环网络证据。
+这是一款司法争议解决流程模拟器。案件的审理被划分为7个法定程序阶段序列 S = {{1, 2, 3, 4, 5, 6, 7}}。案件当前的初始阶段是 {init_state}，目标达成阶段是 {goal_state}。
 
-你可以通过以下三种查询方式来获取信息（每次查询只能使用一种）：
+你有两种诉讼动作可用，记为 B 与 R。每次采取诉讼动作，案件会在相邻的程序阶段间推进或退回。但具体流转方向由当前管辖的隐性诉讼规则方案决定。
 
-1. 交易查询：询问账户 u 和 v 之间是否有资金流转。回答"是"或"否"。
-2. 交易对手数查询：询问账户 u 的交易对手总数。回答一个非负整数。
-3. 下一个交易对手查询：询问账户 u 的下一个未知交易对手。返回一个账户编号或"无"。
-   - 每个账户的交易对手按照编号升序排列
-   - 每次返回你尚未获知的最小编号交易对手
-   - "已获知"是指：之前通过交易查询得到"是"，或通过下一个交易对手查询返回过该账户
-   - 如果所有交易对手都已获知，则返回"无"
+系统从四个确定性诉讼规则方案中选择了其中一个（记为 H），你需要通过程序试探来推断它。四个方案由两个维度决定：
 
-请尽可能少地使用查询次数，收集足够信息后提交最终答案。
+1. 动作-方向映射：
+   - 进取：B 表示上诉推进（向后序阶段流转），R 表示退回异议（向前序阶段退回）
+   - 保守：B 表示退回异议（向前序阶段退回），R 表示上诉推进（向后序阶段流转）
 
-## 查询与提交答案的格式（必须严格遵守）
+2. 审级边界处理：
+   - 终审穷尽（夹持）：在阶段 7 时继续推进仍维持终审状态 7；在阶段 1 时继续退回仍滞留于立案阶段 1
+   - 发回重审（环回）：在阶段 7 时继续推进将触发程序重启回到阶段 1；在阶段 1 时继续退回将因特殊抗诉直接跃迁至阶段 7
 
-每次只能包含一个查询标签。请使用以下 XML 格式：
+具体四个方案：
+- A（进取且终审穷尽）：B=推进，R=退回；边界为终审穷尽
+- B（保守且终审穷尽）：B=退回，R=推进；边界为终审穷尽
+- C（进取且发回重审）：B=推进，R=退回；边界为发回重审机制
+- D（保守且发回重审）：B=退回，R=推进；边界为发回重审机制
 
-- 交易查询（例如询问账户 3 和 5 之间是否有资金流转）：
-<query_edge>3,5</query_edge>
+其他程序阶段的流转均为相邻一步：推进(i)=i+1（若法定允许），退回(i)=i-1（若法定允许），仅在首尾极端阶段受边界规则修正。
 
-- 交易对手数查询（例如询问账户 7 的交易对手数）：
-<query_degree>7</query_degree>
+你可以执行以下操作：
 
-- 下一个交易对手查询（例如询问账户 2 的下一个未知交易对手）：
-<query_neighbor>2</query_neighbor>
+1. 采取动作：执行诉讼动作 B 或 R。系统会返回流转后的案件当前阶段。
 
-提交最终答案时，必须说明连通性并提供证据：
+2. 查询阶段：询问当前的程序阶段（注意：每次动作后系统会自动告知阶段，此查询通常是冗余的）。
 
-- 如果判断"连通"，提供从 S 到 T 的资金链路（账户编号序列，用逗号分隔）：
-<answer>connected, path={s},3,7,{t}</answer>
+3. 宣告方案：提交你认为的真实规则方案（A、B、C 或 D）。
+   - 前置条件：已累计采取至少两次诉讼动作，且至少有一次动作发生于极端阶段（1 或 7）。
+   - 若未满足前置条件，系统会驳回请求并提示继续推进。
+   - 若满足前置条件，系统会裁定你的宣告是否正确。
 
-- 如果判断"不连通"，提供包含 S 但不包含 T 的完整资金闭环（账户编号集合，用逗号分隔）：
-<answer>disconnected, component={s},2,3</answer>
+你的目标：
+1. 通过程序试探推断出真实的诉讼规则方案 H。
+2. 正确宣告后，使案件程序最终落定在目标阶段 {goal_state}。
+
+约束：
+- 法定期限/动议次数有限（仅计 B/R 动作次数；查询与宣告不计入）。
+- 请以最精简的诉讼步骤完成任务。
+
+成功条件：
+1. 在诉讼预算内正确宣告真实方案 H。
+2. 在正确宣告后最终到达目标阶段 {goal_state}。
+
+每次操作只能包含一个标签。请使用以下 XML 格式：
+
+- 采取诉讼动作 B：
+<action>B</action>
+
+- 采取诉讼动作 R：
+<action>R</action>
+
+- 查询当前阶段：
+<query_state></query_state>
+
+- 宣告方案（例如宣告方案 A）：
+<declare>A</declare>
+
+- 提交最终结案（当你已正确宣告方案且案件到达目标阶段后）：
+<answer>success</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-Let's perform an "Illicit Fund Transfer Network" review. The financial system contains a hidden transaction graph of {n} suspect accounts (numbered 1 to {n}). There are two-way fund transfer records between accounts (no self-loops or duplicate associations). The exact transaction flow is confidential. Your task is to determine if Source Account S={s} and Target Account T={t} belong to the same money-laundering network (connected component), providing the transaction path or closed-loop network evidence.
+[Legal Scenario]
+This is a judicial dispute resolution simulator. The case review procedure is divided into a sequence of 7 statutory stages S = {{1, 2, 3, 4, 5, 6, 7}}. The initial procedural stage is {init_state}, and the target stage is {goal_state}.
 
-You can obtain information through three types of queries (only one query per turn):
+You have two litigation motions available, denoted as B and R. Each executed motion causes the case to progress or revert between adjacent procedural stages. However, the specific direction is determined by a hidden jurisdictional rule scheme.
 
-1. Transaction Query: Ask if there is a fund transfer between accounts u and v. Answer "Yes" or "No".
-2. Counterparty Count Query: Ask for the total number of counterparties for account u. Answer a non-negative integer.
-3. Next Counterparty Query: Ask for the next unknown counterparty of account u. Returns an account number or "None".
-   - Counterparties of each account are ordered by ascending account number
-   - Each call returns the smallest-numbered counterparty you haven't learned about yet
-   - "Learned" means: previously got "Yes" from a transaction query, or got that account from a next counterparty query
-   - If all counterparties are already learned, returns "None"
+The system has selected one of four deterministic rule schemes (denoted as H), and you need to infer it through procedural testing. The four schemes are defined by two dimensions:
 
-Use as few queries as possible. After collecting sufficient information, submit your final answer.
+1. Motion-Direction Mapping:
+   - Aggressive: B means Escalate (progress to next stage), R means Remand (revert to previous stage)
+   - Conservative: B means Remand (revert to previous stage), R means Escalate (progress to next stage)
 
-## Query and Answer Format (strictly required)
+2. Jurisdiction Boundary Handling:
+   - Final Exhaustion (Clamped): At stage 7, further escalation remains stuck at final stage 7; at stage 1, further remand remains stalled at filing stage 1
+   - Retrial Refresh (Wrapped): At stage 7, further escalation triggers a retrial refresh back to stage 1; at stage 1, further remand leaps via special appeal to stage 7
 
-Each turn must contain only one query tag. Use the following XML format:
+The four specific schemes:
+- A (Aggressive & Final Exhaustion): B=Escalate, R=Remand; boundaries clamped
+- B (Conservative & Final Exhaustion): B=Remand, R=Escalate; boundaries clamped
+- C (Aggressive & Retrial Refresh): B=Escalate, R=Remand; boundaries wrapped
+- D (Conservative & Retrial Refresh): B=Remand, R=Escalate; boundaries wrapped
 
-- Transaction Query (e.g., asking if there's a fund transfer between accounts 3 and 5):
-<query_edge>3,5</query_edge>
+Transfers at other stages are always one adjacent step: Escalate(i)=i+1 (if allowed), Remand(i)=i-1 (if allowed), only modified at extreme stages by boundary rules.
 
-- Counterparty Count Query (e.g., asking for the counterparty count of account 7):
-<query_degree>7</query_degree>
+You can perform the following operations:
 
-- Next Counterparty Query (e.g., asking for the next unknown counterparty of account 2):
-<query_neighbor>2</query_neighbor>
+1. Execute Motion: Perform litigation motion B or R. The system will return the current procedural stage.
 
-When submitting the final answer, specify connectivity and provide evidence:
+2. Query Stage: Ask what the current stage is (note: the system automatically reports the stage after each motion, so this query is usually redundant).
 
-- If judging "connected", provide a transaction path from S to T (account number sequence, comma-separated):
-<answer>connected, path={s},3,7,{t}</answer>
+3. Declare Scheme: Submit what you believe is the true rule scheme (A, B, C, or D).
+   - Precondition: You must have executed at least two motions, and at least one must have occurred at an extreme stage (1 or 7).
+   - If the precondition is not met, the system will overrule the request and prompt you to proceed further.
+   - If the precondition is met, the system will adjudicate whether your declaration is correct.
 
-- If judging "disconnected", provide the complete closed-loop financial network containing S but not T (account number set, comma-separated):
-<answer>disconnected, component={s},2,3</answer>
+Your goals:
+1. Infer the true litigation rule scheme H through procedural testing.
+2. After correctly declaring, secure the case's final position at the target stage {goal_state}.
+
+Constraints:
+- Motion budget / statutory limits are restricted (only counts B/R motions; queries and declarations do not count).
+- Please use as few litigation motions as possible to complete the procedure.
+
+Success conditions:
+1. Correctly declare the true scheme H within the motion budget.
+2. Finally reach the target stage {goal_state} after correct declaration.
+
+Each operation can only contain one tag. Use the following XML format:
+
+- Execute motion B:
+<action>B</action>
+
+- Execute motion R:
+<action>R</action>
+
+- Query current stage:
+<query_state></query_state>
+
+- Declare scheme (e.g., declare scheme A):
+<declare>A</declare>
+
+- Submit final closure (after you have correctly declared the scheme and reached the target stage):
+<answer>success</answer>
 """
 
-    tags = ["answer", "query_edge", "query_degree", "query_neighbor"]
-
-    # 难度配置：
-    # 1 (简单)       - 12个顶点，S和T直接相连
-    # 2 (中等偏下)   - 12个顶点，S和T通过短路径连接
-    # 3 (中等偏上)   - 12个顶点，S和T通过较长路径连接
-    # 4 (较难)       - 12个顶点，S和T不连通，但有多个连通分量
-    # 5 (难)         - 12个顶点，S和T不连通，图较稠密需要更多查询
+    tags = ["answer", "action", "query_state", "declare"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 12), (1, 2), (2, 3), (3, 4), (11, 12), (10, 11)],
-                "connected": True,
-            },
-            2: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 2), (2, 5), (5, 8), (8, 12), (3, 4), (6, 7), (9, 10)],
-                "connected": True,
-            },
-            3: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 12), (8, 9), (10, 11)],
-                "connected": True,
-            },
-            4: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (6, 7), (7, 8), (8, 12), (9, 10), (10, 11)],
-                "connected": False,
-            },
-            5: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 2), (1, 3), (2, 3), (2, 4), (3, 4), (3, 5), (4, 5), (5, 6), 
-                          (7, 8), (7, 9), (8, 9), (8, 12), (9, 12), (10, 11), (11, 12), (10, 12)],
-                "connected": False,
-            },
+            1: {"init_state": 3, "goal_state": 6, "scheme": "A", "max_actions": 15},
+            2: {"init_state": 3, "goal_state": 6, "scheme": "B", "max_actions": 14},
+            3: {"init_state": 2, "goal_state": 5, "scheme": "C", "max_actions": 13},
+            4: {"init_state": 4, "goal_state": 1, "scheme": "D", "max_actions": 12},
+            5: {"init_state": 7, "goal_state": 1, "scheme": "C", "max_actions": 12},
         },
         "en": {
-            1: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 12), (1, 2), (2, 3), (3, 4), (11, 12), (10, 11)],
-                "connected": True,
-            },
-            2: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 2), (2, 5), (5, 8), (8, 12), (3, 4), (6, 7), (9, 10)],
-                "connected": True,
-            },
-            3: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 12), (8, 9), (10, 11)],
-                "connected": True,
-            },
-            4: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (6, 7), (7, 8), (8, 12), (9, 10), (10, 11)],
-                "connected": False,
-            },
-            5: {
-                "n": 12,
-                "s": 1,
-                "t": 12,
-                "edges": [(1, 2), (1, 3), (2, 3), (2, 4), (3, 4), (3, 5), (4, 5), (5, 6), 
-                          (7, 8), (7, 9), (8, 9), (8, 12), (9, 12), (10, 11), (11, 12), (10, 12)],
-                "connected": False,
-            },
+            1: {"init_state": 3, "goal_state": 6, "scheme": "A", "max_actions": 15},
+            2: {"init_state": 3, "goal_state": 6, "scheme": "B", "max_actions": 14},
+            3: {"init_state": 2, "goal_state": 5, "scheme": "C", "max_actions": 13},
+            4: {"init_state": 4, "goal_state": 1, "scheme": "D", "max_actions": 12},
+            5: {"init_state": 7, "goal_state": 1, "scheme": "C", "max_actions": 12},
         },
     }
 
@@ -563,7 +807,10 @@ When submitting the final answer, specify connectivity and provide evidence:
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
+
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -571,257 +818,186 @@ When submitting the final answer, specify connectivity and provide evidence:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self._game_info["n"] = cfg["n"]
-        self._game_info["s"] = cfg["s"]
-        self._game_info["t"] = cfg["t"]
+        self._game_info["init_state"] = cfg["init_state"]
+        self._game_info["goal_state"] = cfg["goal_state"]
         
-        # 构建图结构
-        self.n = cfg["n"]
-        self.s = cfg["s"]
-        self.t = cfg["t"]
-        self.ground_truth_connected = cfg["connected"]
+        self.current_state = cfg["init_state"]
+        self.goal_state = cfg["goal_state"]
+        self.true_scheme = cfg["scheme"]
+        self.max_actions = cfg["max_actions"]
         
-        # 构建邻接表
-        self.adjacency = {i: set() for i in range(1, self.n + 1)}
-        for u, v in cfg["edges"]:
-            self.adjacency[u].add(v)
-            self.adjacency[v].add(u)
+        self.action_count = 0
+        self.boundary_action_count = 0
+        self.declared_correctly = False
+
+    def _apply_transition(self, action, current=None):
+        if current is None:
+            current = self.current_state
         
-        # 为每个顶点创建排序的邻居列表
-        self.sorted_neighbors = {}
-        for v in range(1, self.n + 1):
-            self.sorted_neighbors[v] = sorted(list(self.adjacency[v]))
+        if self.true_scheme == "A":
+            if action == "B":
+                if current == 7:
+                    return 7
+                else:
+                    return current + 1
+            else:
+                if current == 1:
+                    return 1
+                else:
+                    return current - 1
         
-        # 跟踪玩家已知的邻接关系（用于 NextNeighbor 查询）
-        self.known_edges = set()
+        elif self.true_scheme == "B":
+            if action == "B":
+                if current == 1:
+                    return 1
+                else:
+                    return current - 1
+            else:
+                if current == 7:
+                    return 7
+                else:
+                    return current + 1
         
-        # 查询计数
-        self.query_count = 0
-        self.max_queries = 35
+        elif self.true_scheme == "C":
+            if action == "B":
+                if current == 7:
+                    return 1
+                else:
+                    return current + 1
+            else:
+                if current == 1:
+                    return 7
+                else:
+                    return current - 1
+        
+        elif self.true_scheme == "D":
+            if action == "B":
+                if current == 1:
+                    return 7
+                else:
+                    return current - 1
+            else:
+                if current == 7:
+                    return 1
+                else:
+                    return current + 1
+        
+        return current
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        raw_ans = parsed_info["answer"].strip().lower()
-        
-        # 解析答案类型和内容
-        if "disconnected" in raw_ans:
-            # 声明不连通，需要提供包含 S 的连通分量
-            if "component=" not in raw_ans:
-                return False
-            
-            # 提取连通分量
-            try:
-                comp_part = raw_ans.split("component=")[1].strip()
-                component = set(int(x.strip()) for x in comp_part.split(","))
-            except:
-                return False
-            
-            # 验证 S 在分量中，T 不在分量中
-            if self.s not in component:
-                return False
-            if self.t in component:
-                return False
-            
-            # 验证这是一个完整的连通分量（分量内部全连通，且没有边跨越边界）
-            # 1. 使用 BFS/DFS 从 S 出发，在真实图中找到实际的连通分量
-            actual_component = set()
-            queue = [self.s]
-            actual_component.add(self.s)
-            while queue:
-                u = queue.pop(0)
-                for v in self.adjacency[u]:
-                    if v not in actual_component:
-                        actual_component.add(v)
-                        queue.append(v)
-            
-            # 2. 检查提供的分量是否与实际分量一致
-            if component != actual_component:
-                return False
-            
-            # 分量正确，检查是否与真实连通性一致
-            return not self.ground_truth_connected
-            
-        elif "connected" in raw_ans:
-            # 声明连通，需要提供路径
-            if "path=" not in raw_ans:
-                return False
-            
-            # 提取路径
-            try:
-                path_part = raw_ans.split("path=")[1].strip()
-                path = [int(x.strip()) for x in path_part.split(",")]
-            except:
-                return False
-            
-            # 验证路径
-            if len(path) < 2:
-                return False
-            if path[0] != self.s or path[-1] != self.t:
-                return False
-            
-            # 验证路径中每条边都存在
-            for i in range(len(path) - 1):
-                u, v = path[i], path[i + 1]
-                if u < 1 or u > self.n or v < 1 or v > self.n:
-                    return False
-                if v not in self.adjacency[u]:
-                    return False
-            
-            # 路径有效，检查是否与真实连通性一致
-            return self.ground_truth_connected
-            
-        else:
+        if "answer" not in parsed_info:
             return False
+        
+        ans = parsed_info["answer"].strip().lower()
+        if ans != "success":
+            return False
+        
+        return self.declared_correctly and self.current_state == self.goal_state
 
     def _cf_core_produce(self, parsed_info):
-        """处理查询并产生响应的原始业务逻辑"""
-        if self.config.language == "zh":
-            yes_res, no_res, none_res = "是", "否", "无"
-            error_format = "错误：查询格式无效。"
-            error_range = "错误：顶点编号超出范围。"
-        else:
-            yes_res, no_res, none_res = "Yes", "No", "None"
-            error_format = "Error: Invalid query format."
-            error_range = "Error: Vertex number out of range."
+        is_zh = self.config.language == "zh"
         
-        # 查询计数
-        self.query_count += 1
-        
-        # 处理边查询
-        if "query_edge" in parsed_info:
-            try:
-                raw = parsed_info["query_edge"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    return error_format
-                u, v = int(parts[0]), int(parts[1])
-                
-                if u < 1 or u > self.n or v < 1 or v > self.n:
-                    return error_range
-                
-                # 记录已知边
-                if v in self.adjacency[u]:
-                    self.known_edges.add((min(u, v), max(u, v)))
-                    return yes_res
-                else:
-                    return no_res
-            except:
-                return error_format
-        
-        # 处理度数查询
-        elif "query_degree" in parsed_info:
-            try:
-                u = int(parsed_info["query_degree"].strip())
-                if u < 1 or u > self.n:
-                    return error_range
-                return str(len(self.adjacency[u]))
-            except:
-                return error_format
-        
-        # 处理邻居查询
-        elif "query_neighbor" in parsed_info:
-            try:
-                u = int(parsed_info["query_neighbor"].strip())
-                if u < 1 or u > self.n:
-                    return error_range
-                
-                # 找到第一个未知的邻居
-                for neighbor in self.sorted_neighbors[u]:
-                    edge_tuple = (min(u, neighbor), max(u, neighbor))
-                    if edge_tuple not in self.known_edges:
-                        # 标记为已知
-                        self.known_edges.add(edge_tuple)
-                        return str(neighbor)
-                
-                # 所有邻居都已知
-                return none_res
-            except:
-                return error_format
-        
-        else:
-            raise ValueError("No valid query tag found.")
-
-    def _cf_make_wrong(self, correct):
-        """生成一个与正确答案不同的错误回复，用于反事实干预"""
-        if self.config.language == "zh":
-            yes_res, no_res, none_res = "是", "否", "无"
-        else:
-            yes_res, no_res, none_res = "Yes", "No", "None"
-        
-        # 对于 Yes/No 类回答，翻转结果
-        if correct == yes_res:
-            return no_res
-        elif correct == no_res:
-            return yes_res
-        elif correct == none_res:
-            # 返回一个虚假的邻居编号
-            return "1"
-        else:
-            # 对于数字类答案（度数查询），返回一个不同的数字
-            try:
-                val = int(correct)
-                return str(val + 1)
-            except ValueError:
-                return correct + "_wrong"
-    
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        对于有状态的 query_neighbor，我们为每个顶点模拟多次调用，
-        枚举出所有可能返回的邻居。
-        """
-        results = []
-        
-        if self.config.language == "zh":
-            yes_res, no_res, none_res = "是", "否", "无"
-        else:
-            yes_res, no_res, none_res = "Yes", "No", "None"
-
-        # 1. 边查询 (query_edge)
-        # 枚举所有唯一的顶点对 (u, v) 其中 u < v
-        for u in range(1, self.n + 1):
-            for v in range(u + 1, self.n + 1):
-                query_str = f"<query_edge>{u},{v}</query_edge>"
-                
-                if v in self.adjacency[u]:
-                    ans = yes_res
-                else:
-                    ans = no_res
-                
-                results.append({
-                    "query": query_str,
-                    "answer": ans
-                })
-
-        # 2. 度数查询 (query_degree)
-        for u in range(1, self.n + 1):
-            query_str = f"<query_degree>{u}</query_degree>"
-            ans = str(len(self.adjacency[u]))
-            results.append({
-                "query": query_str,
-                "answer": ans
-            })
-
-        # 3. 邻居查询 (query_neighbor)
-        # 为每个顶点模拟完整的邻居发现过程
-        # 使用临时的 known_edges 来模拟
-        temp_known = set()
-        for u in range(1, self.n + 1):
-            # 模拟多次调用直到返回 None
-            while True:
-                query_str = f"<query_neighbor>{u}</query_neighbor>"
-                ans = none_res
-                for neighbor in self.sorted_neighbors[u]:
-                    edge_tuple = (min(u, neighbor), max(u, neighbor))
-                    if edge_tuple not in temp_known:
-                        temp_known.add(edge_tuple)
-                        ans = str(neighbor)
-                        break
-                results.append({
-                    "query": query_str,
-                    "answer": ans
-                })
-                if ans == none_res:
-                    break
+        if "action" in parsed_info:
+            action = parsed_info["action"].strip().upper()
+            if action not in ["B", "R"]:
+                return "错误：动作必须是 B 或 R。" if is_zh else "Error: Action must be B or R."
             
+            if self.action_count >= self.max_actions:
+                msg = f"动作预算已用尽（{self.max_actions}次）。" if is_zh else f"Action budget exhausted ({self.max_actions} actions)."
+                self.state.set_state("failed", "action budget exhausted")
+                return msg
+            
+            if self.current_state in [1, 7]:
+                self.boundary_action_count += 1
+            
+            self.current_state = self._apply_transition(action)
+            self.action_count += 1
+            
+            msg = f"执行动作 {action}。当前状态：{self.current_state}。" if is_zh else f"Action {action} executed. Current state: {self.current_state}."
+            
+            if self.action_count >= self.max_actions:
+                if not self.declared_correctly:
+                    self.state.set_state("failed", "action budget exhausted before correct declaration")
+                    msg += " 动作预算已用尽，游戏失败。" if is_zh else " Action budget exhausted, game failed."
+                elif self.current_state != self.goal_state:
+                    self.state.set_state("failed", "action budget exhausted before reaching goal")
+                    msg += " 动作预算已用尽，未到达目标，游戏失败。" if is_zh else " Action budget exhausted before reaching goal, game failed."
+            
+            return msg
+        
+        if "query_state" in parsed_info:
+            return f"当前状态：{self.current_state}。" if is_zh else f"Current state: {self.current_state}."
+        
+        if "declare" in parsed_info:
+            declared = parsed_info["declare"].strip().upper()
+            if declared not in ["A", "B", "C", "D"]:
+                return "错误：方案必须是 A、B、C 或 D。" if is_zh else "Error: Scheme must be A, B, C, or D."
+            
+            if self.action_count < 2:
+                return "宣告被拒绝：你至少需要执行两次动作。" if is_zh else "Declaration rejected: You must execute at least two actions."
+            if self.boundary_action_count < 1:
+                return "宣告被拒绝：你至少需要在边界状态（1 或 7）执行一次动作。" if is_zh else "Declaration rejected: You must execute at least one action at a boundary state (1 or 7)."
+            
+            if declared == self.true_scheme:
+                self.declared_correctly = True
+                msg = f"宣告正确！真实方案是 {self.true_scheme}。" if is_zh else f"Declaration correct! The true scheme is {self.true_scheme}."
+                
+                if self.current_state == self.goal_state:
+                    msg += " 你已到达目标状态，请提交最终答案。" if is_zh else " You have reached the goal state, please submit your final answer."
+                else:
+                    msg += f" 现在请移动到目标状态 {self.goal_state}。" if is_zh else f" Now please move to the goal state {self.goal_state}."
+                
+                return msg
+            else:
+                self.state.set_state("failed", "incorrect declaration")
+                return f"宣告错误。正确方案是 {self.true_scheme}。游戏失败。" if is_zh else f"Declaration incorrect. The correct scheme is {self.true_scheme}. Game failed."
+        
+        return "错误：未识别的操作。" if is_zh else "Error: Unrecognized operation."
+
+    def _cf_make_wrong(self, correct: str) -> str:
+        import re as _re
+        
+        pattern_en = r'(Current state:\s*)(\d+)'
+        pattern_zh = r'(当前状态：)(\d+)'
+        
+        match = _re.search(pattern_en, correct) or _re.search(pattern_zh, correct)
+        if match:
+            original_num = int(match.group(2))
+            if original_num < 7:
+                wrong_num = original_num + 1
+            else:
+                wrong_num = original_num - 1
+            wrong = correct[:match.start(2)] + str(wrong_num) + correct[match.end(2):]
+            return wrong
+        
+        match = _re.search(r'(\d+)', correct)
+        if match:
+            original_num = int(match.group(1))
+            if original_num < 7:
+                wrong_num = original_num + 1
+            else:
+                wrong_num = original_num - 1
+            wrong = correct.replace(str(original_num), str(wrong_num), 1)
+            return wrong
+        
+        return correct + " [WRONG]"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        results = []
+        is_zh = self.config.language == "zh"
+
+        for state_val in range(1, 8):
+            for action in ["B", "R"]:
+                new_state = self._apply_transition(action, current=state_val)
+                query_xml = f"<action>{action}</action>"
+                if is_zh:
+                    answer = f"（当前状态：{state_val}）执行动作 {action}。当前状态：{new_state}。"
+                else:
+                    answer = f"(Current state: {state_val}) Action {action} executed. Current state: {new_state}."
+
+                results.append({
+                    "query": query_xml,
+                    "answer": answer
+                })
+
         return results

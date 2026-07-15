@@ -1,913 +1,495 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   改边权影响：将某边权重修改后，全局最短路是否受影响
-# ============================================================
-
-# graph_mode_inference.py
-
 from .base import Game
-import math
 import re
+import random as _random
 
+class SequenceRecoveryGame(Game):
 
-class GraphModeInferenceGame(Game):
-
-    reasoning_type = "溯因推理"
-    data_structure = "图"
+    reasoning_type = "演绎推理"
+    data_structure = "序列"
 
     game_rule_zh = """\
-我们来玩一个"图模式推理"游戏，规则如下：
+我们现在来玩一个"序列恢复"的推理游戏，规则如下：
 
-游戏设定了一个无向加权图，权重均为正整数。节点包括：S（源点）、A、B、C、D、T（汇点）。
+游戏设定了一个长度为 {n} 的有序序列 a1, a2, ..., a{n}，其中每个元素 ai 均为非负整数。序列长度 {n} 已公开，但序列中每个元素的具体值对你不可见。
 
-初始边及权重（基线图）：
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+你的目标是通过有限次数的查询，推理出序列中每个位置的精确值。
 
-在基线图中，从S到T的最短路径成本为 {baseline_cost}，最短路径集合为 {baseline_paths}。
+你可以向我发起以下两种查询：
 
-游戏中存在六条候选路径：
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **两邻项和查询**：询问位置 i 和 i+1 两个相邻元素的和，即 ai + a(i+1)。索引 i 的有效范围是 1 到 {n_minus_1}。
 
-可调整的边仅限于：{adjustable_edges_str}
+2. **三邻项和查询**：询问位置 i、i+1、i+2 三个相邻元素的和，即 ai + a(i+1) + a(i+2)。索引 i 的有效范围是 1 到 {n_minus_2}。**此类查询在整个游戏过程中最多只能使用一次。**
 
-我已秘密选择了一种"模式"（A、B或C之一），该模式决定了边权重如何变化：
-- 减少操作：权重按特定规则减小（但不低于1）
-- 增加操作：权重按特定规则增大
+- 总查询次数（两邻项和查询次数 + 三邻项和查询次数）不能超过 {n} 次。
+- 三邻项和查询最多使用一次。
+- 若索引超出有效范围、超过总查询次数限制、或三邻项和查询超过一次，系统将返回错误提示。
 
-你可以进行以下操作：
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-1. 试运行：选择一条可调整边和一种操作（减少/增加），我会告诉你操作后的最短成本、最短路径集合（用P1-P6标识），以及该边是否出现在最短路径上。注意：每次试运行后图会立即重置为基线，多次试运行互不影响。
+- 两邻项和查询（例如查询位置 1 和 2 的和）：
+<query_pair>1</query_pair>
 
-2. 复述基线：我会重新告诉你基线图的最短成本和最短路径集合。
+- 三邻项和查询（例如查询位置 2、3、4 的和）：
+<query_triple>2</query_triple>
 
-3. 提交答案：当你确定模式后，需要宣判模式（A、B或C）并执行一次边操作，使得路径 {target_path} 成为执行后图的最短路径之一（可以与其他路径并列）。
+当你收集到足够信息后，请提交最终答案。答案必须是一个长度为 {n} 的非负整数序列，按位置从 1 到 {n} 依次给出，元素之间用逗号分隔：
 
-## 操作格式（必须严格遵守）
+<answer>a1,a2,a3,...,a{n}</answer>
 
-试运行查询（例如对边S-C执行减少操作）：
-<query_trial>S-C,减少</query_trial>
+例如，若序列长度为 5，你推理出的序列为 3, 1, 4, 1, 5，则提交：
+<answer>3,1,4,1,5</answer>
 
-复述基线：
-<query_baseline></query_baseline>
-
-提交最终答案（例如宣判模式为A，对边S-B执行增加操作）：
-<answer>mode=A,edge=S-B,op=增加</answer>
-
-注意：
-- 边名称使用连字符连接两个节点，如"S-C"、"B-T"等
-- 操作只能是"减少"或"增加"
-- 每次只能包含一个标签
-- 试运行次数应尽可能少
-
-你的目标是：
-1. 正确识别隐藏的模式（A、B或C）
-2. 给出一次边操作，使 {target_path} 成为最短路径之一
+若答案与真实序列不符或格式错误，游戏将失败。请尽可能少地使用查询次数完成推理。
 """
 
     game_rule_en = """\
-Let's play a "Graph Mode Inference" game. Here are the rules:
+Let's play a "Sequence Recovery" deduction game. Here are the rules:
 
-The game features an undirected weighted graph with positive integer weights. Nodes include: S (source), A, B, C, D, T (sink).
+There is an ordered sequence of length {n}: a1, a2, ..., a{n}, where each element ai is a non-negative integer. The length {n} is publicly known, but the specific values of the elements are hidden from you.
 
-Initial edges and weights (baseline graph):
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+Your goal is to infer the exact value at each position through a limited number of queries.
 
-In the baseline graph, the shortest path cost from S to T is {baseline_cost}, and the shortest path set is {baseline_paths}.
+You can make the following two types of queries:
 
-There are six candidate paths in the game:
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **Pair Sum Query**: Ask for the sum of two adjacent elements at positions i and i+1, i.e., ai + a(i+1). Valid index range for i is 1 to {n_minus_1}.
 
-Adjustable edges are limited to: {adjustable_edges_str}
+2. **Triple Sum Query**: Ask for the sum of three adjacent elements at positions i, i+1, and i+2, i.e., ai + a(i+1) + a(i+2). Valid index range for i is 1 to {n_minus_2}. **This type of query can be used at most once throughout the entire game.**
 
-I have secretly selected a "mode" (A, B, or C), which determines how edge weights change:
-- Decrease operation: weight decreases according to specific rules (but not below 1)
-- Increase operation: weight increases according to specific rules
+- Total number of queries (pair sum queries + triple sum queries) cannot exceed {n}.
+- Triple sum query can be used at most once.
+- If the index is out of valid range, total query limit is exceeded, or triple sum query is used more than once, the system will return an error message.
 
-You can perform the following operations:
+Each query must contain only one tag, using the following XML format:
 
-1. Trial run: Select an adjustable edge and an operation (decrease/increase). I will tell you the resulting shortest cost, shortest path set (identified by P1-P6), and whether the edge appears in the shortest paths. Note: After each trial, the graph immediately resets to baseline; trials do not stack.
+- Pair Sum Query (e.g., querying the sum of positions 1 and 2):
+<query_pair>1</query_pair>
 
-2. Repeat baseline: I will remind you of the baseline graph's shortest cost and path set.
+- Triple Sum Query (e.g., querying the sum of positions 2, 3, and 4):
+<query_triple>2</query_triple>
 
-3. Submit answer: When you determine the mode, declare the mode (A, B, or C) and execute one edge operation to make path {target_path} one of the shortest paths (can be tied with others).
+When you have collected enough information, submit your final answer. The answer must be a sequence of {n} non-negative integers, listed in order from position 1 to {n}, separated by commas:
 
-## Operation Format (must strictly follow)
+<answer>a1,a2,a3,...,a{n}</answer>
 
-Trial query (e.g., decrease edge S-C):
-<query_trial>S-C,decrease</query_trial>
+For example, if the sequence length is 5 and your inferred sequence is 3, 1, 4, 1, 5, submit:
+<answer>3,1,4,1,5</answer>
 
-Repeat baseline:
-<query_baseline></query_baseline>
-
-Submit final answer (e.g., declare mode A, increase edge S-B):
-<answer>mode=A,edge=S-B,op=increase</answer>
-
-Notes:
-- Edge names use hyphen to connect two nodes, e.g., "S-C", "B-T"
-- Operation can only be "decrease" or "increase"
-- Each query must contain only one tag
-- Number of trials should be minimized
-
-Your goals are:
-1. Correctly identify the hidden mode (A, B, or C)
-2. Provide one edge operation to make {target_path} one of the shortest paths
+If the answer does not match the true sequence or the format is incorrect, the game will fail. Try to complete the reasoning with as few queries as possible.
 """
 
     contextualized_rule_zh_1 = """\
-欢迎使用“智能交通路网调度系统”。你是一名城市交通规划师，需要优化从起点（S）到终点（T）的通勤时间。
+我们现在来进行“交通主干道车流特征分析”任务，规则如下：
 
-系统设定了一个无向加权路网图，权重代表通行时间（单位：分钟，均为正整数）。交叉路口包括：S（起点）、A、B、C、D、T（终点）。
+市中心的一条主干道被划分为 {n} 个连续的监控路段（编号1到{n}）。系统已知总路段数 {n}，但每个路段当前的滞留车辆数（非负整数）由于前端传感器故障暂时不可见。
 
-初始路段及通行时间（基线路网）：
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+你的目标是通过调度有限的备用监测设备，精准推断出每个路段的具体车辆数。
 
-在基线路网中，从S到T的最短通勤时间为 {baseline_cost}，最快路线集合为 {baseline_paths}。
+你可以下达以下两种指令：
 
-路网中存在六条主要通勤路线：
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **双路段联动流调**：查询第 i 和第 i+1 两个相邻路段的车辆总和。输入参数 i 的有效范围是 1 到 {n_minus_1}。
 
-可实施交通干预（扩建或限行）的路段仅限于：{adjustable_edges_str}
+2. **三路段无人机巡查**：查询第 i、i+1、i+2 三个相邻路段的车辆总和。输入参数 i 的有效范围是 1 到 {n_minus_2}。**由于空域管制，此类巡查在整个任务中最多只能执行一次。**
 
-系统已秘密设定了一种“交通演变模式”（A、B或C之一），该模式决定了干预措施如何影响通行时间：
-- 减少操作（道路扩建）：通行时间按特定规则减小（但不低于1分钟）
-- 增加操作（施工限行）：通行时间按特定规则增大
+- 总查询次数（双路段联动流调 + 三路段无人机巡查）不能超过 {n} 次。
+- 三路段无人机巡查最多使用一次。
+- 若索引超出有效范围、超过总查询次数限制、或多次调用无人机巡查，系统将返回错误提示。
 
-你可以进行以下操作：
+每次指令只能包含一个标签，使用以下 XML 格式：
 
-1. 试运行：选择一条可干预路段和一种操作（减少/增加），我会告诉你操作后的最短通勤时间、最快路线集合（用P1-P6标识），以及该路段是否出现在最快路线上。注意：每次试运行后路网会立即重置为基线，多次试运行互不影响。
+- 双路段联动流调（例如查询路段 1 和 2 的总和）：
+<query_pair>1</query_pair>
 
-2. 复述基线：我会重新告诉你基线路网的最短通勤时间和最快路线集合。
+- 三路段无人机巡查（例如查询路段 2、3、4 的总和）：
+<query_triple>2</query_triple>
 
-3. 提交答案：当你确定交通演变模式后，需要宣判模式（A、B或C）并执行一次路段操作，使得路线 {target_path} 成为执行后路网的最快路线之一（可以与其他路线并列）。
+当你收集到足够信息后，请提交最终流调报告。报告必须是一个长度为 {n} 的非负整数序列，按路段从 1 到 {n} 依次给出，数值之间用逗号分隔：
 
-## 操作格式（必须严格遵守）
+<answer>a1,a2,a3,...,a{n}</answer>
 
-试运行查询（例如对路段S-C执行减少操作）：
-<query_trial>S-C,减少</query_trial>
+例如，若路段总数为 5，你推理出的车辆分布为 3, 1, 4, 1, 5，则提交：
+<answer>3,1,4,1,5</answer>
 
-复述基线：
-<query_baseline></query_baseline>
-
-提交最终答案（例如宣判模式为A，对路段S-B执行增加操作）：
-<answer>mode=A,edge=S-B,op=增加</answer>
-
-注意：
-- 路段名称使用连字符连接两个节点，如"S-C"、"B-T"等
-- 操作只能是"减少"或"增加"
-- 每次只能包含一个标签
-- 试运行次数应尽可能少
-
-你的目标是：
-1. 正确识别隐藏的交通演变模式（A、B或C）
-2. 给出一次干预操作，使 {target_path} 成为最快路线之一
+若报告与真实数据不符或格式错误，任务将宣告失败。请尽可能高效地调度监测指令完成分析。
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the "Intelligent Traffic Network Dispatch System." You are an urban traffic planner tasked with optimizing the commute time from the starting point (S) to the destination (T).
+Let's perform the "Arterial Traffic Flow Analysis" task. Here are the rules:
 
-The system features an undirected weighted road network graph, where weights represent travel time (in minutes, all positive integers). Intersections include: S (start), A, B, C, D, T (destination).
+A main arterial road in the city center is divided into {n} consecutive monitored segments (numbered 1 to {n}). The total number of segments {n} is known, but the current number of stranded vehicles (a non-negative integer) in each segment is temporarily invisible due to frontend sensor failures.
 
-Initial road segments and travel times (baseline network):
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+Your goal is to accurately infer the specific number of vehicles in each segment by dispatching a limited number of backup monitoring devices.
 
-In the baseline network, the shortest commute time from S to T is {baseline_cost}, and the fastest route set is {baseline_paths}.
+You can issue the following two types of commands:
 
-There are six major commute routes in the network:
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **Dual-Segment Linked Survey**: Query the total number of vehicles in two adjacent segments, i and i+1. The valid range for parameter i is 1 to {n_minus_1}.
 
-Road segments adjustable via traffic interventions (expansion or restriction) are limited to: {adjustable_edges_str}
+2. **Tri-Segment Drone Patrol**: Query the total number of vehicles in three adjacent segments, i, i+1, and i+2. The valid range for parameter i is 1 to {n_minus_2}. **Due to airspace control, this type of patrol can be executed at most once throughout the entire task.**
 
-The system has secretly selected a "traffic evolution mode" (A, B, or C), which determines how interventions affect travel times:
-- Decrease operation (road expansion): time decreases according to specific rules (but not below 1 minute)
-- Increase operation (construction restriction): time increases according to specific rules
+- The total number of queries (Dual-Segment Linked Survey + Tri-Segment Drone Patrol) cannot exceed {n}.
+- The Tri-Segment Drone Patrol can be used at most once.
+- If the index is out of the valid range, the total query limit is exceeded, or the drone patrol is used more than once, the system will return an error message.
 
-You can perform the following operations:
+Each command must contain only one tag, using the following XML format:
 
-1. Trial run: Select an adjustable segment and an operation (decrease/increase). I will tell you the resulting shortest commute time, fastest route set (identified by P1-P6), and whether the segment appears in the fastest routes. Note: After each trial, the network immediately resets to baseline; trials do not stack.
+- Dual-Segment Linked Survey (e.g., querying the sum of segments 1 and 2):
+<query_pair>1</query_pair>
 
-2. Repeat baseline: I will remind you of the baseline network's shortest commute time and fastest route set.
+- Tri-Segment Drone Patrol (e.g., querying the sum of segments 2, 3, and 4):
+<query_triple>2</query_triple>
 
-3. Submit answer: When you determine the evolution mode, declare the mode (A, B, or C) and execute one segment operation to make route {target_path} one of the fastest routes in the resulting network (can be tied with others).
+When you have collected enough information, please submit your final report. The report must be a sequence of {n} non-negative integers, listed in order from segment 1 to {n}, separated by commas:
 
-## Operation Format (must strictly follow)
+<answer>a1,a2,a3,...,a{n}</answer>
 
-Trial query (e.g., decrease segment S-C):
-<query_trial>S-C,decrease</query_trial>
+For example, if the total number of segments is 5 and your inferred vehicle distribution is 3, 1, 4, 1, 5, submit:
+<answer>3,1,4,1,5</answer>
 
-Repeat baseline:
-<query_baseline></query_baseline>
-
-Submit final answer (e.g., declare mode A, increase segment S-B):
-<answer>mode=A,edge=S-B,op=increase</answer>
-
-Notes:
-- Segment names use hyphen to connect two nodes, e.g., "S-C", "B-T"
-- Operation can only be "decrease" or "increase"
-- Each query must contain only one tag
-- Number of trials should be minimized
-
-Your goals are:
-1. Correctly identify the hidden traffic evolution mode (A, B, or C)
-2. Provide one intervention operation to make {target_path} one of the fastest routes
+If the report does not match the actual data or the format is incorrect, the task will fail. Try to complete the analysis using as few monitoring commands as possible.
 """
 
     contextualized_rule_zh_2 = """\
-欢迎使用“临床诊疗路径推演系统”。你是一名主治医师，需要为患者规划从确诊状态（S）到完全康复（T）的最佳治疗方案。
+我们现在来进行“靶向药物阶梯剂量推演”任务，规则如下：
 
-系统设定了一个无向加权疾病进展图，权重代表各治疗阶段的康复周期（单位：天，均为正整数）。阶段节点包括：S（确诊）、A、B、C、D、T（康复）。
+一项临床治疗方案包含 {n} 个连续的给药周期（编号1到{n}）。周期总数 {n} 已知，但每个周期具体的药物剂量（非负整数，单位：毫克）对盲法评估人员不可见。
 
-初始干预手段及康复周期（基线状态）：
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+你的目标是通过调阅有限的联合代谢物检测报告，逆向推导每个周期的精确给药剂量。
 
-在基线状态中，从S到T的最短康复周期为 {baseline_cost} 天，最佳治疗路径集合为 {baseline_paths}。
+你可以发起以下两种化验单查询：
 
-临床上存在六条候选治疗路径：
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **双周期代谢物联合化验**：查询第 i 和第 i+1 两个相邻周期的剂量之和。参数 i 的有效范围是 1 到 {n_minus_1}。
 
-允许调整用药剂量的干预阶段仅限于：{adjustable_edges_str}
+2. **三周期深度靶向筛查**：查询第 i、i+1、i+2 三个相邻周期的剂量之和。参数 i 的有效范围是 1 到 {n_minus_2}。**因该项筛查会消耗极珍贵的生物样本，整个评估过程中最多只能使用一次。**
 
-患者体质隐藏着一种“药物反应模式”（A、B或C之一），该模式决定了剂量调整如何影响康复周期：
-- 减少操作（增加特效药剂量）：周期按特定规则缩短（但不低于1天）
-- 增加操作（采取保守减量）：周期按特定规则延长
+- 总查询次数（双周期化验 + 三周期筛查）不能超过 {n} 次。
+- 三周期深度靶向筛查最多使用一次。
+- 若周期索引超出有效范围、超过总查询次数限制、或多次调用深度筛查，系统将返回错误提示。
 
-你可以进行以下操作：
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-1. 试运行：选择一个可调整阶段和一种操作（减少/增加），我会告诉你操作后的最短康复周期、最佳治疗路径集合（用P1-P6标识），以及该阶段是否出现在最佳路径上。注意：每次试运行后患者状态会立即重置为基线，多次试运行互不影响。
+- 双周期代谢物联合化验（例如查询周期 1 和 2 的总剂量）：
+<query_pair>1</query_pair>
 
-2. 复述基线：我会重新告诉你基线状态的最短康复周期和最佳路径集合。
+- 三周期深度靶向筛查（例如查询周期 2、3、4 的总剂量）：
+<query_triple>2</query_triple>
 
-3. 提交答案：当你确定药物反应模式后，需要宣判模式（A、B或C）并执行一次剂量操作，使得治疗路径 {target_path} 成为执行后临床的最短路径之一（可以与其他路径并列）。
+当数据收集完成后，请提交最终剂量评估报告。报告必须是一个长度为 {n} 的非负整数序列，按周期从 1 到 {n} 依次给出，数值之间用逗号分隔：
 
-## 操作格式（必须严格遵守）
+<answer>a1,a2,a3,...,a{n}</answer>
 
-试运行查询（例如对阶段S-C执行减少操作）：
-<query_trial>S-C,减少</query_trial>
+例如，若周期总数为 5，你推演出的剂量序列为 3, 1, 4, 1, 5，则提交：
+<answer>3,1,4,1,5</answer>
 
-复述基线：
-<query_baseline></query_baseline>
-
-提交最终答案（例如宣判模式为A，对阶段S-B执行增加操作）：
-<answer>mode=A,edge=S-B,op=增加</answer>
-
-注意：
-- 阶段名称使用连字符连接两个节点，如"S-C"、"B-T"等
-- 操作只能是"减少"或"增加"
-- 每次只能包含一个标签
-- 试运行次数应尽可能少
-
-你的目标是：
-1. 正确识别隐藏的药物反应模式（A、B或C）
-2. 给出一次剂量调整操作，使 {target_path} 成为最短康复路径之一
+若报告与真实处方不符或格式错误，评估将失败。请在确保证据充分的前提下尽量减少化验次数。
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the "Clinical Pathway Deduction System." You are an attending physician tasked with planning the optimal treatment plan from diagnosis (S) to full recovery (T) for a patient.
+Let's perform the "Targeted Drug Step-Dose Deduction" task. Here are the rules:
 
-The system features an undirected weighted disease progression graph, where weights represent the recovery cycle of each treatment stage (in days, all positive integers). Stage nodes include: S (diagnosis), A, B, C, D, T (recovery).
+A clinical treatment plan consists of {n} consecutive dosing cycles (numbered 1 to {n}). The total number of cycles {n} is known, but the specific drug dosage (a non-negative integer in mg) for each cycle is blinded to the evaluating staff.
 
-Initial interventions and recovery cycles (baseline state):
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+Your goal is to reverse-engineer the precise dosage administered in each cycle by reviewing a limited number of joint metabolite test reports.
 
-In the baseline state, the shortest recovery cycle from S to T is {baseline_cost} days, and the optimal clinical pathway set is {baseline_paths}.
+You can initiate the following two types of lab queries:
 
-There are six candidate clinical pathways:
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **Dual-Cycle Metabolite Joint Test**: Query the total combined dosage of two adjacent cycles, i and i+1. The valid range for parameter i is 1 to {n_minus_1}.
 
-Treatment stages where dosage adjustments are permitted are limited to: {adjustable_edges_str}
+2. **Tri-Cycle Deep Targeted Screening**: Query the total combined dosage of three adjacent cycles, i, i+1, and i+2. The valid range for parameter i is 1 to {n_minus_2}. **Because this screening consumes extremely precious biological samples, it can be used at most once during the entire evaluation.**
 
-The patient's constitution hides a "drug response mode" (A, B, or C), which determines how dosage adjustments affect the recovery cycle:
-- Decrease operation (increase specific drug dose): cycle shortens according to specific rules (but not below 1 day)
-- Increase operation (conservative dose reduction): cycle lengthens according to specific rules
+- The total number of queries (Dual-Cycle Test + Tri-Cycle Screening) cannot exceed {n}.
+- The Tri-Cycle Deep Targeted Screening can be used at most once.
+- If the index is out of the valid range, the total query limit is exceeded, or the deep screening is used more than once, the system will return an error message.
 
-You can perform the following operations:
+Each query must contain only one tag, using the following XML format:
 
-1. Trial run: Select an adjustable stage and an operation (decrease/increase). I will tell you the resulting shortest recovery cycle, optimal pathway set (identified by P1-P6), and whether the stage appears in the optimal pathways. Note: After each trial, the patient's state immediately resets to baseline; trials do not stack.
+- Dual-Cycle Metabolite Joint Test (e.g., querying the total dose of cycles 1 and 2):
+<query_pair>1</query_pair>
 
-2. Repeat baseline: I will remind you of the baseline state's shortest recovery cycle and optimal pathway set.
+- Tri-Cycle Deep Targeted Screening (e.g., querying the total dose of cycles 2, 3, and 4):
+<query_triple>2</query_triple>
 
-3. Submit answer: When you determine the drug response mode, declare the mode (A, B, or C) and execute one dosage operation to make pathway {target_path} one of the optimal pathways in the resulting clinical state (can be tied with others).
+When data collection is complete, please submit the final dosage evaluation report. The report must be a sequence of {n} non-negative integers, listed in order from cycle 1 to {n}, separated by commas:
 
-## Operation Format (must strictly follow)
+<answer>a1,a2,a3,...,a{n}</answer>
 
-Trial query (e.g., decrease stage S-C):
-<query_trial>S-C,decrease</query_trial>
+For example, if there are 5 cycles and your deduced dosage sequence is 3, 1, 4, 1, 5, submit:
+<answer>3,1,4,1,5</answer>
 
-Repeat baseline:
-<query_baseline></query_baseline>
-
-Submit final answer (e.g., declare mode A, increase stage S-B):
-<answer>mode=A,edge=S-B,op=increase</answer>
-
-Notes:
-- Stage names use hyphen to connect two nodes, e.g., "S-C", "B-T"
-- Operation can only be "decrease" or "increase"
-- Each query must contain only one tag
-- Number of trials should be minimized
-
-Your goals are:
-1. Correctly identify the hidden drug response mode (A, B, or C)
-2. Provide one dosage adjustment operation to make {target_path} one of the shortest recovery pathways
+If the report does not match the actual prescription or the format is incorrect, the evaluation will fail. Try to minimize the number of tests while ensuring sufficient evidence.
 """
 
     contextualized_rule_zh_3 = """\
-欢迎进入“自适应学习路径规划引擎”。你是一名教研专家，需要为学生定制从零基础（S）到掌握核心技能（T）的最优学习路线。
+我们现在来进行“进阶式课程学时评估”任务，规则如下：
 
-系统设定了一个无向加权知识图谱，权重代表掌握特定模块组合所需的课时（单位：小时，均为正整数）。知识节点包括：S（零基础）、A、B、C、D、T（精通）。
+一套核心专业课程由 {n} 个连续的教学模块（编号1到{n}）组成。模块总数 {n} 为公开信息，但每个模块系统分配的标准学时（非负整数）对你隐藏。
 
-初始学习模块及所需课时（基线图谱）：
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+你的目标是通过有限次跨模块考核数据的调用，准确推断出所有模块的独立学时。
 
-在基线图谱中，从S到T的最少学习课时为 {baseline_cost}，最快学习路线集合为 {baseline_paths}。
+你可以向教务系统发起以下两种查询：
 
-系统中存在六条可选的完整学习路线：
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **双模块联合考核用时**：查询第 i 和第 i+1 两个相邻模块的标准学时总和。索引 i 的有效范围是 1 到 {n_minus_1}。
 
-可进行教学干预的模块衔接仅限于：{adjustable_edges_str}
+2. **三模块综合定级测试用时**：查询第 i、i+1、i+2 三个相邻模块的标准学时总和。索引 i 的有效范围是 1 到 {n_minus_2}。**由于防作弊风控机制，此类综合查询在整个评估中最多只能调用一次。**
 
-该学生具备一种隐藏的“认知吸收模式”（A、B或C之一），该模式决定了教学干预如何影响学习课时：
-- 减少操作（提供一对一辅导）：课时按特定规则减小（但不低于1小时）
-- 增加操作（布置拓展自学任务）：课时按特定规则增大
+- 总查询次数（双模块查询 + 三模块查询）不能超过 {n} 次。
+- 三模块综合定级测试查询最多使用一次。
+- 若模块索引超出有效范围、超过总查询次数限制、或多次调用三模块查询，系统将返回错误提示。
 
-你可以进行以下操作：
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-1. 试运行：选择一条可干预模块衔接和一种操作（减少/增加），我会告诉你操作后的最少课时、最快路线集合（用P1-P6标识），以及该模块衔接是否出现在最快路线上。注意：每次试运行后图谱会立即重置为基线，多次试运行互不影响。
+- 双模块联合考核用时（例如查询模块 1 和 2 的学时总和）：
+<query_pair>1</query_pair>
 
-2. 复述基线：我会重新告诉你基线图谱的最少课时和最快路线集合。
+- 三模块综合定级测试用时（例如查询模块 2、3、4 的学时总和）：
+<query_triple>2</query_triple>
 
-3. 提交答案：当你确定认知吸收模式后，需要宣判模式（A、B或C）并执行一次教学操作，使得学习路线 {target_path} 成为执行后图谱的最快路线之一（可以与其他路线并列）。
+当确认各模块课时后，请提交最终课表规划。报告必须是一个长度为 {n} 的非负整数序列，按模块从 1 到 {n} 依次给出，数值之间用逗号分隔：
 
-## 操作格式（必须严格遵守）
+<answer>a1,a2,a3,...,a{n}</answer>
 
-试运行查询（例如对模块衔接S-C执行减少操作）：
-<query_trial>S-C,减少</query_trial>
+例如，若模块总数为 5，你推断出的学时分配为 3, 1, 4, 1, 5，则提交：
+<answer>3,1,4,1,5</answer>
 
-复述基线：
-<query_baseline></query_baseline>
-
-提交最终答案（例如宣判模式为A，对模块衔接S-B执行增加操作）：
-<answer>mode=A,edge=S-B,op=增加</answer>
-
-注意：
-- 衔接名称使用连字符连接两个节点，如"S-C"、"B-T"等
-- 操作只能是"减少"或"增加"
-- 每次只能包含一个标签
-- 试运行次数应尽可能少
-
-你的目标是：
-1. 正确识别隐藏的认知吸收模式（A、B或C）
-2. 给出一次教学干预操作，使 {target_path} 成为最快学习路线之一
+若规划与教务大纲不符或格式错误，评估将被驳回。请合理利用查询次数完成学时逆推。
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the "Adaptive Learning Path Planning Engine." You are an educational research expert tasked with customizing the optimal learning route for a student from zero foundation (S) to mastering core skills (T).
+Let's perform the "Progressive Curriculum Hours Evaluation" task. Here are the rules:
 
-The system features an undirected weighted knowledge graph, where weights represent the learning hours required to master specific module transitions (in hours, all positive integers). Knowledge nodes include: S (zero foundation), A, B, C, D, T (mastery).
+A core professional course consists of {n} consecutive teaching modules (numbered 1 to {n}). The total number of modules {n} is public knowledge, but the standard credit hours (a non-negative integer) allocated to each individual module are hidden from you.
 
-Initial learning modules and required hours (baseline graph):
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+Your goal is to accurately deduce the independent hours of all modules by invoking cross-module assessment data a limited number of times.
 
-In the baseline graph, the minimum learning hours from S to T is {baseline_cost}, and the fastest route set is {baseline_paths}.
+You can initiate the following two types of queries to the academic system:
 
-There are six optional complete learning routes in the system:
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **Dual-Module Joint Assessment Time**: Query the total standard hours of two adjacent modules, i and i+1. The valid range for index i is 1 to {n_minus_1}.
 
-Module transitions adjustable via teaching interventions are limited to: {adjustable_edges_str}
+2. **Tri-Module Comprehensive Placement Test Time**: Query the total standard hours of three adjacent modules, i, i+1, and i+2. The valid range for index i is 1 to {n_minus_2}. **Due to anti-cheating risk control mechanisms, this comprehensive query can be invoked at most once throughout the evaluation.**
 
-The student possesses a hidden "cognitive absorption mode" (A, B, or C), which determines how teaching interventions affect learning hours:
-- Decrease operation (provide one-on-one tutoring): hours decrease according to specific rules (but not below 1 hour)
-- Increase operation (assign extended self-study tasks): hours increase according to specific rules
+- The total number of queries (Dual-Module Query + Tri-Module Query) cannot exceed {n}.
+- The Tri-Module Comprehensive Placement Test can be used at most once.
+- If the module index is out of the valid range, the total query limit is exceeded, or the tri-module query is invoked more than once, the system will return an error message.
 
-You can perform the following operations:
+Each query must contain only one tag, using the following XML format:
 
-1. Trial run: Select an adjustable module transition and an operation (decrease/increase). I will tell you the resulting minimum hours, fastest route set (identified by P1-P6), and whether the transition appears in the fastest routes. Note: After each trial, the graph immediately resets to baseline; trials do not stack.
+- Dual-Module Joint Assessment Time (e.g., querying the total hours of modules 1 and 2):
+<query_pair>1</query_pair>
 
-2. Repeat baseline: I will remind you of the baseline graph's minimum hours and fastest route set.
+- Tri-Module Comprehensive Placement Test Time (e.g., querying the total hours of modules 2, 3, and 4):
+<query_triple>2</query_triple>
 
-3. Submit answer: When you determine the cognitive absorption mode, declare the mode (A, B, or C) and execute one teaching operation to make route {target_path} one of the fastest routes in the resulting graph (can be tied with others).
+When the hours for each module are confirmed, please submit the final syllabus plan. The report must be a sequence of {n} non-negative integers, listed in order from module 1 to {n}, separated by commas:
 
-## Operation Format (must strictly follow)
+<answer>a1,a2,a3,...,a{n}</answer>
 
-Trial query (e.g., decrease transition S-C):
-<query_trial>S-C,decrease</query_trial>
+For example, if there are 5 modules and your deduced hour allocation is 3, 1, 4, 1, 5, submit:
+<answer>3,1,4,1,5</answer>
 
-Repeat baseline:
-<query_baseline></query_baseline>
-
-Submit final answer (e.g., declare mode A, increase transition S-B):
-<answer>mode=A,edge=S-B,op=increase</answer>
-
-Notes:
-- Transition names use hyphen to connect two nodes, e.g., "S-C", "B-T"
-- Operation can only be "decrease" or "increase"
-- Each query must contain only one tag
-- Number of trials should be minimized
-
-Your goals are:
-1. Correctly identify the hidden cognitive absorption mode (A, B, or C)
-2. Provide one teaching intervention operation to make {target_path} one of the fastest learning routes
+If the plan does not match the academic syllabus or the format is incorrect, the evaluation will be rejected. Please utilize your query limits reasonably to complete the reverse calculation.
 """
 
     contextualized_rule_zh_4 = """\
-欢迎进入“智能制造柔性排产系统”。你是一名工艺工程师，需要优化从原材料投料（S）到成品入库（T）的生产周期。
+我们现在来进行“流水线工位产能排查”任务，规则如下：
 
-系统设定了一个无向加权工艺流程图，权重代表各生产工序的加工工时（单位：小时，均为正整数）。车间节点包括：S（投料）、A、B、C、D、T（入库）。
+一条精密制造流水线包含 {n} 个连续的装配工位（编号1到{n}）。工位总数 {n} 已知，但由于中央面板故障，每个工位当前的实际产出件数（非负整数）显示为乱码并对你隐藏。
 
-初始工序及加工工时（基线排产）：
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+你的目标是通过调取有限的区间复检记录，精确还原出每个工位的实际产能数据。
 
-在基线排产中，从S到T的最短生产周期为 {baseline_cost} 小时，最快流水线集合为 {baseline_paths}。
+你可以通过 SCADA 系统发起以下两种区间查询：
 
-车间内存在六条候选的生产流水线：
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **双工位缓冲段计数**：查询第 i 和第 i+1 两个相邻工位的产出总件数。索引 i 的有效范围是 1 到 {n_minus_1}。
 
-可进行参数调整的生产工序仅限于：{adjustable_edges_str}
+2. **三工位全检抽测**：查询第 i、i+1、i+2 三个相邻工位的产出总件数。索引 i 的有效范围是 1 到 {n_minus_2}。**由于全检会导致产线短暂停机，该指令在整个排查过程中最多只能使用一次。**
 
-生产线设备受一种隐藏的“效能波动模式”（A、B或C之一）影响，该模式决定了参数调整如何改变加工工时：
-- 减少操作（超频运转/工艺优化）：工时按特定规则缩短（但不低于1小时）
-- 增加操作（设备保养/降频运转）：工时按特定规则延长
+- 总查询次数（双工位计数 + 三工位抽测）不能超过 {n} 次。
+- 三工位全检抽测最多使用一次。
+- 若索引超出有效范围、超过总查询次数限制、或多次触发全检抽测，系统将返回错误提示。
 
-你可以进行以下操作：
+每次查询只能包含一个标签，使用以下 XML 格式：
 
-1. 试运行：选择一条可调整工序和一种操作（减少/增加），我会告诉你操作后的最短生产周期、最快流水线集合（用P1-P6标识），以及该工序是否出现在最快流水线上。注意：每次试运行后产线参数会立即重置为基线，多次试运行互不影响。
+- 双工位缓冲段计数（例如查询工位 1 和 2 的总件数）：
+<query_pair>1</query_pair>
 
-2. 复述基线：我会重新告诉你基线排产的最短生产周期和最快流水线集合。
+- 三工位全检抽测（例如查询工位 2、3、4 的总件数）：
+<query_triple>2</query_triple>
 
-3. 提交答案：当你确定效能波动模式后，需要宣判模式（A、B或C）并执行一次工序操作，使得流水线 {target_path} 成为执行后排产的最快流水线之一（可以与其他流水线并列）。
+当你收集到足够信息后，请提交最终产能修复报告。报告必须是一个长度为 {n} 的非负整数序列，按工位从 1 到 {n} 依次给出，数值之间用逗号分隔：
 
-## 操作格式（必须严格遵守）
+<answer>a1,a2,a3,...,a{n}</answer>
 
-试运行查询（例如对工序S-C执行减少操作）：
-<query_trial>S-C,减少</query_trial>
+例如，若工位总数为 5，你还原出的产出序列为 3, 1, 4, 1, 5，则提交：
+<answer>3,1,4,1,5</answer>
 
-复述基线：
-<query_baseline></query_baseline>
-
-提交最终答案（例如宣判模式为A，对工序S-B执行增加操作）：
-<answer>mode=A,edge=S-B,op=增加</answer>
-
-注意：
-- 工序名称使用连字符连接两个节点，如"S-C"、"B-T"等
-- 操作只能是"减少"或"增加"
-- 每次只能包含一个标签
-- 试运行次数应尽可能少
-
-你的目标是：
-1. 正确识别隐藏的效能波动模式（A、B或C）
-2. 给出一次工序参数调整操作，使 {target_path} 成为最快生产流水线之一
+若报告与物理台账不符或格式错误，排查任务将失败。请用最少的系统资源完成产能还原。
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing Scenario]
-Welcome to the "Intelligent Manufacturing Flexible Scheduling System." You are a process engineer tasked with optimizing the production cycle from raw material feeding (S) to finished product storage (T).
+[Manufacturing/Industrial Scenario]
+Let's perform the "Assembly Line Station Capacity Audit" task. Here are the rules:
 
-The system features an undirected weighted process flow graph, where weights represent the processing hours of each production step (in hours, all positive integers). Workshop nodes include: S (feeding), A, B, C, D, T (storage).
+A precision manufacturing assembly line contains {n} consecutive assembly stations (numbered 1 to {n}). The total number of stations {n} is known, but due to a central panel malfunction, the current actual production output (a non-negative integer in pieces) of each station is displayed as garbled text and hidden from you.
 
-Initial process steps and processing hours (baseline schedule):
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+Your goal is to accurately reconstruct the actual capacity data for each station by retrieving a limited number of interval re-inspection records.
 
-In the baseline schedule, the shortest production cycle from S to T is {baseline_cost} hours, and the fastest assembly line set is {baseline_paths}.
+You can initiate the following two types of interval queries via the SCADA system:
 
-There are six candidate production assembly lines in the workshop:
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **Dual-Station Buffer Zone Count**: Query the total production output of two adjacent stations, i and i+1. The valid range for index i is 1 to {n_minus_1}.
 
-Production steps adjustable via parameter tuning are limited to: {adjustable_edges_str}
+2. **Tri-Station Full Inspection Sampling**: Query the total production output of three adjacent stations, i, i+1, and i+2. The valid range for index i is 1 to {n_minus_2}. **Because a full inspection causes brief production line downtime, this command can be used at most once throughout the entire audit.**
 
-The production line equipment is influenced by a hidden "efficiency fluctuation mode" (A, B, or C), which determines how parameter tuning changes processing hours:
-- Decrease operation (overclocking/process optimization): hours shorten according to specific rules (but not below 1 hour)
-- Increase operation (equipment maintenance/underclocking): hours lengthen according to specific rules
+- The total number of queries (Dual-Station Count + Tri-Station Sampling) cannot exceed {n}.
+- The Tri-Station Full Inspection Sampling can be used at most once.
+- If the index is out of the valid range, the total query limit is exceeded, or the full inspection is triggered more than once, the system will return an error message.
 
-You can perform the following operations:
+Each query must contain only one tag, using the following XML format:
 
-1. Trial run: Select an adjustable step and an operation (decrease/increase). I will tell you the resulting shortest production cycle, fastest assembly line set (identified by P1-P6), and whether the step appears in the fastest lines. Note: After each trial, line parameters immediately reset to baseline; trials do not stack.
+- Dual-Station Buffer Zone Count (e.g., querying the total output of stations 1 and 2):
+<query_pair>1</query_pair>
 
-2. Repeat baseline: I will remind you of the baseline schedule's shortest production cycle and fastest assembly line set.
+- Tri-Station Full Inspection Sampling (e.g., querying the total output of stations 2, 3, and 4):
+<query_triple>2</query_triple>
 
-3. Submit answer: When you determine the efficiency fluctuation mode, declare the mode (A, B, or C) and execute one step operation to make assembly line {target_path} one of the fastest lines in the resulting schedule (can be tied with others).
+When you have collected enough information, please submit the final capacity restoration report. The report must be a sequence of {n} non-negative integers, listed in order from station 1 to {n}, separated by commas:
 
-## Operation Format (must strictly follow)
+<answer>a1,a2,a3,...,a{n}</answer>
 
-Trial query (e.g., decrease step S-C):
-<query_trial>S-C,decrease</query_trial>
+For example, if the total number of stations is 5 and your reconstructed output sequence is 3, 1, 4, 1, 5, submit:
+<answer>3,1,4,1,5</answer>
 
-Repeat baseline:
-<query_baseline></query_baseline>
-
-Submit final answer (e.g., declare mode A, increase step S-B):
-<answer>mode=A,edge=S-B,op=increase</answer>
-
-Notes:
-- Step names use hyphen to connect two nodes, e.g., "S-C", "B-T"
-- Operation can only be "decrease" or "increase"
-- Each query must contain only one tag
-- Number of trials should be minimized
-
-Your goals are:
-1. Correctly identify the hidden efficiency fluctuation mode (A, B, or C)
-2. Provide one process parameter tuning operation to make {target_path} one of the fastest production assembly lines
+If the report does not match the physical ledger or the format is incorrect, the audit task will fail. Try to restore the capacity data using the minimum amount of system resources.
 """
 
     contextualized_rule_zh_5 = """\
-欢迎使用“司法诉讼程序推演工具”。你是一名资深律师，需要为当事人规划从立案（S）到最终结案（T）的最优诉讼策略。
+我们现在来进行“隐匿资金链穿透追踪”任务，规则如下：
 
-工具设定了一个无向加权法律程序流转图，权重代表各程序阶段的审理耗时（单位：周，均为正整数）。程序节点包括：S（立案）、A、B、C、D、T（结案）。
+在一次反洗钱调查中，确认嫌疑人使用了 {n} 个连续的离岸连环账户（编号1到{n}）进行资金转移。账户总数 {n} 已知，但每个账户沉淀的非法资金额（非负整数，单位：万）被严格加密隐藏。
 
-初始程序流转及耗时（基线流转）：
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+你的目标是通过向国际金融合规网络提交有限的审计申请，精准查清每个账户的具体留存金额。
 
-在基线流转中，从S到T的最短结案耗时为 {baseline_cost} 周，最高效诉讼路线集合为 {baseline_paths}。
+你可以提交以下两种类型的联合审计：
 
-实务中存在六条可选的诉讼策略路线：
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **双账户常规协查**：查询第 i 和第 i+1 两个相邻账户的资金总和。账户索引 i 的有效范围是 1 到 {n_minus_1}。
 
-可通过法律手段干预的程序阶段仅限于：{adjustable_edges_str}
+2. **三账户穿透式特调**：查询第 i、i+1、i+2 三个相邻账户的资金总和。账户索引 i 的有效范围是 1 到 {n_minus_2}。**此类特调需要高级别司法授权，在整个案件侦查中最多只能获批使用一次。**
 
-该管辖区法院存在一种隐藏的“司法审查模式”（A、B或C之一），该模式决定了法律手段干预如何影响程序耗时：
-- 减少操作（申请适用简易程序）：耗时按特定规则缩短（但不低于1周）
-- 增加操作（提出管辖权异议/延期举证）：耗时按特定规则延长
+- 总查询次数（双账户协查 + 三账户特调）不能超过 {n} 次。
+- 三账户穿透式特调最多使用一次。
+- 若账户索引超出有效范围、超过总查询次数限制、或违规多次提交特调申请，系统将返回错误提示。
 
-你可以进行以下操作：
+每次审计申请只能包含一个标签，使用以下 XML 格式：
 
-1. 试运行：选择一个可干预程序阶段和一种操作（减少/增加），我会告诉你操作后的最短结案耗时、最高效路线集合（用P1-P6标识），以及该程序是否出现在最高效路线上。注意：每次试运行后法院状态会立即重置为基线，多次试运行互不影响。
+- 双账户常规协查（例如查询账户 1 和 2 的资金和）：
+<query_pair>1</query_pair>
 
-2. 复述基线：我会重新告诉你基线流转的最短结案耗时和最高效路线集合。
+- 三账户穿透式特调（例如查询账户 2、3、4 的资金和）：
+<query_triple>2</query_triple>
 
-3. 提交答案：当你确定司法审查模式后，需要宣判模式（A、B或C）并执行一次程序干预，使得诉讼路线 {target_path} 成为执行后流转的最高效路线之一（可以与其他路线并列）。
+当你锁定所有证据后，请提交最终查封卷宗。卷宗内容必须是一个长度为 {n} 的非负整数序列，按账户从 1 到 {n} 依次给出，金额之间用逗号分隔：
 
-## 操作格式（必须严格遵守）
+<answer>a1,a2,a3,...,a{n}</answer>
 
-试运行查询（例如对程序S-C执行减少操作）：
-<query_trial>S-C,减少</query_trial>
+例如，若嫌疑账户总数为 5，你查实的资金分布为 3, 1, 4, 1, 5，则提交：
+<answer>3,1,4,1,5</answer>
 
-复述基线：
-<query_baseline></query_baseline>
-
-提交最终答案（例如宣判模式为A，对程序S-B执行增加操作）：
-<answer>mode=A,edge=S-B,op=增加</answer>
-
-注意：
-- 程序名称使用连字符连接两个节点，如"S-C"、"B-T"等
-- 操作只能是"减少"或"增加"
-- 每次只能包含一个标签
-- 试运行次数应尽可能少
-
-你的目标是：
-1. 正确识别隐藏的司法审查模式（A、B或C）
-2. 给出一次法律干预操作，使 {target_path} 成为最高效诉讼路线之一
+若卷宗与实际流水不符或格式错误，指控将因证据链断裂而失败。请在确凿推演的基础上以最少的申请次数破案。
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-Welcome to the "Judicial Litigation Procedure Deduction Tool." You are a senior lawyer tasked with planning the optimal litigation strategy for your client from case filing (S) to final settlement (T).
+[Law Scenario]
+Let's perform the "Hidden Funds Chain Penetration Tracking" task. Here are the rules:
 
-The tool features an undirected weighted legal procedure flow graph, where weights represent the trial time of each procedural stage (in weeks, all positive integers). Procedure nodes include: S (filing), A, B, C, D, T (settlement).
+In an anti-money laundering investigation, it has been confirmed that a suspect used {n} consecutive offshore chained accounts (numbered 1 to {n}) for fund transfers. The total number of accounts {n} is known, but the illicit fund amount (a non-negative integer, in ten-thousands) deposited in each account is strictly encrypted and hidden.
 
-Initial procedural flows and times (baseline flow):
-- S-A: 3
-- A-T: 6
-- S-B: 4
-- B-T: 4
-- S-C: 2
-- C-D: 4
-- D-T: 4
-- A-B: 1
-- B-C: 1
-- C-A: 4
-- B-D: 3
+Your goal is to accurately determine the specific retained amount in each account by submitting a limited number of audit requests to the international financial compliance network.
 
-In the baseline flow, the shortest settlement time from S to T is {baseline_cost} weeks, and the most efficient litigation route set is {baseline_paths}.
+You can submit the following two types of joint audits:
 
-In practice, there are six optional litigation strategy routes:
-- P1: S-C-B-T
-- P2: S-B-T
-- P3: S-A-B-T
-- P4: S-A-T
-- P5: S-C-D-T
-- P6: S-B-D-T
+1. **Dual-Account Routine Coordination**: Query the total funds of two adjacent accounts, i and i+1. The valid range for account index i is 1 to {n_minus_1}.
 
-Procedural stages adjustable via legal interventions are limited to: {adjustable_edges_str}
+2. **Tri-Account Penetrative Special Probe**: Query the total funds of three adjacent accounts, i, i+1, and i+2. The valid range for account index i is 1 to {n_minus_2}. **This type of special probe requires a high-level judicial warrant and can be approved for use at most once during the entire case investigation.**
 
-The jurisdiction's court exhibits a hidden "judicial review mode" (A, B, or C), which determines how legal interventions affect procedural time:
-- Decrease operation (apply for summary procedure): time shortens according to specific rules (but not below 1 week)
-- Increase operation (raise jurisdictional objection/extend evidence presentation): time lengthens according to specific rules
+- The total number of queries (Dual-Account Coordination + Tri-Account Probe) cannot exceed {n}.
+- The Tri-Account Penetrative Special Probe can be used at most once.
+- If the account index is out of the valid range, the total query limit is exceeded, or multiple probe requests are submitted in violation of protocols, the system will return an error message.
 
-You can perform the following operations:
+Each audit request must contain only one tag, using the following XML format:
 
-1. Trial run: Select an adjustable procedural stage and an operation (decrease/increase). I will tell you the resulting shortest settlement time, most efficient route set (identified by P1-P6), and whether the procedure appears in the most efficient routes. Note: After each trial, the court state immediately resets to baseline; trials do not stack.
+- Dual-Account Routine Coordination (e.g., querying the sum of accounts 1 and 2):
+<query_pair>1</query_pair>
 
-2. Repeat baseline: I will remind you of the baseline flow's shortest settlement time and most efficient route set.
+- Tri-Account Penetrative Special Probe (e.g., querying the sum of accounts 2, 3, and 4):
+<query_triple>2</query_triple>
 
-3. Submit answer: When you determine the judicial review mode, declare the mode (A, B, or C) and execute one procedural intervention to make litigation route {target_path} one of the most efficient routes in the resulting flow (can be tied with others).
+When you have locked in all the evidence, please submit the final seizure dossier. The dossier content must be a sequence of {n} non-negative integers, listed in order from account 1 to {n}, separated by commas:
 
-## Operation Format (must strictly follow)
+<answer>a1,a2,a3,...,a{n}</answer>
 
-Trial query (e.g., decrease procedure S-C):
-<query_trial>S-C,decrease</query_trial>
+For example, if the total number of suspect accounts is 5 and your verified fund distribution is 3, 1, 4, 1, 5, submit:
+<answer>3,1,4,1,5</answer>
 
-Repeat baseline:
-<query_baseline></query_baseline>
-
-Submit final answer (e.g., declare mode A, increase procedure S-B):
-<answer>mode=A,edge=S-B,op=increase</answer>
-
-Notes:
-- Procedure names use hyphen to connect two nodes, e.g., "S-C", "B-T"
-- Operation can only be "decrease" or "increase"
-- Each query must contain only one tag
-- Number of trials should be minimized
-
-Your goals are:
-1. Correctly identify the hidden judicial review mode (A, B, or C)
-2. Provide one legal intervention operation to make {target_path} one of the most efficient litigation routes
+If the dossier does not match the actual transaction logs or the format is incorrect, the prosecution will fail due to a broken chain of evidence. Please solve the case with the minimum number of requests based on solid deductions.
 """
 
-    tags = ["answer", "query_trial", "query_baseline"]
-
-    # 难度配置：
-    # 1 (简单)         - 模式A，目标P2，较明显的权重变化
-    # 2 (中等偏下)     - 模式B，目标P2，倍增模式
-    # 3 (中等偏上)     - 模式C，目标P2，极端模式
-    # 4 (较难)         - 模式A，目标P3，需要更精细的调整
-    # 5 (难)           - 模式B，目标P6，复杂的路径关系
+    tags = ["answer", "query_pair", "query_triple"]
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "mode": "A",
-                "target_path": "P2",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 3,
+                "sequence": [2, 3, 5],
             },
             2: {
-                "mode": "B",
-                "target_path": "P2",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 4,
+                "sequence": [1, 4, 2, 7],
             },
             3: {
-                "mode": "C",
-                "target_path": "P2",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 5,
+                "sequence": [3, 0, 5, 1, 4],
             },
             4: {
-                "mode": "A",
-                "target_path": "P3",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 6,
+                "sequence": [2, 5, 1, 8, 3, 6],
             },
             5: {
-                "mode": "B",
-                "target_path": "P6",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 8,
+                "sequence": [1, 7, 2, 9, 0, 4, 6, 3],
             },
         },
         "en": {
             1: {
-                "mode": "A",
-                "target_path": "P2",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 3,
+                "sequence": [2, 3, 5],
             },
             2: {
-                "mode": "B",
-                "target_path": "P2",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 4,
+                "sequence": [1, 4, 2, 7],
             },
             3: {
-                "mode": "C",
-                "target_path": "P2",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 5,
+                "sequence": [3, 0, 5, 1, 4],
             },
             4: {
-                "mode": "A",
-                "target_path": "P3",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 6,
+                "sequence": [2, 5, 1, 8, 3, 6],
             },
             5: {
-                "mode": "B",
-                "target_path": "P6",
-                "adjustable_edges": ["S-C", "B-C", "B-T", "S-B"],
-                "baseline_cost": 7,
-                "baseline_paths": ["P1"],
+                "n": 8,
+                "sequence": [1, 7, 2, 9, 0, 4, 6, 3],
             },
         },
     }
 
-    # 基线图的边权重
-    BASELINE_EDGES = {
-        ("S", "A"): 3,
-        ("A", "T"): 6,
-        ("S", "B"): 4,
-        ("B", "T"): 4,
-        ("S", "C"): 2,
-        ("C", "D"): 4,
-        ("D", "T"): 4,
-        ("A", "B"): 1,
-        ("B", "C"): 1,
-        ("C", "A"): 4,
-        ("B", "D"): 3,
-    }
-
-    # 候选路径定义
-    PATHS = {
-        "P1": [("S", "C"), ("C", "B"), ("B", "T")],
-        "P2": [("S", "B"), ("B", "T")],
-        "P3": [("S", "A"), ("A", "B"), ("B", "T")],
-        "P4": [("S", "A"), ("A", "T")],
-        "P5": [("S", "C"), ("C", "D"), ("D", "T")],
-        "P6": [("S", "B"), ("B", "D"), ("D", "T")],
-    }
-
     def __init__(self, config):
-        self.trial_count = 0  # 试运行计数器
         super().__init__(config)
 
     def _initialize_game(self):
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
+
+        if isinstance(diff, str):
+            diff = int(diff)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -915,287 +497,126 @@ Your goals are:
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        
-        # 保存游戏配置
-        self.hidden_mode = cfg["mode"]
-        self.target_path = cfg["target_path"]
-        self.adjustable_edges = cfg["adjustable_edges"]
-        
-        # 初始化当前图（从基线复制）
-        self.current_edges = dict(self.BASELINE_EDGES)
-        
-        # 为游戏规则准备信息
-        self._game_info["baseline_cost"] = cfg["baseline_cost"]
-        self._game_info["baseline_paths"] = ", ".join(cfg["baseline_paths"])
-        self._game_info["target_path"] = self.target_path
-        
-        if lang == "zh":
-            self._game_info["adjustable_edges_str"] = "、".join(self.adjustable_edges)
-        else:
-            self._game_info["adjustable_edges_str"] = ", ".join(self.adjustable_edges)
+        n = cfg["n"]
+        sequence = cfg["sequence"]
 
-    def _normalize_edge(self, edge_str):
-        """标准化边表示（无向图，确保一致性）"""
-        parts = edge_str.strip().split("-")
-        if len(parts) != 2:
-            return None
-        a, b = parts[0].strip(), parts[1].strip()
-        # 无向图：统一按字典序排列
-        if (a, b) in self.BASELINE_EDGES:
-            return (a, b)
-        elif (b, a) in self.BASELINE_EDGES:
-            return (b, a)
-        return None
+        self._game_info["n"] = n
+        self._game_info["n_minus_1"] = n - 1
+        self._game_info["n_minus_2"] = n - 2
 
-    def _apply_mode_operation(self, weight, operation):
-        """根据隐藏模式应用权重变化"""
-        if self.hidden_mode == "A":
-            # 模式A：均匀
-            if operation == "decrease" or operation == "减少":
-                return max(1, weight - 1)
-            else:  # increase/增加
-                return weight + 1
-        elif self.hidden_mode == "B":
-            # 模式B：倍增
-            if operation == "decrease" or operation == "减少":
-                return math.ceil(weight / 2)
-            else:  # increase/增加
-                return weight * 2
-        elif self.hidden_mode == "C":
-            # 模式C：极端
-            if operation == "decrease" or operation == "减少":
-                return 1 if weight > 1 else 1
-            else:  # increase/增加
-                return weight + 2
-        return weight
+        self.sequence = [None] + list(sequence)
 
-    def _calculate_path_cost(self, path_edges, edge_weights):
-        """计算路径成本"""
-        cost = 0
-        for edge in path_edges:
-            a, b = edge
-            if (a, b) in edge_weights:
-                cost += edge_weights[(a, b)]
-            elif (b, a) in edge_weights:
-                cost += edge_weights[(b, a)]
-            else:
-                return float('inf')
-        return cost
-
-    def _find_shortest_paths(self, edge_weights):
-        """找到所有最短路径及其成本"""
-        path_costs = {}
-        for path_name, path_edges in self.PATHS.items():
-            path_costs[path_name] = self._calculate_path_cost(path_edges, edge_weights)
-        
-        min_cost = min(path_costs.values())
-        shortest_paths = [p for p, c in path_costs.items() if c == min_cost]
-        return min_cost, shortest_paths
-
-    def _edge_in_paths(self, edge, path_list):
-        """检查边是否出现在给定路径列表中的任一路径"""
-        a, b = edge
-        for path_name in path_list:
-            path_edges = self.PATHS[path_name]
-            for pe in path_edges:
-                if (pe == (a, b)) or (pe == (b, a)):
-                    return True
-        return False
+        self.query_count = 0
+        self.triple_query_count = 0
+        self.max_queries = n
 
     def evaluate(self, parsed_info):
-        """评估最终答案"""
-        raw_ans = parsed_info["answer"]
+        raw_ans = parsed_info["answer"].strip()
         
-        # 解析答案格式：mode=X,edge=Y,op=Z
-        parts = [x.strip() for x in raw_ans.split(",")]
-        ans_dict = {}
-        for part in parts:
-            if "=" in part:
-                k, v = part.split("=", 1)
-                ans_dict[k.strip()] = v.strip()
-        
-        # 检查必需字段
-        if "mode" not in ans_dict or "edge" not in ans_dict or "op" not in ans_dict:
-            return False
-        
-        declared_mode = ans_dict["mode"]
-        edge_str = ans_dict["edge"]
-        operation = ans_dict["op"]
-        
-        # 1. 检查模式是否正确
-        if declared_mode != self.hidden_mode:
-            return False
-        
-        # 2. 标准化边
-        edge = self._normalize_edge(edge_str)
-        if edge is None:
-            return False
-        
-        # 3. 检查边是否可调整
-        if edge_str not in self.adjustable_edges:
-            # 尝试反向
-            reversed_edge = "-".join(reversed(edge_str.split("-")))
-            if reversed_edge not in self.adjustable_edges:
+        try:
+            ans_list = [int(x.strip()) for x in raw_ans.split(",")]
+            
+            if len(ans_list) != self._game_info["n"]:
                 return False
-        
-        # 4. 执行操作并计算结果
-        test_edges = dict(self.BASELINE_EDGES)
-        old_weight = test_edges[edge]
-        new_weight = self._apply_mode_operation(old_weight, operation)
-        test_edges[edge] = new_weight
-        
-        # 5. 检查目标路径是否在最短路径集合中
-        _, shortest_paths = self._find_shortest_paths(test_edges)
-        return self.target_path in shortest_paths
+            
+            if any(x < 0 for x in ans_list):
+                return False
+            
+            true_sequence = self.sequence[1:]
+            return ans_list == true_sequence
+            
+        except:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始业务逻辑"""
-        is_zh = (self.config.language == "zh")
-        
-        # 处理复述基线
-        if "query_baseline" in parsed_info:
-            if is_zh:
-                return f"基线图的最短成本为 {self._game_info['baseline_cost']}，最短路径集合为 {self._game_info['baseline_paths']}。"
-            else:
-                return f"The baseline graph has shortest cost {self._game_info['baseline_cost']} and shortest path set {self._game_info['baseline_paths']}."
-        
-        # 处理试运行
-        if "query_trial" in parsed_info:
-            self.trial_count += 1
-            
-            raw = parsed_info["query_trial"]
-            parts = [x.strip() for x in raw.split(",")]
-            if len(parts) != 2:
-                if is_zh:
-                    return "错误：格式无效。应为'边,操作'。"
-                else:
-                    return "Error: Invalid format. Should be 'edge,operation'."
-            
-            edge_str, operation = parts[0], parts[1]
-            
-            # 标准化边
-            edge = self._normalize_edge(edge_str)
-            if edge is None:
-                if is_zh:
-                    return "错误：无效的边。"
-                else:
-                    return "Error: Invalid edge."
-            
-            # 检查边是否可调整
-            if edge_str not in self.adjustable_edges:
-                reversed_edge = "-".join(reversed(edge_str.split("-")))
-                if reversed_edge not in self.adjustable_edges:
-                    if is_zh:
-                        return f"错误：边 {edge_str} 不可调整。"
-                    else:
-                        return f"Error: Edge {edge_str} is not adjustable."
-            
-            # 应用操作（在基线图上）
-            test_edges = dict(self.BASELINE_EDGES)
-            old_weight = test_edges[edge]
-            new_weight = self._apply_mode_operation(old_weight, operation)
-            test_edges[edge] = new_weight
-            
-            # 计算最短路径
-            min_cost, shortest_paths = self._find_shortest_paths(test_edges)
-            
-            # 检查边是否在最短路径上
-            edge_in_shortest = self._edge_in_paths(edge, shortest_paths)
-            
-            # 构建响应
-            paths_str = ", ".join(shortest_paths)
-            if is_zh:
-                in_path_str = "是" if edge_in_shortest else "否"
-                return f"最短成本：{min_cost}\n最短路径集合：{paths_str}\n所选边是否在最短路径上：{in_path_str}"
-            else:
-                in_path_str = "Yes" if edge_in_shortest else "No"
-                return f"Shortest cost: {min_cost}\nShortest path set: {paths_str}\nIs selected edge in shortest paths: {in_path_str}"
-        
-        # 不应到达这里
-        raise ValueError("No valid query tag found.")
-
-    def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        """
-        queries = []
-        is_zh = (self.config.language == "zh")
-        
-        # 1. Baseline query
-        baseline_ans = ""
-        if is_zh:
-            baseline_ans = f"基线图的最短成本为 {self._game_info['baseline_cost']}，最短路径集合为 {self._game_info['baseline_paths']}。"
+        if self.config.language == "zh":
+            error_out_of_range = "错误：索引超出有效范围。"
+            error_triple_limit = "错误：三邻项和查询已超过一次使用限制。"
+            error_invalid_index = "错误：索引格式无效。"
+            error_multiple_tags = "错误：每次查询只能包含一个标签，请勿同时使用两种查询类型。"
         else:
-            baseline_ans = f"The baseline graph has shortest cost {self._game_info['baseline_cost']} and shortest path set {self._game_info['baseline_paths']}."
+            error_out_of_range = "Error: Index out of valid range."
+            error_triple_limit = "Error: Triple sum query limit exceeded (max 1)."
+            error_invalid_index = "Error: Invalid index format."
+            error_multiple_tags = "Error: Each query must contain only one tag. Do not use both query types at once."
+
+        n = self._game_info["n"]
+
+        has_pair = "query_pair" in parsed_info
+        has_triple = "query_triple" in parsed_info
+        if has_pair and has_triple:
+            return error_multiple_tags
+
+        if self.query_count >= self.max_queries:
+            if self.config.language == "zh":
+                return "错误：已达到最大查询次数限制（{}/{}）。请不要再进行查询，直接提交你的最终答案。".format(
+                    self.query_count, self.max_queries)
+            else:
+                return "Error: Maximum query limit reached ({}/{}). Please stop querying and submit your final answer now.".format(
+                    self.query_count, self.max_queries)
+
+        if has_pair:
+            try:
+                i = int(parsed_info["query_pair"].strip())
+                
+                if i < 1 or i > n - 1:
+                    return error_out_of_range
+                
+                self.query_count += 1
+                
+                result = self.sequence[i] + self.sequence[i + 1]
+                return str(result)
+                
+            except ValueError:
+                return error_invalid_index
+
+        elif has_triple:
+            if self.triple_query_count >= 1:
+                return error_triple_limit
             
-        queries.append({
-            "query": "<query_baseline></query_baseline>",
-            "answer": baseline_ans
-        })
-        
-        # 2. Trial queries
-        # Define operations based on language
-        ops = ["减少", "增加"] if is_zh else ["decrease", "increase"]
-        
-        for edge_str in self.adjustable_edges:
-            for op in ops:
-                # Logic copied from _cf_core_produce to ensure consistency without side effects
-                # Normalize edge
-                edge = self._normalize_edge(edge_str)
-                # Note: edge is guaranteed valid as it comes from adjustable_edges
+            try:
+                i = int(parsed_info["query_triple"].strip())
                 
-                # Apply operation on baseline
-                test_edges = dict(self.BASELINE_EDGES)
-                old_weight = test_edges[edge]
-                new_weight = self._apply_mode_operation(old_weight, op)
-                test_edges[edge] = new_weight
+                if i < 1 or i > n - 2:
+                    return error_out_of_range
                 
-                # Calculate shortest paths
-                min_cost, shortest_paths = self._find_shortest_paths(test_edges)
-                edge_in_shortest = self._edge_in_paths(edge, shortest_paths)
+                self.query_count += 1
+                self.triple_query_count += 1
                 
-                paths_str = ", ".join(shortest_paths)
+                result = self.sequence[i] + self.sequence[i + 1] + self.sequence[i + 2]
+                return str(result)
                 
-                # Format answer
-                if is_zh:
-                    in_path_str = "是" if edge_in_shortest else "否"
-                    ans = f"最短成本：{min_cost}\n最短路径集合：{paths_str}\n所选边是否在最短路径上：{in_path_str}"
-                else:
-                    in_path_str = "Yes" if edge_in_shortest else "No"
-                    ans = f"Shortest cost: {min_cost}\nShortest path set: {paths_str}\nIs selected edge in shortest paths: {in_path_str}"
-                
-                queries.append({
-                    "query": f"<query_trial>{edge_str},{op}</query_trial>",
-                    "answer": ans
-                })
-                
-        return queries
+            except ValueError:
+                return error_invalid_index
+
+        else:
+            raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成一个与正确答案不同的错误答案，用于反事实干预"""
-        if self.config.language == "zh":
-            # 仅替换最后一个"是"或"否"（即回答部分），避免替换问句中的"是否"
-            if correct.rstrip().endswith("是"):
-                return correct.rstrip()[:-1] + "否"
-            elif correct.rstrip().endswith("否"):
-                return correct.rstrip()[:-1] + "是"
-            # 尝试修改最短成本数字
-            m = re.search(r'最短成本[：:]\s*(\d+)', correct)
-            if m:
-                old_val = int(m.group(1))
-                new_val = old_val + 1
-                return correct.replace(m.group(1), str(new_val), 1)
-        else:
-            # 英文：仅替换 "Is selected edge in shortest paths: Yes/No" 中的 Yes/No
-            if ": Yes" in correct:
-                return correct.replace(": Yes", ": No", 1)
-            elif ": No" in correct:
-                return correct.replace(": No", ": Yes", 1)
-            # 尝试修改最短成本数字
-            m = re.search(r'Shortest cost:\s*(\d+)', correct)
-            if m:
-                old_val = int(m.group(1))
-                new_val = old_val + 1
-                return correct.replace(m.group(1), str(new_val), 1)
-        
-        return correct + " [WRONG]"
+        try:
+            correct_val = int(correct)
+            wrong_val = correct_val + 1
+            return str(wrong_val)
+        except (ValueError, TypeError):
+            return correct + " (error)"
+
+    def get_all_possible_queries(self) -> list[dict]:
+        n = self._game_info["n"]
+        results = []
+
+        for i in range(1, n):
+            val = self.sequence[i] + self.sequence[i + 1]
+            results.append({
+                "query": f"<query_pair>{i}</query_pair>",
+                "answer": str(val)
+            })
+
+        for i in range(1, n - 1):
+            val = self.sequence[i] + self.sequence[i + 1] + self.sequence[i + 2]
+            results.append({
+                "query": f"<query_triple>{i}</query_triple>",
+                "answer": str(val)
+            })
+
+        return results
+

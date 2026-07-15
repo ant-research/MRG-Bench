@@ -1,520 +1,504 @@
-# -*- coding: utf-8 -*-
-
 from .base import Game
 import random
 
-class VectorInferenceGame(Game):
+class HiddenTreeStructureGame(Game):
 
     reasoning_type = "演绎推理"
-    data_structure = "集合"
+    data_structure = "树"
 
     game_rule_zh = """\
-我们来玩一个"向量推理"游戏，规则如下：
+我们现在来玩一个"隐藏树结构"的推理游戏，规则如下：
 
-游戏设定了一个未知的四维向量 (a, b, c, d)，其中 a、b、c、d 均为非负整数，且满足 a + b + c + d = 17。
-你的目标是通过提问来推断出这个向量的精确值。
+游戏设定了一棵包含 {n} 个节点的无向连通无环图（树），节点编号为 1 到 {n}。树的边集是固定的，但对你隐藏。
 
-你可以反复向我提出以下三类问题（每次仅限一个问题），我会根据真实设定如实回答"是"或"否"：
+- 对于任意节点 r，可以将整棵树视为以 r 为根的有根树。
+- size_r(v) 定义为：在以 r 为根的有根树中，以 v 为根的子树所包含的节点总数（包括 v 本身）。
+- 对于任意两个节点 a 和 b，树上存在唯一路径连接它们。从 a 朝向 b 的"下一跳"定义为该路径上与 a 相邻的唯一节点；若 a 等于 b，则下一跳为 a 本身。
 
-1. **阈值查询**：询问某个分量是否大于等于某个值。例如："第 1 个分量是否大于等于 5？"
-2. **余数查询**：询问某个分量除以 2 或 3 的余数是否等于某个值。例如："第 2 个分量除以 2 的余数是否等于 0？"
-3. **比较查询**：询问两个不同分量之间的大小关系。例如："第 1 个分量是否大于等于第 3 个分量？"
+我已经选定了两个不同的节点 R 等于 {root} 和 T 等于 {target}。你的目标是推断出 size_R(T) 的确切数值，即在以 R 为根的有根树中，以 T 为根的子树包含多少个节点。
 
-当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+你可以反复向我提出以下两类问题（每次仅限一个问题），我会根据真实的树结构如实回答：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. COUNT 查询：询问 size_r(v) 的值，即在以 r 为根的有根树中，以 v 为根的子树包含多少个节点。
+   - 特别注意：你不能直接查询 COUNT(R, T)，即不能查询 COUNT({root}, {target})，否则游戏立即失败。
+   
+2. STEP 查询：询问从节点 a 出发朝向节点 b 的下一跳是哪个节点。
+   - 返回值是与 a 相邻且位于 a 到 b 唯一路径上的节点编号。
+   - 若 a 等于 b，则返回 a 本身。
+
+当你收集足够信息后，请提交最终答案。若答案错误、格式不符或违反查询规则，游戏失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 阈值查询（询问第 i 个分量是否大于等于 t）：
-<query_threshold>i,t</query_threshold>
+- COUNT 查询（例如查询以节点 3 为根时节点 5 的子树大小）：
+<query_count>3,5</query_count>
 
-其中 i 为 1 到 4 的整数，t 为 0 到 17 的整数。
+- STEP 查询（例如查询从节点 2 到节点 7 的下一跳）：
+<query_step>2,7</query_step>
 
-- 余数查询（询问第 i 个分量除以 m 的余数是否等于 r）：
-<query_modulo>i,m,r</query_modulo>
+提交最终答案时，直接给出你推断的 size_R(T) 的数值（一个正整数），格式如下：
 
-其中 i 为 1 到 4 的整数，m 为 2 或 3，r 为 0 到 m-1 的整数。
-
-- 比较查询（询问第 i 个分量是否大于等于第 j 个分量）：
-<query_compare>i,j</query_compare>
-
-其中 i、j 为 1 到 4 的不同整数。
-
-提交最终答案时，按顺序列出四个分量的值（用逗号隔开），格式如下：
-
-<answer>a,b,c,d</answer>
-
-例如：<answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
     game_rule_en = """\
-Let's play a "Vector Inference" game. Here are the rules:
+Let's play a "Hidden Tree Structure" deduction game. Here are the rules:
 
-The game has set an unknown four-dimensional vector (a, b, c, d), where a, b, c, d are all non-negative integers, and a + b + c + d = 17.
-Your goal is to infer the exact values of this vector through queries.
+There is an undirected connected acyclic graph (tree) with {n} nodes, numbered from 1 to {n}. The edge set is fixed but hidden from you.
 
-You can repeatedly ask me three types of questions (one per turn), and I will answer truthfully with "Yes" or "No":
+- For any node r, the entire tree can be viewed as a rooted tree with r as the root.
+- size_r(v) is defined as: in the rooted tree with r as root, the total number of nodes in the subtree rooted at v (including v itself).
+- For any two nodes a and b, there exists a unique path connecting them in the tree. The "next hop" from a towards b is defined as the unique node adjacent to a on that path; if a equals b, the next hop is a itself.
 
-1. **Threshold Query**: Ask if a component is greater than or equal to a certain value. E.g., "Is the 1st component greater than or equal to 5?"
-2. **Modulo Query**: Ask if a component modulo 2 or 3 equals a certain remainder. E.g., "Does the 2nd component modulo 2 equal 0?"
-3. **Comparison Query**: Ask about the relationship between two different components. E.g., "Is the 1st component greater than or equal to the 3rd component?"
+I have selected two different nodes R equals {root} and T equals {target}. Your goal is to infer the exact value of size_R(T), which is the number of nodes in the subtree rooted at T in the rooted tree with R as root.
 
-When you have enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+You can repeatedly ask me the following two types of questions (one per turn), and I will answer truthfully based on the real tree structure:
 
-## Query and Answer Format (strictly required)
+1. COUNT Query: Ask for the value of size_r(v), i.e., in the rooted tree with r as root, how many nodes are in the subtree rooted at v.
+   - Important Note: You cannot directly query COUNT(R, T), i.e., you cannot query COUNT({root}, {target}), or the game fails immediately.
+   
+2. STEP Query: Ask which node is the next hop from node a towards node b.
+   - The return value is the node adjacent to a that lies on the unique path from a to b.
+   - If a equals b, return a itself.
+
+When you have enough information, submit your final answer. If the answer is wrong, the format is invalid, or you violate the query rules, the game fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Threshold Query (asking if the i-th component is greater than or equal to t):
-<query_threshold>i,t</query_threshold>
+- COUNT Query (e.g., querying the subtree size of node 5 when node 3 is the root):
+<query_count>3,5</query_count>
 
-where i is an integer from 1 to 4, and t is an integer from 0 to 17.
+- STEP Query (e.g., querying the next hop from node 2 towards node 7):
+<query_step>2,7</query_step>
 
-- Modulo Query (asking if the i-th component modulo m equals r):
-<query_modulo>i,m,r</query_modulo>
+When submitting the final answer, directly provide your inferred value of size_R(T) (a positive integer) in this format:
 
-where i is an integer from 1 to 4, m is 2 or 3, and r is an integer from 0 to m-1.
-
-- Comparison Query (asking if the i-th component is greater than or equal to the j-th component):
-<query_compare>i,j</query_compare>
-
-where i, j are different integers from 1 to 4.
-
-When submitting the final answer, list the four component values in order (comma-separated), using this format:
-
-<answer>a,b,c,d</answer>
-
-For example: <answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
-    # ================= 场景 1：交通 =================
     contextualized_rule_zh_1 = """\
-欢迎使用城市交通指挥中心应急调度辅助系统。
+欢迎进入“交通路网拓扑探测”系统，具体规则如下：
 
-当前，调度中心已将总计 17 辆应急通讯车秘密部署到 4 个关键交通枢纽。每个枢纽分配的车辆数均为非负整数，设这 4 个枢纽的车辆数分别为 a、b、c、d，且满足 a + b + c + d = 17。
-作为调度稽查员，你的任务是通过系统接口推断出这 4 个枢纽各自的精确车辆部署数量。
+系统设定了一个包含 {n} 个交通枢纽（节点）的连通道路网（呈无环树状结构），枢纽编号为 1 到 {n}。道路连接关系固定但对你隐藏。
 
-你可以反复提交以下三类查询指令（每次仅限一个），系统会根据真实设定如实返回"是"或"否"：
+- 对于任意枢纽 r，可将其视为整个路网的总调度中心。
+- size_r(v) 定义为：以 r 为总调度中心时，由枢纽 v 及其辐射的下级路网所覆盖的交通枢纽总数（包含 v 本身）。
+- 对于任意两个枢纽 a 和 b，路网中存在唯一路径连接它们。从 a 前往 b 的“下一站”定义为该路线上与 a 直接相连的唯一相邻枢纽；若 a 等于 b，则“下一站”为 a 本身。
 
-1. **运力负荷评估（阈值查询）**：询问某个枢纽的车辆数是否大于等于某个值。例如："第 1 个枢纽的车辆数是否大于等于 5？"
-2. **轮班编组检测（余数查询）**：询问某个枢纽的车辆数按 2 或 3 车一组进行编组后，余数是否等于某个值。例如："第 2 个枢纽按 2 车编组的余数是否等于 0？"
-3. **枢纽运力对比（比较查询）**：询问两个不同枢纽之间车辆数量的大小关系。例如："第 1 个枢纽的车辆数是否大于等于第 3 个枢纽？"
+系统已选定了总指挥中心 R={root} 和目标枢纽 T={target}。你的任务是推断出 size_R(T) 的确切数值，即以 R 为总枢纽时，T 及其管辖的下级枢纽总数。
 
-当你收集足够信息后，请提交最终审计结果。若答案错误或格式不符，排查任务失败。
+你可以反复向系统提交以下两类查询（每次仅限一个），系统将如实返回结构数据：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. COUNT 查询：询问 size_r(v) 的值。
+   - 特别注意：绝对不可直接查询 COUNT(R, T)，即不能查询 COUNT({root}, {target})，否则系统将锁定测试失败。
+   
+2. STEP 查询：询问从枢纽 a 前往枢纽 b 的下一站是哪个枢纽。
+   - 返回值是与 a 相连且位于 a 到 b 唯一路径上的枢纽编号。
+   - 若 a 等于 b，则返回 a 本身。
+
+当你收集足够信息后，请提交最终答案。若答案错误、格式不符或违反查询规则，任务失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 运力负荷评估（询问第 i 个枢纽车辆数是否大于等于 t）：
-<query_threshold>i,t</query_threshold>
+- COUNT 查询（例如查询以枢纽 3 为总中心时枢纽 5 的下级枢纽数）：
+<query_count>3,5</query_count>
 
-其中 i 为 1 到 4 的整数，t 为 0 到 17 的整数。
+- STEP 查询（例如查询从枢纽 2 前往枢纽 7 的下一站）：
+<query_step>2,7</query_step>
 
-- 轮班编组检测（询问第 i 个枢纽车辆数除以 m 的余数是否等于 r）：
-<query_modulo>i,m,r</query_modulo>
+提交最终答案时，直接给出你推断的 size_R(T) 的数值（一个正整数），格式如下：
 
-其中 i 为 1 到 4 的整数，m 为 2 或 3，r 为 0 到 m-1 的整数。
-
-- 枢纽运力对比（询问第 i 个枢纽车辆数是否大于等于第 j 个枢纽）：
-<query_compare>i,j</query_compare>
-
-其中 i、j 为 1 到 4 的不同整数。
-
-提交最终答案时，按顺序列出四个枢纽的部署数量（用逗号隔开），格式如下：
-
-<answer>a,b,c,d</answer>
-
-例如：<answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-Welcome to the City Traffic Command Center Emergency Dispatch System.
+Welcome to the "Traffic Network Topology Probe" system. The rules are as follows:
 
-The command center has covertly deployed a total of 17 emergency communication vehicles to 4 key traffic hubs. The number of vehicles at each hub is a non-negative integer. Let the vehicle counts for the 4 hubs be a, b, c, and d, satisfying a + b + c + d = 17.
-As a dispatch auditor, your task is to infer the exact number of deployed vehicles at each hub through the query interface.
+The system has configured a connected road network (an acyclic tree structure) containing {n} traffic hubs (nodes), numbered from 1 to {n}. The road connections are fixed but hidden from you.
 
-You can repeatedly submit the following three types of queries (one per turn), and the system will truthfully return "Yes" or "No":
+- For any hub r, the entire network can be viewed as having r as the main dispatch center.
+- size_r(v) is defined as: with r as the main dispatch center, the total number of hubs covered by hub v and its subordinate network (including v itself).
+- For any two hubs a and b, there exists a unique path connecting them. The "next stop" from a towards b is defined as the unique adjacent hub connected to a on that path; if a equals b, the next stop is a itself.
 
-1. **Capacity Load Assessment (Threshold Query)**: Ask if the number of vehicles at a hub is greater than or equal to a certain value. E.g., "Is the number of vehicles at the 1st hub greater than or equal to 5?"
-2. **Shift Platoon Detection (Modulo Query)**: Ask if the remainder of a hub's vehicle count, when grouped by 2 or 3, equals a certain value. E.g., "Does the 2nd hub's vehicle count modulo 2 equal 0?"
-3. **Hub Capacity Comparison (Comparison Query)**: Ask about the relationship between the vehicle counts of two different hubs. E.g., "Is the vehicle count of the 1st hub greater than or equal to that of the 3rd hub?"
+The system has selected a main command center R={root} and a target hub T={target}. Your task is to infer the exact value of size_R(T), i.e., the total number of hubs governed by T when R is the main center.
 
-When you have enough information, submit your final audit result. If the answer is wrong or the format is invalid, the task fails.
+You can repeatedly submit the following two types of queries to the system (one per turn), and the system will return factual structural data:
 
-## Query and Answer Format (strictly required)
+1. COUNT Query: Ask for the value of size_r(v).
+   - Important Note: You cannot directly query COUNT(R, T), i.e., you cannot query COUNT({root}, {target}), or the system will lock down and the task fails immediately.
+   
+2. STEP Query: Ask which hub is the next stop from hub a towards hub b.
+   - The return value is the hub adjacent to a that lies on the unique path from a to b.
+   - If a equals b, return a itself.
+
+When you have gathered enough information, submit your final answer. If the answer is incorrect, the format is invalid, or you violate the query rules, the task fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Capacity Load Assessment (asking if the i-th hub is greater than or equal to t):
-<query_threshold>i,t</query_threshold>
+- COUNT Query (e.g., querying the subordinate hub count of hub 5 when hub 3 is the main center):
+<query_count>3,5</query_count>
 
-where i is an integer from 1 to 4, and t is an integer from 0 to 17.
+- STEP Query (e.g., querying the next stop from hub 2 towards hub 7):
+<query_step>2,7</query_step>
 
-- Shift Platoon Detection (asking if the i-th hub modulo m equals r):
-<query_modulo>i,m,r</query_modulo>
+When submitting the final answer, directly provide your inferred value of size_R(T) (a positive integer) in this format:
 
-where i is an integer from 1 to 4, m is 2 or 3, and r is an integer from 0 to m-1.
-
-- Hub Capacity Comparison (asking if the i-th hub is greater than or equal to the j-th hub):
-<query_compare>i,j</query_compare>
-
-where i, j are different integers from 1 to 4.
-
-When submitting the final answer, list the four hub vehicle counts in order (comma-separated), using this format:
-
-<answer>a,b,c,d</answer>
-
-For example: <answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
-    # ================= 场景 2：医疗 =================
     contextualized_rule_zh_2 = """\
-欢迎进入医疗资源核心调度系统。
+欢迎进入“医疗转诊网络分析”系统，具体规则如下：
 
-药剂科已将最新批次的 17 剂特效靶向药定向分配给 4 个重症病区。每个病区分配到的药剂数均为非负整数，设这 4 个病区的药剂数分别为 a、b、c、d，且满足 a + b + c + d = 17。
-作为合规稽查员，你的任务是通过审计查询接口推断出各病区的精确药剂分配量。
+系统设定了一个包含 {n} 家医疗机构（节点）的连通转诊网络（呈无环树状结构），机构编号为 1 到 {n}。转诊关系固定但对你隐藏。
 
-你可以反复提交以下三类查询指令（每次仅限一个），系统会根据真实设定如实返回"是"或"否"：
+- 对于任意机构 r，可将其视为整个区域的顶级医疗中心。
+- size_r(v) 定义为：以 r 为顶级医疗中心时，机构 v 及其负责转诊的所有下级机构总数（包含 v 本身）。
+- 对于任意两家机构 a 和 b，网络中存在唯一的转诊路径连接它们。从 a 转往 b 的“下一级接收单位”定义为该路径上与 a 直接对接的唯一相邻机构；若 a 等于 b，则为 a 本身。
 
-1. **剂量达标测试（阈值查询）**：询问某个病区的药剂数是否大于等于某个标准值。例如："第 1 个病区的药剂数是否大于等于 5？"
-2. **用药频次核对（余数查询）**：询问某个病区药剂数按 2 剂或 3 剂一疗程划分后，余数是否等于某个值。例如："第 2 个病区的药剂数按 2 剂划分疗程的余数是否等于 0？"
-3. **病区资源优先级比对（比较查询）**：询问两个不同病区之间药剂数量的大小关系。例如："第 1 个病区的药剂数是否大于等于第 3 个病区？"
+系统已选定了核心中心 R={root} 和目标机构 T={target}。你的任务是推断出 size_R(T) 的确切数值，即以 R 为顶级中心时，T 及其管辖的下级机构总数。
 
-当你收集足够信息后，请提交最终审查结果。若答案错误或格式不符，审计任务失败。
+你可以反复向系统提交以下两类查询（每次仅限一个）：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. COUNT 查询：询问 size_r(v) 的值。
+   - 特别注意：你不能直接查询 COUNT(R, T)，即不能查询 COUNT({root}, {target})，否则系统将判定违规并结束任务。
+   
+2. STEP 查询：询问从机构 a 转诊到机构 b 的下一级接收单位。
+   - 返回值是与 a 直接对接且位于 a 到 b 唯一路径上的机构编号。
+   - 若 a 等于 b，则返回 a 本身。
+
+当你收集足够信息后，请提交最终答案。若答案错误、格式不符或违反查询规则，任务失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 剂量达标测试（询问第 i 个病区药剂数是否大于等于 t）：
-<query_threshold>i,t</query_threshold>
+- COUNT 查询（例如查询以机构 3 为顶级中心时机构 5 的下级转诊总数）：
+<query_count>3,5</query_count>
 
-其中 i 为 1 到 4 的整数，t 为 0 到 17 的整数。
+- STEP 查询（例如查询从机构 2 转诊到机构 7 的下一级接收单位）：
+<query_step>2,7</query_step>
 
-- 用药频次核对（询问第 i 个病区药剂数除以 m 的余数是否等于 r）：
-<query_modulo>i,m,r</query_modulo>
+提交最终答案时，直接给出你推断的 size_R(T) 的数值（一个正整数），格式如下：
 
-其中 i 为 1 到 4 的整数，m 为 2 或 3，r 为 0 到 m-1 的整数。
-
-- 病区资源优先级比对（询问第 i 个病区药剂数是否大于等于第 j 个病区）：
-<query_compare>i,j</query_compare>
-
-其中 i、j 为 1 到 4 的不同整数。
-
-提交最终答案时，按顺序列出四个病区的药剂分配量（用逗号隔开），格式如下：
-
-<answer>a,b,c,d</answer>
-
-例如：<answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-Welcome to the Medical Resource Core Dispatch System.
+Welcome to the "Medical Referral Network Analysis" system. The rules are as follows:
 
-The pharmacy department has allocated the latest batch of 17 doses of targeted drugs to 4 intensive care wards. The number of doses assigned to each ward is a non-negative integer. Let the drug counts for the 4 wards be a, b, c, and d, satisfying a + b + c + d = 17.
-As a compliance auditor, your task is to infer the exact drug allocation for each ward through the audit query interface.
+The system defines a connected referral network (an acyclic tree structure) containing {n} medical institutions (nodes), numbered from 1 to {n}. The referral relationships are fixed but hidden from you.
 
-You can repeatedly submit the following three types of queries (one per turn), and the system will truthfully return "Yes" or "No":
+- For any institution r, the entire network can be viewed as having r as the top-level medical center.
+- size_r(v) is defined as: with r as the top-level medical center, the total number of institutions covered by institution v and its subordinate referral network (including v itself).
+- For any two institutions a and b, there exists a unique referral path connecting them. The "next receiving unit" from a towards b is defined as the unique adjacent institution directly connected to a on that path; if a equals b, it is a itself.
 
-1. **Dosage Compliance Test (Threshold Query)**: Ask if the number of doses in a ward is greater than or equal to a certain standard value. E.g., "Is the number of doses in the 1st ward greater than or equal to 5?"
-2. **Medication Frequency Verification (Modulo Query)**: Ask if the remainder of a ward's drug count, when divided into regimens of 2 or 3 doses, equals a certain value. E.g., "Does the 2nd ward's dose count modulo 2 equal 0?"
-3. **Ward Resource Priority Comparison (Comparison Query)**: Ask about the relationship between the drug counts of two different wards. E.g., "Is the drug count of the 1st ward greater than or equal to that of the 3rd ward?"
+The system has designated a core center R={root} and a target institution T={target}. Your task is to infer the exact value of size_R(T), i.e., the total number of institutions managed by T when R is the top-level center.
 
-When you have enough information, submit your final review result. If the answer is wrong or the format is invalid, the audit fails.
+You can repeatedly submit the following two types of queries to the system (one per turn):
 
-## Query and Answer Format (strictly required)
+1. COUNT Query: Ask for the value of size_r(v).
+   - Important Note: You cannot directly query COUNT(R, T), i.e., you cannot query COUNT({root}, {target}), or the system will flag a violation and end the task.
+   
+2. STEP Query: Ask which institution is the next receiving unit from institution a towards institution b.
+   - The return value is the institution adjacent to a that lies on the unique path from a to b.
+   - If a equals b, return a itself.
+
+When you have enough information, submit your final answer. If the answer is incorrect, the format is invalid, or you violate the query rules, the task fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Dosage Compliance Test (asking if the i-th ward is greater than or equal to t):
-<query_threshold>i,t</query_threshold>
+- COUNT Query (e.g., querying the subordinate institution count of institution 5 when institution 3 is the top-level center):
+<query_count>3,5</query_count>
 
-where i is an integer from 1 to 4, and t is an integer from 0 to 17.
+- STEP Query (e.g., querying the next receiving unit from institution 2 towards institution 7):
+<query_step>2,7</query_step>
 
-- Medication Frequency Verification (asking if the i-th ward modulo m equals r):
-<query_modulo>i,m,r</query_modulo>
+When submitting the final answer, directly provide your inferred value of size_R(T) (a positive integer) in this format:
 
-where i is an integer from 1 to 4, m is 2 or 3, and r is an integer from 0 to m-1.
-
-- Ward Resource Priority Comparison (asking if the i-th ward is greater than or equal to the j-th ward):
-<query_compare>i,j</query_compare>
-
-where i, j are different integers from 1 to 4.
-
-When submitting the final answer, list the four ward drug allocations in order (comma-separated), using this format:
-
-<answer>a,b,c,d</answer>
-
-For example: <answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
-    # ================= 场景 3：教育 =================
     contextualized_rule_zh_3 = """\
-欢迎进入市教育局资源分配核查系统。
+欢迎进入“层级化知识点图谱”解析系统，具体规则如下：
 
-本年度共有 17 个稀缺的高级教师进修名额，已被定向分配给 4 所重点高中。各高中获得的名额数均为非负整数，设这 4 所高中的名额数分别为 a、b、c、d，且满足 a + b + c + d = 17。
-你的任务是通过系统的评估接口推断出各所高中分得的精确名额数量。
+系统构建了一个包含 {n} 个核心知识点（节点）的连通教育网络（呈无环树状结构），知识点编号为 1 到 {n}。知识点之间的先决与衍生关系固定但对你隐藏。
 
-你可以反复提交以下三类查询指令（每次仅限一个），系统会根据真实设定如实返回"是"或"否"：
+- 对于任意知识点 r，可将其视为整个知识体系的根基。
+- size_r(v) 定义为：以 r 为根基时，知识点 v 及其所有衍生知识点包含的节点总数（包含 v 本身）。
+- 对于任意两个知识点 a 和 b，体系中存在唯一学习路径连接它们。从 a 学习到 b 的“下一步关联点”定义为该路径上与 a 紧密相连的唯一节点；若 a 等于 b，则为 a 本身。
 
-1. **最低配额审核（阈值查询）**：询问某所高中的名额数是否大于等于某个基准值。例如："第 1 所高中的名额数是否大于等于 5？"
-2. **名额均分测试（余数查询）**：询问某所高中的名额按 2 人或 3 人一档进行均分后，余数是否等于某个值。例如："第 2 所高中的名额按 2 人均分后的余数是否等于 0？"
-3. **校际名额对比（比较查询）**：询问两所不同高中之间名额分配数量的大小关系。例如："第 1 所高中的名额数是否大于等于第 3 所高中？"
+系统设定了核心基石 R={root} 和目标知识点 T={target}。你的任务是推断出 size_R(T) 的确切数值，即以 R 为根基时，T 及其所有衍生知识点的总数。
 
-当你收集足够信息后，请提交最终核查结果。若答案错误或格式不符，评估任务失败。
+你可以反复向系统提交以下两类查询（每次仅限一个）：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. COUNT 查询：询问 size_r(v) 的值。
+   - 特别注意：你不能直接查询 COUNT(R, T)，即不能查询 COUNT({root}, {target})，否则系统判定考核失败。
+   
+2. STEP 查询：询问从知识点 a 学习到知识点 b 的下一步关联点。
+   - 返回值是与 a 直接相连且位于 a 到 b 唯一学习路径上的知识点编号。
+   - 若 a 等于 b，则返回 a 本身。
+
+当你收集足够信息后，请提交最终答案。若答案错误、格式不符或违反查询规则，考核失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 最低配额审核（询问第 i 所高中名额数是否大于等于 t）：
-<query_threshold>i,t</query_threshold>
+- COUNT 查询（例如查询以知识点 3 为根基时知识点 5 的衍生总数）：
+<query_count>3,5</query_count>
 
-其中 i 为 1 到 4 的整数，t 为 0 到 17 的整数。
+- STEP 查询（例如查询从知识点 2 学习到知识点 7 的下一步关联点）：
+<query_step>2,7</query_step>
 
-- 名额均分测试（询问第 i 所高中名额数除以 m 的余数是否等于 r）：
-<query_modulo>i,m,r</query_modulo>
+提交最终答案时，直接给出你推断的 size_R(T) 的数值（一个正整数），格式如下：
 
-其中 i 为 1 到 4 的整数，m 为 2 或 3，r 为 0 到 m-1 的整数。
-
-- 校际名额对比（询问第 i 所高中名额数是否大于等于第 j 所高中）：
-<query_compare>i,j</query_compare>
-
-其中 i、j 为 1 到 4 的不同整数。
-
-提交最终答案时，按顺序列出四所高中的名额数量（用逗号隔开），格式如下：
-
-<answer>a,b,c,d</answer>
-
-例如：<answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-Welcome to the Municipal Education Bureau Resource Allocation Audit System.
+Welcome to the "Hierarchical Knowledge Graph" analysis system. The rules are as follows:
 
-This year, there are 17 scarce advanced teacher training quotas allocated to 4 key high schools. The number of quotas each school received is a non-negative integer. Let the quota counts for the 4 schools be a, b, c, and d, satisfying a + b + c + d = 17.
-Your task is to infer the exact number of quotas allocated to each high school through the system's evaluation interface.
+The system has structured a connected educational network (an acyclic tree structure) containing {n} core knowledge points (nodes), numbered from 1 to {n}. The prerequisite and derivative relationships are fixed but hidden from you.
 
-You can repeatedly submit the following three types of queries (one per turn), and the system will truthfully return "Yes" or "No":
+- For any knowledge point r, it can be viewed as the foundational basis of the entire knowledge system.
+- size_r(v) is defined as: with r as the foundation, the total number of points contained in the knowledge point v and all its derivative points (including v itself).
+- For any two knowledge points a and b, there is a unique learning path connecting them. The "next associated point" from a towards b is defined as the unique node directly linked to a on that path; if a equals b, it is a itself.
 
-1. **Minimum Quota Audit (Threshold Query)**: Ask if a high school's quota count is greater than or equal to a certain benchmark value. E.g., "Is the 1st school's quota count greater than or equal to 5?"
-2. **Quota Even-Split Test (Modulo Query)**: Ask if the remainder of a school's quota count, when split evenly into tiers of 2 or 3 people, equals a certain value. E.g., "Does the 2nd school's quota count modulo 2 equal 0?"
-3. **Inter-School Quota Comparison (Comparison Query)**: Ask about the relationship between the quota allocations of two different schools. E.g., "Is the 1st school's quota count greater than or equal to the 3rd school's?"
+The system has set a core foundation R={root} and a target knowledge point T={target}. Your task is to infer the exact value of size_R(T), i.e., the total number of derivative points under T when R is the foundation.
 
-When you have enough information, submit your final audit result. If the answer is wrong or the format is invalid, the evaluation task fails.
+You can repeatedly submit the following two types of queries to the system (one per turn):
 
-## Query and Answer Format (strictly required)
+1. COUNT Query: Ask for the value of size_r(v).
+   - Important Note: You cannot directly query COUNT(R, T), i.e., you cannot query COUNT({root}, {target}), or the system will fail your assessment.
+   
+2. STEP Query: Ask which point is the next associated point from point a towards point b.
+   - The return value is the point adjacent to a that lies on the unique learning path from a to b.
+   - If a equals b, return a itself.
+
+When you have collected enough information, submit your final answer. If the answer is incorrect, the format is invalid, or you violate the query rules, the assessment fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Minimum Quota Audit (asking if the i-th school is greater than or equal to t):
-<query_threshold>i,t</query_threshold>
+- COUNT Query (e.g., querying the derivative count of point 5 when point 3 is the foundation):
+<query_count>3,5</query_count>
 
-where i is an integer from 1 to 4, and t is an integer from 0 to 17.
+- STEP Query (e.g., querying the next associated point from point 2 towards point 7):
+<query_step>2,7</query_step>
 
-- Quota Even-Split Test (asking if the i-th school modulo m equals r):
-<query_modulo>i,m,r</query_modulo>
+When submitting the final answer, directly provide your inferred value of size_R(T) (a positive integer) in this format:
 
-where i is an integer from 1 to 4, m is 2 or 3, and r is an integer from 0 to m-1.
-
-- Inter-School Quota Comparison (asking if the i-th school is greater than or equal to the j-th school):
-<query_compare>i,j</query_compare>
-
-where i, j are different integers from 1 to 4.
-
-When submitting the final answer, list the four school quota counts in order (comma-separated), using this format:
-
-<answer>a,b,c,d</answer>
-
-For example: <answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
-    # ================= 场景 4：制造业/工业 =================
     contextualized_rule_zh_4 = """\
-欢迎使用智能制造控制塔物料追踪系统。
+欢迎进入“工业流水线结构”审查系统，具体规则如下：
 
-目前，系统已将 17 批次的核心原材料调拨至 4 条自动化生产线。各产线分配的物料批次数均为非负整数，设这 4 条产线的物料批次数分别为 a、b、c、d，且满足 a + b + c + d = 17。
-你的任务是通过系统的追踪判定接口，推断出每条产线的精确物料批次数量。
+系统设定了一个包含 {n} 个生产车间（节点）的连通物料网络（呈无环树状结构），车间编号为 1 到 {n}。物料流向的连接关系固定但对你隐藏。
 
-你可以反复提交以下三类查询指令（每次仅限一个），系统会根据真实设定如实返回"是"或"否"：
+- 对于任意车间 r，可将其视为整条产线的最终装配中心。
+- size_r(v) 定义为：以 r 为最终装配中心时，车间 v 及其所有上游供应车间的总数（包含 v 本身）。
+- 对于任意两个车间 a 和 b，网络中存在唯一的物料流转路径。从 a 运往 b 的“下一道工序车间”定义为该路径上与 a 直接相邻的唯一车间；若 a 等于 b，则为 a 本身。
 
-1. **产能达标判定（阈值查询）**：询问某条产线的物料批次是否大于等于某个目标值。例如："第 1 条产线的物料批次是否大于等于 5？"
-2. **托盘打包校验（余数查询）**：询问某条产线的物料按 2 批次或 3 批次装满一托盘后，余数是否等于某个值。例如："第 2 条产线按 2 批次装配的余数是否等于 0？"
-3. **产线负荷对比（比较查询）**：询问两条不同产线之间物料分配数量的大小关系。例如："第 1 条产线的物料批次是否大于等于第 3 条产线？"
+系统指定了核心装配中心 R={root} 和目标车间 T={target}。你的任务是推断出 size_R(T) 的确切数值，即以 R 为总装配中心时，T 及其所有上游供应车间的总数。
 
-当你收集足够信息后，请提交最终校验报告。若答案错误或格式不符，追踪任务失败。
+你可以反复向系统提交以下两类查询（每次仅限一个）：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. COUNT 查询：询问 size_r(v) 的值。
+   - 特别注意：你不能直接查询 COUNT(R, T)，即不能查询 COUNT({root}, {target})，否则系统将阻断访问并判定失败。
+   
+2. STEP 查询：询问从车间 a 运往车间 b 的下一道工序车间。
+   - 返回值是与 a 直接相邻且位于 a 到 b 唯一物流路径上的车间编号。
+   - 若 a 等于 b，则返回 a 本身。
+
+当你收集足够信息后，请提交最终答案。若答案错误、格式不符或违反查询规则，审查失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 产能达标判定（询问第 i 条产线物料批次是否大于等于 t）：
-<query_threshold>i,t</query_threshold>
+- COUNT 查询（例如查询以车间 3 为最终装配中心时车间 5 的供应网络总数）：
+<query_count>3,5</query_count>
 
-其中 i 为 1 到 4 的整数，t 为 0 到 17 的整数。
+- STEP 查询（例如查询从车间 2 运往车间 7 的下一道工序车间）：
+<query_step>2,7</query_step>
 
-- 托盘打包校验（询问第 i 条产线物料批次除以 m 的余数是否等于 r）：
-<query_modulo>i,m,r</query_modulo>
+提交最终答案时，直接给出你推断的 size_R(T) 的数值（一个正整数），格式如下：
 
-其中 i 为 1 到 4 的整数，m 为 2 或 3，r 为 0 到 m-1 的整数。
-
-- 产线负荷对比（询问第 i 条产线物料批次是否大于等于第 j 条产线）：
-<query_compare>i,j</query_compare>
-
-其中 i、j 为 1 到 4 的不同整数。
-
-提交最终答案时，按顺序列出四条产线的物料批次数（用逗号隔开），格式如下：
-
-<answer>a,b,c,d</answer>
-
-例如：<answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_4 = """\
 [Manufacturing Scenario]
-Welcome to the Smart Manufacturing Control Tower Material Tracking System.
+Welcome to the "Industrial Assembly Line Structure" review system. The rules are as follows:
 
-Currently, the system has dispatched 17 batches of critical raw materials to 4 automated production lines. The number of material batches assigned to each line is a non-negative integer. Let the batch counts for the 4 production lines be a, b, c, and d, satisfying a + b + c + d = 17.
-Your task is to infer the exact number of material batches for each production line through the tracking assessment interface.
+The system has configured a connected material flow network (an acyclic tree structure) containing {n} production workshops (nodes), numbered from 1 to {n}. The material flow connections are fixed but hidden from you.
 
-You can repeatedly submit the following three types of queries (one per turn), and the system will truthfully return "Yes" or "No":
+- For any workshop r, it can be viewed as the final assembly center of the entire production line.
+- size_r(v) is defined as: with r as the final assembly center, the total number of workshops in workshop v and all its upstream supply workshops (including v itself).
+- For any two workshops a and b, there is a unique material routing path connecting them. The "next operation workshop" from a towards b is defined as the unique adjacent workshop directly connected to a on that path; if a equals b, it is a itself.
 
-1. **Capacity Compliance Assessment (Threshold Query)**: Ask if a production line's material batch count is greater than or equal to a target value. E.g., "Is the 1st line's batch count greater than or equal to 5?"
-2. **Pallet Packaging Validation (Modulo Query)**: Ask if the remainder of a line's batches, when packed by 2 or 3 per pallet, equals a certain value. E.g., "Does the 2nd line's batch count modulo 2 equal 0?"
-3. **Production Line Load Comparison (Comparison Query)**: Ask about the relationship between the material counts of two different production lines. E.g., "Is the 1st line's batch count greater than or equal to the 3rd line's?"
+The system has designated a core assembly center R={root} and a target workshop T={target}. Your task is to infer the exact value of size_R(T), i.e., the total number of upstream workshops for T when R is the final assembly center.
 
-When you have enough information, submit your final validation report. If the answer is wrong or the format is invalid, the tracking task fails.
+You can repeatedly submit the following two types of queries to the system (one per turn):
 
-## Query and Answer Format (strictly required)
+1. COUNT Query: Ask for the value of size_r(v).
+   - Important Note: You cannot directly query COUNT(R, T), i.e., you cannot query COUNT({root}, {target}), or the system will block access and the task fails.
+   
+2. STEP Query: Ask which workshop is the next operation workshop from workshop a towards workshop b.
+   - The return value is the workshop adjacent to a that lies on the unique logistics path from a to b.
+   - If a equals b, return a itself.
+
+When you have sufficient information, submit your final answer. If the answer is incorrect, the format is invalid, or you violate the query rules, the review fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Capacity Compliance Assessment (asking if the i-th line is greater than or equal to t):
-<query_threshold>i,t</query_threshold>
+- COUNT Query (e.g., querying the supply network count of workshop 5 when workshop 3 is the final assembly center):
+<query_count>3,5</query_count>
 
-where i is an integer from 1 to 4, and t is an integer from 0 to 17.
+- STEP Query (e.g., querying the next operation workshop from workshop 2 towards workshop 7):
+<query_step>2,7</query_step>
 
-- Pallet Packaging Validation (asking if the i-th line modulo m equals r):
-<query_modulo>i,m,r</query_modulo>
+When submitting the final answer, directly provide your inferred value of size_R(T) (a positive integer) in this format:
 
-where i is an integer from 1 to 4, m is 2 or 3, and r is an integer from 0 to m-1.
-
-- Production Line Load Comparison (asking if the i-th line is greater than or equal to the j-th line):
-<query_compare>i,j</query_compare>
-
-where i, j are different integers from 1 to 4.
-
-When submitting the final answer, list the four line batch counts in order (comma-separated), using this format:
-
-<answer>a,b,c,d</answer>
-
-For example: <answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
-    # ================= 场景 5：法律 =================
     contextualized_rule_zh_5 = """\
-欢迎登录律所核心案卷分配审计系统。
+欢迎进入“法律条款引用关系”溯源系统，具体规则如下：
 
-管理委员会已将 17 宗重大连环并购案的宗卷分配给 4 个核心律师团队。各团队承接的案卷数均为非负整数，设这 4 个团队的案卷数分别为 a、b、c、d，且满足 a + b + c + d = 17。
-作为合规审计员，你的任务是通过内部核查系统，推断出各团队承接的精确案卷数量。
+系统构建了一个包含 {n} 项法律条款（节点）的连通法条网络（呈无环树状结构），法条编号为 1 到 {n}。法条间的引用从属关系固定但对你隐藏。
 
-你可以反复提交以下三类审计查询指令（每次仅限一个），系统会根据真实设定如实返回"是"或"否"：
+- 对于任意条款 r，可将其视为该法律体系的核心法案。
+- size_r(v) 定义为：以 r 为核心法案时，条款 v 及其所有从属引用条款的总数（包含 v 本身）。
+- 对于任意两个条款 a 和 b，体系中存在唯一的引用链条连接它们。从 a 追溯至 b 的“直接关联条款”定义为该链条上与 a 直接相连的唯一条款；若 a 等于 b，则为 a 本身。
 
-1. **工作量合规审查（阈值查询）**：询问某个团队的案卷数是否大于等于某个合规阈值。例如："第 1 个团队的案卷数是否大于等于 5？"
-2. **交叉复核编组验证（余数查询）**：询问某个团队的案卷按 2 卷或 3 卷一组进行交叉审阅后，余数是否等于某个值。例如："第 2 个团队按 2 卷编组的余数是否等于 0？"
-3. **团队负荷权衡（比较查询）**：询问两个不同团队之间案卷分配数量的大小关系。例如："第 1 个团队的案卷数是否大于等于第 3 个团队？"
+系统指定了基本法核心 R={root} 和目标条款 T={target}。你的任务是推断出 size_R(T) 的确切数值，即以 R 为核心法案时，T 及其所有从属引用条款的总数。
 
-当你收集足够信息后，请提交最终审计结果。若答案错误或格式不符，审计任务失败。
+你可以反复向系统提交以下两类查询（每次仅限一个）：
 
-## 询问与提交答案的格式（必须严格遵守）
+1. COUNT 查询：询问 size_r(v) 的值。
+   - 特别注意：你不能直接查询 COUNT(R, T)，即不能查询 COUNT({root}, {target})，否则系统将立即终止溯源并判定失败。
+   
+2. STEP 查询：询问从条款 a 追溯至条款 b 的直接关联条款。
+   - 返回值是与 a 直接相连且位于 a 到 b 唯一引用链条上的条款编号。
+   - 若 a 等于 b，则返回 a 本身。
+
+当你收集足够信息后，请提交最终答案。若答案错误、格式不符或违反查询规则，溯源失败。
 
 每次询问只能包含一个标签。请使用以下 XML 格式：
 
-- 工作量合规审查（询问第 i 个团队案卷数是否大于等于 t）：
-<query_threshold>i,t</query_threshold>
+- COUNT 查询（例如查询以条款 3 为核心法案时条款 5 的从属条款总数）：
+<query_count>3,5</query_count>
 
-其中 i 为 1 到 4 的整数，t 为 0 到 17 的整数。
+- STEP 查询（例如查询从条款 2 追溯至条款 7 的直接关联条款）：
+<query_step>2,7</query_step>
 
-- 交叉复核编组验证（询问第 i 个团队案卷数除以 m 的余数是否等于 r）：
-<query_modulo>i,m,r</query_modulo>
+提交最终答案时，直接给出你推断的 size_R(T) 的数值（一个正整数），格式如下：
 
-其中 i 为 1 到 4 的整数，m 为 2 或 3，r 为 0 到 m-1 的整数。
-
-- 团队负荷权衡（询问第 i 个团队案卷数是否大于等于第 j 个团队）：
-<query_compare>i,j</query_compare>
-
-其中 i、j 为 1 到 4 的不同整数。
-
-提交最终答案时，按顺序列出四个团队的案卷数量（用逗号隔开），格式如下：
-
-<answer>a,b,c,d</answer>
-
-例如：<answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
     contextualized_rule_en_5 = """\
 [Legal Scenario]
-Welcome to the Law Firm Core Case File Allocation Audit System.
+Welcome to the "Legal Provision Citation Analysis" system. The rules are as follows:
 
-The management committee has allocated 17 serial M&A case files to 4 core legal teams. The number of case files assigned to each team is a non-negative integer. Let the case file counts for the 4 teams be a, b, c, and d, satisfying a + b + c + d = 17.
-As a compliance auditor, your task is to infer the exact number of case files assigned to each team through the internal verification system.
+The system has structured a connected legal network (an acyclic tree structure) containing {n} legal provisions (nodes), numbered from 1 to {n}. The citation and subordination relationships are fixed but hidden from you.
 
-You can repeatedly submit the following three types of audit queries (one per turn), and the system will truthfully return "Yes" or "No":
+- For any provision r, it can be viewed as the core act of the legal framework.
+- size_r(v) is defined as: with r as the core act, the total number of provisions in provision v and all its subordinate cited provisions (including v itself).
+- For any two provisions a and b, there is a unique citation chain connecting them. The "directly associated provision" from a tracing towards b is defined as the unique adjacent provision directly linked to a on that chain; if a equals b, it is a itself.
 
-1. **Workload Compliance Review (Threshold Query)**: Ask if a team's case file count is greater than or equal to a certain compliance threshold. E.g., "Is the 1st team's case count greater than or equal to 5?"
-2. **Cross-Review Grouping Validation (Modulo Query)**: Ask if the remainder of a team's case count, when grouped by 2 or 3 for cross-review, equals a certain value. E.g., "Does the 2nd team's case count modulo 2 equal 0?"
-3. **Team Load Balancing (Comparison Query)**: Ask about the relationship between the case file counts of two different teams. E.g., "Is the 1st team's case count greater than or equal to the 3rd team's?"
+The system has set a core foundational act R={root} and a target provision T={target}. Your task is to infer the exact value of size_R(T), i.e., the total number of subordinate provisions for T when R is the core act.
 
-When you have enough information, submit your final audit result. If the answer is wrong or the format is invalid, the audit task fails.
+You can repeatedly submit the following two types of queries to the system (one per turn):
 
-## Query and Answer Format (strictly required)
+1. COUNT Query: Ask for the value of size_r(v).
+   - Important Note: You cannot directly query COUNT(R, T), i.e., you cannot query COUNT({root}, {target}), or the system will terminate the analysis and flag a failure.
+   
+2. STEP Query: Ask which provision is the directly associated provision from provision a tracing towards provision b.
+   - The return value is the provision adjacent to a that lies on the unique citation chain from a to b.
+   - If a equals b, return a itself.
+
+When you have obtained sufficient information, submit your final answer. If the answer is incorrect, the format is invalid, or you violate the query rules, the analysis fails.
 
 Each query must contain only one tag. Use the following XML format:
 
-- Workload Compliance Review (asking if the i-th team is greater than or equal to t):
-<query_threshold>i,t</query_threshold>
+- COUNT Query (e.g., querying the subordinate provision count of provision 5 when provision 3 is the core act):
+<query_count>3,5</query_count>
 
-where i is an integer from 1 to 4, and t is an integer from 0 to 17.
+- STEP Query (e.g., querying the directly associated provision from provision 2 tracing towards provision 7):
+<query_step>2,7</query_step>
 
-- Cross-Review Grouping Validation (asking if the i-th team modulo m equals r):
-<query_modulo>i,m,r</query_modulo>
+When submitting the final answer, directly provide your inferred value of size_R(T) (a positive integer) in this format:
 
-where i is an integer from 1 to 4, m is 2 or 3, and r is an integer from 0 to m-1.
-
-- Team Load Balancing (asking if the i-th team is greater than or equal to the j-th team):
-<query_compare>i,j</query_compare>
-
-where i, j are different integers from 1 to 4.
-
-When submitting the final answer, list the four team case counts in order (comma-separated), using this format:
-
-<answer>a,b,c,d</answer>
-
-For example: <answer>5,3,6,3</answer>
+<answer>5</answer>
 """
 
-    tags = ["answer", "query_threshold", "query_modulo", "query_compare"]
+    tags = ["answer", "query_count", "query_step"]
 
-    # 使用基于 seed 的可控随机生成，保持可复现性同时避免答案硬编码
     DIFFICULTY_CONFIG = {
         "zh": {
-            1: {"max_component": 6,  "seed_offset": 0},   # 简单：分量较均匀
-            2: {"max_component": 8,  "seed_offset": 100},  # 中等偏下
-            3: {"max_component": 10, "seed_offset": 200},  # 中等偏上
-            4: {"max_component": 12, "seed_offset": 300},  # 较难
-            5: {"max_component": 17, "seed_offset": 400},  # 难：极端分布
+            1: {
+                "n": 5,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
+                "root": 1,
+                "target": 3,
+            },
+            2: {
+                "n": 7,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
+                "root": 4,
+                "target": 1,
+            },
+            3: {
+                "n": 10,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (4, 8), (5, 9), (6, 10)],
+                "root": 2,
+                "target": 1,
+            },
+            4: {
+                "n": 12,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (5, 8), (5, 9), (6, 10), (6, 11), (11, 12)],
+                "root": 3,
+                "target": 1,
+            },
+            5: {
+                "n": 15,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (5, 9), (5, 10), 
+                          (6, 11), (7, 12), (7, 13), (10, 14), (13, 15)],
+                "root": 3,
+                "target": 2,
+            },
         },
         "en": {
-            1: {"max_component": 6,  "seed_offset": 0},
-            2: {"max_component": 8,  "seed_offset": 100},
-            3: {"max_component": 10, "seed_offset": 200},
-            4: {"max_component": 12, "seed_offset": 300},
-            5: {"max_component": 17, "seed_offset": 400},
+            1: {
+                "n": 5,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5)],
+                "root": 1,
+                "target": 3,
+            },
+            2: {
+                "n": 7,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)],
+                "root": 4,
+                "target": 1,
+            },
+            3: {
+                "n": 10,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (4, 8), (5, 9), (6, 10)],
+                "root": 2,
+                "target": 1,
+            },
+            4: {
+                "n": 12,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (4, 7), (5, 8), (5, 9), (6, 10), (6, 11), (11, 12)],
+                "root": 3,
+                "target": 1,
+            },
+            5: {
+                "n": 15,
+                "edges": [(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7), (4, 8), (5, 9), (5, 10), 
+                          (6, 11), (7, 12), (7, 13), (10, 14), (13, 15)],
+                "root": 3,
+                "target": 2,
+            },
         },
     }
 
@@ -522,9 +506,8 @@ For example: <answer>5,3,6,3</answer>
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏，设置目标向量（基于可控随机）"""
         lang = self.config.language
-        diff = int(self.config.difficulty)  # 确保是整数，兼容字符串传入
+        diff = int(self.config.difficulty)
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -532,204 +515,190 @@ For example: <answer>5,3,6,3</answer>
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        max_comp = cfg["max_component"]
-        seed_offset = cfg["seed_offset"]
-
-        # 使用固定 seed 保证可复现
-        rng = random.Random(42 + seed_offset)
-        total = 17
-        vector = []
-        for _ in range(3):
-            upper = min(max_comp, total)
-            val = rng.randint(0, upper)
-            vector.append(val)
-            total -= val
-        vector.append(total)
-
-        # 如果最后一个分量超出 max_component 限制，重新打乱直到合法
-        # （简单策略：直接用生成的向量，极端分布本身就是高难度的特征）
-        rng.shuffle(vector)
-
-        self.target_vector = vector
-
-        # 验证向量合法性
-        assert len(self.target_vector) == 4, "Vector must have 4 components"
-        assert all(isinstance(x, int) and x >= 0 for x in self.target_vector), "All components must be non-negative integers"
-        assert sum(self.target_vector) == 17, "Sum of components must be 17"
+        self._game_info["n"] = cfg["n"]
+        self._game_info["root"] = cfg["root"]
+        self._game_info["target"] = cfg["target"]
         
-        # game_info 用于格式化规则文本（本游戏无需填充参数）
-        self._game_info = {}
+        self.n = cfg["n"]
+        self.root = cfg["root"]
+        self.target = cfg["target"]
+        self.edges = cfg["edges"]
+        
+        self.adj = {i: [] for i in range(1, self.n + 1)}
+        for u, v in self.edges:
+            self.adj[u].append(v)
+            self.adj[v].append(u)
+        
+        self.answer = self._compute_subtree_size(self.root, self.target)
+
+    def _compute_subtree_size(self, root, node):
+        visited = set()
+        parent = {}
+        
+        queue = [root]
+        visited.add(root)
+        parent[root] = None
+        
+        while queue:
+            u = queue.pop(0)
+            for v in self.adj[u]:
+                if v not in visited:
+                    visited.add(v)
+                    parent[v] = u
+                    queue.append(v)
+        
+        def dfs(u):
+            size = 1
+            for v in self.adj[u]:
+                if parent.get(v) == u:
+                    size += dfs(v)
+            return size
+        
+        return dfs(node)
+
+    def _find_next_hop(self, a, b):
+        if a == b:
+            return a
+        
+        visited = set()
+        parent = {}
+        queue = [a]
+        visited.add(a)
+        parent[a] = None
+        
+        while queue:
+            u = queue.pop(0)
+            if u == b:
+                break
+            for v in self.adj[u]:
+                if v not in visited:
+                    visited.add(v)
+                    parent[v] = u
+                    queue.append(v)
+        
+        path = []
+        current = b
+        while current is not None:
+            path.append(current)
+            current = parent.get(current)
+        
+        path.reverse()
+        if len(path) >= 2:
+            return path[1]
+        return a
 
     def evaluate(self, parsed_info):
-        """评估玩家提交的答案是否正确"""
-        raw_ans = parsed_info["answer"].strip()
-        
         try:
-            # 解析答案：a,b,c,d
-            parts = [x.strip() for x in raw_ans.split(",")]
-            if len(parts) != 4:
-                return False
-            
-            # 转换为整数
-            answer_vector = [int(x) for x in parts]
-            
-            # 检查是否匹配目标向量
-            return answer_vector == self.target_vector
-            
-        except (ValueError, AttributeError):
+            ans = int(parsed_info["answer"].strip())
+            return ans == self.answer
+        except:
             return False
 
     def _cf_core_produce(self, parsed_info):
-        """原始的响应生成逻辑"""
-        if self.config.language == "zh":
-            yes_res, no_res = "是", "否"
-            err_format = "错误：格式无效。"
-            err_range = "错误：参数超出范围。"
-        else:
-            yes_res, no_res = "Yes", "No"
-            err_format = "Error: Invalid format."
-            err_range = "Error: Parameter out of range."
+        
+        has_count = "query_count" in parsed_info
+        has_step = "query_step" in parsed_info
+        
+        if has_count and has_step:
+            return ("Error: Multiple queries in one turn are not allowed." 
+                    if self.config.language == "en" 
+                    else "错误：每次仅限提出一个问题。")
 
-        # 优先级：threshold > modulo > compare
-        if "query_threshold" in parsed_info:
+        if has_count:
             try:
-                raw = parsed_info["query_threshold"].strip()
+                raw = parsed_info["query_count"].strip()
                 parts = [x.strip() for x in raw.split(",")]
                 if len(parts) != 2:
-                    return err_format
+                    raise ValueError("Invalid format: expected exactly 2 comma-separated values.")
+                r, v = int(parts[0]), int(parts[1])
                 
-                i = int(parts[0])
-                t = int(parts[1])
+                if r < 1 or r > self.n or v < 1 or v > self.n:
+                    return "Error: Node out of range." if self.config.language == "en" else "错误：节点编号超出范围。"
                 
-                # 检查参数范围
-                if i < 1 or i > 4 or t < 0 or t > 17:
-                    return err_range
+                if r == self.root and v == self.target:
+                    msg = ("Rule violation: Cannot directly query COUNT(R, T)" 
+                           if self.config.language == "en" 
+                           else "违反规则：不能直接查询 COUNT(R, T)")
+                    raise ValueError(msg)
                 
-                # 获取对应分量（索引从0开始）
-                component = self.target_vector[i - 1]
-                return yes_res if component >= t else no_res
+                size = self._compute_subtree_size(r, v)
+                return str(size)
                 
-            except (ValueError, IndexError):
-                return err_format
-
-        elif "query_modulo" in parsed_info:
+            except ValueError as e:
+                if str(e).startswith("Rule violation") or str(e).startswith("违反规则"):
+                    raise
+                return "Error: Invalid format." if self.config.language == "en" else "错误：格式无效。"
+        
+        elif has_step:
             try:
-                raw = parsed_info["query_modulo"].strip()
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 3:
-                    return err_format
-                
-                i = int(parts[0])
-                m = int(parts[1])
-                r = int(parts[2])
-                
-                # 检查参数范围
-                if i < 1 or i > 4:
-                    return err_range
-                if m not in [2, 3]:
-                    return err_range
-                if r < 0 or r >= m:
-                    return err_range
-                
-                # 获取对应分量并检查余数
-                component = self.target_vector[i - 1]
-                return yes_res if component % m == r else no_res
-                
-            except (ValueError, IndexError):
-                return err_format
-
-        elif "query_compare" in parsed_info:
-            try:
-                raw = parsed_info["query_compare"].strip()
+                raw = parsed_info["query_step"].strip()
                 parts = [x.strip() for x in raw.split(",")]
                 if len(parts) != 2:
-                    return err_format
+                    raise ValueError
+                a, b = int(parts[0]), int(parts[1])
                 
-                i = int(parts[0])
-                j = int(parts[1])
+                if a < 1 or a > self.n or b < 1 or b > self.n:
+                    return "Error: Node out of range." if self.config.language == "en" else "错误：节点编号超出范围。"
                 
-                # 检查参数范围
-                if i < 1 or i > 4 or j < 1 or j > 4:
-                    return err_range
-                if i == j:
-                    return err_range
+                next_hop = self._find_next_hop(a, b)
+                return str(next_hop)
                 
-                # 比较两个分量
-                comp_i = self.target_vector[i - 1]
-                comp_j = self.target_vector[j - 1]
-                return yes_res if comp_i >= comp_j else no_res
-                
-            except (ValueError, IndexError):
-                return err_format
-
+            except ValueError:
+                return "Error: Invalid format." if self.config.language == "en" else "错误：格式无效。"
+        
         else:
             raise ValueError("No valid query tag found.")
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        """
-        将正确的 Yes/No（是/否）响应取反，生成一个错误答案。
-        """
+    def _cf_make_wrong(self, correct):
+        try:
+            val = int(correct)
+            return str(val + 1)
+        except ValueError:
+            pass
+
         if self.config.language == "zh":
-            if correct == "是":
-                return "否"
-            elif correct == "否":
-                return "是"
-            else:
-                # 对于错误提示等非标准回复，附加一段干扰文本
-                return correct + "（数据异常）"
+            if "是" in correct:
+                return correct.replace("是", "否")
+            elif "否" in correct:
+                return correct.replace("否", "是")
         else:
-            if correct == "Yes":
-                return "No"
-            elif correct == "No":
-                return "Yes"
-            else:
-                return correct + " (data anomaly)"
+            if "Yes" in correct:
+                return correct.replace("Yes", "No")
+            elif "No" in correct:
+                return correct.replace("No", "Yes")
+            elif "yes" in correct:
+                return correct.replace("yes", "no")
+            elif "no" in correct:
+                return correct.replace("no", "yes")
+        
+        return correct + "_WRONG"
 
-    def get_all_possible_queries(self) -> list:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串（完整XML），与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        results = []
+    def get_all_possible_queries(self) -> list[dict]:
+        queries = []
         
-        # 1. Threshold queries: i=1..4, t=0..17
-        for i in range(1, 5):
-            for t in range(18):
-                # 构造 content 与 XML
-                content = f"{i},{t}"
-                query_xml = f"<query_threshold>{content}</query_threshold>"
+        for r in range(1, self.n + 1):
+            for v in range(1, self.n + 1):
+                if r == self.root and v == self.target:
+                    continue
                 
-                # 构造 simulation parsed_info
-                parsed_info = {"query_threshold": content}
+                query_str = f"<query_count>{r},{v}</query_count>"
                 
-                # 获取正确答案
-                answer = self._cf_core_produce(parsed_info)
-                results.append({"query": query_xml, "answer": answer})
+                answer = str(self._compute_subtree_size(r, v))
+                
+                queries.append({
+                    "query": query_str,
+                    "answer": answer
+                })
         
-        # 2. Modulo queries: i=1..4, m in [2, 3], r in 0..m-1
-        for i in range(1, 5):
-            for m in [2, 3]:
-                for r in range(m):
-                    content = f"{i},{m},{r}"
-                    query_xml = f"<query_modulo>{content}</query_modulo>"
-                    parsed_info = {"query_modulo": content}
-                    answer = self._cf_core_produce(parsed_info)
-                    results.append({"query": query_xml, "answer": answer})
-        
-        # 3. Comparison queries: i,j=1..4, i!=j
-        for i in range(1, 5):
-            for j in range(1, 5):
-                if i != j:
-                    content = f"{i},{j}"
-                    query_xml = f"<query_compare>{content}</query_compare>"
-                    parsed_info = {"query_compare": content}
-                    answer = self._cf_core_produce(parsed_info)
-                    results.append({"query": query_xml, "answer": answer})
-                    
-        return results
+        for a in range(1, self.n + 1):
+            for b in range(1, self.n + 1):
+                query_str = f"<query_step>{a},{b}</query_step>"
+                
+                answer = str(self._find_next_hop(a, b))
+                
+                queries.append({
+                    "query": query_str,
+                    "answer": answer
+                })
+                
+        return queries

@@ -1,470 +1,553 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 溯因推理（明确有若干种可能性，模型需要判断那种是正确的）：面对当前的状态（反馈），推测原因。
-# 数据结构: 序列：存在一个长度为N的有序序列。
-# 知识点:   公共子序列：两个序列的最长公共子序列长度是多少
-# ============================================================
-
 from .base import Game
-import re
+import random
 
-
-def lcs_length(s1: str, s2: str) -> int:
-    """
-    计算两个字符串的最长公共子序列（LCS）长度。
-    使用动态规划算法。
-    """
-    m, n = len(s1), len(s2)
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
-    
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            if s1[i-1] == s2[j-1]:
-                dp[i][j] = dp[i-1][j-1] + 1
-            else:
-                dp[i][j] = max(dp[i-1][j], dp[i][j-1])
-    
-    return dp[m][n]
-
-
-class LCSDeductionGame(Game):
-
-    reasoning_type = "溯因推理"
-    data_structure = "序列"
+class GraphMatchingCoverageGame(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"最长公共子序列推理"游戏，规则如下：
+我们来玩一个"图匹配覆盖推理"游戏，规则如下：
 
-游戏设定了一个字母表，以及三个符号序列：A、B、K。你可以看到这三个序列的具体内容和长度：
-- 序列 A：{seq_a}
-- 序列 B：{seq_b}
-- 序列 K：{seq_k}
+游戏设定了一张无向简单图 G，包含 {n} 个顶点（编号从 1 到 {n}）。图中有一些边连接这些顶点，但边的具体信息对你完全保密。
 
-我已秘密选定了一个参考序列 R，它是从以下四个候选序列中选择的一个，并在整个游戏过程中保持不变：
-1. A 本身
-2. A 的反序
-3. B 本身
-4. B 的反序
+系统已指定一个目标顶点 P = {target_vertex}。
 
-你的目标是：
-1. 通过查询推断出参考序列 R 是哪一个
-2. 计算序列 K 与参考序列 R 的最长公共子序列长度
+你的目标是：判断顶点 P 是否能被某个最大匹配覆盖（即是否存在一个最大匹配包含与 P 相连的边）。
 
-你可以反复向我提交查询序列 S（任意符号序列），我会返回 S 与参考序列 R 的最长公共子序列长度。你必须至少进行两次查询后才能提交最终答案。
+你可以进行以下两类查询：
 
-## 查询与提交答案的格式（必须严格遵守）
+1. 基准查询（仅限 1 次，建议在开始时使用）：
+   询问图的最大匹配大小。系统会返回一个整数 M。
 
-每次查询时，提交一个序列：
-<query>你的查询序列</query>
+2. 约束查询（最多 12 次）：
+   指定两个顶点 u 和 v，强制要求边 {{u,v}} 必须包含在匹配中，询问在此约束下能达到的最大匹配大小。
+   系统会返回以下三种反馈之一：
+   - "非边"：顶点 u 和 v 之间不存在边
+   - "可行但不保最优，新大小为 X"：边存在，但强制使用该边后最大匹配大小变小
+   - "可行且仍达最优，大小为 M"：边存在，且强制使用该边后仍能达到原最大匹配大小
 
-提交最终答案时，必须指定你判定的参考序列类型（使用 A、reverse_A、B、reverse_B 之一），以及你计算出的 K 与 R 的最长公共子序列长度：
-<answer>reference=A, lcs_length=5</answer>
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
 
-注意：reference 的值必须是 A、reverse_A、B、reverse_B 中的一个。
+每次只能提交一个查询或答案标签。请使用以下 XML 格式：
+
+- 基准查询（询问最大匹配大小）：
+<query_baseline></query_baseline>
+
+- 约束查询（例如强制边 {{2,5}}）：
+<query_constraint>2,5</query_constraint>
+
+- 提交最终答案（判断顶点 P 是否能被最大匹配覆盖）：
+  若认为能被覆盖，回答"是"并可选地提供一条证据边：
+<answer>是, evidence=2,5</answer>
+  或简单回答：
+<answer>是</answer>
+  若认为不能被覆盖：
+<answer>否</answer>
 """
 
     game_rule_en = """\
-Let's play a "Longest Common Subsequence (LCS) Deduction" game. Here are the rules:
+Let's play a "Graph Matching Coverage Inference" game. Here are the rules:
 
-The game has defined an alphabet and three symbol sequences: A, B, and K. You can see the specific content and length of these three sequences:
-- Sequence A: {seq_a}
-- Sequence B: {seq_b}
-- Sequence K: {seq_k}
+The game involves an undirected simple graph G with {n} vertices (numbered 1 to {n}). The graph has some edges connecting these vertices, but the edge information is completely hidden from you.
 
-I have secretly selected a reference sequence R from the following four candidates, which will remain constant throughout the game:
-1. A itself
-2. Reverse of A
-3. B itself
-4. Reverse of B
+The system has specified a target vertex P = {target_vertex}.
 
-Your goals are:
-1. Infer which candidate is the reference sequence R through queries
-2. Calculate the LCS length between sequence K and reference sequence R
+Your goal is: determine whether vertex P can be covered by some maximum matching (i.e., whether there exists a maximum matching that includes an edge connected to P).
 
-You can repeatedly submit query sequences S (any symbol sequence), and I will return the LCS length between S and the reference sequence R. You must perform at least two queries before submitting your final answer.
+You can perform the following two types of queries:
 
-## Query and Answer Format (strictly required)
+1. Baseline Query (only 1 time, recommended to use at the start):
+   Ask for the maximum matching size of the graph. The system will return an integer M.
 
-To make a query, submit a sequence:
-<query>your query sequence</query>
+2. Constraint Query (at most 12 times):
+   Specify two vertices u and v, requiring that edge {{u,v}} must be included in the matching, and ask for the maximum matching size achievable under this constraint.
+   The system will return one of three types of feedback:
+   - "Non-edge": No edge exists between vertices u and v
+   - "Feasible but suboptimal, new size is X": Edge exists, but forcing this edge reduces the maximum matching size
+   - "Feasible and still optimal, size is M": Edge exists, and forcing this edge still achieves the original maximum matching size
 
-To submit the final answer, specify the reference sequence type you determined (use one of A, reverse_A, B, reverse_B) and the LCS length you calculated between K and R:
-<answer>reference=A, lcs_length=5</answer>
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
 
-Note: The value of reference must be one of A, reverse_A, B, or reverse_B.
+Each submission can contain only one query or answer tag. Use the following XML format:
+
+- Baseline Query (ask for maximum matching size):
+<query_baseline></query_baseline>
+
+- Constraint Query (e.g., forcing edge {{2,5}}):
+<query_constraint>2,5</query_constraint>
+
+- Submit Final Answer (determine whether vertex P can be covered by a maximum matching):
+  If you believe it can be covered, answer "Yes" and optionally provide an evidence edge:
+<answer>Yes, evidence=2,5</answer>
+  Or simply answer:
+<answer>Yes</answer>
+  If you believe it cannot be covered:
+<answer>No</answer>
 """
 
     contextualized_rule_zh_1 = """\
-我们现在来进行一项“最优通行路径对齐”测试。你是一套智能交通系统的调度终端。
-系统中录入了两个标准的干线路径节点序列：A线 和 B线，以及一辆目标车辆的实际行驶轨迹 K。
-- A线节点序列：{seq_a}
-- B线节点序列：{seq_b}
-- 目标车辆轨迹 K：{seq_k}
+作为交通调度总署的规划师，你需要评估城市路网的“绿波带”同步配置。
+游戏设定了一张隐秘的交通路网图 G，包含 {n} 个关键枢纽（编号从 1 到 {n}）。某些枢纽间可以建立双向同步链路（即图中的边），但链路的具体可行性信息对你完全保密。
 
-系统后台已锁定了一条“当前执行的管制路线”R，它必然是以下四种情况之一，且在测试期间不发生改变：
-1. A线正向 (A)
-2. A线反向 (reverse_A)
-3. B线正向 (B)
-4. B线反向 (reverse_B)
+系统已指定一个重点枢纽 P = {target_vertex}。
 
-你的目标是：
-1. 通过探测推断出当前执行的管制路线 R 究竟是哪一条。
-2. 计算出车辆轨迹 K 与 管制路线 R 的最大有效匹配节点数（即两者的最长公共子序列长度）。
+你的目标是：判断枢纽 P 是否能被包含在某个全局最大同步匹配中（即是否存在一个达到最大同步枢纽对数的方案，且包含与 P 相连的同步链路）。
 
-你可以反复提交探测路径 S（任意节点序列），我会反馈 S 与 R 的最大有效匹配节点数。你必须至少进行两次探测后才能提交最终报告。
+你可以进行以下两类查询：
 
-## 探测与提交报告的格式（必须严格遵守）
-每次探测时，提交一个路径序列：
-<query>你的探测路径序列</query>
+1. 基准查询（仅限 1 次，建议在开始时使用）：
+   询问路网的全局最大同步匹配大小。系统会返回一个整数 M。
 
-提交最终报告时，必须指定你推断出的管制路线类型（使用 A、reverse_A、B、reverse_B 之一），以及计算出的 K 与 R 的最大有效匹配节点数：
-<answer>reference=A, lcs_length=5</answer>
-注意：reference 的值必须严格限定在 A、reverse_A、B、reverse_B 之中。
+2. 约束查询（最多 12 次）：
+   指定两个枢纽 u 和 v，强制要求同步链路 {{u,v}} 必须包含在配置中，询问在此约束下能达到的最大匹配大小。
+   系统会返回以下三种反馈之一：
+   - "非边"：枢纽 u 和 v 之间无法建立同步链路
+   - "可行但不保最优，新大小为 X"：链路可行，但强制使用该链路后整体最大匹配大小变小
+   - "可行且仍达最优，大小为 M"：链路可行，且强制使用该链路后仍能达到原最大匹配大小
+
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+
+每次只能提交一个查询或答案标签。请使用以下 XML 格式：
+
+- 基准查询（询问最大匹配大小）：
+<query_baseline></query_baseline>
+
+- 约束查询（例如强制链路 {{2,5}}）：
+<query_constraint>2,5</query_constraint>
+
+- 提交最终答案（判断枢纽 P 是否能被最大同步匹配覆盖）：
+  若认为能被覆盖，回答"是"并可选地提供一条证据链路：
+<answer>是, evidence=2,5</answer>
+  或简单回答：
+<answer>是</answer>
+  若认为不能被覆盖：
+<answer>否</answer>
 """
 
     contextualized_rule_en_1 = """\
-[Transportation Scenario]
-We are now conducting an "Optimal Route Alignment" test. You are the dispatch terminal of an intelligent traffic management system.
-The system has recorded two standard arterial route node sequences: Route A and Route B, along with the actual driving trajectory K of a target vehicle.
-- Route A Sequence: {seq_a}
-- Route B Sequence: {seq_b}
-- Target Vehicle Trajectory K: {seq_k}
+[Traffic Scenario]
+As a planner at the Traffic Dispatch Administration, you need to evaluate the "green wave" synchronization configuration of the city's road network.
+The game involves a hidden traffic network graph G with {n} key hubs (numbered 1 to {n}). Bidirectional synchronization links can be established between certain hubs (i.e., edges in the graph), but the specific feasibility of these links is completely hidden from you.
 
-The system backend has locked in a "currently enforced control route" R, which is secretly selected from one of the following four configurations and remains unchanged during the test:
-1. Forward Route A (A)
-2. Reverse Route A (reverse_A)
-3. Forward Route B (B)
-4. Reverse Route B (reverse_B)
+The system has specified a priority hub P = {target_vertex}.
 
-Your objectives are:
-1. Infer which configuration is the enforced control route R through probing.
-2. Calculate the maximum number of sequentially matching nodes (i.e., the Longest Common Subsequence length) between trajectory K and control route R.
+Your goal is: determine whether hub P can be covered by some maximum synchronization matching (i.e., whether there exists a maximum matching configuration that includes a synchronization link connected to P).
 
-You can repeatedly submit probe routes S (any node sequence), and I will return the maximum effectively matched nodes between S and R. You must perform at least two probes before submitting your final report.
+You can perform the following two types of queries:
 
-## Probe and Report Format (strictly required)
-To make a probe, submit a sequence:
-<query>your probe route sequence</query>
+1. Baseline Query (only 1 time, recommended to use at the start):
+   Ask for the maximum synchronization matching size of the network. The system will return an integer M.
 
-To submit the final report, specify the control route type you deduced (use one of A, reverse_A, B, reverse_B) and the maximum sequential matching nodes calculated between K and R:
-<answer>reference=A, lcs_length=5</answer>
-Note: The value of reference must be exactly one of A, reverse_A, B, or reverse_B.
+2. Constraint Query (at most 12 times):
+   Specify two hubs u and v, requiring that the synchronization link {{u,v}} must be included in the matching, and ask for the maximum matching size achievable under this constraint.
+   The system will return one of three types of feedback:
+   - "Non-edge": No synchronization link can be established between hubs u and v
+   - "Feasible but suboptimal, new size is X": Link is feasible, but forcing it reduces the maximum matching size
+   - "Feasible and still optimal, size is M": Link is feasible, and forcing it still achieves the original maximum matching size
+
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+
+Each submission can contain only one query or answer tag. Use the following XML format:
+
+- Baseline Query (ask for maximum matching size):
+<query_baseline></query_baseline>
+
+- Constraint Query (e.g., forcing link {{2,5}}):
+<query_constraint>2,5</query_constraint>
+
+- Submit Final Answer (determine whether hub P can be covered by a maximum synchronization matching):
+  If you believe it can be covered, answer "Yes" and optionally provide an evidence link:
+<answer>Yes, evidence=2,5</answer>
+  Or simply answer:
+<answer>Yes</answer>
+  If you believe it cannot be covered:
+<answer>No</answer>
 """
 
     contextualized_rule_zh_2 = """\
-我们现在来进行一项“靶向基因图谱比对”任务。你是一套临床医学辅助诊断系统的分析引擎。
-系统中记录了两种标准靶向药物的分子作用位点序列：方案A 和 方案B，以及一名患者样本中提取出的突变靶点序列 K。
-- 方案A序列：{seq_a}
-- 方案B序列：{seq_b}
-- 患者样本序列 K：{seq_k}
+作为医院外科主任，你需要安排高难度的“双主刀”联合手术。
+游戏设定了 {n} 名外科医生（编号从 1 到 {n}）。某些医生之间技能高度互补，可以组成联合主刀搭档（即图中的边），但具体的互补排班信息对你完全保密。
 
-系统底层已暗中确定了一组“基准抗性图谱” R，它是从以下四组候选图谱中选择其一，并在整个分析过程中保持不变：
-1. 方案A本身 (A)
-2. 方案A的逆向序列 (reverse_A)
-3. 方案B本身 (B)
-4. 方案B的逆向序列 (reverse_B)
+系统已指定一位需要重点培养的青年专家 P = {target_vertex}。
 
-你的目标是：
-1. 通过模拟检验，推断出基准抗性图谱 R 是哪一种。
-2. 计算出患者样本 K 与 基准图谱 R 的最大保守同源长度（即两者的最长公共子序列长度）。
+你的目标是：判断医生 P 是否能被某个最大联合主刀排班覆盖（即是否存在一个达到最大搭档对数的方案，且包含与 P 组队的搭档）。
 
-你可以反复提交试验序列 S（任意位点序列），我会反馈 S 与 R 的同源长度。你必须至少进行两次检验后才能出具最终诊断。
+你可以进行以下两类查询：
 
-## 检验与出具诊断的格式（必须严格遵守）
-每次检验时，提交一个试验序列：
-<query>你的试验序列</query>
+1. 基准查询（仅限 1 次，建议在开始时使用）：
+   询问排班的全局最大联合手术匹配大小。系统会返回一个整数 M。
 
-出具最终诊断时，必须指定你推断出的基准抗性图谱类型（使用 A、reverse_A、B、reverse_B 之一），以及你计算出的 K 与 R 的最大保守同源长度：
-<answer>reference=A, lcs_length=5</answer>
-注意：reference 的值必须严格限定在 A、reverse_A、B、reverse_B 之中。
+2. 约束查询（最多 12 次）：
+   指定两名医生 u 和 v，强制要求搭档 {{u,v}} 必须包含在排班中，询问在此约束下能达到的最大匹配大小。
+   系统会返回以下三种反馈之一：
+   - "非边"：医生 u 和 v 之间无法组成搭档
+   - "可行但不保最优，新大小为 X"：搭档可行，但强制使用该搭档后整体最大排班大小变小
+   - "可行且仍达最优，大小为 M"：搭档可行，且强制使用该搭档后仍能达到原最大排班大小
+
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+
+每次只能提交一个查询或答案标签。请使用以下 XML 格式：
+
+- 基准查询（询问最大匹配大小）：
+<query_baseline></query_baseline>
+
+- 约束查询（例如强制搭档 {{2,5}}）：
+<query_constraint>2,5</query_constraint>
+
+- 提交最终答案（判断医生 P 是否能被最大排班匹配覆盖）：
+  若认为能被覆盖，回答"是"并可选地提供一条证据搭档：
+<answer>是, evidence=2,5</answer>
+  或简单回答：
+<answer>是</answer>
+  若认为不能被覆盖：
+<answer>否</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-We are now conducting a "Targeted Genomic Mapping" task. You are the analysis engine of a clinical medical diagnosis system.
-The system records the molecular binding site sequences of two standard targeted therapies: Protocol A and Protocol B, as well as a mutated target sequence K extracted from a patient's sample.
-- Protocol A Sequence: {seq_a}
-- Protocol B Sequence: {seq_b}
-- Patient Sample Sequence K: {seq_k}
+As the Chief of Surgery at a hospital, you need to schedule highly complex "dual-lead" joint surgeries.
+The game involves {n} surgeons (numbered 1 to {n}). Certain surgeons have highly complementary skills and can form joint-lead partnerships (i.e., edges in the graph), but the specific compatibility information is completely hidden from you.
 
-The system backend has secretly determined a "baseline resistance profile" R, selected from one of the following four candidates, which remains constant throughout the analysis:
-1. Protocol A itself (A)
-2. Reverse of Protocol A (reverse_A)
-3. Protocol B itself (B)
-4. Reverse of Protocol B (reverse_B)
+The system has specified a young specialist P = {target_vertex} who needs prioritized training.
 
-Your objectives are:
-1. Infer which candidate is the baseline resistance profile R through simulation queries.
-2. Calculate the maximum conserved homologous length (i.e., the Longest Common Subsequence length) between sample K and baseline R.
+Your goal is: determine whether doctor P can be covered by some maximum joint-lead scheduling matching (i.e., whether there exists a maximum matching configuration that includes a partnership connected to P).
 
-You can repeatedly submit test sequences S (any binding site sequence), and I will return the homologous length between S and R. You must perform at least two simulations before issuing the final diagnosis.
+You can perform the following two types of queries:
 
-## Simulation and Diagnosis Format (strictly required)
-To make a simulation query, submit a sequence:
-<query>your test sequence</query>
+1. Baseline Query (only 1 time, recommended to use at the start):
+   Ask for the maximum joint surgery matching size. The system will return an integer M.
 
-To issue the final diagnosis, specify the baseline resistance profile type you inferred (use one of A, reverse_A, B, reverse_B) and the maximum conserved homologous length calculated between K and R:
-<answer>reference=A, lcs_length=5</answer>
-Note: The value of reference must be exactly one of A, reverse_A, B, or reverse_B.
+2. Constraint Query (at most 12 times):
+   Specify two doctors u and v, requiring that partnership {{u,v}} must be included in the schedule, and ask for the maximum matching size achievable under this constraint.
+   The system will return one of three types of feedback:
+   - "Non-edge": No partnership can be formed between doctors u and v
+   - "Feasible but suboptimal, new size is X": Partnership is feasible, but forcing it reduces the maximum matching size
+   - "Feasible and still optimal, size is M": Partnership is feasible, and forcing it still achieves the original maximum matching size
+
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+
+Each submission can contain only one query or answer tag. Use the following XML format:
+
+- Baseline Query (ask for maximum matching size):
+<query_baseline></query_baseline>
+
+- Constraint Query (e.g., forcing partnership {{2,5}}):
+<query_constraint>2,5</query_constraint>
+
+- Submit Final Answer (determine whether doctor P can be covered by a maximum matching):
+  If you believe it can be covered, answer "Yes" and optionally provide an evidence partnership:
+<answer>Yes, evidence=2,5</answer>
+  Or simply answer:
+<answer>Yes</answer>
+  If you believe it cannot be covered:
+<answer>No</answer>
 """
 
     contextualized_rule_zh_3 = """\
-我们现在来进行一项“自适应学习路径对齐”测试。你是一个教育AI系统中的学情分析模块。
-平台中预设了两个标准课程模块的学习序列：大纲A 和 大纲B，并记录了一名学生的实际学习轨迹 K。
-- 大纲A序列：{seq_a}
-- 大纲B序列：{seq_b}
-- 学生轨迹 K：{seq_k}
+作为教务长，你需要为学生分配“互助学习搭档”。
+游戏设定了 {n} 名学生（编号从 1 到 {n}）。某些学生之间性格和学科互补，可以结成学习搭档（即图中的边），但具体的互补情况对你完全保密。
 
-底层系统已经为该学生秘密指派了一个“最优认知基准线” R，它是从以下四个候选项中确定的一个，且在测试期间保持不变：
-1. 大纲A正序 (A)
-2. 大纲A逆序（通常用于复习或溯源） (reverse_A)
-3. 大纲B正序 (B)
-4. 大纲B逆序 (reverse_B)
+系统已指定一名需要特别关注的转学生 P = {target_vertex}。
 
-你的目标是：
-1. 通过测试推测出系统指派的认知基准线 R 是哪一个。
-2. 计算学生的实际学习轨迹 K 与 基准线 R 的最大顺位契合度（即两者的最长公共子序列长度）。
+你的目标是：判断学生 P 是否能被某个最大学习搭档分配方案覆盖（即是否存在一个达到最大搭档对数的方案，且包含与 P 结成的搭档）。
 
-你可以反复提交假设轨迹 S（任意学习序列），我会反馈 S 与 R 的最大顺位契合度。你必须至少进行两次测试后才能提交最终评估。
+你可以进行以下两类查询：
 
-## 测试与提交评估的格式（必须严格遵守）
-每次测试时，提交一个假设轨迹序列：
-<query>你的假设轨迹序列</query>
+1. 基准查询（仅限 1 次，建议在开始时使用）：
+   询问整体的最大搭档匹配大小。系统会返回一个整数 M。
 
-提交最终评估时，必须指定你推断出的认知基准线类型（使用 A、reverse_A、B、reverse_B 之一），以及你计算出的 K 与 R 的最大顺位契合度：
-<answer>reference=A, lcs_length=5</answer>
-注意：reference 的值必须严格限定在 A、reverse_A、B、reverse_B 之中。
+2. 约束查询（最多 12 次）：
+   指定两名学生 u 和 v，强制要求搭档 {{u,v}} 必须包含在分配方案中，询问在此约束下能达到的最大匹配大小。
+   系统会返回以下三种反馈之一：
+   - "非边"：学生 u 和 v 之间无法结成搭档
+   - "可行但不保最优，新大小为 X"：搭档可行，但强制使用该搭档后整体最大搭档数变小
+   - "可行且仍达最优，大小为 M"：搭档可行，且强制使用该搭档后仍能达到原最大搭档数
+
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+
+每次只能提交一个查询或答案标签。请使用以下 XML 格式：
+
+- 基准查询（询问最大匹配大小）：
+<query_baseline></query_baseline>
+
+- 约束查询（例如强制搭档 {{2,5}}）：
+<query_constraint>2,5</query_constraint>
+
+- 提交最终答案（判断学生 P 是否能被最大分配方案覆盖）：
+  若认为能被覆盖，回答"是"并可选地提供一条证据搭档：
+<answer>是, evidence=2,5</answer>
+  或简单回答：
+<answer>是</answer>
+  若认为不能被覆盖：
+<answer>否</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-We are now conducting an "Adaptive Learning Path Alignment" test. You are a learning analytics module in an educational AI system.
-The platform has preset two standard curriculum module learning sequences: Syllabus A and Syllabus B, and recorded a student's actual learning trajectory K.
-- Syllabus A Sequence: {seq_a}
-- Syllabus B Sequence: {seq_b}
-- Student Trajectory K: {seq_k}
+As the Dean of Students, you need to assign "peer mentoring partners" for the students.
+The game involves {n} students (numbered 1 to {n}). Certain students have complementary personalities and academic strengths, allowing them to form mentoring partnerships (i.e., edges in the graph), but the specific compatibility information is completely hidden from you.
 
-The underlying system has secretly assigned an "optimal cognitive baseline" R for this student, chosen from the following four candidates, which remains unchanged during the test:
-1. Forward Syllabus A (A)
-2. Reverse Syllabus A (often used for review or tracing) (reverse_A)
-3. Forward Syllabus B (B)
-4. Reverse Syllabus B (reverse_B)
+The system has specified a transfer student P = {target_vertex} who needs special attention.
 
-Your objectives are:
-1. Infer which candidate is the assigned cognitive baseline R through testing.
-2. Calculate the maximum sequential alignment score (i.e., the Longest Common Subsequence length) between the student's trajectory K and baseline R.
+Your goal is: determine whether student P can be covered by some maximum mentoring partner matching (i.e., whether there exists a maximum matching configuration that includes a partnership connected to P).
 
-You can repeatedly submit hypothetical trajectories S (any learning sequence), and I will return the alignment score between S and R. You must perform at least two tests before submitting the final assessment.
+You can perform the following two types of queries:
 
-## Test and Assessment Format (strictly required)
-To make a test query, submit a trajectory sequence:
-<query>your hypothetical trajectory sequence</query>
+1. Baseline Query (only 1 time, recommended to use at the start):
+   Ask for the maximum partner matching size. The system will return an integer M.
 
-To submit the final assessment, specify the cognitive baseline type you inferred (use one of A, reverse_A, B, reverse_B) and the maximum sequential alignment score calculated between K and R:
-<answer>reference=A, lcs_length=5</answer>
-Note: The value of reference must be exactly one of A, reverse_A, B, or reverse_B.
+2. Constraint Query (at most 12 times):
+   Specify two students u and v, requiring that partnership {{u,v}} must be included in the assignment, and ask for the maximum matching size achievable under this constraint.
+   The system will return one of three types of feedback:
+   - "Non-edge": No partnership can be formed between students u and v
+   - "Feasible but suboptimal, new size is X": Partnership is feasible, but forcing it reduces the maximum matching size
+   - "Feasible and still optimal, size is M": Partnership is feasible, and forcing it still achieves the original maximum matching size
+
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+
+Each submission can contain only one query or answer tag. Use the following XML format:
+
+- Baseline Query (ask for maximum matching size):
+<query_baseline></query_baseline>
+
+- Constraint Query (e.g., forcing partnership {{2,5}}):
+<query_constraint>2,5</query_constraint>
+
+- Submit Final Answer (determine whether student P can be covered by a maximum matching):
+  If you believe it can be covered, answer "Yes" and optionally provide an evidence partnership:
+<answer>Yes, evidence=2,5</answer>
+  Or simply answer:
+<answer>Yes</answer>
+  If you believe it cannot be covered:
+<answer>No</answer>
 """
 
     contextualized_rule_zh_4 = """\
-我们现在来进行一项“自动化装配工序核验”测试。你是一套工业质检系统的控制逻辑单元。
-流水线上定义了两种标准装配工艺指令集：工艺A 和 工艺B，同时捕获到一件异常产品的实际加工日志 K。
-- 工艺A指令序列：{seq_a}
-- 工艺B指令序列：{seq_b}
-- 异常加工日志 K：{seq_k}
+作为工业互联网架构师，你需要规划无干涉的“机器协同作业链路”。
+游戏设定了 {n} 台精密数控设备（编号从 1 到 {n}）。某些设备之间可以建立安全的协同作业链路（即图中的边），但具体的链路可行性对你完全保密。
 
-系统主控板内部固化了一个“标准参照指令流” R，它来自于以下四种配置之一，并在核验全程中保持不变：
-1. 工艺A正向装配 (A)
-2. 工艺A逆向拆解 (reverse_A)
-3. 工艺B正向装配 (B)
-4. 工艺B逆向拆解 (reverse_B)
+系统已指定一台核心机床 P = {target_vertex}。
 
-你的目标是：
-1. 通过向主控板发送探测指令推断出标准参照指令流 R 是哪一种配置。
-2. 计算异常加工日志 K 与 参照指令流 R 的最大连续合规指令数（即两者的最长公共子序列长度）。
+你的目标是：判断设备 P 是否能被某个最大协同作业网络覆盖（即是否存在一个达到最大并发链路数的方案，且包含与 P 相连的协同链路）。
 
-你可以反复发送测试指令序列 S（任意操作序列），我会返回 S 与 R 的连续合规指令数。你必须至少发送两次探测指令后才能提交最终报告。
+你可以进行以下两类查询：
 
-## 探测与提交报告的格式（必须严格遵守）
-每次发送探测指令时，提交一个操作序列：
-<query>你的测试指令序列</query>
+1. 基准查询（仅限 1 次，建议在开始时使用）：
+   询问作业网络的最大协同链路匹配大小。系统会返回一个整数 M。
 
-提交最终报告时，必须指定你推测出的标准参照配置（使用 A、reverse_A、B、reverse_B 之一），以及你计算出的 K 与 R 的最大连续合规指令数：
-<answer>reference=A, lcs_length=5</answer>
-注意：reference 的值必须严格限定在 A、reverse_A、B、reverse_B 之中。
+2. 约束查询（最多 12 次）：
+   指定两台设备 u 和 v，强制要求协同链路 {{u,v}} 必须包含在网络中，询问在此约束下能达到的最大匹配大小。
+   系统会返回以下三种反馈之一：
+   - "非边"：设备 u 和 v 之间无法建立协同链路
+   - "可行但不保最优，新大小为 X"：链路可行，但强制使用该链路后整体最大网络规模变小
+   - "可行且仍达最优，大小为 M"：链路可行，且强制使用该链路后仍能达到原最大网络规模
+
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+
+每次只能提交一个查询或答案标签。请使用以下 XML 格式：
+
+- 基准查询（询问最大匹配大小）：
+<query_baseline></query_baseline>
+
+- 约束查询（例如强制链路 {{2,5}}）：
+<query_constraint>2,5</query_constraint>
+
+- 提交最终答案（判断设备 P 是否能被最大作业网络覆盖）：
+  若认为能被覆盖，回答"是"并可选地提供一条证据链路：
+<answer>是, evidence=2,5</answer>
+  或简单回答：
+<answer>是</answer>
+  若认为不能被覆盖：
+<answer>否</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing/Industry Scenario]
-We are now conducting an "Automated Assembly Verification" test. You are the control logic unit of an industrial quality inspection system.
-The assembly line defines two standard operational instruction sets: Process A and Process B, and has captured the actual processing log K of an anomalous product.
-- Process A Sequence: {seq_a}
-- Process B Sequence: {seq_b}
-- Anomalous Processing Log K: {seq_k}
+[Manufacturing Scenario]
+As an Industrial IoT Architect, you need to plan interference-free "machine collaborative links".
+The game involves {n} precision CNC machines (numbered 1 to {n}). Safe collaborative operating links can be established between certain machines (i.e., edges in the graph), but the specific feasibility of these links is completely hidden from you.
 
-The system's main control board has internally hardcoded a "standard reference instruction stream" R, derived from one of the following four configurations, which remains constant throughout the verification:
-1. Forward Assembly Process A (A)
-2. Reverse Teardown Process A (reverse_A)
-3. Forward Assembly Process B (B)
-4. Reverse Teardown Process B (reverse_B)
+The system has specified a core machine P = {target_vertex}.
 
-Your objectives are:
-1. Infer which configuration is the standard reference instruction stream R by sending probe instructions to the control board.
-2. Calculate the maximum number of sequentially compliant instructions (i.e., the Longest Common Subsequence length) between processing log K and reference stream R.
+Your goal is: determine whether machine P can be covered by some maximum collaborative link matching (i.e., whether there exists a maximum matching configuration that includes a link connected to P).
 
-You can repeatedly send test instruction sequences S (any operational sequence), and I will return the sequentially compliant instruction count between S and R. You must send at least two probes before submitting the final report.
+You can perform the following two types of queries:
 
-## Probe and Report Format (strictly required)
-To send a probe instruction, submit an operational sequence:
-<query>your test instruction sequence</query>
+1. Baseline Query (only 1 time, recommended to use at the start):
+   Ask for the maximum collaborative link matching size. The system will return an integer M.
 
-To submit the final report, specify the standard reference configuration you deduced (use one of A, reverse_A, B, reverse_B) and the maximum sequentially compliant instruction count calculated between K and R:
-<answer>reference=A, lcs_length=5</answer>
-Note: The value of reference must be exactly one of A, reverse_A, B, or reverse_B.
+2. Constraint Query (at most 12 times):
+   Specify two machines u and v, requiring that link {{u,v}} must be included in the network, and ask for the maximum matching size achievable under this constraint.
+   The system will return one of three types of feedback:
+   - "Non-edge": No collaborative link can be established between machines u and v
+   - "Feasible but suboptimal, new size is X": Link is feasible, but forcing it reduces the maximum matching size
+   - "Feasible and still optimal, size is M": Link is feasible, and forcing it still achieves the original maximum matching size
+
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+
+Each submission can contain only one query or answer tag. Use the following XML format:
+
+- Baseline Query (ask for maximum matching size):
+<query_baseline></query_baseline>
+
+- Constraint Query (e.g., forcing link {{2,5}}):
+<query_constraint>2,5</query_constraint>
+
+- Submit Final Answer (determine whether machine P can be covered by a maximum matching):
+  If you believe it can be covered, answer "Yes" and optionally provide an evidence link:
+<answer>Yes, evidence=2,5</answer>
+  Or simply answer:
+<answer>Yes</answer>
+  If you believe it cannot be covered:
+<answer>No</answer>
 """
 
     contextualized_rule_zh_5 = """\
-我们现在来进行一项“司法程序合规性审查”工作。你是一款法律AI助手的法理逻辑分析模块。
-案卷中记载了两个历史判例的标准程序步骤序列：判例A 和 判例B，以及当前待审理案件的实际执行程序记录 K。
-- 判例A步骤序列：{seq_a}
-- 判例B步骤序列：{seq_b}
-- 当前案件执行记录 K：{seq_k}
+作为顶级律所的合伙人，你需要为极其复杂的集体诉讼案组建“双律师辩护组”。
+游戏设定了 {n} 名精英律师（编号从 1 到 {n}）。某些律师之间没有利益冲突且专长互补，可以组成联合辩护组（即图中的边），但具体的互补与冲突信息对你完全保密。
 
-主审法官在心中已确立了一条“法定审理基准线” R，它选自以下四种法理情形之一，并在本次审查期间不作变更：
-1. 参照判例A的顺位程序 (A)
-2. 参照判例A的权利回溯程序 (reverse_A)
-3. 参照判例B的顺位程序 (B)
-4. 参照判例B的权利回溯程序 (reverse_B)
+系统已指定一位律所的王牌律师 P = {target_vertex}。
 
-你的目标是：
-1. 通过向系统质询，推断出法官确立的法定审理基准线 R 是哪一种情形。
-2. 计算案件记录 K 与 基准线 R 的最大合法程序顺位重合度（即两者的最长公共子序列长度）。
+你的目标是：判断律师 P 是否能被某个最大辩护组编队覆盖（即是否存在一个达到最大组队数的方案，且包含与 P 组队的编队）。
 
-你可以反复提交模拟案件程序 S（任意步骤序列），我会返回 S 与 R 的程序顺位重合度。你必须至少进行两次质询后才能提交终局审查意见。
+你可以进行以下两类查询：
 
-## 质询与提交意见的格式（必须严格遵守）
-每次质询时，提交一个模拟程序序列：
-<query>你的模拟程序序列</query>
+1. 基准查询（仅限 1 次，建议在开始时使用）：
+   询问律所能组建的最大联合辩护组数量。系统会返回一个整数 M。
 
-提交终局审查意见时，必须指定你推断出的基准法理情形（使用 A、reverse_A、B、reverse_B 之一），以及你计算出的 K 与 R 的最大程序顺位重合度：
-<answer>reference=A, lcs_length=5</answer>
-注意：reference 的值必须严格限定在 A、reverse_A、B、reverse_B 之中。
+2. 约束查询（最多 12 次）：
+   指定两名律师 u 和 v，强制要求组队 {{u,v}} 必须包含在编队中，询问在此约束下能达到的最大组队匹配大小。
+   系统会返回以下三种反馈之一：
+   - "非边"：律师 u 和 v 之间存在冲突，无法组队
+   - "可行但不保最优，新大小为 X"：组队可行，但强制使用该组队后整体最大组队数量变小
+   - "可行且仍达最优，大小为 M"：组队可行，且强制使用该组队后仍能达到原最大组队数量
+
+当你收集足够信息后，请提交最终答案。若答案错误或格式不符，游戏失败。
+
+每次只能提交一个查询或答案标签。请使用以下 XML 格式：
+
+- 基准查询（询问最大匹配大小）：
+<query_baseline></query_baseline>
+
+- 约束查询（例如强制组队 {{2,5}}）：
+<query_constraint>2,5</query_constraint>
+
+- 提交最终答案（判断律师 P 是否能被最大辩护组编队覆盖）：
+  若认为能被覆盖，回答"是"并可选地提供一条证据组队：
+<answer>是, evidence=2,5</answer>
+  或简单回答：
+<answer>是</answer>
+  若认为不能被覆盖：
+<answer>否</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Law Scenario]
-We are now conducting a "Procedural Compliance Review" task. You are the jurisprudential logic analysis module of a legal AI assistant.
-The case files document standard procedural step sequences from two historical precedents: Precedent A and Precedent B, alongside the actual executed procedure record K for the current pending case.
-- Precedent A Step Sequence: {seq_a}
-- Precedent B Step Sequence: {seq_b}
-- Current Case Record K: {seq_k}
+[Legal Scenario]
+As a managing partner at a top law firm, you need to assemble "co-counsel defense teams" for a highly complex class-action lawsuit.
+The game involves {n} elite lawyers (numbered 1 to {n}). Certain lawyers have no conflict of interest and possess complementary expertise, allowing them to form joint defense teams (i.e., edges in the graph), but the specific conflict and compatibility information is completely hidden from you.
 
-The presiding judge has mentally established a "statutory adjudication baseline" R, selected from one of the following four jurisprudential scenarios, which will not change during this review:
-1. Forward procedure based on Precedent A (A)
-2. Retroactive rights procedure based on Precedent A (reverse_A)
-3. Forward procedure based on Precedent B (B)
-4. Retroactive rights procedure based on Precedent B (reverse_B)
+The system has specified a star lawyer P = {target_vertex}.
 
-Your objectives are:
-1. Infer which jurisprudential scenario is the established statutory adjudication baseline R by querying the system.
-2. Calculate the maximum sequential procedural compliance score (i.e., the Longest Common Subsequence length) between case record K and baseline R.
+Your goal is: determine whether lawyer P can be covered by some maximum defense team matching (i.e., whether there exists a maximum matching configuration that includes a team connected to P).
 
-You can repeatedly submit hypothetical procedure sequences S (any step sequence), and I will return the procedural compliance score between S and R. You must perform at least two queries before submitting your final review opinion.
+You can perform the following two types of queries:
 
-## Query and Opinion Format (strictly required)
-To make a query, submit a hypothetical procedure sequence:
-<query>your hypothetical procedure sequence</query>
+1. Baseline Query (only 1 time, recommended to use at the start):
+   Ask for the maximum defense team matching size. The system will return an integer M.
 
-To submit the final review opinion, specify the baseline jurisprudential scenario you inferred (use one of A, reverse_A, B, reverse_B) and the maximum sequential procedural compliance score calculated between K and R:
-<answer>reference=A, lcs_length=5</answer>
-Note: The value of reference must be exactly one of A, reverse_A, B, or reverse_B.
+2. Constraint Query (at most 12 times):
+   Specify two lawyers u and v, requiring that team {{u,v}} must be included in the assembly, and ask for the maximum matching size achievable under this constraint.
+   The system will return one of three types of feedback:
+   - "Non-edge": Lawyers u and v have a conflict and cannot form a team
+   - "Feasible but suboptimal, new size is X": Team is feasible, but forcing it reduces the maximum matching size
+   - "Feasible and still optimal, size is M": Team is feasible, and forcing it still achieves the original maximum matching size
+
+When you have collected enough information, submit your final answer. If the answer is wrong or the format is invalid, the game fails.
+
+Each submission can contain only one query or answer tag. Use the following XML format:
+
+- Baseline Query (ask for maximum matching size):
+<query_baseline></query_baseline>
+
+- Constraint Query (e.g., forcing team {{2,5}}):
+<query_constraint>2,5</query_constraint>
+
+- Submit Final Answer (determine whether lawyer P can be covered by a maximum matching):
+  If you believe it can be covered, answer "Yes" and optionally provide an evidence team:
+<answer>Yes, evidence=2,5</answer>
+  Or simply answer:
+<answer>Yes</answer>
+  If you believe it cannot be covered:
+<answer>No</answer>
 """
 
-    user_prompt_zh = "你可以开始第一次查询了。注意：必须至少进行两次查询后才能提交答案。"
-    user_prompt_en = "You can start your first query now. Note: You must perform at least two queries before submitting an answer."
-
-    tags = ["answer", "query"]
-
-    # 难度配置：
-    # 1 (简单)       - 短序列，字母表小，差异明显
-    # 2 (中等偏下)   - 中等长度，字母表稍大
-    # 3 (中等偏上)   - 较长序列，需要更多查询
-    # 4 (较难)       - 长序列，字母表较大，反序相似度高
-    # 5 (难)         - 很长序列，字母表大，需要精心设计查询
+    tags = ["answer", "query_baseline", "query_constraint"]
+    
+    reasoning_type = "归纳推理"
+    data_structure = "图"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "seq_a": "ABCD",
-                "seq_b": "EFGH",
-                "seq_k": "ACEG",
-                "reference_type": "A",  # A, reverse_A, B, reverse_B
+                "n": 6,
+                "target_vertex": 1,
+                "edges": [(1, 2), (2, 3), (4, 5), (5, 6)],
             },
             2: {
-                "seq_a": "ABCDEF",
-                "seq_b": "GHIJKL",
-                "seq_k": "BDFHJL",
-                "reference_type": "reverse_B",
+                "n": 8,
+                "target_vertex": 3,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (6, 7), (7, 8)],
             },
             3: {
-                "seq_a": "ABCDEFGH",
-                "seq_b": "IJKLMNOP",
-                "seq_k": "ACEGIKMO",
-                "reference_type": "B",
+                "n": 8,
+                "target_vertex": 2,
+                "edges": [(1, 2), (1, 3), (3, 4), (4, 5), (6, 7), (7, 8)],
             },
             4: {
-                "seq_a": "ABCDEFGHIJ",
-                "seq_b": "KLMNOPQRST",
-                "seq_k": "BDFHJLNPRT",
-                "reference_type": "reverse_A",
+                "n": 10,
+                "target_vertex": 5,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10)],
             },
             5: {
-                "seq_a": "ABCDEFGHIJKLM",
-                "seq_b": "NOPQRSTUVWXYZ",
-                "seq_k": "ACEGIKMOQSUWY",
-                "reference_type": "B",
+                "n": 12,
+                "target_vertex": 6,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 7), (7, 8), (8, 9), (9, 10), (10, 11), (11, 12), (6, 1)],
             },
         },
         "en": {
             1: {
-                "seq_a": "ABCD",
-                "seq_b": "EFGH",
-                "seq_k": "ACEG",
-                "reference_type": "A",
+                "n": 6,
+                "target_vertex": 1,
+                "edges": [(1, 2), (2, 3), (4, 5), (5, 6)],
             },
             2: {
-                "seq_a": "ABCDEF",
-                "seq_b": "GHIJKL",
-                "seq_k": "BDFHJL",
-                "reference_type": "reverse_B",
+                "n": 8,
+                "target_vertex": 3,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (6, 7), (7, 8)],
             },
             3: {
-                "seq_a": "ABCDEFGH",
-                "seq_b": "IJKLMNOP",
-                "seq_k": "ACEGIKMO",
-                "reference_type": "B",
+                "n": 8,
+                "target_vertex": 2,
+                "edges": [(1, 2), (1, 3), (3, 4), (4, 5), (6, 7), (7, 8)],
             },
             4: {
-                "seq_a": "ABCDEFGHIJ",
-                "seq_b": "KLMNOPQRST",
-                "seq_k": "BDFHJLNPRT",
-                "reference_type": "reverse_A",
+                "n": 10,
+                "target_vertex": 5,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10)],
             },
             5: {
-                "seq_a": "ABCDEFGHIJKLM",
-                "seq_b": "NOPQRSTUVWXYZ",
-                "seq_k": "ACEGIKMOQSUWY",
-                "reference_type": "B",
+                "n": 12,
+                "target_vertex": 6,
+                "edges": [(1, 2), (2, 3), (3, 4), (4, 5), (5, 7), (7, 8), (8, 9), (9, 10), (10, 11), (11, 12), (6, 1)],
             },
         },
     }
 
     def __init__(self, config):
+        self.baseline_used = False
+        self.constraint_count = 0
         super().__init__(config)
 
     def _initialize_game(self):
-        """初始化游戏配置，设置序列和参考序列"""
         lang = self.config.language
-        diff = int(self.config.difficulty)
+        diff = self.config.difficulty
 
         if lang not in self.DIFFICULTY_CONFIG:
             raise KeyError(f"Unsupported language: {lang}")
@@ -472,156 +555,265 @@ Note: The value of reference must be exactly one of A, reverse_A, B, or reverse_
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["target_vertex"] = cfg["target_vertex"]
         
-        # 设置游戏信息，用于填充规则模板
-        self._game_info["seq_a"] = cfg["seq_a"]
-        self._game_info["seq_b"] = cfg["seq_b"]
-        self._game_info["seq_k"] = cfg["seq_k"]
+        self.n = cfg["n"]
+        self.target_vertex = cfg["target_vertex"]
+        self.edges = set()
+        self.adj = {i: set() for i in range(1, self.n + 1)}
         
-        # 存储序列
-        self.seq_a = cfg["seq_a"]
-        self.seq_b = cfg["seq_b"]
-        self.seq_k = cfg["seq_k"]
+        for u, v in cfg["edges"]:
+            self.edges.add((min(u, v), max(u, v)))
+            self.adj[u].add(v)
+            self.adj[v].add(u)
         
-        # 计算反序
-        self.seq_a_reverse = self.seq_a[::-1]
-        self.seq_b_reverse = self.seq_b[::-1]
+        self.max_matching_size = self._compute_max_matching()
         
-        # 确定参考序列
-        reference_type = cfg["reference_type"]
-        if reference_type == "A":
-            self.reference_seq = self.seq_a
-            self.reference_name = "A"
-        elif reference_type == "reverse_A":
-            self.reference_seq = self.seq_a_reverse
-            self.reference_name = "reverse_A"
-        elif reference_type == "B":
-            self.reference_seq = self.seq_b
-            self.reference_name = "B"
-        elif reference_type == "reverse_B":
-            self.reference_seq = self.seq_b_reverse
-            self.reference_name = "reverse_B"
-        else:
-            raise ValueError(f"Unknown reference type: {reference_type}")
-        
-        # 计算 Ground Truth：K 与 R 的 LCS 长度
-        self.ground_truth_lcs = lcs_length(self.seq_k, self.reference_seq)
-        
-        # 查询计数器
-        self.query_count = 0
+        self.target_coverable = self._is_target_coverable()
+
+    def _compute_max_matching(self, forbidden_edges=None, required_edges=None):
+        if forbidden_edges is None:
+            forbidden_edges = set()
+        if required_edges is None:
+            required_edges = []
+
+        available_adj = {i: set() for i in range(1, self.n + 1)}
+        matched_vertices = set()
+        match = {}
+
+        for u, v in required_edges:
+            edge = (min(u, v), max(u, v))
+            if edge not in self.edges:
+                return -1
+            if u in matched_vertices or v in matched_vertices:
+                return -1
+            match[u] = v
+            match[v] = u
+            matched_vertices.add(u)
+            matched_vertices.add(v)
+
+        for u in range(1, self.n + 1):
+            for v in self.adj[u]:
+                edge = (min(u, v), max(u, v))
+                if edge in forbidden_edges:
+                    continue
+                available_adj[u].add(v)
+
+        def find_augmenting_path(u, visited):
+            for v in available_adj[u]:
+                if v in visited:
+                    continue
+                visited.add(v)
+                if v not in match or find_augmenting_path(match[v], visited):
+                    match[u] = v
+                    match[v] = u
+                    return True
+            return False
+
+        changed = True
+        while changed:
+            changed = False
+            for u in range(1, self.n + 1):
+                if u not in match:
+                    visited = {u}
+                    if find_augmenting_path(u, visited):
+                        changed = True
+
+        return len(match) // 2
+
+    def _is_target_coverable(self):
+        for neighbor in self.adj[self.target_vertex]:
+            edge = (min(self.target_vertex, neighbor), max(self.target_vertex, neighbor))
+            size = self._compute_max_matching(required_edges=[edge])
+            if size == self.max_matching_size:
+                return True
+        return False
 
     def evaluate(self, parsed_info):
-        """评估最终答案是否正确"""
-        # 检查是否至少查询了两次
-        if self.query_count < 2:
+        raw_ans = parsed_info["answer"].strip()
+        
+        if self.config.language == "zh":
+            yes_keyword = "是"
+            no_keyword = "否"
+        else:
+            yes_keyword = "Yes"
+            no_keyword = "No"
+        
+        answer_claim = None
+        evidence_edge = None
+        
+        if "," in raw_ans:
+            parts = raw_ans.split(",", 1)
+            answer_claim = parts[0].strip()
+            if "evidence=" in parts[1]:
+                try:
+                    edge_str = parts[1].split("evidence=")[1].strip()
+                    u, v = map(int, edge_str.split(","))
+                    evidence_edge = (min(u, v), max(u, v))
+                except:
+                    pass
+        else:
+            answer_claim = raw_ans
+        
+        if yes_keyword in answer_claim:
+            model_answer = True
+        elif no_keyword in answer_claim:
+            model_answer = False
+        else:
             return False
         
-        # 解析答案: reference=X, lcs_length=Y
-        raw_ans = parsed_info["answer"]
-        
-        # 提取键值对
-        kv_pairs = [x.strip() for x in raw_ans.split(",")]
-        ans_dict = {}
-        for kv in kv_pairs:
-            if "=" in kv:
-                k, v = kv.split("=", 1)
-                ans_dict[k.strip()] = v.strip()
-        
-        if "reference" not in ans_dict or "lcs_length" not in ans_dict:
+        if model_answer != self.target_coverable:
             return False
         
-        # 1. 检查参考序列判定是否正确
-        if ans_dict["reference"] != self.reference_name:
-            return False
+        if model_answer and evidence_edge is not None:
+            if self.target_vertex not in evidence_edge:
+                return False
+            size = self._compute_max_matching(required_edges=[evidence_edge])
+            if size != self.max_matching_size:
+                return False
         
-        # 2. 检查 LCS 长度是否正确
-        try:
-            model_lcs = int(ans_dict["lcs_length"])
-        except:
-            return False
-            
-        return model_lcs == self.ground_truth_lcs
+        return True
 
     def _cf_core_produce(self, parsed_info):
-        """原始的业务逻辑：计算 LCS 长度"""
-        if "query" in parsed_info:
-            query_seq = parsed_info["query"].strip()
+        if self.config.language == "zh":
+            non_edge_msg = "非边"
+            suboptimal_msg = "可行但不保最优，新大小为 {}"
+            optimal_msg = "可行且仍达最优，大小为 {}"
+            error_msg = "错误：{}"
+            baseline_msg = "最大匹配大小为 {}"
+            limit_msg = "错误：已超过约束查询次数限制"
+        else:
+            non_edge_msg = "Non-edge"
+            suboptimal_msg = "Feasible but suboptimal, new size is {}"
+            optimal_msg = "Feasible and still optimal, size is {}"
+            error_msg = "Error: {}"
+            baseline_msg = "Maximum matching size is {}"
+            limit_msg = "Error: Exceeded constraint query limit"
+        
+        if "query_baseline" in parsed_info:
+            if self.baseline_used:
+                return error_msg.format("基准查询只能使用一次" if self.config.language == "zh" else "Baseline query can only be used once")
+            self.baseline_used = True
+            return baseline_msg.format(self.max_matching_size)
+        
+        elif "query_constraint" in parsed_info:
+            if self.constraint_count >= 12:
+                return limit_msg
             
-            # 计算查询序列与参考序列的 LCS 长度
-            lcs_len = lcs_length(query_seq, self.reference_seq)
+            self.constraint_count += 1
             
-            # 增加查询计数
-            self.query_count += 1
-            
-            return str(lcs_len)
+            try:
+                raw = parsed_info["query_constraint"].strip()
+                parts = raw.split(",")
+                if len(parts) != 2:
+                    raise ValueError("Invalid format")
+                u, v = int(parts[0].strip()), int(parts[1].strip())
+                
+                if u < 1 or u > self.n or v < 1 or v > self.n or u == v:
+                    raise ValueError("Invalid vertices")
+                
+                edge = (min(u, v), max(u, v))
+                
+                if edge not in self.edges:
+                    return non_edge_msg
+                
+                constrained_size = self._compute_max_matching(required_edges=[edge])
+                
+                if constrained_size < 0:
+                    return non_edge_msg
+                elif constrained_size < self.max_matching_size:
+                    return suboptimal_msg.format(constrained_size)
+                else:
+                    return optimal_msg.format(self.max_matching_size)
+                
+            except Exception as e:
+                return error_msg.format("格式无效或顶点错误" if self.config.language == "zh" else "Invalid format or vertices")
+        
         else:
             raise ValueError("No valid query tag found.")
 
     def _cf_make_wrong(self, correct: str) -> str:
-        """生成错误答案"""
-        # 若 correct 是纯整数字符串
-        if correct.isdigit():
-            return str(int(correct) + 1)
-        
-        # 否则按规则替换关键词
-        c_lower = correct.lower()
         if self.config.language == "zh":
-            if "是" in correct:
-                return correct.replace("是", "否")
-            if "否" in correct:
-                return correct.replace("否", "是")
-        elif self.config.language == "en":
-            # 简单的大小写保持处理
-            if "yes" in c_lower:
-                if "Yes" in correct: return correct.replace("Yes", "No")
-                if "yes" in correct: return correct.replace("yes", "no")
-                if "YES" in correct: return correct.replace("YES", "NO")
-                return correct.lower().replace("yes", "no") # fallback
-            if "no" in c_lower:
-                if "No" in correct: return correct.replace("No", "Yes")
-                if "no" in correct: return correct.replace("no", "yes")
-                if "NO" in correct: return correct.replace("NO", "YES")
-                return correct.lower().replace("no", "yes") # fallback
-        
-        # 若都不匹配
-        return correct + "_WRONG"
+            non_edge_msg = "非边"
+            baseline_prefix = "最大匹配大小为"
+            suboptimal_prefix = "可行但不保最优，新大小为"
+            optimal_prefix = "可行且仍达最优，大小为"
+        else:
+            non_edge_msg = "Non-edge"
+            baseline_prefix = "Maximum matching size is"
+            suboptimal_prefix = "Feasible but suboptimal, new size is"
+            optimal_prefix = "Feasible and still optimal, size is"
+
+        if correct == non_edge_msg:
+            if self.config.language == "zh":
+                return f"可行且仍达最优，大小为 {self.max_matching_size}"
+            else:
+                return f"Feasible and still optimal, size is {self.max_matching_size}"
+
+        if baseline_prefix in correct:
+            wrong_size = max(0, self.max_matching_size - 1)
+            if self.config.language == "zh":
+                return f"最大匹配大小为 {wrong_size}"
+            else:
+                return f"Maximum matching size is {wrong_size}"
+
+        if optimal_prefix in correct:
+            wrong_size = max(0, self.max_matching_size - 1)
+            if self.config.language == "zh":
+                return f"可行但不保最优，新大小为 {wrong_size}"
+            else:
+                return f"Feasible but suboptimal, new size is {wrong_size}"
+
+        if suboptimal_prefix in correct:
+            if self.config.language == "zh":
+                return f"可行且仍达最优，大小为 {self.max_matching_size}"
+            else:
+                return f"Feasible and still optimal, size is {self.max_matching_size}"
+
+        return non_edge_msg if correct != non_edge_msg else (
+            f"Feasible and still optimal, size is {self.max_matching_size}"
+            if self.config.language == "en"
+            else f"可行且仍达最优，大小为 {self.max_matching_size}"
+        )
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-
-        Returns:
-            list of dict, 每项格式：
-            {
-                "query" : str,   # 查询内容字符串，与游戏中 parsed_info["query"] 的值格式一致
-                "answer": str,   # 调用游戏逻辑后得到的正确答案字符串
-            }
-        """
-        # 虽然用户可以输入任意字符串，但在本推理游戏的上下文中，
-        # 有意义的策略性查询集合是有限的，主要包括4个候选参考序列以及目标序列K。
-        potential_queries = [
-            self.seq_a,
-            self.seq_a_reverse,
-            self.seq_b,
-            self.seq_b_reverse,
-            self.seq_k
-        ]
-
-        # 去重
-        unique_queries = []
-        seen = set()
-        for q in potential_queries:
-            if q not in seen:
-                unique_queries.append(q)
-                seen.add(q)
-
         results = []
-        for q in unique_queries:
-            # 直接计算，不调用 produce_response 以免产生副作用（如增加计数、触发反事实逻辑）
-            ans_val = lcs_length(q, self.reference_seq)
-            results.append({
-                "query": f"<query>{q}</query>",
-                "answer": str(ans_val)
-            })
+        
+        if self.config.language == "zh":
+            baseline_ans = "最大匹配大小为 {}"
+            non_edge_msg = "非边"
+            suboptimal_msg = "可行但不保最优，新大小为 {}"
+            optimal_msg = "可行且仍达最优，大小为 {}"
+        else:
+            baseline_ans = "Maximum matching size is {}"
+            non_edge_msg = "Non-edge"
+            suboptimal_msg = "Feasible but suboptimal, new size is {}"
+            optimal_msg = "Feasible and still optimal, size is {}"
 
+        results.append({
+            "query": "<query_baseline></query_baseline>",
+            "answer": baseline_ans.format(self.max_matching_size)
+        })
+
+        for u in range(1, self.n + 1):
+            for v in range(u + 1, self.n + 1):
+                query_str = f"<query_constraint>{u},{v}</query_constraint>"
+                edge = (u, v)
+
+                if edge not in self.edges:
+                    ans = non_edge_msg
+                else:
+                    size = self._compute_max_matching(required_edges=[edge])
+                    
+                    if size < self.max_matching_size:
+                        ans = suboptimal_msg.format(size)
+                    else:
+                        ans = optimal_msg.format(self.max_matching_size)
+                
+                results.append({
+                    "query": query_str,
+                    "answer": ans
+                })
+        
         return results

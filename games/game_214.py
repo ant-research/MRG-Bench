@@ -1,711 +1,771 @@
-# -*- coding: utf-8 -*-
-# 自动生成 | 模型: api/gpt-5-2025-08-07
-# 推理类型: 归纳推理（完全自主总结规律）：从多次反馈的样本中，总结出背后隐藏的规律/模式。
-# 数据结构: 图：存在一个由节点和边构成的图。
-# 知识点:   拓扑排序：图中是否存在拓扑排序、排序结果是什么
-# ============================================================
-
 from .base import Game
 import random
+import itertools
+import re
 
-class TopologicalOrderGame(Game):
-
-    reasoning_type = "归纳推理"
-    data_structure = "图"
+class GAME495(Game):
 
     game_rule_zh = """\
-我们现在来玩一个"拓扑排序推理"游戏，规则如下：
+我们来玩一个"隐藏排序规则"的推理游戏，规则如下：
 
-游戏设定了一组有限元素集合 V 和一张固定的有向图 G=(V,E)，图中无自环与重边。边 A→B 表示"A 必须先于 B"的前置约束关系；图中允许传递约束（若 A→B 且 B→C，则隐含 A 早于 C）。你无法直接看到边集 E，但可以通过查询来推断图的结构。
+游戏设定了一组大小为 {n} 的离散对象，每个对象具有：
+- 一个唯一标识符 ID（从 1 到 {n}）
+- 一个公开且互不相同的码（固定长度的数字字符串）
 
-游戏维护一个当前前缀序列 S（初始为空），表示已被确认可按先后约束追加的元素序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
+存在一个对所有对象一致的、固定的、保密的确定性函数 f(code)，对每个对象的 code 计算排序键。全体对象按键值升序排列；若键值相同，则按 code 的字典序（从小到大）作为唯一且稳定的并列打破规则，从而形成一个严格的全序。
 
-你的目标是通过交互查询判断图 G 是否存在拓扑序：
-- 若存在：构造并提交一个覆盖全部元素且满足所有有向边约束的全序（拓扑排序）。
-- 若不存在：提交一个有向环的明确证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
+对象列表：
+{objects_list}
 
-## 可用操作（每次只能使用一个）
+目标对象 ID：{target_id}
 
-1. **LIST**：获取全部元素集合与数量。
-   格式：<list></list>
+确定目标对象在全体 {n} 个对象按隐藏规则排序后的全局名次 R（R 为 1 到 {n} 的整数）。
 
-2. **STATE**：查看当前前缀序列 S。
-   格式：<state></state>
+你可以反复向我提出以下三类问题（每次仅限一个问题），我会根据隐藏的排序规则如实回答：
 
-3. **PLACE**：尝试将元素 X 追加到 S 的末尾（X 尚未在 S 中）。
-   格式：<place>X</place>
-   响应：若 X 无未满足前置则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一个尚未满足的前置元素。
+1. **成对比较**：询问对象 X 和对象 Y 在全序下的相对位置。
+   - 回答："X 在 Y 前"或"Y 在 X 前"
 
-4. **COUNT**：查询相对当前 S，元素 X 仍未满足的直接前置数量。
-   格式：<count>X</count>
+2. **小批量排序**：询问一组对象（2 到 4 个）在全序下的完整排序。
+   - 回答：该子集按全序排序后的 ID 列表
 
-5. **COMPARE**：询问元素 A 和 B 之间是否存在可达性诱导的强制先后关系。
-   格式：<compare>A,B</compare>
-   响应："A<B"（存在 A 到 B 的路径）、"B<A"（存在 B 到 A 的路径）或"NO-CONSTRAINT"（无约束）。
+3. **局部名次**：询问对象 X 在指定子集（2 到 4 个，包含 X）中的局部名次。
+   - 回答：X 在该子集中的位置（1 到子集大小的整数）
 
-6. **ASK-ZERO**：询问是否存在相对当前 S 入度为 0 的未放置元素。
-   格式：<ask_zero></ask_zero>
-   响应："YES X"（存在，X 为其中一个）或"NO"（不存在）。
+- 每次查询的对象 ID 必须互不相同，且来自已公布的 {n} 个对象
+- 任何一次查询的子集规模最多为 4
+- 不允许对全体对象进行直接或等价的整体排序查询
+- 请尽可能少地使用查询次数
 
-7. **CHECK-SEQUENCE**：离线验证一条覆盖全部元素且不重复的序列是否为合法拓扑序（不更改 S）。
-   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
-   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的边）。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-8. **RESET**：清空 S 为初始空前缀（G 不变）。
-   格式：<reset></reset>
+- 成对比较（例如比较 ID 1 和 ID 3）：
+<query_compare>1,3</query_compare>
 
-## 提交答案格式
+- 小批量排序（例如对 ID 1、3、5 进行排序）：
+<query_sort>1,3,5</query_sort>
 
-提交拓扑序：
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- 局部名次（例如询问 ID 2 在子集 [2,4,6] 中的名次）：
+<query_rank>2 in 2,4,6</query_rank>
 
-提交有向环证据：
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+提交最终答案时，请给出目标对象的全局名次（1 到 {n} 的整数），格式如下：
 
-注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成推理。
+<answer>5</answer>
 """
 
     game_rule_en = """\
-Let's play a "Topological Order Inference" game. Here are the rules:
+Let's play a "Hidden Sorting Rule" deduction game. Here are the rules:
 
-The game has a finite set of elements V and a fixed directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means "A must come before B" as a precedence constraint; transitive constraints are allowed (if A→B and B→C, then A implicitly comes before C). You cannot directly see the edge set E, but can infer the graph structure through queries.
+There is a set of {n} discrete objects, each with:
+- A unique identifier ID (from 1 to {n})
+- A public and distinct code (a fixed-length numeric string)
 
-The game maintains a current prefix sequence S (initially empty), representing elements that have been confirmed to be appendable in order respecting constraints. Except for PLACE and RESET operations, other operations do not change S.
+There exists a consistent, fixed, secret deterministic function f(code) that computes a sort key for each object's code. All objects are arranged in ascending order by key value; if key values are equal, lexicographic order of codes (ascending) serves as the unique and stable tiebreaker, forming a strict total order.
 
-Your goal is to determine through interactive queries whether graph G has a topological order:
-- If exists: construct and submit a total order covering all elements satisfying all directed edge constraints (topological sort).
-- If not exists: submit explicit evidence of a directed cycle (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
+Object list:
+{objects_list}
 
-## Available Operations (one per turn)
+Target object ID: {target_id}
 
-1. **LIST**: Get the complete element set and count.
-   Format: <list></list>
+Determine the global rank R of the target object in the total order of all {n} objects (R is an integer from 1 to {n}).
 
-2. **STATE**: View the current prefix sequence S.
-   Format: <state></state>
+You can repeatedly ask me the following three types of questions (one per turn), and I will answer truthfully according to the hidden sorting rule:
 
-3. **PLACE**: Try to append element X to the end of S (X not yet in S).
-   Format: <place>X</place>
-   Response: "OK" if X has no unsatisfied prerequisites and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite of X.
+1. **Pairwise Comparison**: Ask the relative position of object X and object Y in the total order.
+   - Answer: "X before Y" or "Y before X"
 
-4. **COUNT**: Query the number of direct prerequisites of element X that are still unsatisfied relative to current S.
-   Format: <count>X</count>
+2. **Small Batch Sort**: Ask for the complete ordering of a subset (2 to 4 objects) in the total order.
+   - Answer: The ID list of that subset sorted by the total order
 
-5. **COMPARE**: Ask whether there exists a reachability-induced mandatory ordering between elements A and B.
-   Format: <compare>A,B</compare>
-   Response: "A<B" (path from A to B exists), "B<A" (path from B to A exists), or "NO-CONSTRAINT" (no constraint).
+3. **Local Rank**: Ask for the local rank of object X within a specified subset (2 to 4 objects, including X).
+   - Answer: The position of X in that subset (an integer from 1 to subset size)
 
-6. **ASK-ZERO**: Ask whether there exists an unplaced element with in-degree 0 relative to current S.
-   Format: <ask_zero></ask_zero>
-   Response: "YES X" (exists, X is one such element) or "NO" (does not exist).
+- Each query's object IDs must be distinct and from the published {n} objects
+- Any single query's subset size is at most 4
+- Direct or equivalent whole-set sorting queries are not allowed
+- Please use as few queries as possible
 
-7. **CHECK-SEQUENCE**: Offline verify whether a sequence covering all elements without repetition is a valid topological order (does not change S).
-   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
-   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated edge).
+Each query must contain only one tag. Use the following XML format:
 
-8. **RESET**: Clear S back to initial empty prefix (G unchanged).
-   Format: <reset></reset>
+- Pairwise Comparison (e.g., comparing ID 1 and ID 3):
+<query_compare>1,3</query_compare>
 
-## Answer Submission Format
+- Small Batch Sort (e.g., sorting IDs 1, 3, 5):
+<query_sort>1,3,5</query_sort>
 
-Submit topological order:
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- Local Rank (e.g., asking for rank of ID 2 in subset [2,4,6]):
+<query_rank>2 in 2,4,6</query_rank>
 
-Submit directed cycle evidence:
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+When submitting the final answer, provide the global rank of the target object (an integer from 1 to {n}), using this format:
 
-Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the reasoning.
+<answer>5</answer>
 """
 
     contextualized_rule_zh_1 = """\
-这是一套“城市交通导航规划”系统。规则如下：
+智能交通调度中心正在进行一项“隐藏优先权分配”校准演练，规则如下：
 
-系统设定了一组有限的交通路口集合 V 和一张固定的城市路网有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先通过路口 A，才能前往路口 B”的单向通行约束；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 经过）。你无法直接看到所有路网的通行限制 E，但可以通过查询来推断路网结构。
+演练设定了一组规模为 {n} 的自动驾驶车辆，每辆车具备：
+- 一个唯一调度 ID（从 1 到 {n}）
+- 一串公开且互不相同的环境特征码（固定长度的数字字符串）
 
-系统维护一个当前路线前缀序列 S（初始为空），表示已被确认符合通行约束并成功规划的路口序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
+系统调度内核包含一个统一、固定的机密评估函数 f(code)，计算各车辆的通行权权重。所有车辆按权重值升序编排发车顺序（权重越小越优先）；若权重相同，则以特征码的字典序（从小到大）作为唯一的顺位打破规则，形成严格的绝对通行队列。
 
-你的目标是通过交互查询判断该路网是否存在一条能够合法通行所有指定路口的完整路线：
-- 若存在：构造并提交一条覆盖全部路口且满足所有通行约束的完整导航路线（拓扑排序）。
-- 若不存在：提交一个造成交通死锁的闭环死胡同证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
+车辆列表：
+{objects_list}
 
-## 可用操作（每次只能使用一个）
+目标车辆 ID：{target_id}
 
-1. **LIST**：获取全部需通行的交通路口集合与数量。
-   格式：<list></list>
+确定目标车辆在全体 {n} 辆车按隐藏规则排定后的全局绝对通行名次 R（R 为 1 到 {n} 的整数）。
 
-2. **STATE**：查看当前已规划的路线前缀序列 S。
-   格式：<state></state>
+你可以反复向调度系统提出以下三类查询（每次仅限一个问题），系统将根据隐藏的调度规则如实反馈：
 
-3. **PLACE**：尝试将路口 X 追加到规划路线 S 的末尾（X 尚未在 S 中）。
-   格式：<place>X</place>
-   响应：若 X 无未满足的前置路口则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一个尚未满足的前置路口。
+1. **成对比较**：询问车辆 X 和车辆 Y 在全局队列中的相对发车顺序。
+   - 回答："X 在 Y 前"或"Y 在 X 前"
 
-4. **COUNT**：查询相对当前路线 S，路口 X 仍未满足的直接前置路口数量。
-   格式：<count>X</count>
+2. **小批量排序**：询问一个微型车队（2 到 4 辆车）在全局队列中的完整发车顺序。
+   - 回答：该车队按发车队列排序后的 ID 列表
 
-5. **COMPARE**：询问路口 A 和 B 之间是否存在强制的先后通行关系。
-   格式：<compare>A,B</compare>
-   响应："A<B"（必须先过 A 再过 B）、"B<A"（必须先过 B 再过 A）或"NO-CONSTRAINT"（无通行先后约束）。
+3. **局部名次**：询问车辆 X 在指定编队（2 到 4 辆车，包含 X）中的局部放行顺位。
+   - 回答：X 在该编队中的顺位（1 到编队大小的整数）
 
-6. **ASK-ZERO**：询问是否存在相对当前路线 S，可以直接作为下一步通行的路口（入度为0）。
-   格式：<ask_zero></ask_zero>
-   响应："YES X"（存在，X 为其中一个）或"NO"（不存在）。
+- 每次查询的车辆 ID 必须互不相同，且来自已广播的 {n} 辆车
+- 任何一次查询的编队规模最多为 4
+- 不允许对全体车辆进行直接或等价的整体放行查询
+- 请尽可能少地消耗查询频次
 
-7. **CHECK-SEQUENCE**：离线验证一条覆盖全部路口且不重复的路线是否为合法导航路线（不更改 S）。
-   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
-   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的约束）。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-8. **RESET**：清空当前路线 S 为初始空路线（路网约束不变）。
-   格式：<reset></reset>
+- 成对比较（例如比较车辆 ID 1 和 3）：
+<query_compare>1,3</query_compare>
 
-## 提交答案格式
+- 小批量排序（例如对车辆 ID 1、3、5 进行排序）：
+<query_sort>1,3,5</query_sort>
 
-提交完整导航路线：
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- 局部名次（例如询问车辆 ID 2 在编队 [2,4,6] 中的顺位）：
+<query_rank>2 in 2,4,6</query_rank>
 
-提交交通死锁（有向环）证据：
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+提交最终答案时，请给出目标车辆的全局通行名次（1 到 {n} 的整数），格式如下：
 
-注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成路线规划与推理。
+<answer>5</answer>
 """
 
     contextualized_rule_en_1 = """\
 [Traffic Scenario]
-This is a "City Traffic Navigation Planning" system. Here are the rules:
+The Intelligent Traffic Control Center is conducting a "Hidden Priority Allocation" calibration drill. Here are the rules:
 
-The system defines a finite set of traffic intersections V and a fixed city road network directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a one-way precedence constraint: "You must pass intersection A before proceeding to intersection B". Transitive constraints are allowed (if A→B and B→C, then implicitly A must be passed before C). You cannot directly see the entire network restrictions E, but can infer the structure through queries.
+The drill involves a set of {n} autonomous vehicles, each equipped with:
+- A unique dispatch ID (from 1 to {n})
+- A public and distinct environmental feature code (a fixed-length numeric string)
 
-The system maintains a current route prefix sequence S (initially empty), representing the sequence of intersections that have been confirmed and successfully planned in compliance with constraints. Except for PLACE and RESET operations, other operations do not change S.
+The dispatch kernel incorporates a consistent, fixed, and classified evaluation function f(code) that computes a right-of-way weight for each vehicle's code. All vehicles are arranged in ascending order by weight for departure (lower weight means higher priority); if weights are equal, the lexicographic order of codes (ascending) serves as the unique tiebreaker, forming a strict absolute departure queue.
 
-Your goal is to determine through interactive queries whether there exists a valid full route covering all designated intersections:
-- If exists: construct and submit a complete navigation route covering all intersections while satisfying all precedence constraints (topological sort).
-- If not exists: submit explicit evidence of a traffic deadlock or closed-loop dead end (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
+Vehicle list:
+{objects_list}
 
-## Available Operations (one per turn)
+Target vehicle ID: {target_id}
 
-1. **LIST**: Get the complete set of required intersections and count.
-   Format: <list></list>
+Determine the global departure rank R of the target vehicle in the strict queue of all {n} vehicles (R is an integer from 1 to {n}).
 
-2. **STATE**: View the current planned route prefix sequence S.
-   Format: <state></state>
+You can repeatedly send the following three types of queries to the dispatch system (one per turn), and the system will answer truthfully according to the hidden traffic rule:
 
-3. **PLACE**: Try to append intersection X to the end of the planned route S (X not yet in S).
-   Format: <place>X</place>
-   Response: "OK" if X has no unsatisfied prerequisite intersections and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite of X.
+1. **Pairwise Comparison**: Ask the relative departure sequence of vehicle X and vehicle Y in the total queue.
+   - Answer: "X before Y" or "Y before X"
 
-4. **COUNT**: Query the number of direct prerequisite intersections of X that are still unsatisfied relative to current S.
-   Format: <count>X</count>
+2. **Small Batch Sort**: Ask for the complete departure order of a micro-fleet (2 to 4 vehicles) based on the absolute queue.
+   - Answer: The ID list of that fleet sorted by the departure queue
 
-5. **COMPARE**: Ask whether there exists a mandatory passing order between intersections A and B.
-   Format: <compare>A,B</compare>
-   Response: "A<B" (must pass A before B), "B<A" (must pass B before A), or "NO-CONSTRAINT" (no mandatory order).
+3. **Local Rank**: Ask for the local departure position of vehicle X within a specified formation (2 to 4 vehicles, including X).
+   - Answer: The position of X in that formation (an integer from 1 to formation size)
 
-6. **ASK-ZERO**: Ask whether there exists an intersection that can be immediately passed next relative to current S (in-degree 0).
-   Format: <ask_zero></ask_zero>
-   Response: "YES X" (exists, X is one such intersection) or "NO" (does not exist).
+- Each query's vehicle IDs must be distinct and from the broadcasted {n} vehicles
+- Any single query's formation size is at most 4
+- Direct or equivalent whole-fleet sorting queries are prohibited
+- Please minimize the consumption of query frequency
 
-7. **CHECK-SEQUENCE**: Offline verify whether a route covering all intersections without repetition is a valid navigation route (does not change S).
-   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
-   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated constraint).
+Each query must contain only one tag. Use the following XML format:
 
-8. **RESET**: Clear S back to initial empty route (network constraints unchanged).
-   Format: <reset></reset>
+- Pairwise Comparison (e.g., comparing vehicle IDs 1 and 3):
+<query_compare>1,3</query_compare>
 
-## Answer Submission Format
+- Small Batch Sort (e.g., sorting vehicle IDs 1, 3, 5):
+<query_sort>1,3,5</query_sort>
 
-Submit complete navigation route:
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- Local Rank (e.g., asking for the rank of ID 2 in formation [2,4,6]):
+<query_rank>2 in 2,4,6</query_rank>
 
-Submit traffic deadlock evidence:
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+When submitting the final answer, provide the global departure rank of the target vehicle (an integer from 1 to {n}), using this format:
 
-Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the planning and inference.
+<answer>5</answer>
 """
 
     contextualized_rule_zh_2 = """\
-这是一套“医疗临床路径规划”系统。规则如下：
+基因组学实验室正在对医疗测序仪的“样本盲序排队”机制进行校准，规则如下：
 
-系统设定了一组有限的诊疗步骤集合 V 和一张固定的医疗流程有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先完成诊疗步骤 A，才能进行步骤 B”的医疗安全约束；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 完成）。你无法直接看到所有医疗约束 E，但可以通过查询来推断诊疗前置条件。
+待处理流水线上有 {n} 份基因样本，每份样本具有：
+- 一个唯一的试管 ID（从 1 到 {n}）
+- 一串公开且互不相同的分子特征码（固定长度的数字字符串）
 
-系统维护一个当前操作前缀序列 S（初始为空），表示已被确认符合医疗安全规范并成功实施的诊疗步骤序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
+测序仪底层置入了一个对所有样本一致、固定的保密降解评估函数 f(code)，计算各样本的上机优先级键值。全体样本按键值升序排列（键值越小越急迫）；若键值相同，则按特征码的字典序（从小到大）作为唯一的打破并列规则，从而建立严格的先后处理时序。
 
-你的目标是通过交互查询判断该临床路径是否存在一个能够合法涵盖所有步骤的完整诊疗方案：
-- 若存在：构造并提交一份覆盖全部步骤且满足所有医疗安全约束的完整诊疗方案（拓扑排序）。
-- 若不存在：提交一个导致医疗流程矛盾的死循环证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
+样本列表：
+{objects_list}
 
-## 可用操作（每次只能使用一个）
+目标样本试管 ID：{target_id}
 
-1. **LIST**：获取本次需要进行的所有诊疗步骤集合与数量。
-   格式：<list></list>
+确定目标样本在全体 {n} 份样本按隐秘降解规则排定后的全局上机绝对名次 R（R 为 1 到 {n} 的整数）。
 
-2. **STATE**：查看当前已完成的诊疗前缀序列 S。
-   格式：<state></state>
+你可以反复向仪器总线发出以下三类指令（每次仅限一个指令），仪器会根据底层时序规则如实反馈：
 
-3. **PLACE**：尝试将步骤 X 追加到已完成序列 S 的末尾（X 尚未在 S 中）。
-   格式：<place>X</place>
-   响应：若 X 无未满足的前置步骤则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一个尚未满足的前置诊疗步骤。
+1. **成对比较**：核实样本 X 和样本 Y 上机测序的相对先后顺序。
+   - 回答："X 在 Y 前"或"Y 在 X 前"
 
-4. **COUNT**：查询相对当前序列 S，步骤 X 仍未满足的直接前置步骤数量。
-   格式：<count>X</count>
+2. **小批量排序**：请求一簇微孔板样本（2 到 4 份样本）的完整内部处理顺序。
+   - 回答：该子集按上机要求排序后的试管 ID 列表
 
-5. **COMPARE**：询问步骤 A 和 B 之间是否存在强制的先后实施关系。
-   格式：<compare>A,B</compare>
-   响应："A<B"（必须先执行 A 再执行 B）、"B<A"（必须先执行 B 再执行 A）或"NO-CONSTRAINT"（无先后约束）。
+3. **局部名次**：查询样本 X 在指定子集（2 到 4 份样本，包含 X）中的优先顺位。
+   - 回答：X 在该子集中的顺位（1 到子集大小的整数）
 
-6. **ASK-ZERO**：询问是否存在相对当前序列 S，可以直接作为下一步执行的诊疗步骤（入度为0）。
-   格式：<ask_zero></ask_zero>
-   响应："YES X"（存在，X 为其中一个）或"NO"（不存在）。
+- 每次查询的试管 ID 必须互不相同，且来自已记录的 {n} 份样本
+- 任何一次查询的子集规模最多为 4
+- 不允许对全部样本进行直接或等价的整体测序排班查询
+- 请尽可能少地使用总线查询次数
 
-7. **CHECK-SEQUENCE**：离线验证一份覆盖全步骤且不重复的方案是否为合法临床路径（不更改 S）。
-   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
-   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的医疗约束）。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-8. **RESET**：清空当前序列 S 为初始空状态（医疗流程约束不变）。
-   格式：<reset></reset>
+- 成对比较（例如比较试管 ID 1 和 3）：
+<query_compare>1,3</query_compare>
 
-## 提交答案格式
+- 小批量排序（例如对试管 ID 1、3、5 进行测序排序）：
+<query_sort>1,3,5</query_sort>
 
-提交完整诊疗方案：
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- 局部名次（例如询问试管 ID 2 在子集 [2,4,6] 中的顺位）：
+<query_rank>2 in 2,4,6</query_rank>
 
-提交医疗流程死循环证据：
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+提交最终答案时，请给出目标样本的全局测序名次（1 到 {n} 的整数），格式如下：
 
-注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成推理。
+<answer>5</answer>
 """
 
     contextualized_rule_en_2 = """\
 [Medical Scenario]
-This is a "Clinical Pathway Planning" system. Here are the rules:
+The genomics laboratory is calibrating the "Blind Sequencing Queue" mechanism of the medical sequencer. Here are the rules:
 
-The system defines a finite set of medical procedures V and a fixed clinical workflow directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a medical safety constraint: "You must complete procedure A before performing procedure B". Transitive constraints are allowed (if A→B and B→C, then implicitly A must be done before C). You cannot directly see all medical constraints E, but can infer the prerequisites through queries.
+There are {n} genetic samples on the processing pipeline, each with:
+- A unique test tube ID (from 1 to {n})
+- A public and distinct molecular feature code (a fixed-length numeric string)
 
-The system maintains a current operation prefix sequence S (initially empty), representing procedures that have been confirmed compliant with medical safety rules and successfully executed. Except for PLACE and RESET operations, other operations do not change S.
+The sequencer firmware includes a consistent, fixed, and confidential degradation evaluation function f(code) that computes a sequencing priority key for each sample. All samples are ordered in ascending order by key (smaller keys mean higher urgency); if keys are equal, the lexicographic order of codes (ascending) serves as the unique tiebreaker, establishing a strict processing sequence.
 
-Your goal is to determine through interactive queries whether there exists a complete valid clinical pathway covering all procedures:
-- If exists: construct and submit a full treatment plan covering all procedures and satisfying all medical safety constraints (topological sort).
-- If not exists: submit explicit evidence of a contradictory loop in the medical workflow (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
+Sample list:
+{objects_list}
 
-## Available Operations (one per turn)
+Target sample tube ID: {target_id}
 
-1. **LIST**: Get the complete set of required medical procedures and count.
-   Format: <list></list>
+Determine the global sequencing rank R of the target sample among all {n} samples (R is an integer from 1 to {n}).
 
-2. **STATE**: View the current executed procedure prefix sequence S.
-   Format: <state></state>
+You can repeatedly send the following three types of instructions to the instrument bus (one per turn), and the system will answer truthfully according to the underlying sequencing rule:
 
-3. **PLACE**: Try to append procedure X to the end of the executed sequence S (X not yet in S).
-   Format: <place>X</place>
-   Response: "OK" if X has no unsatisfied prerequisite procedures and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite of X.
+1. **Pairwise Comparison**: Verify the relative sequencing order of sample X and sample Y.
+   - Answer: "X before Y" or "Y before X"
 
-4. **COUNT**: Query the number of direct prerequisite procedures of X that are still unsatisfied relative to current S.
-   Format: <count>X</count>
+2. **Small Batch Sort**: Request the complete internal processing sequence of a microplate cluster (2 to 4 samples).
+   - Answer: The tube ID list of that cluster sorted by the sequencing sequence
 
-5. **COMPARE**: Ask whether there exists a mandatory execution order between procedures A and B.
-   Format: <compare>A,B</compare>
-   Response: "A<B" (must execute A before B), "B<A" (must execute B before A), or "NO-CONSTRAINT" (no mandatory order).
+3. **Local Rank**: Ask for the priority position of sample X within a specified subset (2 to 4 samples, including X).
+   - Answer: The position of X in that subset (an integer from 1 to subset size)
 
-6. **ASK-ZERO**: Ask whether there exists a procedure that can be immediately executed next relative to current S (in-degree 0).
-   Format: <ask_zero></ask_zero>
-   Response: "YES X" (exists, X is one such procedure) or "NO" (does not exist).
+- Each query's tube IDs must be distinct and from the recorded {n} samples
+- Any single query's cluster size is at most 4
+- Direct or equivalent whole-batch sequencing schedule queries are not allowed
+- Please minimize the use of bus query counts
 
-7. **CHECK-SEQUENCE**: Offline verify whether a plan covering all procedures without repetition is a valid clinical pathway (does not change S).
-   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
-   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated medical constraint).
+Each query must contain only one tag. Use the following XML format:
 
-8. **RESET**: Clear S back to initial empty sequence (medical constraints unchanged).
-   Format: <reset></reset>
+- Pairwise Comparison (e.g., comparing tube IDs 1 and 3):
+<query_compare>1,3</query_compare>
 
-## Answer Submission Format
+- Small Batch Sort (e.g., sorting tube IDs 1, 3, 5):
+<query_sort>1,3,5</query_sort>
 
-Submit complete treatment plan:
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- Local Rank (e.g., asking for the rank of tube ID 2 in subset [2,4,6]):
+<query_rank>2 in 2,4,6</query_rank>
 
-Submit medical workflow loop evidence:
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+When submitting the final answer, provide the global sequencing rank of the target sample (an integer from 1 to {n}), using this format:
 
-Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the planning and inference.
+<answer>5</answer>
 """
 
     contextualized_rule_zh_3 = """\
-这是一套“高校选课与培养方案规划”系统。规则如下：
+教务评估系统当前正在执行一次“匿存档案盲审基准”计算，规则如下：
 
-系统设定了一组有限的课程集合 V 和一张固定的课程体系有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先修读课程 A，才能选修课程 B”的先修课约束；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 修读）。你无法直接看到所有的选课限制 E，但可以通过查询来推断课程体系结构。
+系统内录入了 {n} 份匿名学生综合素质测评档案，每份档案具备：
+- 一个独立的档案编号 ID（从 1 到 {n}）
+- 一组公开的标准化量化评估码（互不相同的固定长度数字字符串）
 
-系统维护一个当前修读前缀序列 S（初始为空），表示已被确认符合先修约束并成功加入培养方案的课程序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
+系统后台运用了一个未公开的综合评价函数 f(code) 来生成每份档案的基准排序值。全体档案按基准值升序进行综合名次编排；当基准值持平时，则依据评估码的字典序（从小到大）进行唯一稳定的裁决，从而得出严格的班级总评顺位。
 
-你的目标是通过交互查询判断该课程体系是否存在一份能够合法修完所有指定课程的完整选课计划：
-- 若存在：构造并提交一份覆盖全部课程且满足所有先修要求的培养方案（拓扑排序）。
-- 若不存在：提交一个导致选课死锁的循环先修证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
+档案列表：
+{objects_list}
 
-## 可用操作（每次只能使用一个）
+目标档案编号 ID：{target_id}
 
-1. **LIST**：获取需要修读的全部课程集合与数量。
-   格式：<list></list>
+推演出目标档案在全部 {n} 份档案中经过系统综合评定后的全局确切排位 R（R 为 1 到 {n} 的整数）。
 
-2. **STATE**：查看当前已规划的修读前缀序列 S。
-   格式：<state></state>
+你可以反复向教务系统数据库提请以下三种数据比对（每次仅限一个查询），系统将按内置评价规则如实返回：
 
-3. **PLACE**：尝试将课程 X 追加到修读序列 S 的末尾（X 尚未在 S 中）。
-   格式：<place>X</place>
-   响应：若 X 无未满足的先修课则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一门尚未满足的先修课程。
+1. **成对比较**：查询档案 X 与档案 Y 在全景综合顺位中的相对优劣次序。
+   - 回答："X 在 Y 前"或"Y 在 X 前"
 
-4. **COUNT**：查询相对当前序列 S，课程 X 仍未满足的直接先修课数量。
-   格式：<count>X</count>
+2. **小批量排序**：圈定一个研讨小组（2 到 4 份档案），查询其内部的完整排位结果。
+   - 回答：该小组按综合评定排序后的档案 ID 列表
 
-5. **COMPARE**：询问课程 A 和 B 之间是否存在强制的先后修读关系。
-   格式：<compare>A,B</compare>
-   响应："A<B"（必须先修 A 再修 B）、"B<A"（必须先修 B 再修 A）或"NO-CONSTRAINT"（无先后约束）。
+3. **局部名次**：指定档案 X 并在自选的对照组（2 到 4 份档案，包含 X）内，查询其相对名次。
+   - 回答：X 在该对照组中的名次（1 到对照组大小的整数）
 
-6. **ASK-ZERO**：询问是否存在相对当前序列 S，可以直接作为下一门选修的课程（入度为0）。
-   格式：<ask_zero></ask_zero>
-   响应："YES X"（存在，X 为其中一门）或"NO"（不存在）。
+- 每次查询涉及的档案 ID 不可重复，且仅限于已公布的 {n} 份档案
+- 任何一次比对的对照组规模至多为 4 份档案
+- 禁止对全体档案列表发起直接或变相的整体排名拉取
+- 请以最少的数据比对次数完成任务
 
-7. **CHECK-SEQUENCE**：离线验证一份覆盖全课程且不重复的计划是否为合法的培养方案（不更改 S）。
-   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
-   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的先修约束）。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-8. **RESET**：清空当前修读序列 S 为初始空方案（课程体系不变）。
-   格式：<reset></reset>
+- 成对比较（例如比对档案 ID 1 和 3）：
+<query_compare>1,3</query_compare>
 
-## 提交答案格式
+- 小批量排序（例如对档案 ID 1、3、5 的小组进行排名）：
+<query_sort>1,3,5</query_sort>
 
-提交完整培养方案：
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- 局部名次（例如询问档案 ID 2 在对照组 [2,4,6] 中的名次）：
+<query_rank>2 in 2,4,6</query_rank>
 
-提交选课死锁证据：
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+提交最终答案时，请给出目标档案的全局综合排位（1 到 {n} 的整数），格式如下：
 
-注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成规划与推理。
+<answer>5</answer>
 """
 
     contextualized_rule_en_3 = """\
 [Education Scenario]
-This is a "University Course Enrollment and Curriculum Planning" system. Here are the rules:
+The academic evaluation system is currently executing a "Blind Review Benchmark" calculation for anonymous profiles. Here are the rules:
 
-The system defines a finite set of courses V and a fixed curriculum directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a prerequisite constraint: "You must complete course A before enrolling in course B". Transitive constraints are allowed (if A→B and B→C, then implicitly A must be taken before C). You cannot directly see all enrollment restrictions E, but can infer the curriculum structure through queries.
+The system has registered {n} anonymous student comprehensive assessment profiles, each equipped with:
+- A unique profile ID (from 1 to {n})
+- A set of public standardized quantitative assessment codes (distinct, fixed-length numeric strings)
 
-The system maintains a current enrollment prefix sequence S (initially empty), representing the sequence of courses that have been confirmed compliant with prerequisite rules and successfully added to the curriculum plan. Except for PLACE and RESET operations, other operations do not change S.
+The backend utilizes an undisclosed comprehensive evaluation function f(code) to generate a baseline sorting value for each profile. All profiles are ranked in ascending order by their baseline values; in the event of a tie, the lexicographic order of the assessment codes (ascending) acts as the unique and stable tiebreaker, yielding a strict overall class ranking.
 
-Your goal is to determine through interactive queries whether there exists a valid full enrollment plan covering all designated courses:
-- If exists: construct and submit a complete curriculum plan covering all courses and satisfying all prerequisite constraints (topological sort).
-- If not exists: submit explicit evidence of an enrollment deadlock caused by cyclic prerequisites (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
+Profile list:
+{objects_list}
 
-## Available Operations (one per turn)
+Target profile ID: {target_id}
 
-1. **LIST**: Get the complete set of required courses and count.
-   Format: <list></list>
+Deduce the exact global ranking R of the target profile among all {n} profiles after the system's comprehensive evaluation (R is an integer from 1 to {n}).
 
-2. **STATE**: View the current planned enrollment prefix sequence S.
-   Format: <state></state>
+You may repeatedly submit the following three types of data comparisons to the academic database (one query per turn), and the system will respond truthfully based on the built-in evaluation rules:
 
-3. **PLACE**: Try to append course X to the end of the enrollment sequence S (X not yet in S).
-   Format: <place>X</place>
-   Response: "OK" if X has no unsatisfied prerequisites and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite course of X.
+1. **Pairwise Comparison**: Check the relative ranking order of profile X and profile Y in the global landscape.
+   - Answer: "X before Y" or "Y before X"
 
-4. **COUNT**: Query the number of direct prerequisite courses of X that are still unsatisfied relative to current S.
-   Format: <count>X</count>
+2. **Small Batch Sort**: Select a seminar group (2 to 4 profiles) and request its complete internal ranking result.
+   - Answer: The profile ID list of that group sorted by comprehensive evaluation
 
-5. **COMPARE**: Ask whether there exists a mandatory taking order between courses A and B.
-   Format: <compare>A,B</compare>
-   Response: "A<B" (must take A before B), "B<A" (must take B before A), or "NO-CONSTRAINT" (no mandatory order).
+3. **Local Rank**: Check the relative rank of profile X within a self-selected control group (2 to 4 profiles, including X).
+   - Answer: The position of X in that control group (an integer from 1 to group size)
 
-6. **ASK-ZERO**: Ask whether there exists a course that can be immediately taken next relative to current S (in-degree 0).
-   Format: <ask_zero></ask_zero>
-   Response: "YES X" (exists, X is one such course) or "NO" (does not exist).
+- Profile IDs in each query must be distinct and chosen from the published {n} profiles
+- The size of the control group in any single comparison is at most 4 profiles
+- Direct or disguised whole-list ranking extraction queries are strictly prohibited
+- Please complete the task with the minimum number of data comparisons
 
-7. **CHECK-SEQUENCE**: Offline verify whether a plan covering all courses without repetition is a valid curriculum plan (does not change S).
-   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
-   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated prerequisite constraint).
+Each query must contain only one tag. Use the following XML format:
 
-8. **RESET**: Clear S back to initial empty sequence (curriculum structure unchanged).
-   Format: <reset></reset>
+- Pairwise Comparison (e.g., comparing profile IDs 1 and 3):
+<query_compare>1,3</query_compare>
 
-## Answer Submission Format
+- Small Batch Sort (e.g., ranking seminar group with profile IDs 1, 3, 5):
+<query_sort>1,3,5</query_sort>
 
-Submit complete curriculum plan:
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- Local Rank (e.g., asking for the rank of profile ID 2 in control group [2,4,6]):
+<query_rank>2 in 2,4,6</query_rank>
 
-Submit enrollment deadlock evidence:
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+When submitting the final answer, provide the global exact ranking of the target profile (an integer from 1 to {n}), using this format:
 
-Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the planning and inference.
+<answer>5</answer>
 """
 
     contextualized_rule_zh_4 = """\
-这是一套“工业流水线与装配工序排程”系统。规则如下：
+智能制造基地的质检中枢正在执行“隐式探伤批次排期”，流水线规则如下：
 
-系统设定了一组有限的装配工序集合 V 和一张固定的生产依赖有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先完成工序 A，才能进行工序 B”的物理装配约束；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 加工）。你无法直接看到所有的装配依赖 E，但可以通过查询来推断图纸结构。
+当前抽检批次包含 {n} 个精密机械零件，每个零件携带：
+- 一个唯一的流水线追踪 ID（从 1 到 {n}）
+- 一串公开且独一无二的物料光谱码（固定长度的数字字符串）
 
-系统维护一个当前排程前缀序列 S（初始为空），表示已被确认符合装配约束并成功排入流水线的工序序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
+智能质检中枢内嵌了一套核心机密的应力疲劳函数 f(code) 来测算每个零件的检测次序键值。所有零件严格按键值升序被送入探伤舱（键值越小越早进舱）；倘若键值等同，则依照光谱码的字典序（从小到大）进行托底排序，由此得出不可更改的绝对质检次序。
 
-你的目标是通过交互查询判断该装配设计是否存在一份能够合法完成所有加工作业的生产标准作业指导书（SOP）：
-- 若存在：构造并提交一份覆盖全部工序且满足所有物理依赖约束的排程计划（拓扑排序）。
-- 若不存在：提交一个导致流水线卡死的循环装配缺陷证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
+零件批次列表：
+{objects_list}
 
-## 可用操作（每次只能使用一个）
+目标零件追踪 ID：{target_id}
 
-1. **LIST**：获取所有需要进行的装配工序集合与数量。
-   格式：<list></list>
+精准锁定目标零件在全批次 {n} 个零件中被排定的全局绝对质检位次 R（R 为 1 到 {n} 的整数）。
 
-2. **STATE**：查看当前流水线上已排程的工序前缀序列 S。
-   格式：<state></state>
+你可以反复通过工控机向质检中枢发起以下三种抽查指令（每次仅限一个指令），中枢将按隐藏排期如实回传数据：
 
-3. **PLACE**：尝试将工序 X 追加到排程序列 S 的末尾（X 尚未在 S 中）。
-   格式：<place>X</place>
-   响应：若 X 无未满足的前置依赖则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一道尚未完成的前置工序。
+1. **成对比较**：校验零件 X 和零件 Y 进入探伤舱的先后时序。
+   - 回答："X 在 Y 前"或"Y 在 X 前"
 
-4. **COUNT**：查询相对当前序列 S，工序 X 仍未满足的直接前置依赖数量。
-   格式：<count>X</count>
+2. **小批量排序**：截取 2 到 4 个零件作为一个上料架子集，索取该架的精确检测顺序。
+   - 回答：该上料架按检测次序排序后的追踪 ID 列表
 
-5. **COMPARE**：询问工序 A 和 B 之间是否存在强制的加工先后关系。
-   格式：<compare>A,B</compare>
-   响应："A<B"（必须先加工 A 再加工 B）、"B<A"（必须先加工 B 再加工 A）或"NO-CONSTRAINT"（无先后约束）。
+3. **局部名次**：指定零件 X 并查询其在某个托盘合集（2 到 4 个零件，包含 X）内的局部位次。
+   - 回答：X 在该托盘合集中的顺位（1 到合集大小的整数）
 
-6. **ASK-ZERO**：询问是否存在相对当前序列 S，可以直接安排上线的工序（入度为0）。
-   格式：<ask_zero></ask_zero>
-   响应："YES X"（存在，X 为其中一道工序）或"NO"（不存在）。
+- 每次抽查的追踪 ID 必须相互独立，且来源于已登记的 {n} 个零件
+- 任一抽查指令的合集零件数最高不能超过 4 个
+- 严禁调取或通过变通手段请求整条流水线的全量质检排期表
+- 请尽最大努力压缩工控机的交互指令次数
 
-7. **CHECK-SEQUENCE**：离线验证一份覆盖全工序且不重复的排程是否为合法的作业指导书（不更改 S）。
-   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
-   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的装配约束）。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-8. **RESET**：清空当前排程序列 S 为初始空方案（生产图纸约束不变）。
-   格式：<reset></reset>
+- 成对比较（例如校验零件 ID 1 和 3）：
+<query_compare>1,3</query_compare>
 
-## 提交答案格式
+- 小批量排序（例如对零件 ID 1、3、5 的上料架排序）：
+<query_sort>1,3,5</query_sort>
 
-提交完整排程计划（SOP）：
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- 局部名次（例如询问零件 ID 2 在托盘合集 [2,4,6] 中的顺位）：
+<query_rank>2 in 2,4,6</query_rank>
 
-提交装配缺陷（有向环）证据：
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+提交最终答案时，请给出目标零件的全局质检位次（1 到 {n} 的整数），格式如下：
 
-注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成排程与推理。
+<answer>5</answer>
 """
 
     contextualized_rule_en_4 = """\
-[Manufacturing / Industrial Scenario]
-This is an "Industrial Assembly Line and Process Scheduling" system. Here are the rules:
+[Manufacturing Scenario]
+The quality inspection hub of the smart manufacturing base is executing an "Implicit Defect Detection Batch Scheduling". Here are the assembly line rules:
 
-The system defines a finite set of assembly operations V and a fixed production dependency directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a physical assembly constraint: "You must complete operation A before proceeding to operation B". Transitive constraints are allowed (if A→B and B→C, then implicitly A must be processed before C). You cannot directly see all assembly dependencies E, but can infer the blueprint structure through queries.
+The current sampling batch contains {n} precision mechanical parts, each carrying:
+- A unique assembly line tracking ID (from 1 to {n})
+- A public and unique material spectrum code (a fixed-length numeric string)
 
-The system maintains a current schedule prefix sequence S (initially empty), representing the sequence of operations that have been confirmed compliant with assembly constraints and successfully scheduled. Except for PLACE and RESET operations, other operations do not change S.
+The smart quality inspection hub embeds a highly confidential stress-fatigue function f(code) to calculate the inspection sequence key for each part. All parts are strictly fed into the flaw detection cabin in ascending order of their keys (smaller keys mean earlier entry); if keys are identical, the lexicographic order of the spectrum codes (ascending) acts as the baseline sorting rule, thus yielding an immutable absolute inspection sequence.
 
-Your goal is to determine through interactive queries whether there exists a valid Standard Operating Procedure (SOP) covering all processing jobs:
-- If exists: construct and submit a complete schedule plan covering all operations and satisfying all physical dependency constraints (topological sort).
-- If not exists: submit explicit evidence of a cyclic assembly defect causing a pipeline jam (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
+Part batch list:
+{objects_list}
 
-## Available Operations (one per turn)
+Target part tracking ID: {target_id}
 
-1. **LIST**: Get the complete set of required assembly operations and count.
-   Format: <list></list>
+Accurately pinpoint the global absolute inspection rank R of the target part among all {n} parts in the batch (R is an integer from 1 to {n}).
 
-2. **STATE**: View the current scheduled operation prefix sequence S.
-   Format: <state></state>
+You can repeatedly send the following three types of sampling commands to the inspection hub via the IPC (one command per turn), and the hub will return data truthfully according to the hidden schedule:
 
-3. **PLACE**: Try to append operation X to the end of the schedule sequence S (X not yet in S).
-   Format: <place>X</place>
-   Response: "OK" if X has no unsatisfied prerequisite dependencies and X is added to S; otherwise "BLOCKED Y" where Y is an unsatisfied prerequisite operation of X.
+1. **Pairwise Comparison**: Verify the temporal sequence of part X and part Y entering the flaw detection cabin.
+   - Answer: "X before Y" or "Y before X"
 
-4. **COUNT**: Query the number of direct prerequisite operations of X that are still unsatisfied relative to current S.
-   Format: <count>X</count>
+2. **Small Batch Sort**: Intercept 2 to 4 parts as a loading rack subset and request the exact inspection order for that rack.
+   - Answer: The tracking ID list of that loading rack sorted by inspection sequence
 
-5. **COMPARE**: Ask whether there exists a mandatory processing order between operations A and B.
-   Format: <compare>A,B</compare>
-   Response: "A<B" (must process A before B), "B<A" (must process B before A), or "NO-CONSTRAINT" (no mandatory order).
+3. **Local Rank**: Specify part X and query its local rank within a tray collection (2 to 4 parts, including X).
+   - Answer: The rank of X in that tray collection (an integer from 1 to collection size)
 
-6. **ASK-ZERO**: Ask whether there exists an operation that can be immediately scheduled next relative to current S (in-degree 0).
-   Format: <ask_zero></ask_zero>
-   Response: "YES X" (exists, X is one such operation) or "NO" (does not exist).
+- Tracking IDs in each command must be independent and sourced from the registered {n} parts
+- The number of parts in any command's collection cannot exceed 4
+- Fetching or functionally bypassing to request the full inspection schedule of the entire assembly line is strictly forbidden
+- Please make every effort to minimize the number of IPC interaction commands
 
-7. **CHECK-SEQUENCE**: Offline verify whether a schedule covering all operations without repetition is a valid SOP (does not change S).
-   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
-   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated assembly constraint).
+Each query must contain only one tag. Use the following XML format:
 
-8. **RESET**: Clear S back to initial empty sequence (blueprint constraints unchanged).
-   Format: <reset></reset>
+- Pairwise Comparison (e.g., verifying part IDs 1 and 3):
+<query_compare>1,3</query_compare>
 
-## Answer Submission Format
+- Small Batch Sort (e.g., sorting the loading rack for part IDs 1, 3, 5):
+<query_sort>1,3,5</query_sort>
 
-Submit complete schedule plan (SOP):
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- Local Rank (e.g., asking for the rank of part ID 2 in tray collection [2,4,6]):
+<query_rank>2 in 2,4,6</query_rank>
 
-Submit assembly defect (directed cycle) evidence:
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+When submitting the final answer, provide the global inspection rank of the target part (an integer from 1 to {n}), using this format:
 
-Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the scheduling and inference.
+<answer>5</answer>
 """
 
     contextualized_rule_zh_5 = """\
-这是一套“法定审批与司法调查程序规划”系统。规则如下：
+最高法务审计系统正在进行一项关于“卷宗盲审急迫度”的调度推演，规则如下：
 
-系统设定了一组有限的法定程序集合 V 和一张固定的司法流程有向图 G=(V,E)，图中无自环与重边。边 A→B 表示“必须先完成程序 A，才能开展程序 B”的法定先决条件（如先获批搜查令才能取证）；图中允许传递约束（若 A→B 且 B→C，则隐含 A 必须早于 C 执行）。你无法直接看到所有的法理约束 E，但可以通过查询来推断调查流程。
+庭审前备查数据库包含 {n} 份数字案卷，每份案卷附有：
+- 一个不可复用的立案 ID（从 1 到 {n}）
+- 一串公开且彼此迥异的哈希特征码（固定长度的数字字符串）
 
-系统维护一个当前执行前缀序列 S（初始为空），表示已被确认符合法定程序并成功记录在案的流程序列。除了 PLACE 和 RESET 操作外，其他操作不会改变 S。
+审计系统应用了一套深度保密的法理测算算法 f(code) 来计算每一份案卷的审查急迫指数。全部卷宗须依照指数的升序排定审查顺位（指数越低，优先级越高）；一旦指数重合，系统将利用特征码的字典序（从小到大）作为唯一基准来破除并列，以此维系绝无歧义的法务审查排期。
 
-你的目标是通过交互查询判断该案件卷宗是否存在一条合法合规且覆盖所有环节的完整程序时间表：
-- 若存在：构造并提交一份覆盖全部程序且满足所有法定约束的合法办案流程（拓扑排序）。
-- 若不存在：提交一个导致权力审批死锁或法理逻辑循环的违规证据（C1→C2→…→Ck→C1，其中 k 大于等于 2）。
+卷宗备查列表：
+{objects_list}
 
-## 可用操作（每次只能使用一个）
+目标卷宗立案 ID：{target_id}
 
-1. **LIST**：获取本次调查需要履行的全部法定程序集合与数量。
-   格式：<list></list>
+推断出目标卷宗在这批 {n} 宗案件里确切的全局审查绝对排期 R（R 为 1 到 {n} 的整数）。
 
-2. **STATE**：查看当前已合法执行的程序卷宗前缀序列 S。
-   格式：<state></state>
+你获准向审计系统终端提交以下三类审查指令（每次仅限一个提交），终端将依保密急迫度模型给出属实应答：
 
-3. **PLACE**：尝试将程序 X 追加到执行序列 S 的末尾（X 尚未在 S 中）。
-   格式：<place>X</place>
-   响应：若 X 无未满足的先决程序则返回"OK"并将 X 加入 S；否则返回"BLOCKED Y"，其中 Y 为 X 的一项尚未履行的先决程序。
+1. **成对比较**：对比卷宗 X 与卷宗 Y 提呈庭审的先后位次。
+   - 回答："X 在 Y 前"或"Y 在 X 前"
 
-4. **COUNT**：查询相对当前序列 S，程序 X 仍未满足的直接先决程序数量。
-   格式：<count>X</count>
+2. **小批量排序**：抽取 2 到 4 份关联卷宗形成并案子集，提取其微观维度的庭审排序链。
+   - 回答：该子集按照审查排期排序完成后的立案 ID 列表
 
-5. **COMPARE**：询问程序 A 和 B 之间是否存在强制的先后执行关系。
-   格式：<compare>A,B</compare>
-   响应："A<B"（必须先执行 A 再执行 B）、"B<A"（必须先执行 B 再执行 A）或"NO-CONSTRAINT"（无法定先后约束）。
+3. **局部名次**：锁定卷宗 X，并在你指定的抽样并案组（2 到 4 份卷宗，须包含 X）中查勘它的相对次序。
+   - 回答：X 在该并案组中的次序（1 到合集大小的整数）
 
-6. **ASK-ZERO**：询问是否存在相对当前序列 S，可以直接作为下一步启动的法定程序（入度为0）。
-   格式：<ask_zero></ask_zero>
-   响应："YES X"（存在，X 为其中一项）或"NO"（不存在）。
+- 每次指令所引用的立案 ID 必须不相干，且存在于已披露的 {n} 份卷宗范围内
+- 单次检索的并案组合规模上限限定为 4 宗案件
+- 封禁对全体案卷进行直接宏观排序或具有同等效力的大规模接口拉取
+- 请恪守司法效率准则，最大限度地缩减系统检索次数
 
-7. **CHECK-SEQUENCE**：离线验证一份覆盖全程序且不重复的时间表是否为合法合规的办案流程（不更改 S）。
-   格式：<check_sequence>X1,X2,...,Xn</check_sequence>
-   响应："VALID"（合法）或"INVALID U V"（不合法，U→V 为首次违背的法定约束）。
+每次查询只能包含一个标签。请使用以下 XML 格式：
 
-8. **RESET**：清空当前执行序列 S 为初始未启动状态（法理约束不变）。
-   格式：<reset></reset>
+- 成对比较（例如对比卷宗 ID 1 和 3）：
+<query_compare>1,3</query_compare>
 
-## 提交答案格式
+- 小批量排序（例如对关联卷宗 ID 1、3、5 的排序）：
+<query_sort>1,3,5</query_sort>
 
-提交合法办案流程：
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- 局部名次（例如查勘卷宗 ID 2 在抽样并案组 [2,4,6] 中的次序）：
+<query_rank>2 in 2,4,6</query_rank>
 
-提交审批死锁/法理循环证据：
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+提交最终答案时，请给出目标卷宗的全局审查绝对排期（1 到 {n} 的整数），格式如下：
 
-注意：所有操作和答案必须使用严格的 XML 标签格式，每次只能包含一个标签。请尽可能少地使用查询次数来完成规划与推理。
+<answer>5</answer>
 """
 
     contextualized_rule_en_5 = """\
-[Legal Scenario]
-This is a "Statutory Approval and Judicial Investigation Procedure Planning" system. Here are the rules:
+[Law Scenario]
+The Supreme Legal Audit System is conducting a scheduling deduction on the "Urgency of Blind Case Review". Here are the rules:
 
-The system defines a finite set of statutory procedures V and a fixed judicial workflow directed graph G=(V,E) with no self-loops or multiple edges. An edge A→B means a legal prerequisite: "You must complete procedure A before initiating procedure B" (e.g., obtaining a warrant before evidence collection). Transitive constraints are allowed (if A→B and B→C, then implicitly A must be executed before C). You cannot directly see all jurisprudential constraints E, but can infer the investigation workflow through queries.
+The pre-trial database contains {n} digital case files, each attached with:
+- A non-reusable case ID (from 1 to {n})
+- A public and distinct hash feature code (a fixed-length numeric string)
 
-The system maintains a current execution prefix sequence S (initially empty), representing the sequence of procedures that have been confirmed compliant with statutory rules and successfully recorded in the dossier. Except for PLACE and RESET operations, other operations do not change S.
+The audit system applies a deeply confidential jurisprudential calculation algorithm f(code) to compute the review urgency index of every case file. All files must be sequenced for review in ascending order of this index (a lower index means higher priority); should the indices overlap, the system will utilize the lexicographic order of the feature codes (ascending) as the sole benchmark to break the tie, thereby maintaining an unambiguous legal review schedule.
 
-Your goal is to determine through interactive queries whether there exists a fully compliant procedure schedule covering all necessary steps for the case:
-- If exists: construct and submit a lawful investigation workflow covering all procedures and satisfying all statutory constraints (topological sort).
-- If not exists: submit explicit evidence of a regulatory violation causing an approval deadlock or cyclic jurisprudential logic (C1→C2→…→Ck→C1, where k is greater than or equal to 2).
+Case file list:
+{objects_list}
 
-## Available Operations (one per turn)
+Target case ID: {target_id}
 
-1. **LIST**: Get the complete set of required statutory procedures and count.
-   Format: <list></list>
+Deduce the exact global absolute review schedule R of the target case file among this batch of {n} cases (R is an integer from 1 to {n}).
 
-2. **STATE**: View the current lawfully executed procedure prefix sequence S.
-   Format: <state></state>
+You are authorized to submit the following three types of review commands to the audit system terminal (one submission per turn), and the terminal will provide truthful responses according to the confidential urgency model:
 
-3. **PLACE**: Try to append procedure X to the end of the execution sequence S (X not yet in S).
-   Format: <place>X</place>
-   Response: "OK" if X has no unsatisfied prerequisite procedures and X is added to S; otherwise "BLOCKED Y" where Y is an unfulfilled prerequisite procedure of X.
+1. **Pairwise Comparison**: Contrast the sequential order of presenting case file X and case file Y for hearing.
+   - Answer: "X before Y" or "Y before X"
 
-4. **COUNT**: Query the number of direct prerequisite procedures of X that are still unsatisfied relative to current S.
-   Format: <count>X</count>
+2. **Small Batch Sort**: Extract 2 to 4 associated files to form a consolidated subset, retrieving its micro-dimensional hearing sorting chain.
+   - Answer: The case ID list of that subset sorted according to the review schedule
 
-5. **COMPARE**: Ask whether there exists a mandatory execution order between procedures A and B.
-   Format: <compare>A,B</compare>
-   Response: "A<B" (must execute A before B), "B<A" (must execute B before A), or "NO-CONSTRAINT" (no mandatory order).
+3. **Local Rank**: Pinpoint case file X and inspect its relative sequence within a sampling consolidated group of your designation (2 to 4 files, must include X).
+   - Answer: The sequence of X in that consolidated group (an integer from 1 to group size)
 
-6. **ASK-ZERO**: Ask whether there exists a procedure that can be immediately initiated next relative to current S (in-degree 0).
-   Format: <ask_zero></ask_zero>
-   Response: "YES X" (exists, X is one such procedure) or "NO" (does not exist).
+- Case IDs referenced in each command must be disjoint and fall within the scope of the disclosed {n} case files
+- The upper limit of the consolidated group size for a single retrieval is constrained to 4 cases
+- Direct macro-sorting of all files or large-scale API pulling with equivalent effect is blocked
+- Please adhere to judicial efficiency guidelines and minimize system retrieval counts to the greatest extent possible
 
-7. **CHECK-SEQUENCE**: Offline verify whether a schedule covering all procedures without repetition is a lawful investigation workflow (does not change S).
-   Format: <check_sequence>X1,X2,...,Xn</check_sequence>
-   Response: "VALID" (valid) or "INVALID U V" (invalid, U→V is the first violated statutory constraint).
+Each query must contain only one tag. Use the following XML format:
 
-8. **RESET**: Clear S back to the initial uninitiated state (jurisprudential constraints unchanged).
-   Format: <reset></reset>
+- Pairwise Comparison (e.g., contrasting case IDs 1 and 3):
+<query_compare>1,3</query_compare>
 
-## Answer Submission Format
+- Small Batch Sort (e.g., sorting associated case IDs 1, 3, 5):
+<query_sort>1,3,5</query_sort>
 
-Submit lawful investigation workflow:
-<answer_topo>X1,X2,...,Xn</answer_topo>
+- Local Rank (e.g., inspecting case ID 2's sequence in sampling group [2,4,6]):
+<query_rank>2 in 2,4,6</query_rank>
 
-Submit approval deadlock / cyclic logic evidence:
-<answer_cycle>C1,C2,...,Ck</answer_cycle>
+When submitting the final answer, provide the global absolute review schedule of the target case file (an integer from 1 to {n}), using this format:
 
-Note: All operations and answers must use strict XML tag format, with only one tag per turn. Try to use as few queries as possible to complete the planning and inference.
+<answer>5</answer>
 """
 
-    tags = ["answer_topo", "answer_cycle", "list", "state", "place", "count", "compare", "ask_zero", "check_sequence", "reset"]
-
-    # 难度说明：
-    # 1 (简单)        - 3个节点，简单链式 DAG，有唯一拓扑序
-    # 2 (中等偏下)    - 4个节点，有分支的 DAG，多个拓扑序
-    # 3 (中等偏上)    - 5个节点，复杂 DAG，传递边较多
-    # 4 (较难)        - 4个节点，包含一个简单环
-    # 5 (难)          - 6个节点，包含复杂环结构
+    tags = ["answer", "query_compare", "query_sort", "query_rank"]
+    
+    reasoning_type = "归纳推理"
+    data_structure = "序列"
 
     DIFFICULTY_CONFIG = {
         "zh": {
             1: {
-                "elements": ["A", "B", "C"],
-                "edges": [("A", "B"), ("B", "C")],  # A→B→C 链式
-                "has_cycle": False,
+                "n": 5,
+                "objects": [
+                    (1, "1023"),
+                    (2, "4567"),
+                    (3, "2891"),
+                    (4, "3456"),
+                    (5, "7890")
+                ],
+                "target_id": 3,
+                "func_type": "last_digit"
             },
             2: {
-                "elements": ["A", "B", "C", "D"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")],  # 菱形结构
-                "has_cycle": False,
+                "n": 8,
+                "objects": [
+                    (1, "1234"),
+                    (2, "5678"),
+                    (3, "2468"),
+                    (4, "1357"),
+                    (5, "9876"),
+                    (6, "3141"),
+                    (7, "2718"),
+                    (8, "1618")
+                ],
+                "target_id": 5,
+                "func_type": "sum_digits"
             },
             3: {
-                "elements": ["A", "B", "C", "D", "E"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E"), ("A", "E")],  # 带传递边
-                "has_cycle": False,
+                "n": 10,
+                "objects": [
+                    (1, "1001"),
+                    (2, "2002"),
+                    (3, "3003"),
+                    (4, "4004"),
+                    (5, "5005"),
+                    (6, "6006"),
+                    (7, "7007"),
+                    (8, "8008"),
+                    (9, "9009"),
+                    (10, "1111")
+                ],
+                "target_id": 7,
+                "func_type": "sum_mod7"
             },
             4: {
-                "elements": ["A", "B", "C", "D"],
-                "edges": [("A", "B"), ("B", "C"), ("C", "A"), ("D", "A")],  # 包含环 A→B→C→A
-                "has_cycle": True,
+                "n": 12,
+                "objects": [
+                    (1, "1234"),
+                    (2, "2345"),
+                    (3, "3456"),
+                    (4, "4567"),
+                    (5, "5678"),
+                    (6, "6789"),
+                    (7, "7890"),
+                    (8, "8901"),
+                    (9, "9012"),
+                    (10, "1111"),
+                    (11, "2222"),
+                    (12, "3333")
+                ],
+                "target_id": 8,
+                "func_type": "first_two_sum"
             },
             5: {
-                "elements": ["A", "B", "C", "D", "E", "F"],
-                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"), ("E", "B"), ("F", "A")],  # 复杂环 B→C→D→E→B
-                "has_cycle": True,
-            },
+                "n": 15,
+                "objects": [
+                    (1, "1234"),
+                    (2, "5678"),
+                    (3, "9012"),
+                    (4, "3456"),
+                    (5, "7890"),
+                    (6, "2468"),
+                    (7, "1357"),
+                    (8, "9876"),
+                    (9, "5432"),
+                    (10, "1111"),
+                    (11, "2222"),
+                    (12, "3333"),
+                    (13, "4444"),
+                    (14, "5555"),
+                    (15, "6666")
+                ],
+                "target_id": 10,
+                "func_type": "alternating_sum"
+            }
         },
         "en": {
             1: {
-                "elements": ["A", "B", "C"],
-                "edges": [("A", "B"), ("B", "C")],
-                "has_cycle": False,
+                "n": 5,
+                "objects": [
+                    (1, "1023"),
+                    (2, "4567"),
+                    (3, "2891"),
+                    (4, "3456"),
+                    (5, "7890")
+                ],
+                "target_id": 3,
+                "func_type": "last_digit"
             },
             2: {
-                "elements": ["A", "B", "C", "D"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")],
-                "has_cycle": False,
+                "n": 8,
+                "objects": [
+                    (1, "1234"),
+                    (2, "5678"),
+                    (3, "2468"),
+                    (4, "1357"),
+                    (5, "9876"),
+                    (6, "3141"),
+                    (7, "2718"),
+                    (8, "1618")
+                ],
+                "target_id": 5,
+                "func_type": "sum_digits"
             },
             3: {
-                "elements": ["A", "B", "C", "D", "E"],
-                "edges": [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E"), ("A", "E")],
-                "has_cycle": False,
+                "n": 10,
+                "objects": [
+                    (1, "1001"),
+                    (2, "2002"),
+                    (3, "3003"),
+                    (4, "4004"),
+                    (5, "5005"),
+                    (6, "6006"),
+                    (7, "7007"),
+                    (8, "8008"),
+                    (9, "9009"),
+                    (10, "1111")
+                ],
+                "target_id": 7,
+                "func_type": "sum_mod7"
             },
             4: {
-                "elements": ["A", "B", "C", "D"],
-                "edges": [("A", "B"), ("B", "C"), ("C", "A"), ("D", "A")],
-                "has_cycle": True,
+                "n": 12,
+                "objects": [
+                    (1, "1234"),
+                    (2, "2345"),
+                    (3, "3456"),
+                    (4, "4567"),
+                    (5, "5678"),
+                    (6, "6789"),
+                    (7, "7890"),
+                    (8, "8901"),
+                    (9, "9012"),
+                    (10, "1111"),
+                    (11, "2222"),
+                    (12, "3333")
+                ],
+                "target_id": 8,
+                "func_type": "first_two_sum"
             },
             5: {
-                "elements": ["A", "B", "C", "D", "E", "F"],
-                "edges": [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"), ("E", "B"), ("F", "A")],
-                "has_cycle": True,
-            },
-        },
+                "n": 15,
+                "objects": [
+                    (1, "1234"),
+                    (2, "5678"),
+                    (3, "9012"),
+                    (4, "3456"),
+                    (5, "7890"),
+                    (6, "2468"),
+                    (7, "1357"),
+                    (8, "9876"),
+                    (9, "5432"),
+                    (10, "1111"),
+                    (11, "2222"),
+                    (12, "3333"),
+                    (13, "4444"),
+                    (14, "5555"),
+                    (15, "6666")
+                ],
+                "target_id": 10,
+                "func_type": "alternating_sum"
+            }
+        }
     }
 
     def __init__(self, config):
@@ -721,321 +781,209 @@ Note: All operations and answers must use strict XML tag format, with only one t
             raise KeyError(f"Unsupported difficulty: {diff}")
 
         cfg = self.DIFFICULTY_CONFIG[lang][diff]
-        self.elements = set(cfg["elements"])
-        self.edges = cfg["edges"]  # 有向边列表 [(from, to), ...]
-        self.has_cycle = cfg["has_cycle"]
+        self._game_info["n"] = cfg["n"]
+        self._game_info["target_id"] = cfg["target_id"]
         
-        # 构建邻接表和入度表（相对于原始图）
-        self.adj = {elem: set() for elem in self.elements}  # elem -> {后继节点}
-        self.reverse_adj = {elem: set() for elem in self.elements}  # elem -> {前驱节点}
-        for u, v in self.edges:
-            self.adj[u].add(v)
-            self.reverse_adj[v].add(u)
+        self.objects = {}
+        for obj_id, code in cfg["objects"]:
+            self.objects[obj_id] = code
         
-        # 计算传递闭包（用于 COMPARE 操作）
-        self.reachable = {elem: set() for elem in self.elements}
-        for start in self.elements:
-            self._compute_reachable(start)
+        self.func_type = cfg["func_type"]
+        self.sort_keys = {}
+        for obj_id, code in self.objects.items():
+            self.sort_keys[obj_id] = self._compute_sort_key(code, self.func_type)
         
-        # 当前前缀序列 S
-        self.current_sequence = []
+        sorted_ids = sorted(
+            self.objects.keys(),
+            key=lambda x: (self.sort_keys[x], self.objects[x])
+        )
         
-        # 用于游戏规则中的占位符（如果需要）
-        self._game_info = {}
-
-    def _compute_reachable(self, start):
-        """计算从 start 可达的所有节点（DFS）"""
-        visited = set()
-        stack = [start]
-        while stack:
-            node = stack.pop()
-            if node in visited:
-                continue
-            visited.add(node)
-            for neighbor in self.adj[node]:
-                if neighbor not in visited:
-                    stack.append(neighbor)
-        visited.discard(start)  # 不包括自己
-        self.reachable[start] = visited
-
-    def _get_unsatisfied_predecessors(self, elem):
-        """获取元素 elem 相对当前序列 S 尚未满足的直接前驱"""
-        placed_set = set(self.current_sequence)
-        direct_preds = self.reverse_adj[elem]
-        return direct_preds - placed_set
-
-    def _can_place(self, elem):
-        """判断元素 elem 是否可以放置到当前序列末尾"""
-        if elem in self.current_sequence:
-            return False, None
-        unsatisfied = self._get_unsatisfied_predecessors(elem)
-        if unsatisfied:
-            # 返回任一未满足的前驱
-            return False, next(iter(unsatisfied))
-        return True, None
-
-    def _get_zero_indegree_elements(self):
-        """获取相对当前序列 S，入度为 0 的未放置元素"""
-        placed_set = set(self.current_sequence)
-        zero_indegree = []
-        for elem in self.elements:
-            if elem not in placed_set:
-                if len(self._get_unsatisfied_predecessors(elem)) == 0:
-                    zero_indegree.append(elem)
-        return zero_indegree
-
-    def _check_sequence_validity(self, sequence):
-        """检查序列是否为合法拓扑序，返回 (is_valid, first_violated_edge)"""
-        if set(sequence) != self.elements or len(sequence) != len(self.elements):
-            return False, None
+        self.global_ranks = {}
+        for rank, obj_id in enumerate(sorted_ids, start=1):
+            self.global_ranks[obj_id] = rank
         
-        pos = {elem: i for i, elem in enumerate(sequence)}
-        for u, v in self.edges:
-            if pos[u] >= pos[v]:  # u 应该在 v 之前，但实际上 v 在 u 之前或同位置
-                return False, (u, v)
-        return True, None
-
-    def _check_cycle_validity(self, cycle):
-        """检查提交的环是否真实存在"""
-        if len(cycle) < 2:
-            return False
+        self.target_id = cfg["target_id"]
+        self.target_rank = self.global_ranks[self.target_id]
         
-        # 检查每一条边是否都存在
-        for i in range(len(cycle)):
-            u = cycle[i]
-            v = cycle[(i + 1) % len(cycle)]
-            if v not in self.adj.get(u, set()):
-                return False
-        return True
+        objects_lines = []
+        for obj_id, code in sorted(self.objects.items()):
+            objects_lines.append(f"ID {obj_id}: code = {code}")
+        self._game_info["objects_list"] = "\n".join(objects_lines)
+
+    def _compute_sort_key(self, code, func_type):
+        if func_type == "last_digit":
+            return int(code[-1])
+        elif func_type == "sum_digits":
+            return sum(int(d) for d in code)
+        elif func_type == "sum_mod7":
+            return sum(int(d) for d in code) % 7
+        elif func_type == "first_two_sum":
+            return int(code[0]) + int(code[1])
+        elif func_type == "alternating_sum":
+            total = 0
+            for i, d in enumerate(code, start=1):
+                if i % 2 == 1:
+                    total += int(d)
+                else:
+                    total -= int(d)
+            return total
+        else:
+            raise ValueError(f"Unknown function type: {func_type}")
+
+    def _sort_subset(self, id_list):
+        return sorted(id_list, key=lambda x: (self.sort_keys[x], self.objects[x]))
 
     def get_all_possible_queries(self) -> list[dict]:
-        """
-        枚举所有合法查询并返回对应的正确答案。
-        注意：PLACE 和 RESET 有副作用，这里基于初始空序列进行模拟。
-        """
         queries = []
-        sorted_elements = sorted(list(self.elements))
-
-        # 1. LIST
-        queries.append({
-            "query": "<list></list>",
-            "answer": f"ITEMS: {','.join(sorted_elements)} COUNT: {len(self.elements)}"
-        })
-
-        # 2. STATE (基于初始空序列)
-        queries.append({
-            "query": "<state></state>",
-            "answer": "INSTALLED: []"
-        })
-
-        # 3. ASK-ZERO (基于初始空序列)
-        zero_elems = self._get_zero_indegree_elements()
-        if zero_elems:
-            ask_zero_ans = f"YES {zero_elems[0]}"
-        else:
-            ask_zero_ans = "NO"
-        queries.append({
-            "query": "<ask_zero></ask_zero>",
-            "answer": ask_zero_ans
-        })
-
-        # 4. COUNT (对每个元素，基于初始空序列)
-        for elem in sorted_elements:
-            unsatisfied = self._get_unsatisfied_predecessors(elem)
+        n = self._game_info["n"]
+        ids = list(range(1, n + 1))
+        tid = self.target_id
+        
+        for other_id in ids:
+            if other_id == tid:
+                continue
+            id1, id2 = min(tid, other_id), max(tid, other_id)
+            query_content = f"{id1},{id2}"
+            parsed_info = {"query_compare": query_content}
+            ans = self._cf_core_produce(parsed_info)
             queries.append({
-                "query": f"<count>{elem}</count>",
-                "answer": str(len(unsatisfied))
+                "query": f"<query_compare>{query_content}</query_compare>",
+                "answer": ans
             })
 
-        # 5. COMPARE (对所有不同元素对) - 无副作用，结果始终一致
-        for a in sorted_elements:
-            for b in sorted_elements:
-                if a == b:
-                    continue
-                if b in self.reachable[a]:
-                    ans = f"{a}<{b}"
-                elif a in self.reachable[b]:
-                    ans = f"{b}<{a}"
-                else:
-                    ans = "NO-CONSTRAINT"
+        other_ids = [x for x in ids if x != tid]
+        for k in range(1, min(4, len(other_ids) + 1)):
+            for others in itertools.combinations(other_ids, k):
+                subset = sorted([tid] + list(others))
+                query_content = ",".join(map(str, subset))
+                parsed_info = {"query_sort": query_content}
+                ans = self._cf_core_produce(parsed_info)
                 queries.append({
-                    "query": f"<compare>{a},{b}</compare>",
+                    "query": f"<query_sort>{query_content}</query_sort>",
                     "answer": ans
                 })
 
-        # 注意：不包含 PLACE、RESET、CHECK-SEQUENCE 等有副作用或需要参数的操作，
-        # 因为它们的结果依赖于执行时的序列状态。
+        for k in range(1, min(4, len(other_ids) + 1)):
+            for others in itertools.combinations(other_ids, k):
+                subset = sorted([tid] + list(others))
+                subset_str = ",".join(map(str, subset))
+                query_content = f"{tid} in {subset_str}"
+                parsed_info = {"query_rank": query_content}
+                ans = self._cf_core_produce(parsed_info)
+                queries.append({
+                    "query": f"<query_rank>{query_content}</query_rank>",
+                    "answer": ans
+                })
 
         return queries
 
-    def parse(self, response: str):
-        parsed_info = super().parse(response)
-        if "answer_topo" in parsed_info or "answer_cycle" in parsed_info:
-            parsed_info["answer"] = parsed_info.get("answer_topo", parsed_info.get("answer_cycle", ""))
-        return parsed_info
-
     def evaluate(self, parsed_info):
-        if "answer_topo" in parsed_info:
-            # 提交拓扑序答案
-            raw = parsed_info["answer_topo"].strip()
-            try:
-                sequence = [x.strip() for x in raw.split(",") if x.strip()]
-                is_valid, _ = self._check_sequence_validity(sequence)
-                # 只有在图无环且序列合法时才算成功
-                return (not self.has_cycle) and is_valid
-            except:
-                return False
-        
-        elif "answer_cycle" in parsed_info:
-            # 提交环答案
-            raw = parsed_info["answer_cycle"].strip()
-            try:
-                cycle = [x.strip() for x in raw.split(",") if x.strip()]
-                is_valid = self._check_cycle_validity(cycle)
-                # 只有在图有环且提交的环合法时才算成功
-                return self.has_cycle and is_valid
-            except:
-                return False
-        
-        return False
-
-    def _core_produce_response(self, parsed_info):
-        # LIST 操作
-        if "list" in parsed_info:
-            elements_str = ",".join(sorted(self.elements))
-            return f"ITEMS: {elements_str} COUNT: {len(self.elements)}"
-        
-        # STATE 操作
-        elif "state" in parsed_info:
-            if self.current_sequence:
-                seq_str = ",".join(self.current_sequence)
-                return f"INSTALLED: [{seq_str}]"
-            else:
-                return "INSTALLED: []"
-        
-        # PLACE 操作
-        elif "place" in parsed_info:
-            elem = parsed_info["place"].strip()
-            if elem not in self.elements:
-                return "ERROR: Element not found." if self.config.language == "en" else "错误：元素不存在。"
-            
-            if elem in self.current_sequence:
-                return "ERROR: Element already placed." if self.config.language == "en" else "错误：元素已放置。"
-            
-            can_place, blocked_by = self._can_place(elem)
-            if can_place:
-                self.current_sequence.append(elem)
-                return "OK"
-            else:
-                return f"BLOCKED {blocked_by}"
-        
-        # COUNT 操作
-        elif "count" in parsed_info:
-            elem = parsed_info["count"].strip()
-            if elem not in self.elements:
-                return "ERROR: Element not found." if self.config.language == "en" else "错误：元素不存在。"
-            
-            unsatisfied = self._get_unsatisfied_predecessors(elem)
-            return str(len(unsatisfied))
-        
-        # COMPARE 操作
-        elif "compare" in parsed_info:
-            try:
-                raw = parsed_info["compare"]
-                parts = [x.strip() for x in raw.split(",")]
-                if len(parts) != 2:
-                    raise ValueError
-                a, b = parts
-                
-                if a not in self.elements or b not in self.elements:
-                    return "ERROR: Element not found." if self.config.language == "en" else "错误：元素不存在。"
-                
-                # 检查可达性
-                if b in self.reachable[a]:
-                    return f"{a}<{b}"
-                elif a in self.reachable[b]:
-                    return f"{b}<{a}"
-                else:
-                    return "NO-CONSTRAINT"
-            except:
-                return "ERROR: Invalid format." if self.config.language == "en" else "错误：格式无效。"
-        
-        # ASK-ZERO 操作
-        elif "ask_zero" in parsed_info:
-            zero_elems = self._get_zero_indegree_elements()
-            if zero_elems:
-                # 返回任意一个零入度元素
-                elem = zero_elems[0]
-                return f"YES {elem}"
-            else:
-                return "NO"
-        
-        # CHECK-SEQUENCE 操作
-        elif "check_sequence" in parsed_info:
-            raw = parsed_info["check_sequence"].strip()
-            try:
-                sequence = [x.strip() for x in raw.split(",") if x.strip()]
-                is_valid, violated_edge = self._check_sequence_validity(sequence)
-                if is_valid:
-                    return "VALID"
-                else:
-                    if violated_edge:
-                        return f"INVALID {violated_edge[0]} {violated_edge[1]}"
-                    else:
-                        return "INVALID"
-            except:
-                return "ERROR: Invalid format." if self.config.language == "en" else "错误：格式无效。"
-        
-        # RESET 操作
-        elif "reset" in parsed_info:
-            self.current_sequence = []
-            return "RESET-DONE"
-        
-        else:
-            raise ValueError("No valid operation tag found.")
+        try:
+            answer = int(parsed_info["answer"].strip())
+            return answer == self.target_rank
+        except:
+            return False
 
     def _cf_core_produce(self, parsed_info):
-        """与 _core_produce_response 完全一致，供反事实框架调用（不检查游戏状态上限）"""
-        return self._core_produce_response(parsed_info)
+        lang = self.config.language
+        
+        try:
+            if "query_compare" in parsed_info:
+                raw = parsed_info["query_compare"].strip()
+                parts = [x.strip() for x in raw.split(",")]
+                if len(parts) != 2:
+                    raise ValueError("Compare query must contain exactly 2 IDs")
+                
+                id1, id2 = int(parts[0]), int(parts[1])
+                if id1 not in self.objects or id2 not in self.objects:
+                    raise ValueError("ID out of range")
+                if id1 == id2:
+                    raise ValueError("IDs must be distinct")
+                
+                sorted_pair = self._sort_subset([id1, id2])
+                if sorted_pair[0] == id1:
+                    if lang == "zh":
+                        return f"{id1} 在 {id2} 前"
+                    else:
+                        return f"{id1} before {id2}"
+                else:
+                    if lang == "zh":
+                        return f"{id2} 在 {id1} 前"
+                    else:
+                        return f"{id2} before {id1}"
+            
+            elif "query_sort" in parsed_info:
+                raw = parsed_info["query_sort"].strip()
+                parts = [int(x.strip()) for x in raw.split(",")]
+                
+                if len(parts) < 2 or len(parts) > 4:
+                    raise ValueError("Sort query must contain 2 to 4 IDs")
+                if len(parts) != len(set(parts)):
+                    raise ValueError("IDs must be distinct")
+                if any(obj_id not in self.objects for obj_id in parts):
+                    raise ValueError("ID out of range")
+                
+                sorted_ids = self._sort_subset(parts)
+                return ",".join(str(obj_id) for obj_id in sorted_ids)
+            
+            elif "query_rank" in parsed_info:
+                raw = parsed_info["query_rank"].strip()
+                if " in " not in raw:
+                    raise ValueError("Rank query must use format: X in X1,X2,...")
+                
+                target_part, subset_part = raw.split(" in ", 1)
+                target_id = int(target_part.strip())
+                subset_ids = [int(x.strip()) for x in subset_part.split(",")]
+                
+                if len(subset_ids) < 2 or len(subset_ids) > 4:
+                    raise ValueError("Rank query subset must contain 2 to 4 IDs")
+                if len(subset_ids) != len(set(subset_ids)):
+                    raise ValueError("IDs must be distinct")
+                if target_id not in subset_ids:
+                    raise ValueError("Target ID must be in the subset")
+                if any(obj_id not in self.objects for obj_id in subset_ids):
+                    raise ValueError("ID out of range")
+                
+                sorted_subset = self._sort_subset(subset_ids)
+                rank = sorted_subset.index(target_id) + 1
+                return str(rank)
+            
+            else:
+                raise ValueError("No valid query tag found")
+        
+        except ValueError as e:
+            if lang == "zh":
+                return f"错误：{str(e)}"
+            else:
+                return f"Error: {str(e)}"
+        except Exception as e:
+            if lang == "zh":
+                return f"错误：无效的查询格式"
+            else:
+                return f"Error: Invalid query format"
 
-    def _cf_make_wrong(self, correct: str) -> str:
-        # PLACE 结果
-        if correct == "OK":
-            return "BLOCKED A"          # 给一个假的阻塞
-        if correct.startswith("BLOCKED "):
-            return "OK"                  # 翻转：本来阻塞 → 假装可以放
+    def _cf_make_wrong(self, correct):
+        lang = self.config.language
 
-        # COUNT 结果（纯整数）
         if correct.strip().isdigit():
-            return str(int(correct.strip()) + 1)
+            val = int(correct.strip())
+            if val > 1:
+                return str(val - 1)
+            else:
+                return str(val + 1)
 
-        # COMPARE 结果
-        if correct == "NO-CONSTRAINT":
-            sorted_elems = sorted(self.elements)
-            if len(sorted_elems) >= 2:
-                return f"{sorted_elems[0]}<{sorted_elems[1]}"
-            return correct + "_WRONG"
-        if "<" in correct and correct != "NO-CONSTRAINT":
-            # 例如 "A<B" → 翻转为 "B<A"
-            parts = correct.split("<")
+        if lang == "zh" and " 在 " in correct and " 前" in correct:
+            m = re.match(r"(\S+)\s+在\s+(\S+)\s+前", correct)
+            if m:
+                return f"{m.group(2)} 在 {m.group(1)} 前"
+        if lang == "en" and " before " in correct:
+            parts = correct.split(" before ")
             if len(parts) == 2:
-                return f"{parts[1]}<{parts[0]}"
+                return f"{parts[1].strip()} before {parts[0].strip()}"
 
-        # ASK-ZERO 结果
-        if correct == "NO":
-            sorted_unplaced = [e for e in sorted(self.elements)
-                            if e not in self.current_sequence]
-            if sorted_unplaced:
-                return f"YES {sorted_unplaced[0]}"
-            return "YES X"
-        if correct.startswith("YES "):
-            return "NO"
+        if "," in correct:
+            parts = correct.split(",")
+            if len(parts) >= 2:
+                return ",".join(reversed(parts))
 
-        # CHECK-SEQUENCE 结果
-        if correct == "VALID":
-            return "INVALID A B"
-        if correct.startswith("INVALID"):
-            return "VALID"
-
-        # LIST / STATE / RESET 等固定文本
-        return correct + "_WRONG"
+        return f"{correct}_WRONG"

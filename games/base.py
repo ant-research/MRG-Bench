@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import List, Dict
 
 class _SafeDict(dict):
-    """对缺失的键原样保留 {key} 而不报错"""
     def __missing__(self, key):
         return "{" + key + "}"
 
@@ -27,19 +26,7 @@ class GameState:
             "content": content
         })
 
-
 class Game(ABC):
-    """
-    流程：
-        1. 游戏初始化后，先根据config对游戏规则进行初始化，选zh/en，以及是否要把game_rule放到system prompt中
-        2. runner开始循环，每一轮
-            1) 获取game_state的messages
-            2) 喂入llm, 得到回复
-            3) 用户回复，然后更新game_state, 依次调用:
-                parse失败直接结束
-                成功判断是进入evaluate还是make_response环境
-                
-    """
 
     game_rule_zh = ""
     game_rule_en = ""
@@ -57,14 +44,14 @@ class Game(ABC):
     contextualized_rule_en_5 = ""
     tags = []
 
-    reasoning_type = "" # 演绎推理、归纳推理、溯因推理
-    data_structure = "" # 集合、序列、树、图
+    reasoning_type = ""
+    data_structure = ""
 
     def __init__(self, config):
-        self.enable_counterfactual = False # 设为 True 时开启反事实干预模式
-        self._cf_round_counter = 0          # produce_response 调用轮次计数
-        self._cf_correct_resp  = None       # 第 2 轮的正确答案（暂存）
-        self._cf_wrong_resp    = None       # 第 2 轮注入的错误答案（暂存）
+        self.enable_counterfactual = False
+        self._cf_round_counter = 0
+        self._cf_correct_resp  = None
+        self._cf_wrong_resp    = None
         self.config = config
         self.state = GameState()
         self._game_info = {}
@@ -72,11 +59,9 @@ class Game(ABC):
         self._init_rule()
         self._init_message()
 
-
     @abstractmethod
     def _initialize_game(self):
         pass
-
 
     def _init_rule(self):
         if self.config.context == 0:
@@ -109,11 +94,8 @@ class Game(ABC):
         else:
             raise KeyError()
 
-
-
     def _init_message(self):
         self.state.add_message("user", self.game_rule + "\n" + self.user_prompt)
-
 
     def parse(self, response: str):
         response = response.strip()
@@ -142,13 +124,11 @@ class Game(ABC):
                 f"or at least one query tag to be present."
             )
 
-
     @abstractmethod
     def evaluate(self, parsed_info):
         pass
 
     def produce_response(self, parsed_info):
-        """处理查询并返回读数"""
         if self.enable_counterfactual:
             self._cf_round_counter += 1
 
@@ -185,7 +165,6 @@ class Game(ABC):
         else:
             return (f"[Correction] The previous response was incorrect. Wrong answer: {wrong}; Correct answer: {correct}.\n"
                     f"Please restart your questioning based on the correct information.")
-
 
     def step(self, response: str) -> GameState:
 
